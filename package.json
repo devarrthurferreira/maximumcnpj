@@ -1,0 +1,32 @@
+{
+  "name": "maximum-cnpj",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Central de consultas e indicadores de CNPJ da Maximum",
+  "engines": {
+    "node": ">=22.16.0 <25"
+  },
+  "scripts": {
+    "dev": "npm run build && node --experimental-strip-types --watch --env-file-if-exists=.env src/server.ts",
+    "build": "tsc && node scripts/assets.mjs",
+    "start": "node --env-file-if-exists=.env dist/server.js",
+    "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/domain.test.ts tests/security.test.ts tests/provider.test.ts tests/http.test.ts",
+    "test:integration": "node --experimental-strip-types --test tests/integration.test.ts",
+    "seed": "node --experimental-strip-types --env-file-if-exists=.env scripts/seed.ts",
+    "verify:source": "node --experimental-strip-types --env-file-if-exists=.env scripts/verify-source.ts",
+    "test:e2e": "playwright test",
+    "check:release": "node scripts/check-release.mjs"
+  },
+  "dependencies": {
+    "google-auth-library": "9.15.1",
+    "mongodb": "6.21.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.30",
+    "typescript": "5.8.3",
+    "@playwright/test": "1.55.1"
+  }
+}

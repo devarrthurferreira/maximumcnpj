@@ -1,0 +1,56 @@
+name: Verificação Maximum CNPJ
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mongo:
+        image: mongo:7.0
+        ports: ['27017:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MONGODB_URI: mongodb://127.0.0.1:27017
+      MONGODB_DB: maximum_e2e
+      WORKSPACE_ID: ci
+      ADMIN_NAME: CI Administrator
+      ADMIN_EMAIL: ci@example.test
+      ADMIN_PASSWORD: synthetic-CI-password-1234
+      BQ_SOURCE_APPROVED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 2 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Dependências
+        run: npm install
+      - name: Versão e documentação
+        run: npm run check:release
+      - name: Tipos e build
+        run: npm run check && npm run build
+      - name: Regras e HTTP
+        run: npm test
+      - name: Integração com MongoDB e BigQuery simulado
+        run: npm run test:integration
+      - name: Conta efêmera para teste
+        run: npm run seed
+      - name: Chromium para testes
+        run: npx playwright install --with-deps chromium
+      - name: Navegador, CSV e XLSX
+        run: npm run test:e2e
+      - name: Evidências de build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maximum-verification
+          path: |
+            package-lock.json
+            playwright-report/
+            test-results/
+          retention-days: 7
