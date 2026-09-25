@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { collection, scope, audit } from './store.ts';
 import type { Doc } from './store.ts';
-import { need, text, integer, digest, AppError, escapeRegex } from './security.ts';
+import { need, text, integer, digest, escapeRegex } from './security.ts';
 import { prepareRows, statistics, VERSION, MAX_ROWS, normalizeCnpj, LABELS } from './domain.ts';
 import type { Status } from './domain.ts';
-import { BigQuerySource, configuration } from './provider.ts';
+import { IMPORT_MODE, importedStatus, mergeImportedStatuses } from './imported.ts';
 export type Actor = { _id: string; role: string; name: string; email: string };
 export function canWrite(actor: Actor) { need(['admin','operator'].includes(actor.role), 'Seu perfil permite apenas leitura.', 403, 'FORBIDDEN'); }
 export function canAdmin(actor: Actor) { need(actor.role === 'admin', 'Ação exclusiva do administrador.', 403, 'FORBIDDEN'); }
@@ -29,10 +29,14 @@ export async function createBatch(actor: Actor, input: any) {
   need(c, 'Selecione a empresa ou carteira responsável pela base.');
   const id = text(input.importId); need(/^[a-f0-9-]{36}$/.test(id), 'Identificador da importação inválido.');
   const existing = await (await collection('batches')).findOne(scope({ _id: id, createdBy: actor._id }));
-  if (existing) return existing;
+  if (existing) {
+    need(existing.mode === IMPORT_MODE && existing.clientId === clientId && existing.fileName === input.fileName && existing.expectedRows === input.expectedRows && JSON.stringify(existing.headers) === JSON.stringify(input.headers) && existing.cnpjColumn === input.cnpjColumn && existing.nameColumn === input.nameColumn && existing.statusColumn === (input.statusColumn ?? -1), 'Este identificador já pertence a outra importação ou mapeamento.', 409, 'IMPORT_CONFLICT');
+    return existing;
+  }
   need(Array.isArray(input.headers) && input.headers.length > 0 && input.headers.length <= 80 && input.headers.every((v: unknown) => typeof v === 'string' && v.length <= 200), 'Cabeçalhos inválidos.');
   const b: Doc = { _id: id, ...scope(), clientId, clientName: c.name, fileName: text(input.fileName, 200), headers: input.headers,
     expectedRows: integer(input.expectedRows, 1, MAX_ROWS), cnpjColumn: integer(input.cnpjColumn, 0, input.headers.length-1), nameColumn: integer(input.nameColumn, -1, input.headers.length-1),
+    statusColumn: integer(input.statusColumn ?? -1, -1, input.headers.length-1), mode: IMPORT_MODE,
     createdBy: actor._id, createdAt: new Date(), updatedAt: new Date(), status: 'UPLOADING', uploaded: 0, version: VERSION, attempts: 0 };
   await (await collection('batches')).insertOne(b); await audit(actor._id, 'batch.create', id); return b;
 }
@@ -47,10 +51,12 @@ async function locked<T>(id: string, action: (b: Doc, owner: string) => Promise<
 export async function uploadRows(actor: Actor, id: string, input: any) {
   canWrite(actor);
   return locked(id, async b => {
+    need(b.mode === IMPORT_MODE, 'Importação antiga: cancele e reimporte no modo básico.', 409, 'LEGACY_BATCH');
     need(b.status === 'UPLOADING', 'Este lote não aceita mais linhas.', 409);
     need(Array.isArray(input.rows) && input.rows.length > 0 && input.rows.length <= 250, 'Envie no máximo 250 linhas por parte.');
     const offset = integer(input.offset, 0, b.expectedRows-1); need(offset + input.rows.length <= b.expectedRows, 'Parte excede o total informado.');
-    const rows = prepareRows(input.rows, b.cnpjColumn, b.nameColumn);
+    need(input.rows.every((row: unknown) => Array.isArray(row) && row.every(value => value == null || typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value)))), 'As células precisam ser valores simples, não objetos.');
+    const rows = prepareRows(input.rows, b.cnpjColumn, b.nameColumn).map(r => ({ ...r, importedStatus: importedStatus(b.statusColumn >= 0 ? r.values[b.statusColumn] : null) }));
     need(rows.every(r => r.values.length === b.headers.length), 'A quantidade de colunas deve corresponder aos cabeçalhos.');
     const hash = digest(JSON.stringify(input.rows));
     const chunkId = `${id}:${offset}`;
@@ -71,76 +77,55 @@ export async function uploadRows(actor: Actor, id: string, input: any) {
 export async function finishUpload(actor: Actor, id: string) {
   canWrite(actor);
   return locked(id, async b => {
+    need(b.mode === IMPORT_MODE, 'Importação antiga: cancele e reimporte no modo básico.', 409, 'LEGACY_BATCH');
     if (b.status !== 'UPLOADING') return b;
     const rows = await collection('rows'), count = await rows.countDocuments(scope({ batchId: id }));
-    need(count === b.expectedRows, 'O envio ainda não está completo.', 409);
+    need(count === b.expectedRows && b.uploaded === count, 'O envio ainda não está completo.', 409);
     const unique = await rows.distinct('cnpj', scope({ batchId: id, valid: true }));
     const invalid = await rows.countDocuments(scope({ batchId: id, valid: false }));
     const summary = { lines: count, unique: unique.length, invalid, duplicates: count-invalid-unique.length };
-    await (await collection('batches')).updateOne(scope({ _id: id }), { $set: { status: unique.length ? 'READY' : 'INVALID', summary, uploaded: count, updatedAt: new Date() } });
+    await (await collection('batches')).updateOne(scope({ _id: id }), { $set: { status: unique.length ? 'PROCESSING' : 'INVALID', summary, received: 0, cursor: '', updatedAt: new Date() } });
     await audit(actor._id, 'batch.validated', id); return batch(id);
   });
 }
-async function identifiers(id: string): Promise<string[]> { return (await collection('rows')).distinct('cnpj', scope({ batchId: id, valid: true })); }
-export async function estimate(actor: Actor, id: string) {
+/** Uma página limitada por execução. Checkpoint e upserts permitem retomada idempotente. */
+export async function processBatch(actor: Actor, id: string) {
   canWrite(actor);
   return locked(id, async b => {
-    need(['READY','ESTIMATED'].includes(b.status), 'Valide a importação antes de estimar.', 409);
-    const c = configuration(), estimate = await new BigQuerySource(c).estimate(await identifiers(id));
-    const estimateId = randomUUID();
-    await (await collection('batches')).updateOne(scope({ _id: id }), { $set: { estimate: { ...estimate, id: estimateId, at: new Date(), config: c }, status: 'ESTIMATED', updatedAt: new Date() } });
-    await audit(actor._id, 'query.estimate', id); return batch(id);
-  });
-}
-export async function start(actor: Actor, id: string, input: any) {
-  canWrite(actor);
-  return locked(id, async b => {
-    if (['RUNNING','FETCHING','COMPLETED'].includes(b.status)) return b;
-    need(['ESTIMATED','STARTING'].includes(b.status), 'Gere uma estimativa antes de executar.', 409);
-    need(input.estimateId === b.estimate?.id && input.accept === true, 'Confirme a estimativa apresentada.', 409);
-    need(b.estimate.withinLimit, 'Estimativa acima do teto configurado.', 422, 'BUDGET_LIMIT');
-    const config = configuration();
-    if (b.status !== 'STARTING') {
-      need(Date.now()-new Date(b.estimate.at).getTime() < 15*60000, 'Estimativa expirada. Estime novamente.', 409, 'ESTIMATE_EXPIRED');
-      need(JSON.stringify(config) === JSON.stringify(b.estimate.config), 'Configuração alterada. Estime novamente.', 409);
-      const source = await new BigQuerySource(config).inspect();
-      need(source.etag === b.estimate.source.etag, 'A fonte mudou após a estimativa. Estime novamente.', 409);
-    }
-    const jobId = b.jobId || 'maximum_'+randomUUID().replace(/-/g,'');
-    await (await collection('batches')).updateOne(scope({ _id: id }), { $set: { jobId, status: 'STARTING', queryConfig: b.estimate.config, updatedAt: new Date() } });
-    await new BigQuerySource(b.estimate.config).start(jobId, await identifiers(id));
-    await (await collection('batches')).updateOne(scope({ _id: id }), { $set: { status: 'RUNNING', startedAt: b.startedAt || new Date(), updatedAt: new Date() } });
-    await audit(actor._id, 'query.start', id); return batch(id);
-  });
-}
-export async function advance(actor: Actor, id: string) {
-  canWrite(actor);
-  return locked(id, async b => {
-    if (!['RUNNING','FETCHING'].includes(b.status)) return b;
-    const source = new BigQuerySource(b.queryConfig);
-    const job = await source.job(b.jobId);
-    if (job.status?.errorResult) {
-      await (await collection('batches')).updateOne(scope({ _id: id }), { $set: { status: 'FAILED', failure: 'QUERY_FAILED', updatedAt: new Date() } });
-      return batch(id);
-    }
-    const page = await source.page(b.jobId, b.pageToken);
-    if (page.running) return b;
-    need(page.total === b.summary.unique, 'Total retornado diverge dos CNPJs únicos. Nenhum resultado publicado.', 502, 'RESULT_COUNT');
-    const expected = new Set(await identifiers(id));
-    need(page.results.every(r => expected.has(r.cnpj)), 'Resposta contém CNPJ fora do lote.', 502, 'RESULT_IDENTITY');
+    need(b.mode === IMPORT_MODE, 'Lote antigo preservado. Reimporte para usar o modo básico.', 409, 'LEGACY_BATCH');
+    if (b.status === 'COMPLETED') return b;
+    need(b.status === 'PROCESSING', 'Finalize o envio antes de processar.', 409);
+    const rows = await collection('rows');
+    const page = await rows.aggregate([
+      { $match: scope({ batchId: id, valid: true, cnpj: { $gt: b.cursor || '' } }) },
+      { $group: { _id: '$cnpj' } }, { $sort: { _id: 1 } }, { $limit: 500 }
+    ], { maxTimeMS: 20000 }).toArray();
+    const keys = page.map(r => r._id as string);
+    const grouped = keys.length ? await rows.aggregate([
+      { $match: scope({ batchId: id, valid: true, cnpj: { $in: keys } }) },
+      { $sort: { index: 1 } },
+      { $group: { _id: '$cnpj', name: { $first: '$name' }, statuses: { $addToSet: '$importedStatus' }, lines: { $sum: 1 } } }
+    ], { maxTimeMS: 20000 }).toArray() : [];
     const results = await collection('results');
-    if (page.results.length) await results.bulkWrite(page.results.map(r => ({ updateOne: { filter: scope({ batchId: id, cnpj: r.cnpj }), update: { $setOnInsert: { _id: `${id}:${r.cnpj}`, ...scope(), ...r, batchId: id, clientId: b.clientId, observedAt: b.startedAt, source: b.estimate.source, completed: false } }, upsert: true } })), { ordered: true });
+    if (grouped.length) await results.bulkWrite(grouped.map(r => ({ updateOne: {
+      filter: scope({ batchId: id, cnpj: r._id }),
+      update: { $setOnInsert: {
+        _id: `${id}:${r._id}`, ...scope(), batchId: id, clientId: b.clientId, cnpj: r._id, name: r.name || null,
+        ...mergeImportedStatuses(r.statuses), mei: null, sourceCount: r.lines,
+        source: { kind: 'PLANILHA', label: 'Informado na planilha; não verificado externamente', fileName: b.fileName },
+        observedAt: b.createdAt, completed: false
+      } }, upsert: true
+    } })), { ordered: true });
     const received = await results.countDocuments(scope({ batchId: id }));
-    if (page.next) {
-      need(page.next !== b.pageToken, 'O provedor repetiu a paginação.', 502, 'PAGE_LOOP');
-      await (await collection('batches')).updateOne(scope({ _id: id }), { $set: { status: 'FETCHING', pageToken: page.next, received, updatedAt: new Date() } });
-    } else {
-      need(received === b.summary.unique, 'Resultados incompletos; publicação bloqueada.', 502, 'RESULT_COUNT');
+    need(received <= b.summary.unique && (keys.length > 0 || received === b.summary.unique), 'Contagem inconsistente. Os indicadores não foram publicados.', 409, 'RESULT_COUNT');
+    if (received === b.summary.unique) {
       const summary = statistics(await results.find(scope({ batchId: id })).project({ cnpj:1, status:1, mei:1 }).toArray() as any);
-      // Dashboard joins batches in COMPLETED, so this flag alone never publishes partial results.
+      // Somente COMPLETED no lote publica as observações no dashboard.
       await results.updateMany(scope({ batchId: id }), { $set: { completed: true } });
-      await (await collection('batches')).updateOne(scope({ _id: id }), { $set: { status: 'COMPLETED', received, resultSummary: summary, completedAt: new Date(), bytesProcessed: page.billed, bytesBilled: job.statistics?.query?.totalBytesBilled || null, updatedAt: new Date() }, $unset: { pageToken: '' } });
-      await audit(actor._id, 'query.completed', id);
+      await (await collection('batches')).updateOne(scope({ _id: id }), { $set: { status: 'COMPLETED', received, resultSummary: summary, completedAt: new Date(), updatedAt: new Date() }, $unset: { cursor: '' } });
+      await audit(actor._id, 'batch.processed', id);
+    } else {
+      await (await collection('batches')).updateOne(scope({ _id: id }), { $set: { received, cursor: keys[keys.length-1], updatedAt: new Date() } });
     }
     return batch(id);
   });
@@ -149,7 +134,6 @@ export async function cancel(actor: Actor, id: string) {
   canWrite(actor);
   return locked(id, async b => {
     need(!['COMPLETED','CANCELLED'].includes(b.status), 'Lote finalizado não pode ser cancelado.', 409);
-    if (b.jobId) await new BigQuerySource(b.queryConfig).cancel(b.jobId);
     await (await collection('batches')).updateOne(scope({ _id: id }), { $set: { status: 'CANCELLED', updatedAt: new Date() } });
     await audit(actor._id, 'batch.cancel', id); return batch(id);
   });
@@ -177,7 +161,7 @@ export async function listBatches(clientId?: string, page = 1) {
 export async function listResults(id: string, page = 1, status = '', search = '') {
   const b = await batch(id); need(b.status === 'COMPLETED', 'Os resultados só são publicados depois da conferência completa do lote.', 409);
   const q: Record<string, unknown> = scope({ batchId: id });
-  if (status) { need(status in LABELS, 'Status inválido.'); q.status = status; }
+  if (status) { need(Object.hasOwn(LABELS, status), 'Status inválido.'); q.status = status; }
   if (search) q.$or = [{ cnpj: { $regex: escapeRegex(search.slice(0,100)), $options:'i' } }, { name: { $regex: escapeRegex(search.slice(0,100)), $options:'i' } }];
   const c = await collection('results');
   return { items: await c.find(q).sort({ cnpj:1 }).skip((page-1)*50).limit(50).toArray(), total: await c.countDocuments(q), page };
@@ -192,5 +176,5 @@ export async function exportRows(id: string, offset: number) {
   const map = new Map(results.map(r=>[r.cnpj,r]));
   const first = await (await collection('rows')).aggregate([{ $match: scope({ batchId:id, valid:true, cnpj:{$in:rows.map(r=>r.cnpj)} }) }, { $group:{ _id:'$cnpj', index:{$min:'$index'} } }]).toArray();
   const firstIndex = new Map(first.map(r=>[r._id,r.index]));
-  return { headers:[...b.headers,'CNPJ_NORMALIZADO','VALIDACAO','DUPLICADO','SIMPLES','MEI','MOTIVO','FONTE','REFERENCIA_BASE','CONSULTADO_EM'], rows: rows.map(r => { const a=map.get(r.cnpj); return [...r.values, r.cnpj, r.valid?'Válido':'Inválido', r.valid && firstIndex.get(r.cnpj)!==r.index?'Sim':'Não', a?LABELS[a.status as Status]:'Não confirmado', a?.mei===true?'Sim':a?.mei===false?'Não':'Não confirmado', r.reason || a?.reason || (a?'':'NAO_CONSULTADO'), a?.source?.table || '', a?.source?.referenceDate || '', a?.observedAt?.toISOString() || '']; }), next: offset+rows.length < b.expectedRows ? offset+rows.length : null };
+  return { headers:[...b.headers,'CNPJ_NORMALIZADO','VALIDACAO','DUPLICADO','SIMPLES','MEI','MOTIVO','FONTE','REFERENCIA_BASE','REGISTRADO_EM'], rows: rows.map(r => { const a=map.get(r.cnpj); return [...r.values, r.cnpj, r.valid?'Válido':'Inválido', r.valid && firstIndex.get(r.cnpj)!==r.index?'Sim':'Não', a?LABELS[a.status as Status]:'Não confirmado', a?.mei===true?'Sim':a?.mei===false?'Não':'Não confirmado', r.reason || a?.reason || (a?'':'SEM_ENQUADRAMENTO'), a?.source?.label || a?.source?.table || '', a?.source?.referenceDate || '', a?.observedAt?.toISOString() || '']; }), next: offset+rows.length < b.expectedRows ? offset+rows.length : null };
 }

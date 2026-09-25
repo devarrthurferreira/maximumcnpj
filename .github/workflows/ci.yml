@@ -22,7 +22,6 @@ jobs:
       ADMIN_NAME: CI Administrator
       ADMIN_EMAIL: ci@example.test
       ADMIN_PASSWORD: synthetic-CI-password-1234
-      BQ_SOURCE_APPROVED: 'false'
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 2 }
@@ -36,7 +35,7 @@ jobs:
         run: npm run check && npm run build
       - name: Regras e HTTP
         run: npm test
-      - name: Integração com MongoDB e BigQuery simulado
+      - name: Integração com MongoDB, sem consulta externa
         run: npm run test:integration
       - name: Conta efêmera para teste
         run: npm run seed

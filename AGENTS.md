@@ -1,29 +1,23 @@
 # Desenvolvimento do Maximum CNPJ
 
-Leia README.md, CHANGELOG.md e o estado real do repositório antes de iniciar cada alteração. O plano v0.1.0 é histórico; o escopo vigente usa MongoDB.
+Leia README, CHANGELOG e o estado real do repositório antes de alterar código. Escopo vigente v0.3.0: básico, Node.js + MongoDB, sem consulta fiscal externa automática. Planos anteriores são históricos.
 
-## Compromissos de cada entrega
+## Cada entrega
+1. Atualize README e CHANGELOG junto com a mudança; mantenha versão coerente em package.json e src/domain.ts.
+2. Confira a branch antes de publicar e preserve alterações concorrentes. Não faça force-push.
+3. Execute tipos, build, regras, integração e navegador quando possível. Registre falhas e testes ignorados sem chamá-los de aprovados.
+4. Não versione .env real, URI privada, credenciais ou senha de produção. Não crie senha pública padrão.
 
-1. Atualize README e CHANGELOG no mesmo commit/PR de toda mudança relevante. Registre funcionamento, configurações, testes executados, limitações, progresso e próximo passo.
-2. Mantenha a versão consistente em package.json, src/domain.ts, README e CHANGELOG. Use commits descritivos e preserve o histórico.
-3. Execute check:release, check, build, test, test:integration e test:e2e quando o ambiente permitir. Informe explicitamente o que não foi executado. Não invente sucesso de CI, fonte real ou deploy.
-4. Não faça force-push nem sobrescreva alterações concorrentes. Confira a branch antes de publicar.
-5. Nunca adicione senha padrão, tokens, arquivos .env reais ou credenciais JSON ao repositório.
+## Invariantes
+- A responsável pela base é escolhida explicitamente.
+- CNPJ completo é texto; não deduplicar pela raiz nem preencher zeros perdidos por hipótese.
+- Todas as linhas são preservadas; repetições e inválidos não inflam indicadores.
+- A coluna de enquadramento é opcional. Ausência, desconhecimento ou conflito não é resposta negativa.
+- Dados de planilha são declarações, não consultas oficiais. Não apresentar preenchimento como verificação fiscal.
+- Resultados parciais não entram no dashboard; histórico antigo não é apagado.
+- Processamento local usa páginas, checkpoint e chaves idempotentes. Não envia CNPJs a provedor externo.
+- Não reintroduzir Google, API paga, scraping ou automação fiscal sem nova definição explícita do responsável.
+- Não habilitar cálculos tributários fictícios; regras precisam de fontes e homologação próprias.
 
-## Invariantes do produto
-
-- Cada importação pertence a uma carteira escolhida pelo usuário.
-- CNPJ é STRING canônica de 14 caracteres, incluindo formato alfanumérico; não deduplicar pelo CNPJ básico.
-- Repetições permanecem nas linhas/exportações, mas não inflam indicadores.
-- Inválidos, ausentes, desconhecidos, conflitos e falhas não significam não optante.
-- Resultados parciais não entram no dashboard. Conferir identidades, quantidade e lote concluído.
-- Indicadores globais usam a última observação por identidade, não a soma dos lotes.
-- Fonte, referência fiscal e data técnica são informações diferentes.
-- Demonstração deve permanecer identificada e isolada de consultas reais.
-- Jobs precisam de estimativa, teto de bytes, confirmação e ID idempotente.
-- Não substituir uma fonte por API paga, scraping ou contorno de CAPTCHA sem aprovação e documentação.
-- A calculadora tributária fica bloqueada até existir engine e homologação fiscal com regras versionadas.
-
-## Evolução imediata
-
-Primeiro estabilize testes, lockfile e fonte real. Depois avance para comparação individual de snapshots, filas, governança e calculadora. Não crie telas que aparentem uma funcionalidade fiscal pronta quando ela é apenas planejamento.
+## Próxima prioridade
+Validar build/lockfile, MongoDB e E2E; depois testar uma base real autorizada. Evoluir campos e filtros com base no uso antes de acrescentar integrações.

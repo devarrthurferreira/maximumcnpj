@@ -1,27 +1,25 @@
-# ADR-001 · Persistência e consulta em lote
+# Arquitetura vigente · v0.3.0
 
-Status: adotada no código v0.2.0, em homologação. Data: 24/09/2026.
+Atualizada em 25/09/2026. Substitui o desenho operacional da v0.2.0.
 
-## Contexto
+Navegador → API Node.js/TypeScript → MongoDB. A leitura/exportação CSV/XLSX ocorre em Web Worker. O servidor valida novamente as linhas. Não há adaptador fiscal externo ativo.
 
-O planejamento inicial dispensava banco próprio. O usuário passou a solicitar carteiras, histórico, indicadores sem duplicidade e preparação para futura calculadora. Sem persistência, não seria possível reabrir lotes e reconstruir observações com segurança.
+## Componentes
+- src/domain.ts: identidade, deduplicação, estatísticas e CSV.
+- src/imported.ts: enquadramento explícito e conflitos da planilha.
+- src/service.ts: carteiras, partes de upload, páginas de processamento, resultados e exportação.
+- src/store.ts: conexão, índices e provisionamento inicial.
+- src/server.ts: HTTP, sessão, origem e autorização.
+- public/app.js: interface básica e retomada enquanto o operador acompanha.
 
-## Decisão
+## Persistência e publicação
+Carteiras e lotes pertencem ao workspace. Linhas preservam valores originais. Resultados únicos por lote/CNPJ registram fonte PLANILHA. O dashboard exige lote COMPLETED e usa a última observação por CNPJ completo. Fontes de registros históricos são preservadas.
 
-Usar MongoDB para a aplicação e BigQuery para o cruzamento externo. Não espelhar a base completa da Receita no banco da aplicação. Arquivos são lidos no browser, e as linhas confirmadas são transmitidas em partes. O arquivo binário original não é armazenado nesta etapa.
+Upload exige posição e hash coerentes. A finalização confere totais; chamadas seguintes organizam até 500 identidades por página. Checkpoint usa ordenação canônica do CNPJ. Upserts e índices únicos permitem reenvio. A contagem precisa coincidir com os únicos antes da publicação. Travas temporárias protegem operações simultâneas.
 
-Separar responsável pela base (carteira), documento importado (linha), identidade (CNPJ canônico), lote (execução) e observação (resposta datada). Cada resultado é único por lote/CNPJ. O snapshot de um lote concluído é preservado, e o painel global calcula a última observação por CNPJ completo.
+Não há cron nem fila independente do navegador. O limite de 50.000 linhas não substitui carga real: o desempenho das agregações no MongoDB e da hospedagem ainda precisa de medição.
 
-Um workspace por instalação é configurado no servidor. Usuários compartilham as carteiras desse workspace conforme o papel; não existe propriedade privada de carteira por usuário. Toda consulta usa filtro de workspace.
+## Migração
+Nenhum dado é removido. Lotes anteriores concluídos podem ser lidos/exportados. Incompletos exigem nova importação; não são convertidos automaticamente. Cancelamento local não cancela eventual job antigo em outro serviço.
 
-## Confiabilidade
-
-Upload em partes com hash, índice e reenvio seguro; leases para mutações concorrentes; job ID persistido antes da chamada externa; upsert de resultados por identidade; checkpoint de página; conferência de cardinalidade e pertencimento antes de publicar. O dashboard cruza as observações com o estado COMPLETED do lote para não publicar páginas parciais.
-
-Não dependemos de uma promessa de execução após a resposta de uma função serverless. O BigQuery executa o SQL, mas um operador deve abrir/atualizar o lote para a aplicação receber páginas e publicar o resultado. Fila autônoma é evolução separada.
-
-## Consequências e riscos
-
-Há custo e responsabilidade de armazenamento, retenção e backup. O escopo v0.1.0 sem banco foi superado por necessidade explícita do produto. Ainda não há exclusão definitiva pela interface nem retomada do arquivo entre sessões. A coleção de resultados pode crescer com os snapshots; medir agregações e criar materializações/índices adicionais conforme volume real, preservando semântica de última observação.
-
-Não utilizar a conexão MongoDB ou a tabela BigQuery em teste sintético como prova de homologação fiscal. Fonte, acesso e carga real precisam de evidência própria antes de produção.
+README contém variáveis, limites, segurança e testes pendentes.

@@ -70,7 +70,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
   if (client && method==='PATCH') return json(res,200,await service.saveClient(actor,await body(req),client[1]));
   if (path==='/api/batches' && method==='GET') return json(res,200,await service.listBatches(clientId,page));
   if (path==='/api/batches' && method==='POST') return json(res,201,await service.createBatch(actor,await body(req)));
-  const b=path.match(/^\/api\/batches\/([a-f0-9-]+)(?:\/(rows|finalize|estimate|start|advance|cancel|results|export))?$/);
+  const b=path.match(/^\/api\/batches\/([a-f0-9-]+)(?:\/(rows|finalize|process|cancel|results|export))?$/);
   if (b) {
     const id=b[1], action=b[2];
     if (!action && method==='GET') return json(res,200,await service.batch(id));
@@ -80,13 +80,11 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
       const input=await body(req);
       if (action==='rows') return json(res,200,await service.uploadRows(actor,id,input));
       if (action==='finalize') return json(res,200,await service.finishUpload(actor,id));
-      if (action==='estimate') return json(res,200,await service.estimate(actor,id));
-      if (action==='start') return json(res,200,await service.start(actor,id,input));
-      if (action==='advance') return json(res,200,await service.advance(actor,id));
+      if (action==='process') return json(res,200,await service.processBatch(actor,id));
       if (action==='cancel') return json(res,200,await service.cancel(actor,id));
     }
   }
-  if (path==='/api/settings' && method==='GET') return json(res,200,{ version:VERSION, workspace:workspace(), source:{ approved:process.env.BQ_SOURCE_APPROVED==='true', table:process.env.BQ_SOURCE_TABLE||'opencnpj-bigquery.public.receita', referenceDate:process.env.BQ_SOURCE_REFERENCE_DATE||null, location:process.env.BQ_LOCATION||null, maximumBytesBilled:process.env.BQ_MAXIMUM_BYTES_BILLED||null }, maxRows:50000, history:'Histórico das consultas concluídas neste sistema; não é histórico oficial de enquadramento.' });
+  if (path==='/api/settings' && method==='GET') return json(res,200,{ version:VERSION, workspace:workspace(), mode:'LOCAL_IMPORT_V1', maxRows:50000, source:'Dados informados na planilha. Nenhuma consulta externa automática.', database:'MongoDB', history:'Importações e resultados armazenados; não é histórico fiscal oficial.' });
   if (path==='/api/users' && method==='GET') { service.canAdmin(actor); return json(res,200,{ items:await (await collection('users')).find(scope()).project({ passwordHash:0 }).limit(100).toArray() }); }
   if (path==='/api/users' && method==='POST') {
     service.canAdmin(actor); const input=await body(req); need(['admin','operator','viewer'].includes(input.role),'Perfil inválido.');
