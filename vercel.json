@@ -6,9 +6,11 @@
   "buildCommand": "npm run build",
   "outputDirectory": "public",
   "functions": {
-    "api/index.ts": { "maxDuration": 60 }
+    "api/index.ts": { "maxDuration": 60 },
+    "api/reports.py": { "maxDuration": 60, "excludeFiles": "{node_modules/**,public/**,docs/**,tests/**,dist/**,.git/**}" }
   },
   "rewrites": [
+    { "source": "/api/reports", "destination": "/api/reports" },
     { "source": "/api/:path*", "destination": "/api" }
   ],
   "redirects": [

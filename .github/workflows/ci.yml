@@ -29,6 +29,14 @@ jobs:
         with: { node-version: '22' }
       - name: Dependências
         run: npm install
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Dependências dos relatórios
+        run: python -m pip install -r requirements.txt
+      - name: Python, PDF e MongoDB descartável
+        run: npm run test:reports
+        env:
+          REPORT_TEST_MONGO: '1'
       - name: Versão e documentação
         run: npm run check:release
       - name: Tipos e build
@@ -66,6 +74,8 @@ jobs:
         with: { node-version: '22' }
       - name: Origem de login e sessão pública (sem credenciais)
         run: node scripts/smoke-auth.mjs
+      - name: Relatórios Python sem sessão permanecem privados
+        run: node scripts/smoke-reports.mjs
       - name: Conectividade da fonte com um CNPJ público de exemplo
         continue-on-error: true
         run: node --experimental-strip-types scripts/verify-provider.mjs
