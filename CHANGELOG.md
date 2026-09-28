@@ -1,5 +1,16 @@
 # Histórico de alterações
 
+## [0.5.1] — 2026-09-28
+
+### Identidade visual
+- Paleta Maximum em bordô, branco e tons de apoio no painel atual, legado, login e relatórios.
+- Logo oficial local, íntegra e proporcional; símbolo compacto derivado do próprio PNG.
+- Marca no login móvel e no menu recolhido; sem dependência de imagem remota em produção.
+- PDFs Python com logo branca em faixa bordô em todas as páginas, margens e contraste ajustados.
+- Testes de integridade da imagem, PDF incorporado, contraste e navegação responsiva.
+- README atualizado no mesmo incremento. Senhas, autenticação, dados e regras fiscais preservados.
+
+
 ## [0.5.0] — 2026-09-28
 
 ### Adicionado

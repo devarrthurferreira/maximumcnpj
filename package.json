@@ -1,10 +1,12 @@
 {
   "name": "maximum-cnpj",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "type": "module",
   "description": "Consultas CNPJ, histórico por empresa e relatórios Python com Node.js e MongoDB",
-  "engines": { "node": ">=22.16.0 <23" },
+  "engines": {
+    "node": ">=22.16.0 <23"
+  },
   "scripts": {
     "dev": "npm run build && node --experimental-strip-types --watch --env-file-if-exists=.env src/server.ts",
     "build": "tsc && node scripts/assets.mjs",
@@ -20,6 +22,13 @@
     "test:reports": "python -m unittest discover -s tests -p reports_test.py -v",
     "smoke": "node scripts/smoke-deployment.mjs"
   },
-  "dependencies": { "mongodb": "6.21.0", "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz" },
-  "devDependencies": { "@types/node": "22.15.30", "typescript": "5.8.3", "@playwright/test": "1.55.1" }
+  "dependencies": {
+    "mongodb": "6.21.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.30",
+    "typescript": "5.8.3",
+    "@playwright/test": "1.55.1"
+  }
 }
