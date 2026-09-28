@@ -1,5 +1,20 @@
 # Histórico de alterações
 
+## [0.4.1] — 2026-09-28
+
+### Corrigido
+- Provisionamento do primeiro administrador aceita credencial privada de 10 a 128 caracteres, corrigindo PASSWORD_POLICY no primeiro login com senha de dez caracteres.
+- A mesma correção atende npm run seed e a criação inicial autorizada no login.
+- Hash scrypt, sal aleatório e comparação exata preservados; não existe senha fixa no código nem reset de usuários existentes.
+- Cadastro de outros usuários e troca pelo painel conservam a política regular de 12 a 128 caracteres. A compatibilidade de dez caracteres é restrita ao seed inicial.
+
+### Testes e documentação
+- Cinco testes locais de segurança aprovados, incluindo mínimo/máximo, tipos inválidos, diferenças de caixa/espaço e preservação da política regular.
+- Novo teste HTTP + MongoDB descartável para criação inicial, senha incorreta, hash, sessão, logout e impossibilidade de reset por alteração de ADMIN_PASSWORD; incluído em test:integration.
+- README atualizado com causa, escopo, configuração e distinção entre PASSWORD_POLICY/400 e indisponibilidade 503.
+- Versão alinhada em package.json e src/domain.ts. Build, CI, implantação e login real precisam de evidência do SHA correspondente; nenhum acesso real foi executado na preparação.
+- Nenhuma credencial real, URI privada ou planilha adicionada ao repositório. Regras de CNPJ, histórico, interfaces e controles de origem mantidos.
+
 ## [0.4.0] — 2026-09-28
 
 ### Corrigido

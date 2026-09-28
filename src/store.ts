@@ -1,6 +1,6 @@
 import type { Db, MongoClient, Document } from 'mongodb';
 import { randomUUID } from 'node:crypto';
-import { AppError, email, hashPassword, text } from './security.ts';
+import { AppError, email, hashInitialAdminPassword, text } from './security.ts';
 export type Doc = Document & { _id: string };
 let connection: Promise<Db> | undefined;
 let client: MongoClient | undefined;
@@ -41,7 +41,7 @@ export async function rateLimit(key: string, max: number, minutes: number) {
 export async function seed() {
   const users = await collection('users');
   if (await users.countDocuments(scope())) throw new AppError(409, 'ADMIN_EXISTS', 'Já existem usuários. Nenhuma conta ou senha foi alterada.');
-  const user = { _id: randomUUID(), ...scope(), name: text(process.env.ADMIN_NAME || 'Administrador'), email: email(process.env.ADMIN_EMAIL), passwordHash: await hashPassword(process.env.ADMIN_PASSWORD || ''), role: 'admin', active: true, mustChangePassword: false, createdAt: new Date() };
+  const user = { _id: randomUUID(), ...scope(), name: text(process.env.ADMIN_NAME || 'Administrador'), email: email(process.env.ADMIN_EMAIL), passwordHash: await hashInitialAdminPassword(process.env.ADMIN_PASSWORD || ''), role: 'admin', active: true, mustChangePassword: false, createdAt: new Date() };
   await users.insertOne(user); return user.email;
 }
 export async function closeDatabase() { await client?.close(); client = undefined; connection = undefined; }

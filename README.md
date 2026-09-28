@@ -1,4 +1,4 @@
-# Maximum CNPJ · v0.4.0
+# Maximum CNPJ · v0.4.1
 
 **Node.js + TypeScript + MongoDB. Consultas pela API Minha Receita, importação de empresas por Código/ID e histórico sem duplicar cadastros. Sem Google Cloud.**
 
@@ -6,16 +6,17 @@
 
 | Controle | Situação |
 |---|---|
-| Versão / revisão | 0.4.0 · 28/09/2026 |
+| Versão / revisão | 0.4.1 · 28/09/2026 |
 | Repositório | devarrthurferreira/maximumCNPJ |
 | Plataforma | Interface estática + API Node.js, MongoDB externo |
 | Fonte | Minha Receita, GET /CNPJ, sem chave de API ou Google |
 | Cadastro da responsável | Código = ID da planilha S3D; UUID interno preservado |
-| Testes locais | 15 testes de domínio, segurança, origem e adaptador aprovados |
-| Instalação, build e MongoDB | Aprovados na CI 36441452492 da primeira revisão |
-| Navegador | Primeira revisão falhou; modal corrigido. Conferir a CI deste SHA |
-| Banco de produção / login real | Não alterados/testados com credenciais pela preparação |
-| Dados reais anexados | Analisados localmente; não versionados nem enviados em massa à fonte |
+| Correção desta versão | Senha de dez caracteres aceita no provisionamento inicial do administrador |
+| Testes locais desta correção | Cinco testes de segurança aprovados; teste novo de bootstrap com MongoDB incluído na CI |
+| CI anterior | 36443242617, SHA 2b2dbf7: build, regras, MongoDB, navegador e smoke aprovados para a v0.4.0 |
+| CI / implantação desta correção | Conferir a execução e a implantação correspondentes ao novo SHA; não confundir com a CI anterior |
+| Banco de produção / login real | Nenhuma redefinição de conta ou teste com credenciais reais executado na preparação |
+| Dados reais anexados | Analisados na etapa anterior; não versionados nem enviados em massa à fonte |
 
 ## 1. Correção do login
 
@@ -26,6 +27,22 @@ O log da produção confirmou `POST /api/auth/login → 403`, código `ORIGIN`: 
 `GET /api/auth/session` retorna 200 com `user:null` antes de entrar. A nova interface usa essa rota e não trata ausência normal de sessão como erro de carregamento. As rotas privadas continuam respondendo 401 quando não autenticadas; credenciais incorretas continuam sendo recusadas.
 
 Na primeira entrada, caso não exista usuário no workspace e as credenciais apresentadas correspondam exatamente a `ADMIN_EMAIL`/`ADMIN_PASSWORD` privadas do ambiente, o servidor pode provisionar o administrador pelo mesmo seed existente. Não cria senha padrão, não altera contas existentes e não reseta senhas. Depois de provisionar, remova `ADMIN_PASSWORD` da hospedagem.
+
+### v0.4.1 — senha do primeiro administrador
+
+Em 28/09/2026, o login passou pela validação de origem, mas a criação inicial foi recusada com `PASSWORD_POLICY`: o seed exigia 12 caracteres e a credencial definida pelo responsável tinha dez. A correção está restrita a esse provisionamento, sem colocar a senha escolhida no repositório, nos testes ou no frontend.
+
+| Operação | Regra vigente |
+|---|---|
+| Primeiro administrador, via `npm run seed` ou primeiro login autorizado | De **10 a 128 caracteres**, usando exclusivamente a credencial privada configurada no servidor |
+| Login de conta já criada | Compara exatamente a senha apresentada com o hash salvo; não aplica de novo a política de criação |
+| Cadastro de outros usuários e troca de senha pelo painel | A política regular permanece de **12 a 128 caracteres**, igual aos formulários existentes |
+
+`hashInitialAdminPassword` e `hashPassword` compartilham a mesma geração de hash scrypt, sal aleatório e formato persistido. A comparação continua exata, incluindo maiúsculas, minúsculas e espaços. A exceção não é uma senha universal: só o seed utiliza o mínimo de dez, e o seed se recusa a sobrescrever contas existentes.
+
+A atualização não muda as variáveis privadas da hospedagem. `ADMIN_EMAIL` e `ADMIN_PASSWORD` precisam conter os valores escolhidos pelo responsável. Alterar essas variáveis depois que já existe usuário **não redefine sua senha**. Sessões, CSRF, limite de tentativas e demais controles de acesso foram preservados.
+
+O teste `tests/bootstrap.test.ts` usa somente credenciais sintéticas e banco descartável para verificar primeiro login, senha incorreta, hash sem texto aberto, sessão, logout e ausência de reset ao alterar a configuração inicial. Erros 503 anteriores são de outra categoria; esta correção trata especificamente `PASSWORD_POLICY`, não presume uma correção universal de indisponibilidade do banco.
 
 ## 2. Fluxo com os arquivos fornecidos
 
@@ -149,7 +166,7 @@ MONGODB_DB=maximum_cnpj
 WORKSPACE_ID=maximum
 ```
 
-Local: APP_ORIGIN=http://localhost:3000. Na Vercel, habilite exposição das variáveis de sistema quando usar os domínios automáticos. Domínio customizado exige APP_ORIGIN exata. ADMIN_NAME/ADMIN_EMAIL/ADMIN_PASSWORD são para primeiro provisionamento; não publique valores reais. A senha precisa ter 12 a 128 caracteres e nenhuma conta existente é resetada.
+Local: APP_ORIGIN=http://localhost:3000. Na Vercel, habilite exposição das variáveis de sistema quando usar os domínios automáticos. Domínio customizado exige APP_ORIGIN exata. ADMIN_NAME/ADMIN_EMAIL/ADMIN_PASSWORD são para primeiro provisionamento; não publique valores reais. A senha inicial do administrador aceita 10 a 128 caracteres na v0.4.1; a política regular de cadastro/troca pelo painel permanece 12 a 128. Nenhuma conta existente é resetada.
 
 `npm run dev` prepara os ativos. O build copia domain.js, lookup-domain.js e o leitor XLSX para public; nenhum segredo vai ao navegador. O leitor não depende de CDN durante uso. O lockfile deve ser versionado depois de uma instalação validada; não substituir npm install por npm ci sem lockfile válido.
 
@@ -190,11 +207,11 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Localmente passaram 15 testes de domínio, segurança, origem e transporte simulado. Cobrem deduplicação sintética 10.001/50.000, nulos, identidade divergente, projeção mínima, ausência de cache, 429 e origens maliciosas. A sintaxe JavaScript também foi conferida. Isso não equivale a login real ou carga na produção.
+Na preparação da v0.4.1 passaram cinco testes locais de segurança: hash/sal/comparação, tokens/validação, senha inicial de dez caracteres, limites/tipos e preservação da política regular. O teste integrado novo está em `tests/bootstrap.test.ts` e faz parte de `npm run test:integration`; exige MongoDB, usa banco aleatório próprio e não contém credenciais reais. O build e as integrações desta revisão devem ser conferidos na CI do novo SHA, não presumidos a partir de uma execução anterior.
 
-A CI 36441452492 (primeira revisão, SHA 7aff58b) aprovou instalação, tipos/build, regras/HTTP, integração legada e integração nova com MongoDB descartável. O navegador falhou; a revisão seguinte remove formulários fechados do DOM para evitar conflito entre os IDs de mapeamento. Não apresentar essa execução como aprovação E2E. Confira o resultado do novo SHA.
+Como evidência histórica, a CI 36443242617, no SHA 2b2dbf7 da v0.4.0, aprovou instalação, tipos/build, regras/HTTP, integração legada, integração nova com MongoDB descartável, navegador e smoke de produção. A execução anterior 36441452492 havia falhado no navegador; o modal foi corrigido antes daquela publicação.
 
-A CI usa MongoDB descartável, legado, teste novo de compartilhamento/histórico, reconsulta e isolamento, e Chromium CSV/XLSX no painel novo e antigo. O browser intercepta a chamada externa: fixtures não vão ao provedor. Testes integrados usam banco aleatório, nunca credenciais de produção.
+A CI usa MongoDB descartável, legado, testes de compartilhamento/histórico, reconsulta e isolamento, e Chromium CSV/XLSX no painel novo e antigo. O browser intercepta a chamada externa: fixtures não vão ao provedor. Testes integrados usam banco aleatório, nunca credenciais de produção.
 
 Após publicar em main, o smoke verifica sessão e login **sem credenciais**: domínio legítimo com JSON incompleto precisa retornar 400; origem externa precisa retornar 403. Isso verifica origem, não a senha de uma conta real. Há teste informativo separado com um CNPJ público da documentação da fonte; falha não é apresentada como aprovação nem negativa fiscal.
 
@@ -202,6 +219,8 @@ Confira o resultado associado ao SHA entregue. Existência de workflow não comp
 
 ## 11. Diagnóstico
 
+- PASSWORD_POLICY/400 no primeiro acesso: a v0.4.1 aceita senha inicial de 10 a 128 caracteres. Conferir versão implantada e configuração privada; não gravar a senha no Git.
+- PASSWORD_POLICY/400 no cadastro/troca pelo painel: a política regular continua 12 a 128 caracteres.
 - ORIGIN/403: conferir APP_ORIGIN e domínios da Vercel; não liberar *.
 - INVALID_LOGIN/401: conferir conta/senha e provisionamento; não há reset automático.
 - 503: verificar MongoDB, rede e permissões. Não simular dados para esconder erro.
@@ -213,6 +232,8 @@ Confira o resultado associado ao SHA entregue. Existência de workflow não comp
 
 README, CHANGELOG, versão e testes acompanham toda mudança relevante. Sem force-push, sem apagar dados legados. Documentos antigos ficam em docs/archive e no Git; não representam requisitos atuais.
 
+A v0.4.1 altera somente o provisionamento inicial da senha, testes e documentação/versionamento. Não altera regras fiscais, importações, dados existentes, origem autorizada, limites de API nem configuração de implantação.
+
 Prioridades seguintes: homologar amostras com fonte oficial, incorporar referência fiscal verificada, medir lote real, fila independente da aba e política de retenção. Busca nominal ambígua, automações e calculadora precisam de desenho/homologação próprios e não estão habilitadas.
 
 ## Referências técnicas
@@ -220,4 +241,4 @@ Prioridades seguintes: homologar amostras com fonte oficial, incorporar referên
 - Minha Receita: https://docs.minhareceita.org/como-usar/ e https://docs.minhareceita.org/dicionario/
 - Vercel: https://vercel.com/docs/environment-variables/system-environment-variables
 
-Documentação consultada em 28/09/2026. Gratuidade, disponibilidade e atualidade não são garantias permanentes.
+Referências da implementação v0.4.0 consultadas em 28/09/2026; a correção de senha não constitui nova homologação da fonte. Gratuidade, disponibilidade e atualidade não são garantias permanentes.

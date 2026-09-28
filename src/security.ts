@@ -3,11 +3,18 @@ import { promisify } from 'node:util';
 const derive = promisify(scrypt);
 export function digest(value: string): string { return createHash('sha256').update(value).digest('hex'); }
 export function token(): string { return randomBytes(32).toString('base64url'); }
-export async function hashPassword(password: string): Promise<string> {
-  if (typeof password !== 'string' || password.length < 12 || password.length > 128) throw new AppError(400, 'PASSWORD_POLICY', 'A senha deve ter entre 12 e 128 caracteres.');
+async function createPasswordHash(password: string, minimumLength: number): Promise<string> {
+  if (typeof password !== 'string' || password.length < minimumLength || password.length > 128) throw new AppError(400, 'PASSWORD_POLICY', `A senha deve ter entre ${minimumLength} e 128 caracteres.`);
   const salt = randomBytes(16).toString('hex');
   const key = await derive(password, salt, 64) as Buffer;
   return `scrypt:${salt}:${key.toString('hex')}`;
+}
+export async function hashPassword(password: string): Promise<string> {
+  return createPasswordHash(password, 12);
+}
+/** Only the first administrator provisioned from private server configuration. */
+export async function hashInitialAdminPassword(password: string): Promise<string> {
+  return createPasswordHash(password, 10);
 }
 export async function verifyPassword(password: unknown, stored: string): Promise<boolean> {
   if (typeof password !== 'string' || password.length > 128) return false;
