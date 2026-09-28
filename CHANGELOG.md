@@ -6,6 +6,7 @@
 - Login 403 ORIGIN: origens exatas configuradas e domínios da Vercel, sem confiar em Host ou remover CSRF.
 - Sessão com user:null antes do login e suporte ao JSON já processado no serverless.
 - Primeiro administrador apenas com credenciais privadas configuradas e apresentadas corretamente; sem reset de contas existentes.
+- Limpeza de formulários de importação após fechar o modal, evitando IDs de coluna duplicados entre cadastro S3D e relatório.
 
 ### Adicionado
 - Importação S3D/Excel: ID = Código, conflitos explícitos e UUID preservado.
@@ -19,12 +20,16 @@
 - Testes de origem, adaptador, minimização, histórico, integração e browser.
 - Smoke em produção sem credenciais e teste informativo de conectividade da fonte.
 
+### Verificações
+- 15 testes puros/simulados passaram localmente.
+- A CI 36441452492 da primeira revisão aprovou instalação, tipos/build, regras/HTTP, integração legada e integração de consultas com MongoDB descartável; a etapa de navegador falhou.
+- Correção do ciclo do modal adicionada antes de publicar em produção; conferir a nova execução no SHA entregue, sem apresentar a execução anterior como aprovação completa.
+
 ### Preservado e limitado
 - Node.js/TypeScript + MongoDB, sem Google Cloud; legado disponível em /legacy.html.
 - Sem arquivos reais de clientes/CPF/senhas no Git. Anexos analisados localmente, não importados na produção pela preparação.
 - Sem busca fiscal só pelo nome, sem confirmação em tempo real; referência da base ainda não homologada.
 - Tela aberta conduz a fila; grandes lotes não são instantâneos.
-- 15 testes puros/simulados passaram localmente; resultados completos devem ser conferidos na CI do SHA.
 
 ## [0.3.0] — 2026-09-25 / implantação corrigida em 2026-09-28
 

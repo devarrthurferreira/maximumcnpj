@@ -11,8 +11,9 @@
 | Plataforma | Interface estática + API Node.js, MongoDB externo |
 | Fonte | Minha Receita, GET /CNPJ, sem chave de API ou Google |
 | Cadastro da responsável | Código = ID da planilha S3D; UUID interno preservado |
-| Testes locais desta preparação | 15 testes de domínio, segurança, origem e adaptador aprovados |
-| Build, MongoDB e navegador | Testes incluídos; conferir a CI do SHA publicado |
+| Testes locais | 15 testes de domínio, segurança, origem e adaptador aprovados |
+| Instalação, build e MongoDB | Aprovados na CI 36441452492 da primeira revisão |
+| Navegador | Primeira revisão falhou; modal corrigido. Conferir a CI deste SHA |
 | Banco de produção / login real | Não alterados/testados com credenciais pela preparação |
 | Dados reais anexados | Analisados localmente; não versionados nem enviados em massa à fonte |
 
@@ -48,6 +49,8 @@ Um arquivo começando por número, como `868-...`, sugere o Código corresponden
 | RESPOSTA, Regime, outras colunas | Não utilizadas para determinar o enquadramento |
 
 É possível escolher aba, linha do cabeçalho e colunas. A detecção sugere, mas não substitui a revisão. A planilha não precisa trazer a resposta do Simples já preenchida.
+
+Ao fechar o modal do cadastro, o formulário é removido do DOM. Isso evita selecionar colunas ocultas com o mesmo ID ao iniciar a importação do relatório.
 
 ### Análise estrutural dos anexos
 
@@ -188,6 +191,8 @@ npm run test:e2e
 ```
 
 Localmente passaram 15 testes de domínio, segurança, origem e transporte simulado. Cobrem deduplicação sintética 10.001/50.000, nulos, identidade divergente, projeção mínima, ausência de cache, 429 e origens maliciosas. A sintaxe JavaScript também foi conferida. Isso não equivale a login real ou carga na produção.
+
+A CI 36441452492 (primeira revisão, SHA 7aff58b) aprovou instalação, tipos/build, regras/HTTP, integração legada e integração nova com MongoDB descartável. O navegador falhou; a revisão seguinte remove formulários fechados do DOM para evitar conflito entre os IDs de mapeamento. Não apresentar essa execução como aprovação E2E. Confira o resultado do novo SHA.
 
 A CI usa MongoDB descartável, legado, teste novo de compartilhamento/histórico, reconsulta e isolamento, e Chromium CSV/XLSX no painel novo e antigo. O browser intercepta a chamada externa: fixtures não vão ao provedor. Testes integrados usam banco aleatório, nunca credenciais de produção.
 
