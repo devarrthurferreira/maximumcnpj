@@ -1,6 +1,7 @@
 """PDF paginado e sem HTML remoto, anexos ou cópias permanentes no banco."""
 from __future__ import annotations
 from html import escape
+from .brand import draw_brand_header
 from io import BytesIO
 import re
 from reportlab.lib import colors
@@ -10,10 +11,10 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from .core import (VERSION, STATUSES, KINDS, NOTICE, display_date, number, percent,
                    percentage, cnpj_mask, PDF_PART_SIZE)
 
-INK = colors.HexColor('#172339')
-VIOLET = colors.HexColor('#6852d5')
-LIGHT = colors.HexColor('#f3f1fa')
-MUTED = colors.HexColor('#5b6475')
+INK = colors.HexColor('#222222')
+BORDEAUX = colors.HexColor('#750207')
+LIGHT = colors.HexColor('#F7F3F3')
+MUTED = colors.HexColor('#666666')
 
 
 def render_pdf(meta, result, options):
@@ -22,13 +23,13 @@ def render_pdf(meta, result, options):
     page_width, page_height = landscape(A4)
     width = page_width - 64
     doc = SimpleDocTemplate(stream, pagesize=landscape(A4), rightMargin=32, leftMargin=32,
-                            topMargin=54, bottomMargin=40, title='Maximum CNPJ - Relatório de consulta',
+                            topMargin=88, bottomMargin=40, title='Maximum CNPJ - Relatório de consulta',
                             author='Maximum CNPJ', pageCompression=1)
     styles = {
         'body': ParagraphStyle('body', fontName='Helvetica', fontSize=9, leading=13, textColor=INK, spaceAfter=7),
         'small': ParagraphStyle('small', fontName='Helvetica', fontSize=8, leading=11, textColor=MUTED),
         'title': ParagraphStyle('title', fontName='Helvetica-Bold', fontSize=22, leading=26, textColor=INK, spaceAfter=12),
-        'heading': ParagraphStyle('heading', fontName='Helvetica-Bold', fontSize=12, leading=16, textColor=VIOLET, spaceAfter=9),
+        'heading': ParagraphStyle('heading', fontName='Helvetica-Bold', fontSize=12, leading=16, textColor=BORDEAUX, spaceAfter=9),
         'cell': ParagraphStyle('cell', fontName='Helvetica', fontSize=8, leading=10.5, textColor=INK, splitLongWords=True),
         'head': ParagraphStyle('head', fontName='Helvetica-Bold', fontSize=8, leading=11, textColor=colors.white),
     }
@@ -39,18 +40,16 @@ def render_pdf(meta, result, options):
         t = LongTable(data, colWidths=widths, repeatRows=1 if header else 0, hAlign='LEFT')
         spec = [('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),8),
                 ('RIGHTPADDING',(0,0),(-1,-1),8),('TOPPADDING',(0,0),(-1,-1),7),
-                ('BOTTOMPADDING',(0,0),(-1,-1),7),('LINEBELOW',(0,-1),(-1,-1),0.3,colors.HexColor('#d7dce5'))]
+                ('BOTTOMPADDING',(0,0),(-1,-1),7),('LINEBELOW',(0,-1),(-1,-1),0.3,colors.HexColor('#EAD5D6'))]
         if header:
-            spec += [('BACKGROUND',(0,0),(-1,0),INK),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white, LIGHT])]
+            spec += [('BACKGROUND',(0,0),(-1,0),BORDEAUX),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white, LIGHT])]
         t.setStyle(TableStyle(spec))
         return t
     def on_page(canvas, document):
         canvas.saveState()
-        canvas.setFont('Helvetica-Bold',11); canvas.setFillColor(VIOLET)
-        canvas.drawString(32,page_height-27,'maximum | CNPJ')
-        canvas.setFont('Helvetica',8); canvas.setFillColor(MUTED)
-        canvas.drawRightString(page_width-32,page_height-27,'RELATÓRIOS · PYTHON')
-        canvas.setStrokeColor(colors.HexColor('#dedbe9')); canvas.line(32,32,page_width-32,32)
+        draw_brand_header(canvas, page_width, page_height)
+        canvas.setFillColor(MUTED)
+        canvas.setStrokeColor(colors.HexColor('#EAD5D6')); canvas.line(32,32,page_width-32,32)
         canvas.setFont('Helvetica',7)
         canvas.drawString(32,20,f'Consulta {job["_id"]} | v{VERSION}')
         canvas.drawRightString(page_width-32,20,f'Página {document.page} | Horários de Brasília')
