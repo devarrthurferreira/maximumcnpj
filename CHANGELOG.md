@@ -11,13 +11,18 @@
 - Leitura mínima e geração em memória; nenhum arquivo ou cadastro duplicado armazenado.
 - Testes Python, MongoDB/HTTP descartável, navegação e downloads; smoke público do runtime Python sem credenciais.
 
+### Revisão da verificação de implantação
+- Smoke de autenticação agora usa a versão de package.json, em vez de exigir a versão antiga 0.4.0.
+- Timeout em todas as requisições do smoke e teste de regressão para impedir versão fixa.
+- A etapa verify da CI 36461983028 aprovou a implementação inicial; conferir o SHA final para os smokes de produção.
+
 ### Preservado
 - Node.js/TypeScript, MongoDB e integração Minha Receita, sem Google Cloud.
 - Correção de senha inicial da v0.4.1, limites, CSRF, sessões e comportamento de contas existentes.
 - Histórico, snapshots anteriores e exportações legadas; nenhum dado migrado ou removido.
 
 ### Evidências e limitações
-- Sete testes locais Python aprovados; PDF sintético renderizado e revisado. MongoDB e navegador devem ser conferidos na CI do SHA.
+- Sete testes locais Python aprovados; PDF sintético renderizado e revisado. Quatro testes integrados Python/MongoDB/HTTP e testes de navegador aprovados na CI 36461983028; revisão do smoke requer nova execução.
 - Emitir arquivo não faz nova consulta fiscal. O tipo é o primeiro armazenado por CNPJ na importação.
 - Pesquisa textual é somente da tabela; arquivos contêm o grupo/tipo completos.
 - Listagem completa exige todas as partes; sem ZIP/envio por e-mail/agendamento nesta versão.

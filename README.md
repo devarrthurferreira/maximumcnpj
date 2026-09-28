@@ -10,12 +10,18 @@
 | Repositório | `devarrthurferreira/maximumCNPJ` |
 | Novo módulo | `/reports.html` e função Python `/api/reports` |
 | Base da atualização | v0.4.1, correção do primeiro administrador preservada |
-| Testes locais Python | 7 aprovados, incluindo PDF de 500 registros; 4 de MongoDB aguardam a CI |
+| Testes Python | 7 locais e 4 de integração MongoDB/HTTP aprovados na CI da primeira revisão |
 | Inspeção visual | PDF sintético renderizado e páginas revisadas |
-| Validação completa | Conferir CI e implantação correspondentes ao SHA entregue |
+| Validação completa | CI 36461983028 aprovou build, Python/MongoDB, regras e navegador; smoke de versão corrigido nesta revisão |
 | Banco de produção | Nenhuma importação, exclusão ou troca de senha feita por esta atualização |
 
 O README e o CHANGELOG completos da v0.4.1 foram preservados em `docs/archive/`. A versão anterior descreve a fundação e suas evidências; este documento é a referência operacional vigente. Nenhum relatório demonstrativo é resultado fiscal real.
+
+### Validação e revisão da implantação
+
+A etapa `verify` da CI **36461983028**, commit `edbd0239f5685d172e544bfe3a225c434d633c08`, aprovou os testes Python/MongoDB, build, regras, autenticação em banco descartável e navegador. A implantação desse código respondeu com a versão 0.5.0, página de relatórios disponível e runtime Python identificado.
+
+O smoke antigo ainda exigia literalmente 0.4.0 e por isso não reconhecia a atualização. Esta revisão lê a versão diretamente de `package.json`, impõe timeout nas requisições e adiciona regressão dessa regra. Confira a nova CI associada ao SHA final para os smokes de produção. Isso não representa login com a conta real do usuário nem homologação fiscal.
 
 ## 1. O que foi acrescentado
 
@@ -193,7 +199,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Na preparação local, sete testes Python passaram: validação, origem, sessão, datas/percentuais, CSV seguro, PDF vazio/resumo e PDF de 500 registros com textos longos. Os PDFs foram renderizados para inspeção. Quatro testes de MongoDB são pulados localmente quando `REPORT_TEST_MONGO` não está habilitado, e precisam passar na CI.
+Na preparação local, sete testes Python passaram: validação, origem, sessão, datas/percentuais, CSV seguro, PDF vazio/resumo e PDF de 500 registros com textos longos. Os PDFs foram renderizados para inspeção. Quatro testes de MongoDB são pulados localmente quando `REPORT_TEST_MONGO` não está habilitado; eles foram executados e aprovados na CI 36461983028, junto com a etapa de navegador. Essa referência é do commit descrito acima; consulte a execução do SHA final para as verificações subsequentes.
 
 A CI instala Python, executa `REPORT_TEST_MONGO=1 npm run test:reports` em MongoDB descartável e preserva todos os testes Node, bootstrap, consulta e navegador anteriores. Os novos testes de integração cobrem filtros, reconciliação, isolamento, sessão, respostas PDF/CSV e proteção HTTP. O E2E usa respostas sintéticas do serviço para testar navegação, grupos, partes, download e layout móvel; não é prova de consulta fiscal real.
 
