@@ -5,17 +5,21 @@ import { resolve, extname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { AppError, need, text, email, integer, token, digest, verifyPassword, hashPassword } from './security.ts';
-import { collection, scope, workspace, rateLimit, audit } from './store.ts';
+import { collection, scope, workspace, rateLimit, audit, seed } from './store.ts';
 import * as service from './service.ts';
 import type { Actor } from './service.ts';
 import { VERSION } from './domain.ts';
+import { appOrigin, permittedOrigin } from './origins.ts';
+import { routeV4 } from './lookup-http.ts';
 const PUBLIC = resolve(process.cwd(), 'public');
 const cookieName = () => process.env.NODE_ENV === 'production' ? '__Host-maximum_session' : 'maximum_session';
 const cookie = (value: string, age=43200) => `${cookieName()}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}${process.env.NODE_ENV==='production'?'; Secure':''}`;
-const origin = () => process.env.APP_ORIGIN || 'http://localhost:3000';
+const origin = appOrigin;
 function json(res: ServerResponse, status: number, value: unknown) { res.writeHead(status, { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' }); res.end(JSON.stringify(value)); }
 async function body(req: IncomingMessage): Promise<any> {
   need((req.headers['content-type']||'').split(';')[0] === 'application/json', 'Envie JSON.', 415);
+  const parsed=(req as IncomingMessage & {body?:unknown}).body;
+  if(parsed !== undefined){ need(parsed && typeof parsed==='object' && !Array.isArray(parsed), 'JSON inválido.'); need(Buffer.byteLength(JSON.stringify(parsed))<=2800000, 'Parte acima do limite.', 413);return parsed; }
   const chunks: Buffer[]=[]; let size=0;
   for await (const chunk of req) { size+=chunk.length; need(size<=2800000, 'Parte do arquivo acima de 2,8 MB. Divida o envio.', 413); chunks.push(chunk); }
   try { const value=JSON.parse(Buffer.concat(chunks).toString('utf8')); need(value && typeof value==='object' && !Array.isArray(value), 'JSON inválido.'); return value; }
@@ -33,17 +37,23 @@ async function authentication(req: IncomingMessage): Promise<Actor & {mustChange
 async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
   const method=req.method||'GET', path=url.pathname;
   if (path==='/api/health' && method==='GET') return json(res,200,{ ok:true, version:VERSION });
-  if (!['GET','HEAD'].includes(method)) need(req.headers.origin===origin(), 'Origem da requisição não autorizada.', 403, 'ORIGIN');
+  if (!['GET','HEAD'].includes(method)) need(permittedOrigin(req.headers), 'Origem da requisição não autorizada.', 403, 'ORIGIN');
   if (path==='/api/auth/login' && method==='POST') {
     const input=await body(req), account=email(input.email);
     await rateLimit('login-ip:'+digest(workspace()+':'+(req.socket.remoteAddress||'unknown')),100,15);
     await rateLimit('login-account:'+digest(workspace()+':'+account),10,15);
+    if(process.env.ADMIN_EMAIL?.trim().toLowerCase()===account && process.env.ADMIN_PASSWORD && typeof input.password==='string' && digest(input.password)===digest(process.env.ADMIN_PASSWORD) && !(await (await collection('users')).countDocuments(scope()))){
+      try { await seed(); } catch(e:any) { if(e?.code!==11000 && e?.code!=='ADMIN_EXISTS')throw e; }
+    }
     const user=await (await collection('users')).findOne(scope({ email:account, active:true }));
     const valid=await verifyPassword(input.password,user?.passwordHash || 'scrypt:00000000000000000000000000000000:'+ '0'.repeat(128));
     need(user && valid, 'E-mail ou senha incorretos.',401,'INVALID_LOGIN');
     const raw=token(); await (await collection('sessions')).insertOne({ _id:digest(raw), ...scope(), userId:user._id, expiresAt:new Date(Date.now()+43200000), createdAt:new Date() });
     res.setHeader('Set-Cookie',cookie(raw)); await audit(user._id,'auth.login',user._id);
     return json(res,200,{ ok:true });
+  }
+  if(path==='/api/auth/session' && method==='GET'){
+    try {return json(res,200,{user:await authentication(req),version:VERSION});}catch(e){if(e instanceof AppError && e.status===401)return json(res,200,{user:null,version:VERSION});throw e;}
   }
   const actor=await authentication(req);
   if (path==='/api/auth/me' && method==='GET') return json(res,200,{ user:actor, version:VERSION });
@@ -62,6 +72,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
   }
   need(!actor.mustChangePassword,'Redefina sua senha antes de continuar.',403,'PASSWORD_CHANGE_REQUIRED');
   if (!['GET','HEAD'].includes(method)) await rateLimit('write:'+actor._id,1200,15);
+  if(path.startsWith('/api/v4/'))return json(res,200,await routeV4(actor,method,url,method==='GET'?{}:await body(req)));
   const clientId=url.searchParams.get('clientId')||undefined, page=integer(url.searchParams.get('page')||1,1,100000);
   if (path==='/api/dashboard' && method==='GET') return json(res,200,await service.dashboard(clientId));
   if (path==='/api/clients' && method==='GET') return json(res,200,{ items:await service.clients() });
@@ -84,7 +95,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
       if (action==='cancel') return json(res,200,await service.cancel(actor,id));
     }
   }
-  if (path==='/api/settings' && method==='GET') return json(res,200,{ version:VERSION, workspace:workspace(), mode:'LOCAL_IMPORT_V1', maxRows:50000, source:'Dados informados na planilha. Nenhuma consulta externa automática.', database:'MongoDB', history:'Importações e resultados armazenados; não é histórico fiscal oficial.' });
+  if (path==='/api/settings' && method==='GET') return json(res,200,{ version:VERSION, workspace:workspace(), mode:'API_MINIMAL_V1', maxRows:50000, source:'Minha Receita: resultados conforme a atualização da base externa.', database:'MongoDB', history:'Histórico de consultas e importações anteriores; não é histórico fiscal oficial.' });
   if (path==='/api/users' && method==='GET') { service.canAdmin(actor); return json(res,200,{ items:await (await collection('users')).find(scope()).project({ passwordHash:0 }).limit(100).toArray() }); }
   if (path==='/api/users' && method==='POST') {
     service.canAdmin(actor); const input=await body(req); need(['admin','operator','viewer'].includes(input.role),'Perfil inválido.');

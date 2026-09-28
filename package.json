@@ -1,32 +1,24 @@
 {
   "name": "maximum-cnpj",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Carteiras, importações e indicadores declarados com Node.js e MongoDB",
-  "engines": {
-    "node": ">=22.16.0 <23"
-  },
+  "description": "Consultas CNPJ, histórico por empresa e indicadores com Node.js e MongoDB",
+  "engines": { "node": ">=22.16.0 <23" },
   "scripts": {
     "dev": "npm run build && node --experimental-strip-types --watch --env-file-if-exists=.env src/server.ts",
     "build": "tsc && node scripts/assets.mjs",
     "start": "node --env-file-if-exists=.env dist/server.js",
     "check": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/domain.test.ts tests/security.test.ts tests/imported.test.ts tests/http.test.ts tests/deployment.test.mjs",
+    "test": "node --experimental-strip-types --test tests/domain.test.ts tests/security.test.ts tests/imported.test.ts tests/http.test.ts tests/deployment.test.mjs tests/lookup.test.ts tests/lookup-http.test.ts",
     "test:integration": "node --experimental-strip-types --test tests/integration.test.ts",
     "seed": "node --experimental-strip-types --env-file-if-exists=.env scripts/seed.ts",
     "test:e2e": "playwright test",
     "check:release": "node scripts/check-release.mjs",
+    "test:lookup-integration": "node --experimental-strip-types --test tests/lookup-integration.test.ts",
     "test:deployment": "node --test tests/deployment.test.mjs",
     "smoke": "node scripts/smoke-deployment.mjs"
   },
-  "dependencies": {
-    "mongodb": "6.21.0",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
-  },
-  "devDependencies": {
-    "@types/node": "22.15.30",
-    "typescript": "5.8.3",
-    "@playwright/test": "1.55.1"
-  }
+  "dependencies": { "mongodb": "6.21.0", "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz" },
+  "devDependencies": { "@types/node": "22.15.30", "typescript": "5.8.3", "@playwright/test": "1.55.1" }
 }

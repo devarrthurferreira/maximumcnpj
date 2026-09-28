@@ -1,25 +1,22 @@
-# Arquitetura vigente · v0.3.0
+# Arquitetura vigente · v0.4.0
 
-Atualizada em 25/09/2026. Substitui o desenho operacional da v0.2.0.
+Navegador (HTML/JS + Worker CSV/XLSX) → API Node.js/TypeScript → MongoDB.
+A API também consulta o endpoint público Minha Receita, com documento válido, timeout, pausas e limite global. Não usa Google Cloud.
 
-Navegador → API Node.js/TypeScript → MongoDB. A leitura/exportação CSV/XLSX ocorre em Web Worker. O servidor valida novamente as linhas. Não há adaptador fiscal externo ativo.
+## Separação dos dados
 
-## Componentes
-- src/domain.ts: identidade, deduplicação, estatísticas e CSV.
-- src/imported.ts: enquadramento explícito e conflitos da planilha.
-- src/service.ts: carteiras, partes de upload, páginas de processamento, resultados e exportação.
-- src/store.ts: conexão, índices e provisionamento inicial.
-- src/server.ts: HTTP, sessão, origem e autorização.
-- public/app.js: interface básica e retomada enquanto o operador acompanha.
+clients representa a responsável identificada por Código/ID da exportação S3D. Não confundir com os fornecedores/clientes consultados dentro de uma planilha.
 
-## Persistência e publicação
-Carteiras e lotes pertencem ao workspace. Linhas preservam valores originais. Resultados únicos por lote/CNPJ registram fonte PLANILHA. O dashboard exige lote COMPLETED e usa a última observação por CNPJ completo. Fontes de registros históricos são preservadas.
+cnpjEntities é o cadastro compartilhado por workspace/CNPJ. cnpjStates conserva conteúdo mínimo imutável por fingerprint. lookupItems vincula uma verificação ao lote, CNPJ, nome informado, data da chamada e referência do estado. lookupJobs contém responsável, arquivo, datas e totais.
 
-Upload exige posição e hash coerentes. A finalização confere totais; chamadas seguintes organizam até 500 identidades por página. Checkpoint usa ordenação canônica do CNPJ. Upserts e índices únicos permitem reenvio. A contagem precisa coincidir com os únicos antes da publicação. Travas temporárias protegem operações simultâneas.
+Não se usa cache como nova consulta. Cada lote distinto verifica novamente a fonte; respostas iguais reutilizam estado no banco. Os percentuais consideram somente lotes completos e a última observação por identidade, nunca a soma de reimportações.
 
-Não há cron nem fila independente do navegador. O limite de 50.000 linhas não substitui carga real: o desempenho das agregações no MongoDB e da hospedagem ainda precisa de medição.
+## Compatibilidade
 
-## Migração
-Nenhum dado é removido. Lotes anteriores concluídos podem ser lidos/exportados. Incompletos exigem nova importação; não são convertidos automaticamente. Cancelamento local não cancela eventual job antigo em outro serviço.
+As coleções e APIs das importações declaradas anteriores permanecem, com interface /legacy.html. Não há migração destrutiva nem conversão de declarações em consultas externas. A nova interface usa /api/v4 e session pública sem retirar proteção de endpoints privados.
 
-README contém variáveis, limites, segurança e testes pendentes.
+## Limites
+
+Leases por lote e por fonte no MongoDB, upload compacto, staging temporário com TTL, CNPJs únicos, até três tentativas transitórias e Retry-After. Processamento é conduzido pela tela; fila autônoma é etapa futura.
+
+Dados de sócios, telefones, endereços, honorários e arquivo binário não são persistidos no fluxo novo. ConsultadoEm não é atualização fiscal. A referência não homologada é indicada como Não informada.

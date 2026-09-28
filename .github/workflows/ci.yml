@@ -35,8 +35,10 @@ jobs:
         run: npm run check && npm run build
       - name: Regras e HTTP
         run: npm test
-      - name: Integração com MongoDB, sem consulta externa
+      - name: Integração legada com MongoDB
         run: npm run test:integration
+      - name: Consultas com API simulada e compartilhamento de registros
+        run: npm run test:lookup-integration
       - name: Conta efêmera para teste
         run: npm run seed
       - name: Chromium para testes
@@ -53,3 +55,17 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+  production-smoke:
+    if: github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Origem de login e sessão pública (sem credenciais)
+        run: node scripts/smoke-auth.mjs
+      - name: Conectividade da fonte com um CNPJ público de exemplo
+        continue-on-error: true
+        run: node --experimental-strip-types scripts/verify-provider.mjs

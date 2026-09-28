@@ -1,197 +1,180 @@
-# Maximum CNPJ · v0.3.0
+# Maximum CNPJ · v0.4.0
 
-**Hotfix de implantação · static-api-v1 · 28/09/2026**
+**Node.js + TypeScript + MongoDB. Consultas pela API Minha Receita, importação de empresas por Código/ID e histórico sem duplicar cadastros. Sem Google Cloud.**
 
-**Gestão de carteiras, importações e indicadores com Node.js + TypeScript e MongoDB.**
+> A resposta corresponde à base do fornecedor, não a uma consulta instantânea ao portal oficial. Data da requisição e atualização fiscal são diferentes. Ausência, erro e indicador desconhecido nunca significam automaticamente “não optante”.
 
-Correção de implantação em **28/09/2026**, identificada pelo SHA do commit e pelo header `X-Maximum-Deployment: static-api-v1`. A versão funcional 0.3.0 foi preservada: não houve alteração das regras do sistema. O escopo continua básico: login, carteiras, importação CSV/XLSX, deduplicação, indicadores declarados, histórico e exportação. Sem Google Cloud, BigQuery ou API fiscal externa.
+| Controle | Situação |
+|---|---|
+| Versão / revisão | 0.4.0 · 28/09/2026 |
+| Repositório | devarrthurferreira/maximumCNPJ |
+| Plataforma | Interface estática + API Node.js, MongoDB externo |
+| Fonte | Minha Receita, GET /CNPJ, sem chave de API ou Google |
+| Cadastro da responsável | Código = ID da planilha S3D; UUID interno preservado |
+| Testes locais desta preparação | 15 testes de domínio, segurança, origem e adaptador aprovados |
+| Build, MongoDB e navegador | Testes incluídos; conferir a CI do SHA publicado |
+| Banco de produção / login real | Não alterados/testados com credenciais pela preparação |
+| Dados reais anexados | Analisados localmente; não versionados nem enviados em massa à fonte |
 
-> **Não há consulta automática ao Simples Nacional.** A informação vem da coluna opcional escolhida na planilha. Sem resposta explícita ou diante de conflito, o resultado é **Não confirmado**. Dados importados não são confirmação fiscal atual.
+## 1. Correção do login
 
-## 1. Correção do erro 500
+O log da produção confirmou `POST /api/auth/login → 403`, código `ORIGIN`: a origem do navegador não correspondia a `APP_ORIGIN`. Não era evidência de senha inválida.
 
-Os logs de produção do deployment `dpl_2VzbhqSh51vgCmpbaCsd164RKUG7`, baseado no commit `2c56277568c45abf68f724fbf545a472c9e0ce80`, mostraram falhas em `/` e `/favicon.ico`:
+`src/origins.ts` aceita somente origens exatas configuradas em `APP_ORIGIN` e, na Vercel, os domínios injetados pela plataforma em `VERCEL_URL`, `VERCEL_BRANCH_URL` e `VERCEL_PROJECT_PRODUCTION_URL`. Não usa Host/X-Forwarded-Host do pedido para autorizar acessos, não libera todos os domínios `.vercel.app` e não remove CSRF.
+
+`GET /api/auth/session` retorna 200 com `user:null` antes de entrar. A nova interface usa essa rota e não trata ausência normal de sessão como erro de carregamento. As rotas privadas continuam respondendo 401 quando não autenticadas; credenciais incorretas continuam sendo recusadas.
+
+Na primeira entrada, caso não exista usuário no workspace e as credenciais apresentadas correspondam exatamente a `ADMIN_EMAIL`/`ADMIN_PASSWORD` privadas do ambiente, o servidor pode provisionar o administrador pelo mesmo seed existente. Não cria senha padrão, não altera contas existentes e não reseta senhas. Depois de provisionar, remova `ADMIN_PASSWORD` da hospedagem.
+
+## 2. Fluxo com os arquivos fornecidos
+
+1. Entre com a conta autorizada.
+2. Acesse **Empresas e códigos → Importar cadastro S3D** e selecione o CSV de empresas ou XLSX equivalente.
+3. Confira: `ID → Código`, `Razão social → Nome`, `CNPJ → Documento`, `Ativa? → Situação` e `UF → UF`.
+4. Revise e confirme. Cadastros com CPF/documento ausente podem ser responsáveis, mas o CPF não é armazenado nem consultado como CNPJ.
+5. Abra **Nova consulta**, escolha a responsável e importe o relatório de clientes/fornecedores.
+6. Mapeie documento e nome; confira contagens e confirme o envio dos campos essenciais.
+7. Acompanhe o lote, os percentuais, os filtros e a exportação CSV.
+8. Use **Consultar novamente na API** para nova verificação, preservando o histórico anterior.
+
+Um arquivo começando por número, como `868-...`, sugere o Código correspondente. A seleção continua visível para confirmação; não vincula dados silenciosamente à empresa errada.
+
+| Planilha de relatório | Destino |
+|---|---|
+| CNPJ / CPF / CNO, CNPJ | Identidade completa validada |
+| Razão Social, Nome | Nome informado, conferido com a API |
+| TIPO | Cliente/fornecedor, quando disponível |
+| Estado, UF | UF informada |
+| RESPOSTA, Regime, outras colunas | Não utilizadas para determinar o enquadramento |
+
+É possível escolher aba, linha do cabeçalho e colunas. A detecção sugere, mas não substitui a revisão. A planilha não precisa trazer a resposta do Simples já preenchida.
+
+### Análise estrutural dos anexos
+
+O relatório fornecido tem 1.200 linhas de dados, 1.141 CNPJs válidos distintos e 59 repetições adicionais. O cadastro S3D contém 421 registros: 376 documentos com 14 posições, 41 CPFs e quatro vazios. Contagem de posições não substitui validação do dígito.
+
+Esses números são de leitura/validação local, não resultados fiscais. Os arquivos completos não integram o Git e não foram carregados automaticamente no banco de produção. A interface permite importá-los com a sessão do administrador.
+
+## 3. Identidade e nome
+
+A chamada externa utiliza o **CNPJ completo**. O backend exige que a identidade retornada seja igual à solicitada e compara razão social/nome fantasia com o nome da linha. A resposta mostra nome informado, retornado e aviso de compatibilidade/divergência.
+
+Não determina opção pelo nome, atividade, porte, resultado de mecanismo de busca ou resposta antiga. Homônimos podem ser empresas diferentes. Nome divergente é alerta, não substitui identidade nem altera silenciosamente o CNPJ. Sem CNPJ válido, a linha fica no diagnóstico para corrigir a origem; não há busca fiscal confiável somente por nome nesta versão.
+
+CNPJs numéricos e alfanuméricos são validados localmente. A aceitação/cobertura de alfanuméricos pelo fornecedor depende da API; uma recusa não é negativa fiscal. CPF, CNO e inválidos não entram na fila CNPJ nem nos percentuais.
+
+## 4. Percentuais
+
+| Classificação | Regra |
+|---|---|
+| Optante | opcao_pelo_simples === true, identidade conferida, sem conflito |
+| Não optante | opcao_pelo_simples === false, identidade conferida, sem conflito |
+| Não confirmado | Nulo/inesperado, erro, ausência, identidade divergente ou conflito |
+
+Só booleanos explícitos são aceitos. String `"false"` não vira negativa. MEI positivo com Simples negativo vira conflito.
+
+Os percentuais usam **CNPJs válidos distintos**, incluindo não confirmados. Repetições não aumentam contagem; matriz/filial com CNPJ completo diferente continuam distintas. Cobertura = respostas explícitas / total válido distinto. Arredondamento pode variar a soma em 0,01 ponto.
+
+O dashboard usa somente lotes concluídos e a última consulta por CNPJ, com filtro por responsável. Não soma reimportações nem mistura declarações antigas da v0.3.0 com respostas externas.
+
+## 5. Fonte, limites e atualidade
+
+`src/lookup-provider.ts` usa endpoint fixo `https://minhareceita.org/{cnpj}`, Node fetch, timeout de nove segundos, resposta limitada a 2 MB, sem cache HTTP da aplicação e conferência de identidade. Não há fallback pago ou scraping silencioso.
+
+O controle compartilhado no MongoDB permite uma requisição por vez e intervalo mínimo de 1,1 segundo após cada resposta. Erro 429 e falhas transitórias aplicam pausa e até três tentativas, respeitando Retry-After. O limite local é uma política conservadora, não uma franquia garantida pelo fornecedor.
+
+Mais de 10.000 CNPJs são um lote lógico, **não chamadas paralelas nem processamento instantâneo**. A hospedagem também tem consumo/limites; não há garantia de custo total zero. Não aumente concorrência para contornar bloqueios.
+
+A cada novo lote/reconsulta, a API é chamada de novo para cada CNPJ distinto. Reutilizamos registros no MongoDB, não apresentamos resultado antigo como nova verificação. O fornecedor pode responder a partir da mesma base: nova chamada não garante atualização fiscal naquele dia.
+
+A referência fiscal não é inferida do horário HTTP ou da data de opção. Enquanto esse metadado não for homologado, interface/exportação informa **Não informada**. `checkedAt` é apenas a data da requisição.
+
+## 6. Armazenamento mínimo e histórico
+
+| Coleção | Conteúdo |
+|---|---|
+| clients | Responsável: código, nome, CNPJ válido opcional, ativa, UF e IDs internos |
+| cnpjEntities | Um cadastro por workspace/CNPJ, ponteiro ao estado atual |
+| cnpjStates | Estado reduzido imutável, compartilhado quando igual |
+| lookupJobs | Responsável/código, arquivo, datas, contagens, status e resumo |
+| lookupItems | Um vínculo por lote/CNPJ, nome informado, tipo/UF, ocorrências, estado e data |
+| lookupStage | Campos mínimos temporários; excluídos após validação; TTL sete dias para abandono |
+| providerControl | Controle global de requisições da fonte |
+| users/sessions/audit | Acesso e auditoria preservados |
+
+O fingerprint não inclui o horário da chamada. Duas verificações iguais usam o mesmo estado, mas cada vínculo registra a nova data. Se o conteúdo muda, cria-se outro estado sem alterar snapshots anteriores.
+
+Histórico exige vínculo por consulta/CNPJ; eliminar todos impediria reconstruir buscas. Não copiamos payload integral por lote, sócios, telefones, endereços ou colunas irrelevantes.
+
+O arquivo binário não é salvo. A exportação nova tem **uma linha por CNPJ único e campos essenciais**, não reproduz todas as colunas/linhas originais. Guarde o arquivo original conforme política interna. Histórico e exportação antigos continuam em `/legacy.html`, sem migração destrutiva.
+
+Históricos não expiram automaticamente nesta entrega. Defina retenção, backups e descarte antes de grandes volumes. Índices/reaproveitamento não tornam armazenamento ilimitado.
+
+## 7. Processamento e retomada
 
 ```text
-ReferenceError: document is not defined
-at file:///var/task/app.js:118:1
+UPLOADING → PROCESSING → COMPLETED
+           ↘ INVALID
+Lotes abertos → CANCELLED
 ```
 
-A implantação estava usando o preset `node` e executando o JavaScript da interface como entrada de servidor. Esse erro ocorria antes de uma consulta ao banco. O objeto `document` pertence ao navegador; esconder o erro com um `typeof document` não entregaria corretamente o painel.
+Upload em partes de até 250 linhas, offset e hash; reenvio igual é idempotente. Após consolidar, cada CNPJ tem item único. Chamadas limitadas mantêm PENDING/RETRY/DONE e gravam resposta antes de concluir.
 
-### O que esta versão altera
+Há lease por lote e controle global da fonte no banco. Indicadores só são publicados depois da contagem final. Reconsulta copia identidades mínimas no servidor e cria outro histórico, não copia respostas como novas.
 
-- `vercel.json` define **`framework: null` (Other)** explicitamente. Isso não remove Node.js: apenas desativa a detecção de um framework de servidor para a interface.
-- `public` é o **diretório de saída estática**, não a raiz do projeto. HTML, CSS, JS, Worker e ícone são entregues como arquivos.
-- Apenas **`api/index.ts`** é configurado como função Node; o código continua em `src/`.
-- Somente `/api/:path*` é encaminhado à função. A raiz e os arquivos visuais não são reescritos para o servidor.
-- `/favicon.ico` redireciona para o ícone existente `/favicon.svg`, sem criar outra função.
-- O runtime foi restringido à linha **Node.js 22**, a partir de 22.16.0. Removida a definição fixa de memória da função; `maxDuration` permanece em 60 segundos.
-- Os headers de segurança também cobrem a interface estática, e as respostas da API usam `no-store`.
-- Há testes de regressão de configuração e um comando de verificação HTTP após a implantação.
+A tela aberta conduz o processamento. Fechar pausa a continuidade após a chamada em curso; reabrir retoma. Não há cron/fila autônoma. Pausar não desfaz uma requisição já iniciada. Upload incompleto sem arquivo local deve ser cancelado e reimportado.
 
-Não foram alterados os registros do MongoDB, credenciais, senhas, regras fiscais ou permissões dos usuários.
+Limites: arquivo CSV/XLSX até 10 MiB, 50.000 linhas, 80 colunas; API recebe até 2,8 MB por chamada. São limites de código, não homologação de velocidade para qualquer lote real.
 
-## 2. Configuração exata na Vercel
+## 8. Instalação e variáveis
 
-Importe o repositório inteiro `devarrthurferreira/maximumCNPJ` e mantenha:
-
-| Campo | Valor |
-|---|---|
-| Root Directory | Raiz do repositório, campo vazio ou `.`; **não usar `public` nem `src`** |
-| Framework Preset | **Other**, também fixado no `vercel.json` por `null` |
-| Install Command | `npm install` |
-| Build Command | `npm run build` |
-| Output Directory | `public` |
-| Node.js | 22.x, compatível com `package.json` |
-| Production Branch | `main` |
-
-O `vercel.json` precisa ser lido a partir da raiz. Se o projeto tiver sido configurado com Root Directory `public`, corrija esse campo nas configurações da Vercel e publique novamente: o JSON da raiz não consegue corrigir uma raiz externa que o exclui do build.
-
-Em produção, defina no servidor:
-
-```env
-APP_ORIGIN=https://maximum-cnpj.vercel.app
-MONGODB_URI=SUA_STRING_PRIVADA_DO_MONGODB
-MONGODB_DB=maximum_cnpj
-WORKSPACE_ID=maximum
-NODE_ENV=production
-```
-
-`APP_ORIGIN` é a origem exata, sem barra final. Não adicione credenciais do MongoDB ao código, ao README ou a variáveis públicas de frontend. A conexão com o banco continua restrita ao backend. Uma URL de preview exige a origem correspondente para operações autenticadas de escrita.
-
-Após o build, verifique a **nova implantação e seu SHA**, não apenas o estado Ready de uma implantação antiga. Ready indica que o build terminou; não comprova que a função responde corretamente.
-
-## 3. Instalação local e primeiro acesso
-
-Requisitos: Node.js 22.16.0 ou superior **dentro da linha 22**, npm e MongoDB acessível ao servidor.
+Node.js >=22.16.0 <23, npm e MongoDB. Consulta não exige chave Minha Receita ou Google.
 
 ```bash
 npm install
 cp .env.example .env
-# Preencha a conexão e os dados de provisionamento no .env.
+# Configure banco e administrador em segredo.
 npm run seed
 npm run build
 npm start
 ```
 
-Em PowerShell, use `Copy-Item .env.example .env`. Abra `http://localhost:3000`. Para desenvolver, execute `npm run dev`.
-
-| Variável | Finalidade |
-|---|---|
-| `PORT` | Porta local; padrão 3000 |
-| `APP_ORIGIN` | Origem exata; HTTPS em produção |
-| `MONGODB_URI` | Conexão privada do banco |
-| `MONGODB_DB` | Banco; padrão `maximum_cnpj` |
-| `WORKSPACE_ID` | Identificador da instalação |
-| `ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Apenas para o provisionamento inicial |
-| `NODE_ENV` | `production` ativa cookie seguro e exigências de produção |
-
-**Não existe senha padrão.** O seed exige senha de 12 a 128 caracteres e não altera contas existentes. Execute-o uma vez contra o banco correto e remova `ADMIN_PASSWORD` do ambiente após criar o administrador. Não coloque o seed no build de produção nem recrie usuários a cada deploy.
-
-O leitor XLSX e o módulo compartilhado `domain.js` são copiados para `public` no build. Não são baixados de CDN enquanto o usuário usa o painel. O lockfile permanece pendente de versionamento: não mude para `npm ci` sem um `package-lock.json` validado.
-
-## 4. Funcionalidades e fluxo
-
-A navegação oferece **Visão geral**, **Empresas e carteiras**, **Nova importação**, **Bases e histórico** e **Configurações**.
-
-| Área | Recursos atuais |
-|---|---|
-| Acesso | Login, sessão, logout e troca de senha |
-| Equipe | Administrador, operador e visualizador; novo acesso com redefinição inicial |
-| Carteiras | Cadastro, edição, observações, responsável opcional com CNPJ e arquivamento |
-| Importação | CSV/XLSX, escolha de aba, cabeçalho, CNPJ, nome e Simples opcional |
-| Revisão | Linhas, CNPJs únicos, repetições, inválidos e células numéricas |
-| Processamento | Páginas locais de até 500 identidades, checkpoint e retomada |
-| Indicadores | Última observação por CNPJ, percentuais e preenchimento declarado |
-| Histórico | Lotes anteriores preservados; pesquisa, filtros e exportação CSV/XLSX |
-
-```text
-Login → cadastrar/escolher a responsável pela base
-      → importar planilha e mapear as colunas
-      → revisar repetições, inválidos e avisos
-      → confirmar o armazenamento no MongoDB
-      → processar páginas locais
-      → acompanhar indicadores, filtrar e exportar
+```env
+APP_ORIGIN=https://maximum-cnpj.vercel.app
+MONGODB_URI=SUA_CONEXAO_PRIVADA
+MONGODB_DB=maximum_cnpj
+WORKSPACE_ID=maximum
 ```
 
-A pergunta **“De qual empresa ou carteira é esta base?”** é obrigatória. O CNPJ da responsável não substitui os documentos da planilha nem é adicionado à consulta silenciosamente.
+Local: APP_ORIGIN=http://localhost:3000. Na Vercel, habilite exposição das variáveis de sistema quando usar os domínios automáticos. Domínio customizado exige APP_ORIGIN exata. ADMIN_NAME/ADMIN_EMAIL/ADMIN_PASSWORD são para primeiro provisionamento; não publique valores reais. A senha precisa ter 12 a 128 caracteres e nenhuma conta existente é resetada.
 
-O binário original não é salvo, mas os valores de **todas as colunas importadas** são armazenados após a confirmação para permitir conferência e exportação. Remova colunas sensíveis/desnecessárias antes de importar.
+`npm run dev` prepara os ativos. O build copia domain.js, lookup-domain.js e o leitor XLSX para public; nenhum segredo vai ao navegador. O leitor não depende de CDN durante uso. O lockfile deve ser versionado depois de uma instalação validada; não substituir npm install por npm ci sem lockfile válido.
 
-## 5. Enquadramento, duplicidade e percentuais
+Vercel mantém framework:null, saída public, função api/index.ts, segurança e roteamento /api/*. Assim preserva a correção anterior de `document is not defined`.
 
-A coluna de enquadramento começa desativada. Selecioná-la é uma decisão explícita do usuário, não uma inferência pelo nome ou atividade da empresa.
+## 9. API nova
 
-| Valores reconhecidos, sem distinção de caixa/acentos | Resultado registrado |
+Sessão em /api/v4/*; escritas exigem origem/perfil. Cadastro por importação exige admin; consultas admin/operador; visualizador lê/exporta.
+
+| Método / rota | Finalidade |
 |---|---|
-| Sim, S, True, 1, Optante, Simples Nacional | Optante, conforme informado |
-| Não, N, False, 0, Não optante, NAO_OPTANTE | Não optante, conforme informado |
-| Vazio, coluna não escolhida ou outro valor | Não confirmado |
+| GET /api/auth/session | Conta ou user:null antes do login |
+| GET /api/v4/clients | Responsáveis e códigos |
+| POST /api/v4/clients/import | Até 100 cadastros por parte |
+| POST /api/v4/lookups | Criar consulta |
+| POST /api/v4/lookups/:id/rows | Receber campos essenciais |
+| POST /api/v4/lookups/:id/finalize | Consolidar identidades |
+| POST /api/v4/lookups/:id/process | Próxima parcela de chamadas à API |
+| POST /api/v4/lookups/:id/repeat | Reconsulta em novo lote |
+| POST /api/v4/lookups/:id/cancel | Cancelar continuidade |
+| GET /api/v4/lookups/:id | Estado e contagens |
+| GET /api/v4/lookups/:id/results | Paginação e filtro de situação/CNPJ/nome |
+| GET /api/v4/history | Histórico por responsável/CNPJ |
+| GET /api/v4/dashboard | Indicadores de consultas completas |
 
-“Lucro real”, “Isento” ou “Talvez” não viram resposta negativa automaticamente. Duas classificações diferentes para o mesmo CNPJ produzem `CONFLITO_NA_PLANILHA` e **Não confirmado**, inclusive preenchido versus desconhecido. Os valores originais são preservados. Não há inferência de MEI em novos lotes.
+As APIs legadas permanecem identificadas como dados declarados, não consulta fiscal nova.
 
-A identidade é o **CNPJ completo normalizado como texto**, não a raiz de oito posições. Matriz e filial com documentos completos diferentes continuam distintas. Dígitos válidos não comprovam a existência de uma empresa. Zeros perdidos no Excel não são completados por hipótese.
-
-Cada CNPJ válido conta uma vez. Inválidos ficam fora do denominador; linhas repetidas continuam disponíveis na exportação. Os percentuais de optantes, não optantes e não confirmados usam o mesmo total de CNPJs válidos únicos.
-
-Exemplo hipotético: 12.000 linhas com 500 inválidas e 1.500 repetições adicionais correspondem a 10.000 CNPJs únicos. O total global usa a última observação por identidade, não soma reimportações. A mesma regra vale dentro de uma carteira selecionada.
-
-Uma nova base sem enquadramento pode atualizar o indicador atual para Não confirmado: não herdamos dados antigos silenciosamente. A data da importação não é uma data de consulta fiscal. Preenchimento não significa conferência na Receita.
-
-## 6. Arquitetura, limites e retenção
-
-```text
-Navegador (arquivos estáticos + Worker)
-       ↓ API autenticada
-Node.js / TypeScript
-       ↓
-MongoDB
-```
-
-`src/store.ts` concentra conexão e índices. Coleções: `users`, `sessions`, `limits`, `clients`, `batches`, `rows`, `chunks`, `results` e `audit`. Uma instalação atende um workspace; usuários autorizados compartilham suas carteiras. Não existe isolamento privado por carteira no painel.
-
-```text
-UPLOADING → PROCESSING → COMPLETED
-          ↘ INVALID
-Lotes não concluídos → CANCELLED
-```
-
-O upload usa posição e hash; reenvios iguais são idempotentes e conteúdos divergentes são recusados. O processamento grava resultados por chave única e checkpoint. Somente lotes completos e reconciliados entram nos indicadores. Reabra o lote para retomar o processamento; não há fila independente do navegador. Se a sessão do upload for perdida, cancele a base parcial e reimporte.
-
-| Limite do código | Valor |
-|---|---|
-| Arquivo | CSV/XLSX até 10 MiB |
-| Linhas / colunas | Até 50.000 / 80 |
-| Célula / cabeçalho | 2.000 / 200 caracteres |
-| Parte de upload | Até 250 linhas e aproximadamente 2 MB |
-| Corpo HTTP | Até 2.800.000 bytes |
-| Página de processamento / resultados | 500 / 50 identidades |
-
-São limites configurados, não garantia de desempenho em produção. Linhas vazias são ignoradas; os índices de revisão representam a sequência importada. Fórmulas devem ser convertidas em valores. A proteção preventiva de XLSX recusa macros, proteção e vínculos externos, sem prometer detectar todo arquivo malicioso.
-
-Exportações preservam todas as linhas, incluindo repetições e inválidos, com diagnóstico e origem acrescentados. CSV neutraliza fórmulas potenciais; XLSX escreve texto. Dados não expiram automaticamente. Defina retenção, backup e descarte antes de usar dados reais. Arquivar carteira não é apagar histórico.
-
-## 7. API e segurança
-
-A função `api/index.ts` encaminha para o handler Node em `src/server.ts`. O navegador nunca é importado pelo servidor.
-
-| Rotas | Uso |
-|---|---|
-| `GET /api/health` | Processo HTTP e versão; não verifica MongoDB |
-| `POST /api/auth/login`, `/api/auth/logout`, `/api/auth/password` | Acesso e senha |
-| `GET /api/auth/me` | Usuário autenticado |
-| `GET /api/dashboard?clientId=` | Indicadores |
-| `GET/POST /api/clients`, `PATCH /api/clients/:id` | Carteiras |
-| `GET/POST /api/batches` | Listar ou criar importação |
-| `POST /api/batches/:id/rows`, `/finalize`, `/process`, `/cancel` | Etapas do lote |
-| `GET /api/batches/:id`, `/results`, `/export` | Estado, resultados e exportação |
-| `GET /api/settings` | Configuração sem segredos |
-| `GET/POST /api/users`, `GET /api/audit` | Administração |
-
-Exceto saúde e login, as rotas exigem sessão. Mutações exigem JSON, origem exata e autorização no servidor. Mantidos scrypt, hashes de tokens, cookies HttpOnly/SameSite/Secure e limites de tentativas/operações. Visualizadores não podem importar ou processar. MFA e recuperação por e-mail ainda não existem; contas podem ser desativadas por administrador do banco com `active=false`, preservando histórico.
-
-## 8. Verificações e diagnóstico
+## 10. Testes e validação
 
 ```bash
 npm run check:release
@@ -199,43 +182,37 @@ npm run check
 npm run build
 npm test
 npm run test:integration
+npm run test:lookup-integration
 npx playwright install chromium
 npm run test:e2e
-npm run smoke -- https://maximum-cnpj.vercel.app
 ```
 
-`test:deployment` executa isoladamente os testes de configuração. Eles impedem a remoção acidental de `framework: null`, funções para a interface, rewrites globais e perda do ícone/headers. O teste de versão mantém os arquivos alinhados.
+Localmente passaram 15 testes de domínio, segurança, origem e transporte simulado. Cobrem deduplicação sintética 10.001/50.000, nulos, identidade divergente, projeção mínima, ausência de cache, 429 e origens maliciosas. A sintaxe JavaScript também foi conferida. Isso não equivale a login real ou carga na produção.
 
-`smoke` faz **apenas leituras públicas**, sem senha e sem gravar dados: verifica `/`, JS, CSS, ícones, saúde na versão esperada e resposta 401 da sessão anônima. Ele verifica o header `static-api-v1` e a versão funcional, e falha quando falta o marcador da correção ou há HTML no lugar de JSON. **Não testa conexão com MongoDB, login real ou importação.**
+A CI usa MongoDB descartável, legado, teste novo de compartilhamento/histórico, reconsulta e isolamento, e Chromium CSV/XLSX no painel novo e antigo. O browser intercepta a chamada externa: fixtures não vão ao provedor. Testes integrados usam banco aleatório, nunca credenciais de produção.
 
-| Evidência | Situação |
-|---|---|
-| Incidente original | Logs Vercel confirmam `document is not defined` em raiz e ícone |
-| CI da base v0.3.0 | Execução `36148532158`, SHA `2c56277`, concluída com sucesso; consultada em 28/09/2026 |
-| Testes desta correção | Regras de implantação adicionadas ao `npm test`; consultar também a CI do SHA corrigido |
-| Dependências/build local | Registro npm inacessível neste ambiente; sem homologação completa local |
-| MongoDB de produção | Não acessado nem alterado nesta correção |
-| Aceite de deploy | Verificar nova implantação e executar o smoke no domínio, não reutilizar resultado de outra versão |
+Após publicar em main, o smoke verifica sessão e login **sem credenciais**: domínio legítimo com JSON incompleto precisa retornar 400; origem externa precisa retornar 403. Isso verifica origem, não a senha de uma conta real. Há teste informativo separado com um CNPJ público da documentação da fonte; falha não é apresentada como aprovação nem negativa fiscal.
 
-A CI anterior é evidência do commit anterior, não do patch. Testes integrados usam MongoDB efêmero; nunca use banco de produção. Uma execução só é aprovada quando o resultado do SHA correspondente confirma isso.
+Confira o resultado associado ao SHA entregue. Existência de workflow não comprova sucesso. Deploy, CI, login real, base real e homologação fiscal são verificações distintas.
 
-| Erro | Verificação |
-|---|---|
-| `document is not defined` | Preset e raiz do projeto; não executar `public/app.js` como servidor |
-| HTML abre, mas `/api/health` falha | Verificar função `api/index.ts`, build e roteamento |
-| `/api/auth/me` retorna 401 sem login | Comportamento esperado; não liberar acesso anônimo para esconder o erro |
-| 503 em operação de banco | MongoDB, rede, credenciais e permissões; não é o mesmo erro da interface |
-| `ORIGIN` / 403 | `APP_ORIGIN` com domínio e protocolo exatos |
-| `LEGACY_BATCH` | Reimportar no fluxo básico; registro antigo não é convertido automaticamente |
-| `IMPORT_CONFLICT`, `RESULT_COUNT`, `BATCH_BUSY` | Mapeamento divergente, reconciliação ou operação simultânea; conferir o lote antes de repetir |
-| XLSX/`domain.js` ausente | Conferir `npm run build` e saída `public` |
+## 11. Diagnóstico
 
-## 9. Histórico, versionamento e próximos passos
+- ORIGIN/403: conferir APP_ORIGIN e domínios da Vercel; não liberar *.
+- INVALID_LOGIN/401: conferir conta/senha e provisionamento; não há reset automático.
+- 503: verificar MongoDB, rede e permissões. Não simular dados para esconder erro.
+- CODE_CONFLICT/CNPJ_CONFLICT: código e documento apontam para registros distintos; corrigir sem sobrescrever.
+- LIMITE_DA_FONTE/FONTE_INDISPONIVEL: respeitar pausa; não usar cache como atual.
+- IDENTIDADE_DIVERGENTE: revisar fonte; fica não confirmado.
 
-O [manual v0.3.0](docs/archive/README-v0.3.0.md) foi preservado integralmente. O Git e o CHANGELOG conservam as entregas anteriores. Esta correção não apaga dados nem transforma lotes antigos incompletos. Cancelar localmente não encerra um eventual job legado em outro serviço.
+## 12. Versionamento e evolução
 
-Toda mudança relevante deve atualizar README, CHANGELOG, versão e testes no mesmo commit. Não fazer force-push nem substituir alterações concorrentes. A licença do código próprio não foi alterada.
+README, CHANGELOG, versão e testes acompanham toda mudança relevante. Sem force-push, sem apagar dados legados. Documentos antigos ficam em docs/archive e no Git; não representam requisitos atuais.
 
-Próximas etapas: confirmar o deploy corrigido, validar login e uma base real autorizada, medir tempo/memória na hospedagem e versionar o lockfile validado. Depois evoluir campos, filtros e comparação por CNPJ. Consulta externa, fila autônoma, recuperação/MFA, exclusão definitiva e calculadora tributária continuam fora do escopo básico.
+Prioridades seguintes: homologar amostras com fonte oficial, incorporar referência fiscal verificada, medir lote real, fila independente da aba e política de retenção. Busca nominal ambígua, automações e calculadora precisam de desenho/homologação próprios e não estão habilitadas.
 
-Referência de implantação: [configuração oficial da Vercel](https://vercel.com/docs/project-configuration/vercel-json), especialmente `framework`, `outputDirectory`, `functions`, `rewrites` e `redirects`. A escolha de Other não impede funções Node.js em `api/`.
+## Referências técnicas
+
+- Minha Receita: https://docs.minhareceita.org/como-usar/ e https://docs.minhareceita.org/dicionario/
+- Vercel: https://vercel.com/docs/environment-variables/system-environment-variables
+
+Documentação consultada em 28/09/2026. Gratuidade, disponibilidade e atualidade não são garantias permanentes.

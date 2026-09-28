@@ -26,6 +26,7 @@ self.onmessage = async ({data}) => {
       }
       self.postMessage({type:'preview',rows:matrix.slice(0,15),total:matrix.length});
     }
+    if(data.action==='matrix') { self.postMessage({type:'matrix',rows:matrix}); }
     if(data.action==='validate') {
       const header=Number(data.header), width=matrix.slice(header).reduce((max,row)=>Math.max(max,row.length),0);
       const headers=Array.from({length:width},(_,i)=>String(matrix[header]?.[i]||`Coluna ${i+1}`));
