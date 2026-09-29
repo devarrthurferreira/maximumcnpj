@@ -47,7 +47,14 @@ class handler(BaseHTTPRequestHandler):
             db = database()
             actor = authenticate(db, self.headers, workspace)
             action = options['action']
-            rate_limit(db, actor['_id'], workspace, action in ('pdf', 'csv'))
+            rate_limit(db, actor['_id'], workspace, action in ('pdf', 'csv', 'generation-pdf'))
+            if action == 'generation-pdf':
+                from reporting.generations import generation_metadata, render_generation_pdf
+                generation_meta = generation_metadata(db, options['generationId'], workspace, options['part'])
+                content = render_generation_pdf(generation_meta)
+                require(len(content) <= MAX_RESPONSE_BYTES, 413, 'REPORT_TOO_LARGE', 'Parte do relatório acima do limite de resposta.')
+                filename = f'geracao-{options["generationId"]}-parte-{options["part"]}-de-{generation_meta["parts"]}.pdf'
+                return self.send(200, content, 'application/pdf', filename)
             if action == 'jobs':
                 return self.send(200, json.dumps(jobs(db, workspace, options['clientId'], options['page']), default=iso, ensure_ascii=False).encode())
             job = get_job(db, options['jobId'], workspace, options['clientId'])

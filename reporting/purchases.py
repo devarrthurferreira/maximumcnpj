@@ -29,6 +29,10 @@ GROUP_LABELS = {
     'NAO_CONSULTAVEL': 'CPF / documento não consultável',
 }
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
+COMPONENT_FIELDS = ('grossCents', 'discountCents', 'accessoryCents', 'freightCents', 'abatementCents')
+COMPONENT_LABELS = ('Q - Valor bruto', 'Y - Desconto', 'Z - Despesa acessória', 'AA - Frete', 'AB - Abatimento', 'Novo total')
+MANAGEMENT_NOTE = ('Não confirmados integram Não optantes no agrupamento gerencial solicitado. '
+                   'A situação original da fonte permanece não confirmada; essa inclusão não comprova negativa fiscal.')
 
 
 @lru_cache(maxsize=1)
@@ -87,7 +91,10 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     _check(job.get('workspaceId') == workspace and job.get('mode') == PURCHASES_MODE)
     require(job.get('status') == 'COMPLETED', 409, 'INCOMPLETE', 'Conclua a consulta de compras para emitir o relatório.')
     _check(isinstance(job.get('clientId'), str) and bool(job['clientId']))
+    version = job.get('calculationVersion', 'Q_V1')
+    _check(version in ('Q_V1', 'NET_V2'))
     summary, financial = job.get('summary') or {}, job.get('purchaseInput') or {}
+    components = {key: 0 for key in (*COMPONENT_FIELDS, 'totalCents')} if version == 'NET_V2' else None
     expected = _integer(job.get('expectedRows'), 50_000)
     _check(expected > 0 and _integer(job.get('uploaded')) == expected)
     for key in ('lines', 'unique', 'invalid', 'duplicates'):
@@ -110,6 +117,11 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         valid = _valid_cnpj(document)
         _check(row['valid'] == valid and row.get('cnpj') == (document if valid else ''))
         cents = _integer(row.get('totalCents'), 100_000_000_000)
+        if components is not None:
+            values = {key: _integer(row.get(key), 100_000_000_000) for key in COMPONENT_FIELDS}
+            _check(values['grossCents'] - values['discountCents'] + values['freightCents'] - values['abatementCents'] == cents)
+            for key, value in {**values, 'totalCents': cents}.items():
+                components[key] = _integer(components[key] + value)
         qty = row.get('quantity')
         _check(isinstance(qty, str) and re.fullmatch(r'\d{1,9}(?:\.\d{1,6})?', qty))
         quantity += Decimal(qty)
@@ -126,6 +138,11 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     _check(line_count == expected == summary['lines'] and unique == summary['unique'] and
            excluded_lines == summary['invalid'] and line_count - excluded_lines - unique == summary['duplicates'] and
            total_cents == financial['totalCents'] and cnpj_cents == financial['cnpjCents'])
+    if components is not None:
+        stored_components = financial.get('components')
+        _check(isinstance(stored_components, dict))
+        for key, value in components.items():
+            _check(_integer(stored_components.get(key)) == value)
     groups = {status: {'status': status, 'label': label, 'suppliers': 0, 'lines': 0, 'totalCents': 0}
               for status, label in GROUP_LABELS.items()}
     seen, checks = set(), []
@@ -156,10 +173,20 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         group['supplierPercent'] = percentage(group['suppliers'], unique)
         group['valuePercent'] = percentage(group['totalCents'], cnpj_cents) if group['status'] != 'NAO_CONSULTAVEL' else None
         group['fileValuePercent'] = percentage(group['totalCents'], total_cents)
+    unknown = dict(groups['NAO_CONFIRMADO'])
+    managerial_nonoptant = dict(groups['NAO_OPTANTE'])
+    for key in ('suppliers', 'lines', 'totalCents'):
+        managerial_nonoptant[key] += unknown[key]
+    managerial_nonoptant.update(label='Não optantes (inclui não confirmados)',
+        supplierPercent=percentage(managerial_nonoptant['suppliers'], unique),
+        valuePercent=percentage(managerial_nonoptant['totalCents'], cnpj_cents),
+        fileValuePercent=percentage(managerial_nonoptant['totalCents'], total_cents))
     quantity_text = format(quantity, 'f').rstrip('0').rstrip('.') if '.' in format(quantity, 'f') else format(quantity, 'f')
     return {'job': {key: job.get(key) for key in ('_id', 'clientId', 'clientCode', 'clientName', 'fileName', 'completedAt')},
             'totalCents': total_cents, 'cnpjCents': cnpj_cents, 'nonCnpjCents': non_cnpj_cents,
             'lineCount': line_count, 'uniqueSuppliers': unique, 'groups': list(groups.values()),
+            'managerialGroups': [groups['OPTANTE'], managerial_nonoptant, groups['NAO_CONSULTAVEL']],
+            'unconfirmed': unknown, 'components': components, 'calculationVersion': version,
             'quantityDisplay': quantity_text.replace('.', ','), 'generatedAt': utcnow(),
             'firstCheck': min(checks) if checks else None, 'lastCheck': max(checks) if checks else None}
 
@@ -168,7 +195,8 @@ def purchase_metadata(db, job, workspace):
     """Read only the selected job and join states by workspace, exact identity and state ID."""
     query = {'workspaceId': workspace, 'jobId': job['_id']}
     lines = db.purchaseLines.find(query, {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'index': 1, 'document': 1,
-                                        'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'totalCents': 1, 'valid': 1})
+                                        'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'totalCents': 1, 'valid': 1,
+                                        **{key: 1 for key in COMPONENT_FIELDS}})
     lines = lines.limit(50_001).batch_size(500).max_time_ms(20000)
     items = db.lookupItems.aggregate([
         {'$match': query},
@@ -187,84 +215,114 @@ def money(cents):
     return f'R$ {number(cents // 100)},{cents % 100:02d}'
 
 
-def render_purchase_pdf(meta):
-    job = meta['job']
+def purchase_pdf_styles():
     font, bold = _fonts()
-    stream = BytesIO()
-    page_width, page_height = landscape(A4)
-    width = page_width - 64
-    doc = SimpleDocTemplate(stream, pagesize=landscape(A4), rightMargin=32, leftMargin=32,
-                            topMargin=86, bottomMargin=40,
-                            title='Maximum CNPJ - Relatório de compras',
-                            author='Maximum CNPJ', pageCompression=1)
-    ink, primary, muted, light = [colors.HexColor(c) for c in ('#222222', '#750207', '#666666', '#F7F3F3')]
-    styles = {
-        'body': ParagraphStyle('purchase-body', fontName=font, fontSize=9, leading=12, textColor=ink, spaceAfter=6),
-        'small': ParagraphStyle('purchase-small', fontName=font, fontSize=8, leading=10.5, textColor=muted, spaceAfter=5),
-        'title': ParagraphStyle('purchase-title', fontName=bold, fontSize=20, leading=24, textColor=ink, spaceAfter=8),
-        'heading': ParagraphStyle('purchase-heading', fontName=bold, fontSize=11, leading=14, textColor=primary, spaceAfter=7),
-        'cell': ParagraphStyle('purchase-cell', fontName=font, fontSize=8, leading=10.5, textColor=ink, splitLongWords=True),
-        'head': ParagraphStyle('purchase-head', fontName=bold, fontSize=8, leading=10.5, textColor=colors.white),
+    ink, primary, muted = [colors.HexColor(c) for c in ('#222222', '#750207', '#666666')]
+    return {
+        'body': ParagraphStyle('purchase-body', fontName=font, fontSize=8.3, leading=11, textColor=ink, spaceAfter=5),
+        'small': ParagraphStyle('purchase-small', fontName=font, fontSize=7.5, leading=10, textColor=muted, spaceAfter=4),
+        'title': ParagraphStyle('purchase-title', fontName=bold, fontSize=17, leading=21, textColor=ink, spaceAfter=7, keepWithNext=True),
+        'heading': ParagraphStyle('purchase-heading', fontName=bold, fontSize=10, leading=13, textColor=primary, spaceAfter=6, keepWithNext=True),
+        'cell': ParagraphStyle('purchase-cell', fontName=font, fontSize=7.6, leading=10, textColor=ink, splitLongWords=True),
+        'head': ParagraphStyle('purchase-head', fontName=bold, fontSize=7.6, leading=10, textColor=colors.white),
     }
 
-    def p(value, style='body'):
-        value = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', str(value if value is not None else '-'))
-        return Paragraph(escape(value).replace('\n', '<br/>'), styles[style])
 
-    def on_page(canvas, document):
-        canvas.saveState()
-        draw_brand_header(canvas, page_width, page_height, font=font, bold_font=bold)
-        canvas.setFillColor(muted)
-        canvas.setStrokeColor(colors.HexColor('#EAD5D6'))
-        canvas.line(32, 32, page_width - 32, 32)
-        canvas.setFont(font, 7)
-        canvas.drawString(32, 20, f'Compras {job["_id"]} | v{VERSION}')
-        canvas.drawRightString(page_width - 32, 20, f'Página {document.page} | Horários de Brasília')
-        canvas.restoreState()
+def purchase_paragraph(value, styles, style='body'):
+    value = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', str(value if value is not None else '-'))
+    return Paragraph(escape(value).replace('\n', '<br/>'), styles[style])
 
+
+def purchase_table(rows, fractions, width, styles, total_row=False, padding=7):
+    table = LongTable([[purchase_paragraph(v, styles, 'head' if i == 0 else 'cell') for v in row]
+                       for i, row in enumerate(rows)],
+                      colWidths=[width * x for x in fractions], repeatRows=1, hAlign='LEFT')
+    settings = [
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#750207')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F7F3F3')]),
+        ('LEFTPADDING', (0, 0), (-1, -1), 7), ('RIGHTPADDING', (0, 0), (-1, -1), 7),
+        ('TOPPADDING', (0, 0), (-1, -1), padding), ('BOTTOMPADDING', (0, 0), (-1, -1), padding),
+    ]
+    if total_row:
+        settings.extend([('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#EAD5D6')),
+                         ('LINEBELOW', (0, -1), (-1, -1), .3, colors.HexColor('#B2797B'))])
+    table.setStyle(TableStyle(settings))
+    return table
+
+
+def purchase_story(meta, width, styles):
+    """The same reconciled per-company memory is used in single and consolidated PDFs."""
+    job = meta['job']
+    p = lambda value, style='body': purchase_paragraph(value, styles, style)
     title = f'{job.get("clientCode") or "Sem código"} - {job.get("clientName") or "Empresa"}'
-    story = [p('Relatório de compras por enquadramento', 'heading'), p(title, 'title'),
+    calculation_label = 'atual' if meta['calculationVersion'] == 'NET_V2' else 'anterior'
+    story = [p('Compras - enquadramento e memória de cálculo', 'heading'), p(title, 'title'),
              p(f'Arquivo: {job.get("fileName") or "Não informado"}'),
-             p(f'Consulta concluída: {display_date(job.get("completedAt"))} | Emissão: {display_date(meta["generatedAt"])}', 'small'),
-             Spacer(1, 5),
-             p(f'Total de compras: {money(meta["totalCents"])} | {number(meta["lineCount"])} linhas | '
-               f'{number(meta["uniqueSuppliers"])} CNPJs únicos consultáveis', 'heading')]
-    rows = [['Enquadramento', 'CNPJs únicos', '% dos CNPJs', 'Linhas', 'Valor de compras', '% valor CNPJs', '% valor arquivo']]
-    for group in meta['groups']:
+             p(f'Consulta: {job["_id"]} | Conclusão: {display_date(job.get("completedAt"))} | '
+               f'Emissão: {display_date(meta["generatedAt"])}', 'small'),
+             p(f'Total: {money(meta["totalCents"])} | {number(meta["lineCount"])} linhas | '
+               f'{number(meta["uniqueSuppliers"])} CNPJs únicos consultáveis | Cálculo {calculation_label}', 'heading')]
+    rows = [['Grupo gerencial', 'CNPJs únicos', '% dos CNPJs', 'Linhas', 'Valor de compras', '% valor CNPJs', '% valor arquivo']]
+    for group in meta['managerialGroups']:
         consultable = group['status'] != 'NAO_CONSULTAVEL'
         rows.append([group['label'], number(group['suppliers']) if consultable else 'Fora da base',
                      percent(group['supplierPercent']) if consultable else '-', number(group['lines']),
                      money(group['totalCents']), percent(group['valuePercent']) if consultable else '-', percent(group['fileValuePercent'])])
     rows.append(['TOTAL', number(meta['uniqueSuppliers']), percent(100 if meta['uniqueSuppliers'] else 0),
                  number(meta['lineCount']), money(meta['totalCents']), '-', percent(100 if meta['totalCents'] else 0)])
-    table = LongTable([[p(v, 'head' if i == 0 else 'cell') for v in row] for i, row in enumerate(rows)],
-                      colWidths=[width * x for x in (.25, .10, .115, .07, .19, .14, .135)], repeatRows=1, hAlign='LEFT')
-    table.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('BACKGROUND', (0, 0), (-1, 0), primary),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, light]),
-        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#EAD5D6')),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8), ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING', (0, 0), (-1, -1), 8), ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-        ('LINEBELOW', (0, -1), (-1, -1), .3, colors.HexColor('#B2797B')),
-    ]))
-    story += [table, Spacer(1, 12), p('Como ler os percentuais e valores', 'heading'),
-              p(f'% dos CNPJs: base de {number(meta["uniqueSuppliers"])} CNPJs válidos distintos, incluindo os não confirmados. '
-                'O mesmo fornecedor conta uma vez; todas as suas linhas de compra integram o valor.', 'small'),
-              p(f'% valor CNPJs: base de {money(meta["cnpjCents"])} (Q somente dos CNPJs válidos, incluindo não confirmados). '
-                f'% valor arquivo: base de {money(meta["totalCents"])} (Q de todas as linhas). '
-                'CPF e outros documentos não consultáveis ficam separados e seus valores permanecem no total. '
-                'Quando a base é zero, o percentual é apresentado como 0,00%.', 'small'),
-              p('Colunas utilizadas: A - CNPJ fornecedor; I - razão social; P - quantidade; Q - valor total informado. '
-                'O valor da coluna Q é somado uma vez por linha, sem multiplicar pela quantidade P. '
-                'Não é possível identificar notas repetidas sem uma chave de nota no arquivo.', 'small'),
-              p('Origem e rastreabilidade', 'heading'),
-              p(f'Chamadas da consulta: {display_date(meta.get("firstCheck"))} até {display_date(meta.get("lastCheck"))}. '
-                f'Quantidade informada na coluna P (soma): {meta["quantityDisplay"]}.', 'small'),
-              p('As classificações são observações salvas da API Minha Receita no momento das chamadas. '
-                'Não comprovam o regime na data das compras, nem a atualização fiscal da base. '
-                'Erros, ausência de resposta e campos desconhecidos ficam como não confirmados; nunca como não optante. '
-                'A emissão deste PDF não faz nova consulta. Referência fiscal da base: não informada.', 'small'),
-              p('Resumo integral da empresa e consulta identificadas acima. Os valores são reconciliados com as linhas '
-                'salvas do relatório; nenhum resultado enviado pelo navegador é aceito como fonte.', 'small')]
+    story += [purchase_table(rows, (.25, .10, .115, .07, .19, .14, .135), width, styles, True), Spacer(1, 6)]
+    unknown = meta['unconfirmed']
+    story.append(p(f'Subtotal não confirmado, já incluído em Não optantes: {number(unknown["suppliers"])} CNPJs, '
+                   f'{number(unknown["lines"])} linhas e {money(unknown["totalCents"])}. {MANAGEMENT_NOTE}', 'small'))
+    story += [Spacer(1, 3), p('Memória dos valores importados', 'heading')]
+    if meta['components'] is not None:
+        values = meta['components']
+        memory = [list(COMPONENT_LABELS), [money(values[key]) for key in (*COMPONENT_FIELDS, 'totalCents')]]
+        story += [purchase_table(memory, (.17, .16, .18, .16, .16, .17), width, styles), Spacer(1, 5),
+                  p(f'Q - Y + AA - AB = {money(values["grossCents"])} - {money(values["discountCents"])} + '
+                    f'{money(values["freightCents"])} - {money(values["abatementCents"])} = {money(values["totalCents"])}. '
+                    'Z é apenas informativa e não entra na fórmula.', 'small')]
+    else:
+        story += [p(f'Regra anterior: total = soma da coluna Q = {money(meta["totalCents"])}. '
+                    'Os ajustes Y, Z, AA e AB não foram armazenados neste lote. Reimporte o arquivo em uma nova consulta '
+                    'para aplicar Q - Y + AA - AB; este histórico mantém o cálculo original.', 'small')]
+    story += [
+        p(f'Bases dos percentuais: CNPJs = {number(meta["uniqueSuppliers"])} documentos válidos distintos; '
+          f'valor CNPJs = {money(meta["cnpjCents"])}; valor arquivo = {money(meta["totalCents"])}. '
+          'Cada fornecedor conta uma vez; todas as suas linhas compõem o valor. CPF e demais documentos não consultáveis '
+          'ficam fora das bases de CNPJ. Base zero resulta em 0,00%.', 'small'),
+        p(f'Valores somados por linha, sem multiplicar por P. Quantidade P total: {meta["quantityDisplay"]}. '
+          'A = documento; I = razão social; P = quantidade; Q = valor bruto; Y = desconto; '
+          'Z = despesa acessória; AA = frete; AB = abatimento não tributado.', 'small'),
+        p(f'Fonte: Minha Receita. Chamadas de {display_date(meta.get("firstCheck"))} a {display_date(meta.get("lastCheck"))}. '
+          'A observação salva não comprova o regime na data da compra nem a atualização fiscal da base. '
+          'Referência fiscal não informada. Este PDF lê o snapshot reconciliado e não faz nova consulta.', 'small'),
+    ]
+    return story
+
+
+def purchase_page_callback(footer):
+    font, bold = _fonts()
+    page_width, page_height = landscape(A4)
+    def on_page(canvas, document):
+        canvas.saveState()
+        draw_brand_header(canvas, page_width, page_height, font=font, bold_font=bold)
+        canvas.setFillColor(colors.HexColor('#666666'))
+        canvas.setStrokeColor(colors.HexColor('#EAD5D6'))
+        canvas.line(32, 32, page_width - 32, 32)
+        canvas.setFont(font, 7)
+        canvas.drawString(32, 20, f'{footer} | v{VERSION}')
+        canvas.drawRightString(page_width - 32, 20, f'Página {document.page} | Horários de Brasília')
+        canvas.restoreState()
+    return on_page
+
+
+def render_purchase_pdf(meta):
+    stream = BytesIO()
+    doc = SimpleDocTemplate(stream, pagesize=landscape(A4), rightMargin=32, leftMargin=32,
+                            topMargin=86, bottomMargin=40,
+                            title='Maximum CNPJ - Relatório de compras', author='Maximum CNPJ', pageCompression=1)
+    story = purchase_story(meta, landscape(A4)[0] - 64, purchase_pdf_styles())
+    on_page = purchase_page_callback(f'Compras {meta["job"]["_id"]}')
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
     return stream.getvalue()

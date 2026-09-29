@@ -4,13 +4,13 @@ import * as XLSX from 'xlsx';
 const clientId = '00000000-0000-4000-8000-000000000020';
 const client = {_id:clientId, code:'000', name:'EMPRESA DEMONSTRAÇÃO', active:true};
 const lines = [
-  {document:'11.222.333/0001-81', name:'FORNECEDOR FICTÍCIO', quantity:'2', totalCents:10010},
-  {document:'11222333000181', name:'FORNECEDOR FICTÍCIO', quantity:'7', totalCents:2020},
-  {document:'123.456.789-00', name:'PESSOA FICTÍCIA', quantity:'1', totalCents:5000}
+  {document:'11.222.333/0001-81', name:'FORNECEDOR FICTÍCIO', quantity:'2', grossCents:10010,discountCents:1000,accessoryCents:250,freightCents:500,abatementCents:10,totalCents:9500},
+  {document:'11222333000181', name:'FORNECEDOR FICTÍCIO', quantity:'7',grossCents:2020,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:2020},
+  {document:'123.456.789-00', name:'PESSOA FICTÍCIA', quantity:'1',grossCents:5000,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:5000}
 ];
 const csv = () => {
-  const header = Array(17).fill(''); header[0] = 'CNPJ / CPF / CNO'; header[8] = 'Razão Social'; header[15] = 'Quantidade'; header[16] = 'Valor Total';
-  return [header, ...lines.map(l => {const row = Array(17).fill(''); row[0] = l.document; row[8] = l.name; row[15] = l.quantity; row[16] = (l.totalCents / 100).toFixed(2).replace('.', ','); return row;})].map(row => row.join(';')).join('\r\n');
+  const header = Array(28).fill(''); header[0] = 'CNPJ / CPF / CNO'; header[8] = 'Razão Social'; header[15] = 'Quantidade'; header[16] = 'Valor Total'; header[24]='Valor Desconto';header[25]='Valor Despesa Acessória';header[26]='Valor Frete';header[27]='Abatimento não Tributado';
+  return [header, ...lines.map(l => {const row = Array(28).fill(''); row[0] = l.document; row[8] = l.name; row[15] = l.quantity; row[16] = (l.grossCents / 100).toFixed(2).replace('.', ',');[l.discountCents,l.accessoryCents,l.freightCents,l.abatementCents].forEach((v,i)=>row[24+i]=(v/100).toFixed(2).replace('.',',')); return row;})].map(row => row.join(';')).join('\r\n');
 };
 
 test('Compras imports cp1252 columns, keeps financial values and provides snapshot downloads', async ({page}, testInfo) => {
@@ -23,15 +23,15 @@ test('Compras imports cp1252 columns, keeps financial values and provides snapsh
     if (url.pathname === '/api/v4/purchases') {
       if (method === 'GET') return route.fulfill({json:{items:job ? [job] : [],total:job ? 1 : 0,page:1}});
       expect(p.clientId).toBe(clientId); expect(p.type).toBe('PURCHASES'); expect(p.expectedRows).toBe(3);
-      job = {_id:p.importId,clientId,clientCode:'000',clientName:client.name,fileName:p.fileName,expectedRows:3,uploaded:0,status:'UPLOADING',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:1,invalid:1,duplicates:1}};
+      job = {_id:p.importId,calculationVersion:'NET_V2',clientId,clientCode:'000',clientName:client.name,fileName:p.fileName,expectedRows:3,uploaded:0,status:'UPLOADING',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:1,invalid:1,duplicates:1}};
       return route.fulfill({json:job});
     }
     if (url.pathname.endsWith('/rows')) { posted = p.rows; job.uploaded = 3; return route.fulfill({json:{uploaded:3}}); }
     if (url.pathname.endsWith('/finalize')) {job.status = 'COMPLETED'; job.completedAt = '2026-09-29T12:01:00Z';return route.fulfill({json:job});}
-    if (url.pathname.endsWith('/summary')) return route.fulfill({json:{job,totals:{lines:3,uniqueCnpjs:1,cnpjLines:2,nonCnpjLines:1,totalCents:17030,cnpjCents:12030,nonCnpjCents:5000},groups:[{status:'OPTANTE',count:1,lines:2,totalCents:12030,countPercent:100,valuePercent:100},{status:'NAO_OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_CONFIRMADO',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0}],excluded:[{documentKind:'CPF',lines:1,totalCents:5000}]}});
+    if (url.pathname.endsWith('/summary')) return route.fulfill({json:{job,calculationVersion:'NET_V2',components:{grossCents:17030,discountCents:1000,accessoryCents:250,freightCents:500,abatementCents:10,totalCents:16520},totals:{lines:3,uniqueCnpjs:1,cnpjLines:2,nonCnpjLines:1,totalCents:16520,cnpjCents:11520,nonCnpjCents:5000},groups:[{status:'OPTANTE',count:1,lines:2,totalCents:11520,countPercent:100,valuePercent:100},{status:'NAO_OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_CONFIRMADO',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0}],excluded:[{documentKind:'CPF',lines:1,totalCents:5000}]}});
     if (url.pathname.endsWith('/results') || url.pathname.endsWith('/lines')) {
       const excluded = url.searchParams.get('status') === 'NON_CNPJ';
-      return route.fulfill({json:{items:excluded ? [{...lines[2],submittedName:lines[2].name,documentKind:'CPF',status:'NON_CNPJ'}] : [{cnpj:'11222333000181',documentKind:'CNPJ',submittedName:lines[0].name,status:'OPTANTE',occurrences:2,totalCents:12030,checkedAt:'2026-09-29T12:01:00Z'}],total:1,page:1,pageSize:100}});
+      return route.fulfill({json:{items:excluded ? [{...lines[2],submittedName:lines[2].name,documentKind:'CPF',status:'NON_CNPJ'}] : [{cnpj:'11222333000181',documentKind:'CNPJ',submittedName:lines[0].name,status:'OPTANTE',occurrences:2,totalCents:11520,checkedAt:'2026-09-29T12:01:00Z'}],total:1,page:1,pageSize:100}});
     }
     if (url.pathname.endsWith('/csv')) {expect(method).toBe('POST');csvBody=p;return route.fulfill({json:{content:'\uFEFFDocumento;Valor\n12345678900;50,00',fileName:'compras-ficticias.csv',mimeType:'text/csv;charset=utf-8',part:1,parts:1,total:1}});}
     return route.fulfill({json:job});
@@ -42,13 +42,13 @@ test('Compras imports cp1252 columns, keeps financial values and provides snapsh
   await expect(page.locator('#purchase-file')).toBeDisabled();
   await page.getByLabel('Empresa responsável (Código / ID)').selectOption(clientId);
   await page.locator('#purchase-file').setInputFiles({name:'000-COMPRAS.csv',mimeType:'text/csv',buffer:Buffer.from(csv(),'latin1')});
-  await page.getByRole('button',{name:'Conferir colunas A, I, P e Q'}).click();
+  await page.getByRole('button',{name:'Conferir colunas e valores'}).click();
   await expect(page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'})).toBeVisible();
   await page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'}).click();
   await expect(page.getByRole('heading',{name:'Total de compras do relatório'})).toBeVisible();
   expect(posted).toEqual(lines);
-  await expect(page.locator('.purchase-hero')).toContainText('170,30');
-  await expect(page.locator('.purchase-group').first()).toContainText('120,30');
+  await expect(page.locator('.purchase-hero')).toContainText('165,20');
+  await expect(page.locator('.purchase-group').first()).toContainText('115,20');
   await expect(page.locator('.purchase-group').first()).toContainText('100%');
   await page.getByRole('button',{name:'Ver documentos não consultáveis'}).click();
   await expect(page.locator('#purchase-result-list')).toContainText('PESSOA FICTÍCIA');
@@ -81,7 +81,7 @@ test('Compras preview blocks a missing reason/social name before any upload', as
   await page.route(/\/api\/v4\/purchases(?:[/?]|$)/, route => {if(route.request().method()==='POST')writes++;return route.fulfill({json:{items:[],total:0}});});
   await page.goto('/purchases.html'); await page.getByLabel('Empresa responsável (Código / ID)').selectOption(clientId);
   await page.locator('#purchase-file').setInputFiles({name:'fixture.csv',mimeType:'text/csv',buffer:Buffer.from(csv().replaceAll('FORNECEDOR FICTÍCIO',''))});
-  await page.getByRole('button',{name:'Conferir colunas A, I, P e Q'}).click();
+  await page.getByRole('button',{name:'Conferir colunas e valores'}).click();
   await expect(page.getByRole('heading',{name:'Revise o arquivo antes de importar'})).toBeVisible();
   await expect(page.locator('#purchase-confirm')).toHaveCount(0); expect(writes).toBe(0);
 });
@@ -90,7 +90,7 @@ test('Excel starting at row 5 keeps fixed source coordinates and CNPJ leading ze
   await page.route('**/api/auth/session', route => route.fulfill({json:{user:{_id:'test',role:'operator'}}}));
   await page.route('**/api/v4/clients', route => route.fulfill({json:{items:[client]}}));
   await page.route(/\/api\/v4\/purchases(?:[/?]|$)/, route => route.fulfill({json:{items:[],total:0}}));
-  const sheet:XLSX.WorkSheet = {'!ref':'A5:Q8',A5:{t:'s',v:'Documento'},I5:{t:'s',v:'Razão Social'},P5:{t:'s',v:'Quantidade'},Q5:{t:'s',v:'Valor Total'}};
+  const sheet:XLSX.WorkSheet = {'!ref':'A5:AB8',A5:{t:'s',v:'Documento'},I5:{t:'s',v:'Razão Social'},P5:{t:'s',v:'Quantidade'},Q5:{t:'s',v:'Valor Total'},Y5:{t:'s',v:'Valor Desconto'},Z5:{t:'s',v:'Despesa Acessória'},AA5:{t:'s',v:'Valor Frete'},AB5:{t:'s',v:'Abatimento não Tributado'}};
   for(let r=6;r<=8;r++) {
     sheet['A'+r]={t:'n',v:r===6?4252011000110:11222333000181,z:'00000000000000'};
     sheet['I'+r]={t:'s',v:'FORNECEDOR LINHA '+r};sheet['P'+r]={t:'n',v:1};sheet['Q'+r]={t:'n',v:r*10};
@@ -99,11 +99,31 @@ test('Excel starting at row 5 keeps fixed source coordinates and CNPJ leading ze
   await page.goto('/purchases.html');await page.getByLabel('Empresa responsável (Código / ID)').selectOption(clientId);
   await page.locator('#purchase-file').setInputFiles({name:'fixture.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:XLSX.write(book,{bookType:'xlsx',type:'buffer'})});
   await page.getByLabel('Linha do cabeçalho').selectOption('4');
-  await page.getByRole('button',{name:'Conferir colunas A, I, P e Q'}).click();
+  await page.getByRole('button',{name:'Conferir colunas e valores'}).click();
   await expect(page.getByRole('button',{name:'Confirmar empresa e consultar 2 CNPJs'})).toBeVisible();
   const reviewRows=page.locator('#purchase-review tbody tr');
   await expect(reviewRows).toHaveCount(3);
   await expect(reviewRows.nth(0)).toContainText('04252011000110');await expect(reviewRows.nth(0)).toContainText('FORNECEDOR LINHA 6');await expect(reviewRows.nth(0)).toContainText('60,00');
   await expect(reviewRows.nth(1)).toContainText('11222333000181');await expect(reviewRows.nth(1)).toContainText('FORNECEDOR LINHA 7');
   await expect(reviewRows.nth(2)).toContainText('FORNECEDOR LINHA 8');await expect(reviewRows.nth(2)).toContainText('80,00');
+});
+
+test('Purchases resumes the original upload within its generation and keeps source failures distinct',async({page})=>{
+ const generationId='00000000-0000-4000-8000-000000000070',jobId='00000000-0000-4000-8000-000000000071';
+ let attached:any,rows:any,requestedHistory=false;
+ const job:any={_id:jobId,generationId,clientId,clientCode:'000',clientName:client.name,fileName:'000-COMPRAS.csv',calculationVersion:'NET_V2',expectedRows:3,uploaded:2,status:'UPLOADING',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:1,invalid:1,duplicates:1}};
+ await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'test',role:'operator'}}}));await page.route('**/api/v4/clients',r=>r.fulfill({json:{items:[client]}}));
+ await page.route(/\/api\/v4\/generations(?:[/?]|$)/,r=>{if(r.request().method()==='POST')attached=r.request().postDataJSON();return r.fulfill({json:{_id:generationId,companies:[{clientId}],generation:{_id:generationId},job}});});
+ await page.route(/\/api\/v4\/purchases(?:[/?]|$)/,r=>{
+  const url=new URL(r.request().url());if(url.pathname==='/api/v4/purchases'){requestedHistory=true;return r.fulfill({json:{items:[],total:0}});}
+  if(url.pathname.endsWith('/rows')){rows=r.request().postDataJSON();job.uploaded=3;return r.fulfill({json:{uploaded:3}});}
+  if(url.pathname.endsWith('/finalize')){job.status='COMPLETED';return r.fulfill({json:job});}
+  if(url.pathname.endsWith('/summary'))return r.fulfill({json:{job,calculationVersion:'NET_V2',totals:{lines:3,uniqueCnpjs:1,cnpjLines:2,nonCnpjLines:1,totalCents:16520,cnpjCents:11520,nonCnpjCents:5000},groups:[{status:'OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_CONFIRMADO',count:1,lines:2,totalCents:11520,countPercent:100,valuePercent:100}],reportingGroups:[{status:'OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_OPTANTE',count:1,lines:2,totalCents:11520,countPercent:100,valuePercent:100,unconfirmedCount:1,unconfirmedCents:11520}],excluded:[]}});
+  if(url.pathname.endsWith('/results'))return r.fulfill({json:{items:[{cnpj:'11222333000181',submittedName:'FORNECEDOR FICTÍCIO',documentKind:'CNPJ',status:'NAO_CONFIRMADO',reportingStatus:'NAO_OPTANTE',reason:'Fonte sem resposta',totalCents:11520,occurrences:2}],page:1,total:1,pageSize:100}});
+  return r.fulfill({json:job});
+ });
+ await page.goto(`/purchases.html?generation=${generationId}&client=${clientId}&job=${jobId}`);await expect(page.getByRole('heading',{name:'Importação incompleta'})).toBeVisible();await expect(page.locator('#purchase-company')).toBeDisabled();await expect(page.locator('.purchase-history')).toBeHidden();
+ await page.locator('#purchase-file').setInputFiles({name:'000-COMPRAS.csv',mimeType:'text/csv',buffer:Buffer.from(csv(),'latin1')});await page.getByRole('button',{name:'Conferir colunas e valores'}).click();await page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'}).click();
+ await expect(page.getByRole('heading',{name:'Total de compras do relatório'})).toBeVisible();expect(attached).toMatchObject({importId:jobId,clientId,expectedRows:3});expect(rows.offset).toBe(0);expect(rows.rows).toEqual(lines);expect(requestedHistory).toBe(false);await expect(page).toHaveURL(new RegExp(`generation=${generationId}`));
+ await expect(page.locator('.purchase-group')).toHaveCount(2);await expect(page.locator('[data-status="NAO_OPTANTE"]')).toContainText('Inclui 1 não confirmado(s)');await expect(page.locator('#purchase-result-list')).toContainText('Origem: não confirmado. Fonte sem resposta');await expect(page.getByRole('link',{name:'← Voltar à geração e às outras empresas'})).toHaveAttribute('href','/generations.html?id='+generationId);
 });

@@ -6,7 +6,7 @@ import { LOOKUP_MODE, compactLine, compareNames, SOURCE_NAME } from './lookup-do
 import { lookupCnpj, SourceError } from './lookup-provider.ts';
 import { ensureLookupIndexes, withJob, getJob, write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
-import { PURCHASE_MODE, compactPurchaseLine } from './purchase-domain.ts';
+import { PURCHASE_MODE, PURCHASE_CALCULATION_VERSION, calculationVersion, compactPurchaseLine } from './purchase-domain.ts';
 import { finalizePurchaseUpload, purchaseSummary } from './purchase-store.ts';
 export async function createLookup(actor:LookupActor,input:any,mode=LOOKUP_MODE){
   need([LOOKUP_MODE,PURCHASE_MODE].includes(mode),'Tipo de consulta inválido.');
@@ -16,7 +16,7 @@ export async function createLookup(actor:LookupActor,input:any,mode=LOOKUP_MODE)
   const expected=integer(input.expectedRows,1,MAX_ROWS),fileName=text(input.fileName,200);
   const jobs=await collection('lookupJobs'),old=await jobs.findOne(scope({_id:id}));
   if(old){need(old.mode===mode&&old.clientId===c._id&&old.expectedRows===expected&&old.fileName===fileName&&old.createdBy===actor._id,'Identificador já utilizado por outro lote.',409);return old;}
-  const job={_id:id,...scope(),mode,clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
+  const job={_id:id,...scope(),mode,...(mode===PURCHASE_MODE?{calculationVersion:PURCHASE_CALCULATION_VERSION}:{}),clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
   await jobs.insertOne(job);await audit(actor._id,'lookup.create',id);return job;
 }
 export async function uploadLookup(actor:LookupActor,id:string,input:any){
@@ -24,7 +24,7 @@ export async function uploadLookup(actor:LookupActor,id:string,input:any){
     need(j.status==='UPLOADING','Este lote não aceita novas linhas.',409);
     need(Array.isArray(input.rows)&&input.rows.length>0&&input.rows.length<=250,'Envie até 250 linhas por parte.');
     const offset=integer(input.offset,0,j.expectedRows-1);need(offset+input.rows.length<=j.expectedRows,'Linhas excedem o tamanho do lote.');
-    const lines=input.rows.map(j.mode===PURCHASE_MODE?compactPurchaseLine:compactLine),hash=digest(JSON.stringify(lines)),chunks=await collection('chunks'),key=`lookup:${id}:${offset}`;
+    const lines=input.rows.map((row:any)=>j.mode===PURCHASE_MODE?compactPurchaseLine(row,calculationVersion(j)):compactLine(row)),hash=digest(JSON.stringify(lines)),chunks=await collection('chunks'),key=`lookup:${id}:${offset}`;
     const old=await chunks.findOne(scope({_id:key}));if(old){need(old.hash===hash,'Parte já enviada com outros dados.',409);if(old.complete)return {uploaded:j.uploaded};}
     need(offset===j.uploaded || (old && offset+lines.length===j.uploaded),'Retome a próxima parte esperada.',409,'UPLOAD_OFFSET');
     await chunks.updateOne(scope({_id:key}),{$setOnInsert:{...scope(),hash,complete:false,createdAt:new Date()}},{upsert:true});

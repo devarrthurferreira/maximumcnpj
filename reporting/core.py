@@ -10,7 +10,7 @@ from http.cookies import SimpleCookie, CookieError
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-VERSION = '0.6.0'
+VERSION = '0.7.0'
 STATUSES = {'ALL': 'Todos os CNPJs', 'OPTANTE': 'Optantes pelo Simples',
             'NAO_OPTANTE': 'Não optantes', 'NAO_CONFIRMADO': 'Não confirmados'}
 KINDS = {'ALL': 'Clientes e fornecedores', 'CLIENTE': 'Clientes',
@@ -118,7 +118,16 @@ def session_hash(headers, env=None):
 def validate(payload):
     require(isinstance(payload, dict))
     action = payload.get('action', 'summary')
-    require(action in ('jobs', 'summary', 'rows', 'pdf', 'csv'))
+    require(action in ('jobs', 'summary', 'rows', 'pdf', 'csv', 'generation-pdf'))
+    if action == 'generation-pdf':
+        generation = payload.get('generationId')
+        part = payload.get('part', 1)
+        require(isinstance(generation, str) and re.fullmatch(r'[a-f0-9-]{36}', generation))
+        require(type(part) is int and 1 <= part <= 5)
+        require(not payload.get('jobId') and not payload.get('clientId') and not payload.get('search') and
+                payload.get('status', 'ALL') == 'ALL' and payload.get('kind', 'ALL') == 'ALL',
+                message='O PDF da geração inclui integralmente as empresas da parte selecionada.')
+        return dict(action=action, generationId=generation, part=part)
     client = payload.get('clientId', '')
     require(isinstance(client, str) and (not client or re.fullmatch(r'[a-f0-9-]{36}', client)))
     job = payload.get('jobId', '')

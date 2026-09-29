@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {amountCents, decimal, decodePurchaseCsv, parsePurchaseMatrix} from '../public/purchase-parser.js';
 
-const header = Array.from({length:17}, (_,i) => ['Documento','','','','','','','','Razão social','','','','','','','Quantidade','Valor Total'][i]);
-const row = (document, name, quantity, total) => { const r = Array(17).fill(''); r[0] = document; r[8] = name; r[15] = quantity; r[16] = total; return r; };
+const header = Array(28).fill('');
+for (const [index,label] of [[0,'Documento'],[8,'Razão social'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']]) header[index] = label;
+const row = (document, name, quantity, total) => { const r = Array(28).fill(''); r[0] = document; r[8] = name; r[15] = quantity; r[16] = total; return r; };
 
 test('purchase parser keeps cents exact and accepts Brazilian formatting or numeric Excel cells', () => {
   assert.equal(amountCents('1.234,56'), 123456);
@@ -53,4 +54,30 @@ test('CSV detection decodes Portuguese cp1252 and UTF-8, and retains quoted sepa
   const utf8 = decodePurchaseCsv(Buffer.from('\uFEFF' + csv));
   assert.equal(utf8.encoding, 'utf-8');
   assert.equal(utf8.matrix[0][0], 'Documento');
+});
+
+test('NET_V2 aplica Q-Y+AA-AB, preserva Z informativa e denuncia total negativo', () => {
+  const input = row('11222333000181','Fornecedor','10','100,00');
+  input[24]='12,50'; input[25]='300,00'; input[26]='2,10'; input[27]='0,60';
+  const parsed = parsePurchaseMatrix([header,input]);
+  assert.equal(parsed.errors.length,0); assert.equal(parsed.totalCents,8900);
+  assert.deepEqual(parsed.components,{grossCents:10000,discountCents:1250,accessoryCents:30000,freightCents:210,abatementCents:60,totalCents:8900});
+  assert.equal(parsed.rows[0].quantity,'10'); assert.equal(parsed.formula,'Q - Y + AA - AB');
+  input[24]='102,00'; assert.match(parsePurchaseMatrix([header,input]).errors[0].message,/negativo/);
+  input[24]='[FORMULA_NAO_SUPORTADA]'; assert.match(parsePurchaseMatrix([header,input]).errors[0].message,/fórmulas/);
+  const oldHeader = header.slice(0,17), oldRow = input.slice(0,17);
+  assert.throws(() => parsePurchaseMatrix([oldHeader,oldRow]), /AB/);
+  const legacy = parsePurchaseMatrix([oldHeader,oldRow],0,{calculationVersion:'Q_V1'});
+  assert.equal(legacy.totalCents,10000); assert.equal(legacy.components,null); assert(!('grossCents' in legacy.rows[0]));
+});
+
+test('vendas preparado rejeita colunas deslocadas mesmo com mesma largura do cabeçalho', () => {
+  const salesHeader = [...header,'Código','Chave',''];
+  const normal = [...row('11222333000181','Comprador','1','100,00'),'936','chave',''];
+  assert.equal(parsePurchaseMatrix([salesHeader,normal],0,{type:'SALES'}).totalCents,10000);
+  const shifted = [...normal]; shifted[15] = 'Kit'; shifted[16] = '1'; shifted[30] = 'chave';
+  assert.match(parsePurchaseMatrix([salesHeader,shifted],0,{type:'SALES'}).errors[0].message,/desalinhadas/);
+  shifted[30]=''; assert.match(parsePurchaseMatrix([salesHeader,shifted],0,{type:'SALES'}).errors[0].message,/Quantidade/);
+  const sparseHeader = [...header]; sparseHeader[15]=''; const sparse = row('11222333000181','Comprador','','100,00');
+  assert.equal(parsePurchaseMatrix([sparseHeader,sparse],0,{type:'SALES'}).rows[0].quantity,'0');
 });

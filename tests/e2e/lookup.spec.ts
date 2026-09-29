@@ -12,7 +12,7 @@ test('Novo painel: sessão, importação de códigos e leitura do modelo cliente
  await expect(page.locator('#col-code')).toBeVisible();await page.locator('#review-file').click();await page.locator('#save-catalog').click();await expect(page.locator('#client-table')).toContainText(name);
  await expect(page.locator('#dialog')).not.toBeVisible();await expect(page.locator('#dialog #col-cnpj')).toHaveCount(0);
  for(const format of ['csv','xlsx']){
-  await page.locator('.nav [data-nav=import]').click();await page.locator('#owner').selectOption({label:code+' · '+name});
+  await page.goto('/#import');await page.locator('#owner').selectOption({label:code+' · '+name});
   const rows=[['TIPO','CNPJ / CPF / CNO','Razão Social','Estado','RESPOSTA'],['CLIENTE','00.000.000/0001-91','Sintética A','MG','Não optante'],['FORNECEDOR','00000000000191','Sintética A','MG','Optante'],['CLIENTE','12345678900','Pessoa sintética','MG','']];
   let buffer:Buffer;if(format==='csv')buffer=Buffer.from(rows.map(r=>r.join(';')).join('\n'));else{const b=XLSX.utils.book_new();XLSX.utils.book_append_sheet(b,XLSX.utils.aoa_to_sheet(rows),'Relatório');buffer=XLSX.write(b,{bookType:'xlsx',type:'buffer'});}
   await page.locator('#import-file').setInputFiles({name:code+'-relatorio.'+format,mimeType:format==='csv'?'text/csv':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer});

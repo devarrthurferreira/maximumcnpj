@@ -11,7 +11,7 @@ Leia README, CHANGELOG e estado real da branch. v0.5.0: Node.js/TypeScript, Mong
 ## Invariantes
 - Código = ID de origem. Responsável escolhida explicitamente. UUID interno é diferente do Código.
 - CNPJ completo é identidade. CPF/CNO/inválidos não vão à API CNPJ nem aos percentuais.
-- Nome auxilia, mas não comprova enquadramento. Erro/ausência nunca viram negativa fiscal.
+- Nome auxilia, mas não comprova enquadramento. Erro/ausência nunca viram negativa fiscal na fonte. A partir da v0.7.0, por solicitação da Maximum, não confirmados integram o grupo gerencial de não optantes; mantenha a situação original e o subtotal identificados.
 - Novo lote consulta novamente a API. Relatório só lê o snapshot, não é nova consulta.
 - Compartilhe estados iguais no banco; preserve data e vínculo de cada busca.
 - Relatórios precisam de sessão/usuário ativo/workspace/origem; não aceite cliente enviando resultados como verdade.

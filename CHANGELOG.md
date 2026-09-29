@@ -1,5 +1,24 @@
 # Histórico de alterações
 
+## [0.7.0] — 2026-09-29
+
+### Geração e navegação
+- Menu organizado em Navegação (Início, Empresas) e Geração (Iniciar, Histórico), com identidade Maximum e uso responsivo.
+- Gerações salvas para múltiplas empresas, relatórios faltantes identificados, retomada e preservação dos registros anteriores.
+- PDF Python consolidado com memória de cálculo por empresa, emitido apenas após conclusão e reconciliação das compras.
+
+### Regra financeira
+- Novas compras usam Q − Y + AA − AB, com componentes em centavos validados no servidor. Z fica disponível para conferência e fora da fórmula.
+- Não confirmados integram o grupo gerencial de não optantes, mantendo situação original e subtotal identificados.
+- CSV e PDF expõem componentes, fórmula, valores e denominadores. CPF e demais documentos não consultáveis continuam separados.
+- Históricos da regra anterior preservam a soma de Q; nenhum ajuste ausente é inventado.
+- Leitura do formato de vendas preparada, com importação e processamento ainda indisponíveis.
+
+### Preservação e verificação
+- Contas, senhas, empresas e consultas existentes preservadas. README anterior arquivado.
+- Testes sintéticos de regras, gerações, autenticação/isolamento, PDF e navegador; conferir a CI do commit final.
+- Arquivos reais usados somente em conferência local, sem inclusão no repositório.
+
 ## [0.6.0] — 2026-09-29
 
 ### Acessos Maximum

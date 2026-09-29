@@ -9,7 +9,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from reporting.core import ReportError, utcnow, MAX_RESPONSE_BYTES
-from reporting.purchases import reconcile_purchase_snapshot, render_purchase_pdf, money, percentage, _integer, MAX_SAFE_INTEGER
+from reporting.purchases import reconcile_purchase_snapshot, render_purchase_pdf, money, percentage, _integer, MAX_SAFE_INTEGER, COMPONENT_FIELDS
 
 JOB = '00000000-0000-4000-8000-000000000071'
 CLIENT = '00000000-0000-4000-8000-000000000072'
@@ -40,6 +40,17 @@ def fixture():
     return job, lines, items
 
 
+def net_fixture():
+    job, lines, items = fixture()
+    job['calculationVersion'] = 'NET_V2'
+    for line in lines:
+        line.update(grossCents=line['totalCents'] + 500, discountCents=200, accessoryCents=177,
+                    freightCents=100, abatementCents=400)
+    job['purchaseInput']['components'] = {key: sum(line[key] for line in lines)
+                                          for key in (*COMPONENT_FIELDS, 'totalCents')}
+    return job, lines, items
+
+
 def large_double_fixture():
     """BSON doubles as emitted by Node for cent values above the Int32 range."""
     job, lines, items = fixture()
@@ -50,6 +61,38 @@ def large_double_fixture():
 
 
 class PurchaseReportTests(unittest.TestCase):
+    def test_net_formula_components_and_managerial_unknown_preserve_source(self):
+        job, lines, items = net_fixture()
+        meta = reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
+        self.assertEqual(meta['calculationVersion'], 'NET_V2')
+        self.assertEqual(meta['components'], {'grossCents': 102500, 'discountCents': 1000,
+            'accessoryCents': 885, 'freightCents': 500, 'abatementCents': 2000, 'totalCents': 100000})
+        nonoptant = meta['managerialGroups'][1]
+        self.assertEqual((nonoptant['suppliers'], nonoptant['lines'], nonoptant['totalCents']), (2, 2, 50000))
+        self.assertEqual((nonoptant['supplierPercent'], nonoptant['valuePercent']), (66.67, 62.5))
+        self.assertEqual(meta['unconfirmed']['totalCents'], 10000)
+        self.assertEqual(items[2]['status'], 'NAO_CONFIRMADO')
+        self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+        legacy = reconcile_purchase_snapshot(*fixture(), WORKSPACE)
+        self.assertEqual(legacy['calculationVersion'], 'Q_V1')
+        self.assertIsNone(legacy['components'])
+
+    def test_net_component_tampering_and_unknown_versions_block_pdf(self):
+        def omitted(job, lines, items): del lines[0]['discountCents']
+        def formula(job, lines, items): lines[0]['freightCents'] += 1
+        def informational(job, lines, items): lines[0]['accessoryCents'] += 1
+        def summary(job, lines, items): job['purchaseInput']['components']['grossCents'] += 1
+        def missing_summary(job, lines, items): del job['purchaseInput']['components']
+        def future_version(job, lines, items): job['calculationVersion'] = 'NET_V3'
+        def negative(job, lines, items): lines[0]['discountCents'] = -1
+        def excessive(job, lines, items): lines[0]['accessoryCents'] = 100_000_000_001
+        for change in (omitted, formula, informational, summary, missing_summary, future_version, negative, excessive):
+            with self.subTest(change=change.__name__):
+                job, lines, items = net_fixture()
+                change(job, lines, items)
+                with self.assertRaises(ReportError):
+                    reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
+
     def test_bson_integral_doubles_are_normalized_without_losing_centavos(self):
         meta = reconcile_purchase_snapshot(*large_double_fixture(), WORKSPACE)
         self.assertIs(type(meta['totalCents']), int)

@@ -30,9 +30,10 @@ test('MongoDB compras: idempotência, CNPJ único, CPF separado, somas exatas e 
       {document:ids[1],name:'Fornecedor sintético',quantity:'1',totalCents:20000},
       {document:ids[2],name:'Fornecedor sintético',quantity:'1',totalCents:9990},
       {document:'12345678900',name:'Pessoa sintética',quantity:'1',totalCents:3000}
-    ];
+    ].map(row=>({...row,grossCents:row.totalCents+500,discountCents:600,accessoryCents:99,freightCents:150,abatementCents:50}));
     const input = {importId:randomUUID(),clientId,fileName:'sintetico.csv',expectedRows:rows.length};
     const job = await createLookup(actor, input, PURCHASE_MODE);
+    assert.equal(job.calculationVersion,'NET_V2');
     assert.equal((await createLookup(actor, input, PURCHASE_MODE))._id, job._id);
     let acquired!: () => void, release!: () => void;
     const locked = new Promise<void>(resolve => { acquired = resolve; });
@@ -60,9 +61,18 @@ test('MongoDB compras: idempotência, CNPJ único, CPF separado, somas exatas e 
     assert.deepEqual(summary.groups.map(g=>[g.status,g.count,g.totalCents,g.countPercent,g.valuePercent]), [
       ['OPTANTE',1,10010,33.33,25.03], ['NAO_OPTANTE',1,20000,33.33,50], ['NAO_CONFIRMADO',1,9990,33.33,24.98]
     ]);
+    assert.deepEqual(summary.components, {grossCents:45500,discountCents:3000,accessoryCents:495,freightCents:750,abatementCents:250,totalCents:43000});
+    assert.equal(summary.calculationVersion,'NET_V2'); assert.equal(summary.formula,'Q - Y + AA - AB');
+    assert.deepEqual(summary.reportingGroups.map(g=>[g.status,g.count,g.totalCents,g.countPercent,g.valuePercent,g.unconfirmedCount,g.unconfirmedCents]), [
+      ['OPTANTE',1,10010,33.33,25.03,0,0], ['NAO_OPTANTE',2,29990,66.67,74.98,1,9990]
+    ]);
+    assert.equal((await purchaseRows(job._id,'NAO_OPTANTE',1)).total,2);
+    assert.equal((await purchaseRows(job._id,'NAO_CONFIRMADO',1)).total,1);
+    assert.equal((await purchaseRows(job._id,'NAO_OPTANTE',1,true)).total,2);
+    const combinedCsv = await purchaseExport(job._id,'NAO_OPTANTE',1); assert.equal(combinedCsv.total,2); assert(combinedCsv.content.includes('"NAO_OPTANTE";"NAO_CONFIRMADO"'));
     const cnpjs = await purchaseRows(job._id, 'ALL', 1); assert.equal(cnpjs.total, 3);
     const excluded = await purchaseRows(job._id, 'NON_CNPJ', 1); assert.equal(excluded.total, 1); assert.equal(excluded.items[0].documentKind, 'CPF');
-    const csv = await purchaseExport(job._id, 'ALL', 1); assert.equal(csv.total, 5); assert(csv.content.includes('"99";"100,01"')); assert.equal(csv.parts, 1);
+    const csv = await purchaseExport(job._id, 'ALL', 1); assert.equal(csv.total, 5); assert(csv.content.includes('"99";"105,01";"6,00";"0,99";"1,50";"0,50";"100,01"')); assert.equal(csv.parts, 1);
     await assert.rejects(purchaseExport(job._id, 'ALL', 2));
     await assert.rejects(routeV4(actor,'GET',new URL('https://test/api/v4/purchases/'+job._id+'/csv'),{}));
     const exported:any = await routeV4(actor,'POST',new URL('https://test/api/v4/purchases/'+job._id+'/csv'),{status:'ALL',part:1}); assert.equal(exported.total,5);
@@ -81,11 +91,24 @@ test('MongoDB compras: idempotência, CNPJ único, CPF separado, somas exatas e 
     await (await collection('lookupItems')).updateOne(scope({_id:target!._id}),{$set:{stateId:'missing'}});
     await assert.rejects(purchaseExport(job._id,'ALL',1));
     await (await collection('lookupItems')).updateOne(scope({_id:target!._id}),{$set:{stateId:target!.stateId}});
+    const purchaseLines = await collection('purchaseLines'), lineIdentity = scope({jobId:job._id,index:0});
+    await purchaseLines.updateOne(lineIdentity,{$inc:{grossCents:1}}); await assert.rejects(purchaseSummary(job._id));
+    await purchaseLines.updateOne(lineIdentity,{$inc:{grossCents:-1}});
+    await purchaseLines.updateOne(lineIdentity,{$inc:{accessoryCents:1}}); await assert.rejects(purchaseSummary(job._id));
+    await purchaseLines.updateOne(lineIdentity,{$inc:{accessoryCents:-1}});
+    await purchaseLines.updateOne(lineIdentity,{$unset:{discountCents:''}}); await assert.rejects(purchaseSummary(job._id));
+    await purchaseLines.updateOne(lineIdentity,{$set:{discountCents:600}});
     process.env.WORKSPACE_ID = 'another_workspace'; await assert.rejects(purchaseSummary(job._id)); process.env.WORKSPACE_ID = 'purchases_test';
     const allCpf = await createLookup(actor,{...input,importId:randomUUID(),expectedRows:1},PURCHASE_MODE);
     await uploadLookup(actor,allCpf._id,{offset:0,rows:[rows[4]]});
     assert.equal((await finalizeLookup(actor,allCpf._id)).status,'COMPLETED');
     const cpfSummary = await purchaseSummary(allCpf._id); assert.equal(cpfSummary.totals.cnpjCents,0); assert.equal(cpfSummary.totals.totalCents,3000); assert(cpfSummary.groups.every(g=>g.countPercent===0&&g.valuePercent===0));
+    const legacy = await createLookup(actor,{...input,importId:randomUUID(),expectedRows:1},PURCHASE_MODE);
+    await (await collection('lookupJobs')).updateOne(scope({_id:legacy._id}),{$unset:{calculationVersion:''}});
+    await uploadLookup(actor,legacy._id,{offset:0,rows:[{document:'12345678900',name:'Legado',quantity:'1',totalCents:12345}]});
+    await finalizeLookup(actor,legacy._id); const legacySummary = await purchaseSummary(legacy._id);
+    assert.equal(legacySummary.calculationVersion,'Q_V1'); assert.equal(legacySummary.formula,'Q'); assert.equal(legacySummary.components,null); assert.equal(legacySummary.totals.totalCents,12345);
+    assert(!(await purchaseLines.findOne(scope({jobId:legacy._id})))!.grossCents);
     assert.equal((await purchaseSummary(job._id)).totals.totalCents,43000); assert.equal(await (await collection('clients')).countDocuments(scope()),2);
   } finally {
     await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();

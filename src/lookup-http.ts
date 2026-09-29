@@ -2,6 +2,7 @@ import { collection, scope } from './store.ts';
 import { need, integer, escapeRegex } from './security.ts';
 import { normalizeCnpj } from './domain.ts';
 import { routePurchases } from './purchase-http.ts';
+import { routeGenerations } from './generation-http.ts';
 import { PURCHASE_MODE } from './purchase-domain.ts';
 import { ensureLookupIndexes, getJob } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
@@ -23,12 +24,13 @@ async function history(clientId:string,page:number,cnpj:string){
 async function dashboard(clientId:string){
   const q=scope(clientId?{clientId}:{});
   const values=await (await collection('lookupItems')).aggregate([{$match:{...q,state:'DONE'}},{$lookup:{from:'lookupJobs',localField:'jobId',foreignField:'_id',as:'job'}},{$match:{'job.status':'COMPLETED'}},{$sort:{cnpj:1,checkedAt:-1,jobId:-1}},{$group:{_id:'$cnpj',status:{$first:'$status'}}},{$group:{_id:'$status',count:{$sum:1}}}],{allowDiskUse:true,maxTimeMS:20000}).toArray();
-  const get=(s:string)=>values.find(v=>v._id===s)?.count||0;const optants=get('OPTANTE'),nonOptants=get('NAO_OPTANTE'),unknown=get('NAO_CONFIRMADO'),total=optants+nonOptants+unknown;
+  const get=(s:string)=>values.find(v=>v._id===s)?.count||0;const optants=get('OPTANTE'),nonOptants=get('NAO_OPTANTE'),unknown=get('NAO_CONFIRMADO'),reportingNonOptants=nonOptants+unknown,total=optants+nonOptants+unknown;
   const p=(v:number)=>total?Math.round(v/total*10000)/100:0;
-  return {metrics:{total,optants,nonOptants,unknown,optantsPercent:p(optants),nonOptantsPercent:p(nonOptants),unknownPercent:p(unknown),coverage:p(optants+nonOptants)},recent:(await history(clientId,1,'')).items.slice(0,8),entities:await (await collection('cnpjEntities')).countDocuments(scope()),clientCount:await (await collection('clients')).countDocuments(scope({active:true})),source:'Minha Receita',sourceReferenceDate:null};
+  return {metrics:{total,optants,nonOptants,unknown,optantsPercent:p(optants),nonOptantsPercent:p(nonOptants),unknownPercent:p(unknown),coverage:p(optants+nonOptants),reportingNonOptants,reportingNonOptantsPercent:p(reportingNonOptants),unknownIncludedInNonOptants:true},recent:(await history(clientId,1,'')).items.slice(0,8),entities:await (await collection('cnpjEntities')).countDocuments(scope()),clientCount:await (await collection('clients')).countDocuments(scope({active:true})),source:'Minha Receita',sourceReferenceDate:null};
 }
 export async function routeV4(actor:LookupActor,method:string,url:URL,input:any){
   await ensureLookupIndexes();
+  if(url.pathname==='/api/v4/generations' || url.pathname.startsWith('/api/v4/generations/'))return routeGenerations(actor,method,url,input);
   if(url.pathname.startsWith('/api/v4/purchases') || url.pathname.startsWith('/api/v4/sales'))return routePurchases(actor,method,url,input);
   const path=url.pathname.replace('/api/v4',''),p=integer(url.searchParams.get('page')||1,1,100000),client=url.searchParams.get('clientId')||'';
   if(path==='/clients'&&method==='GET')return listCatalog();

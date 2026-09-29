@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compactPurchaseLine, exactCents, percentage, purchaseCsv, MAX_LINE_CENTS } from '../src/purchase-domain.ts';
 
-const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', quantity: '020.500000', totalCents: 1050};
-test('Compras: valida quatro campos no servidor, centavos exatos e não multiplica P por Q', () => {
+const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050};
+test('Compras: valida componentes no servidor, centavos exatos e não multiplica P por Q', () => {
   const value = compactPurchaseLine({...row, status: 'OPTANTE', rawWorkbook: 'discard'});
   assert.equal(value.document, '00000000000191'); assert.equal(value.cnpj, '00000000000191'); assert.equal(value.documentKind, 'CNPJ');
   assert.equal(value.quantity, '20.5'); assert.equal(value.totalCents, 1050); assert.equal(value.valid, true);
@@ -21,8 +21,22 @@ test('Compras: CPF, inválido e ausência preservam valor sem virarem CNPJ ou ne
   assert.equal(percentage(10010, 40000), 25.03); assert.equal(percentage(0, 0), 0);
   assert.throws(() => exactCents(Number.MAX_SAFE_INTEGER + 1)); assert.throws(() => exactCents(-1));
 });
-test('Compras: CSV preserva P e Q e neutraliza fórmula', () => {
-  const csv = purchaseCsv({_id:'test',clientCode:'1',clientName:'Empresa',fileName:'arquivo.csv'}, [{...compactPurchaseLine({...row,name:'=DDE()'}),index:0,status:'OPTANTE'}]);
-  assert(csv.startsWith('\uFEFF')); assert(csv.includes('"20.5";"10,50"')); assert(csv.includes("'"+'=DDE()'));
+test('Compras: CSV preserva componentes, P, total e fonte e neutraliza fórmula', () => {
+  const csv = purchaseCsv({calculationVersion:'NET_V2',_id:'test',clientCode:'1',clientName:'Empresa',fileName:'arquivo.csv'}, [{...compactPurchaseLine({...row,name:'=DDE()'}),index:0,status:'OPTANTE'}]);
+  assert(csv.startsWith('\uFEFF')); assert(csv.includes('"20.5";"12,00";"2,00";"999,99";"1,00";"0,50";"10,50"')); assert(csv.includes("'"+'=DDE()'));
   assert(!csv.includes('215,25'));
+});
+
+test('NET_V2 exige componentes, recalcula o total e não inclui Z; Q_V1 mantém snapshot antigo', () => {
+  assert.equal(compactPurchaseLine(row).totalCents, 1050);
+  for (const field of ['grossCents','discountCents','accessoryCents','freightCents','abatementCents']) {
+    for (const invalid of [undefined, null, -1, 0.1, '1', Infinity, MAX_LINE_CENTS + 1]) assert.throws(() => compactPurchaseLine({...row,[field]:invalid}));
+  }
+  assert.throws(() => compactPurchaseLine({...row,totalCents:1049}), /divergente/);
+  assert.throws(() => compactPurchaseLine({...row,discountCents:99999}), /negativo/);
+  const legacy = compactPurchaseLine({document:row.document,name:row.name,quantity:row.quantity,totalCents:100}, 'Q_V1');
+  assert.equal(legacy.totalCents,100); assert(!('grossCents' in legacy));
+  const csv = purchaseCsv({_id:'legacy',clientName:'Empresa',fileName:'legado.csv'}, [{...legacy,index:0,status:'NAO_CONFIRMADO'}]);
+  assert(csv.includes('"Q";"Q_V1";"NAO_OPTANTE";"NAO_CONFIRMADO"'));
+  assert(csv.includes('"1,00";"";"";"";"";"1,00"'));
 });
