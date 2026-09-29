@@ -15,3 +15,7 @@ service-account*.json
 playwright-report/
 test-results/
 
+public/lookup-domain.js
+__pycache__/
+*.pyc
+tmp/

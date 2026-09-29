@@ -6,14 +6,17 @@ import { LOOKUP_MODE, compactLine, compareNames, SOURCE_NAME } from './lookup-do
 import { lookupCnpj, SourceError } from './lookup-provider.ts';
 import { ensureLookupIndexes, withJob, getJob, write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
-export async function createLookup(actor:LookupActor,input:any){
+import { PURCHASE_MODE, compactPurchaseLine } from './purchase-domain.ts';
+import { finalizePurchaseUpload, purchaseSummary } from './purchase-store.ts';
+export async function createLookup(actor:LookupActor,input:any,mode=LOOKUP_MODE){
+  need([LOOKUP_MODE,PURCHASE_MODE].includes(mode),'Tipo de consulta inválido.');
   write(actor);await ensureLookupIndexes();
   const id=text(input.importId);need(/^[a-f0-9-]{36}$/.test(id),'Identificador inválido.');
   const c=await (await collection('clients')).findOne(scope({_id:text(input.clientId),active:true}));need(c,'Escolha uma empresa/carteira ativa.');
   const expected=integer(input.expectedRows,1,MAX_ROWS),fileName=text(input.fileName,200);
   const jobs=await collection('lookupJobs'),old=await jobs.findOne(scope({_id:id}));
-  if(old){need(old.clientId===c._id&&old.expectedRows===expected&&old.fileName===fileName&&old.createdBy===actor._id,'Identificador já utilizado por outro lote.',409);return old;}
-  const job={_id:id,...scope(),mode:LOOKUP_MODE,clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
+  if(old){need(old.mode===mode&&old.clientId===c._id&&old.expectedRows===expected&&old.fileName===fileName&&old.createdBy===actor._id,'Identificador já utilizado por outro lote.',409);return old;}
+  const job={_id:id,...scope(),mode,clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
   await jobs.insertOne(job);await audit(actor._id,'lookup.create',id);return job;
 }
 export async function uploadLookup(actor:LookupActor,id:string,input:any){
@@ -21,7 +24,7 @@ export async function uploadLookup(actor:LookupActor,id:string,input:any){
     need(j.status==='UPLOADING','Este lote não aceita novas linhas.',409);
     need(Array.isArray(input.rows)&&input.rows.length>0&&input.rows.length<=250,'Envie até 250 linhas por parte.');
     const offset=integer(input.offset,0,j.expectedRows-1);need(offset+input.rows.length<=j.expectedRows,'Linhas excedem o tamanho do lote.');
-    const lines=input.rows.map(compactLine),hash=digest(JSON.stringify(lines)),chunks=await collection('chunks'),key=`lookup:${id}:${offset}`;
+    const lines=input.rows.map(j.mode===PURCHASE_MODE?compactPurchaseLine:compactLine),hash=digest(JSON.stringify(lines)),chunks=await collection('chunks'),key=`lookup:${id}:${offset}`;
     const old=await chunks.findOne(scope({_id:key}));if(old){need(old.hash===hash,'Parte já enviada com outros dados.',409);if(old.complete)return {uploaded:j.uploaded};}
     need(offset===j.uploaded || (old && offset+lines.length===j.uploaded),'Retome a próxima parte esperada.',409,'UPLOAD_OFFSET');
     await chunks.updateOne(scope({_id:key}),{$setOnInsert:{...scope(),hash,complete:false,createdAt:new Date()}},{upsert:true});
@@ -34,6 +37,7 @@ export async function uploadLookup(actor:LookupActor,id:string,input:any){
 export async function finalizeLookup(actor:LookupActor,id:string){
   write(actor);return withJob(id,async j=>{
     if(j.status!=='UPLOADING')return j;
+    if(j.mode===PURCHASE_MODE)return finalizePurchaseUpload(actor,j);
     const stage=await collection('lookupStage');const count=await stage.countDocuments(scope({jobId:id}));need(count===j.expectedRows&&j.uploaded===count,'Envio incompleto ou expirado. Reenvie a planilha.',409);
     const unique=await stage.aggregate([{$match:scope({jobId:id,valid:true})},{$sort:{index:1}},{$group:{_id:'$cnpj',name:{$first:'$name'},kind:{$first:'$kind'},uf:{$first:'$uf'},occurrences:{$sum:1}}}],{allowDiskUse:true,maxTimeMS:20000}).toArray();
     const invalid=await stage.countDocuments(scope({jobId:id,valid:false}));
@@ -84,6 +88,7 @@ export async function processLookup(actor:LookupActor,id:string,transport:typeof
     update.nextPollMs=Math.max(1200,Math.min(60000,(control?.nextAt?.getTime()||0)-Date.now()));
     if(received===j.summary.unique){
       const docs=await items.find(scope({jobId:id})).project({cnpj:1,status:1}).toArray();
+      if(j.mode===PURCHASE_MODE)await purchaseSummary(id,false);
       update.status='COMPLETED';update.completedAt=new Date();update.resultSummary=statistics(docs as any);
       await audit(actor._id,'lookup.completed',id);
     }
@@ -92,7 +97,7 @@ export async function processLookup(actor:LookupActor,id:string,transport:typeof
 }
 export async function cancelLookup(actor:LookupActor,id:string){write(actor);return withJob(id,async j=>{need(j.status!=='COMPLETED','Consulta concluída fica preservada.',409);await (await collection('lookupJobs')).updateOne(scope({_id:id}),{$set:{status:'CANCELLED',updatedAt:new Date()}});await (await collection('lookupStage')).deleteMany(scope({jobId:id}));await audit(actor._id,'lookup.cancel',id);return getJob(id);});}
 export async function repeatLookup(actor:LookupActor,id:string){
-  write(actor);const old=await getJob(id);need(old.status==='COMPLETED','A consulta anterior precisa estar concluída.',409);
+  write(actor);const old=await getJob(id);need(old.mode!==PURCHASE_MODE,'Para novo relatório de compras, importe novamente as linhas e os valores.',409,'PURCHASE_REIMPORT');need(old.status==='COMPLETED','A consulta anterior precisa estar concluída.',409);
   const count=await (await collection('lookupItems')).countDocuments(scope({jobId:id}));need(count>0,'Sem CNPJs para reconsultar.');
   const j=await createLookup(actor,{importId:randomUUID(),clientId:old.clientId,fileName:'Reconsulta · '+old.fileName.slice(0,170),expectedRows:count});
   await (await collection('lookupItems')).aggregate([

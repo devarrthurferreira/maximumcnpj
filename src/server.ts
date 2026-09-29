@@ -11,6 +11,7 @@ import type { Actor } from './service.ts';
 import { VERSION } from './domain.ts';
 import { appOrigin, permittedOrigin } from './origins.ts';
 import { routeV4 } from './lookup-http.ts';
+import { provisionMaximumForLogin, provisionMaximumTeam } from './team.ts';
 const PUBLIC = resolve(process.cwd(), 'public');
 const cookieName = () => process.env.NODE_ENV === 'production' ? '__Host-maximum_session' : 'maximum_session';
 const cookie = (value: string, age=43200) => `${cookieName()}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}${process.env.NODE_ENV==='production'?'; Secure':''}`;
@@ -42,6 +43,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     const input=await body(req), account=email(input.email);
     await rateLimit('login-ip:'+digest(workspace()+':'+(req.socket.remoteAddress||'unknown')),100,15);
     await rateLimit('login-account:'+digest(workspace()+':'+account),10,15);
+    await provisionMaximumForLogin(account,input.password);
     if(process.env.ADMIN_EMAIL?.trim().toLowerCase()===account && process.env.ADMIN_PASSWORD && typeof input.password==='string' && digest(input.password)===digest(process.env.ADMIN_PASSWORD) && !(await (await collection('users')).countDocuments(scope()))){
       try { await seed(); } catch(e:any) { if(e?.code!==11000 && e?.code!=='ADMIN_EXISTS')throw e; }
     }
@@ -65,6 +67,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
     const input=await body(req), u=await (await collection('users')).findOne(scope({ _id:actor._id }));
     await rateLimit('password:'+actor._id,10,15);
     need(u && await verifyPassword(input.current,u.passwordHash),'Senha atual incorreta.',400);
+    need(typeof input.password==='string' && input.password!==input.current,'Escolha uma nova senha diferente da senha atual.',400,'PASSWORD_REUSE');
     const passwordHash=await hashPassword(input.password);
     await (await collection('users')).updateOne(scope({ _id:actor._id }),{$set:{ passwordHash,mustChangePassword:false }});
     await (await collection('sessions')).deleteMany(scope({ userId:actor._id })); res.setHeader('Set-Cookie',cookie('',0));
@@ -97,6 +100,14 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
   }
   if (path==='/api/settings' && method==='GET') return json(res,200,{ version:VERSION, workspace:workspace(), mode:'API_MINIMAL_V1', maxRows:50000, source:'Minha Receita: resultados conforme a atualização da base externa.', database:'MongoDB', history:'Histórico de consultas e importações anteriores; não é histórico fiscal oficial.' });
   if (path==='/api/users' && method==='GET') { service.canAdmin(actor); return json(res,200,{ items:await (await collection('users')).find(scope()).project({ passwordHash:0 }).limit(100).toArray() }); }
+  if (path==='/api/users/provision-maximum' && method==='POST') {
+    service.canAdmin(actor);
+    const input=await body(req);
+    need(input.teamPassword===undefined || (typeof input.teamPassword==='string' && input.teamPassword.length>=8 && input.teamPassword.length<=128),'A senha temporária da equipe deve ter entre 8 e 128 caracteres.');
+    need(input.adminPassword===undefined || (typeof input.adminPassword==='string' && input.adminPassword.length>=10 && input.adminPassword.length<=128),'A senha inicial do administrador deve ter entre 10 e 128 caracteres.');
+    const config=('teamPassword' in input || 'adminPassword' in input) ? {teamPassword:input.teamPassword,adminPassword:input.adminPassword} : undefined;
+    return json(res,200,await provisionMaximumTeam(config));
+  }
   if (path==='/api/users' && method==='POST') {
     service.canAdmin(actor); const input=await body(req); need(['admin','operator','viewer'].includes(input.role),'Perfil inválido.');
     const id=randomUUID(); await (await collection('users')).insertOne({ _id:id,...scope(),name:text(input.name),email:email(input.email),passwordHash:await hashPassword(input.password),role:input.role,active:true,mustChangePassword:true,createdAt:new Date() });

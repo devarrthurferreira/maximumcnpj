@@ -1,0 +1,127 @@
+import { collection, scope, audit } from './store.ts';
+import type { Doc } from './store.ts';
+import { getJob } from './lookup-db.ts';
+import type { LookupActor } from './lookup-db.ts';
+import { need, integer } from './security.ts';
+import { PURCHASE_MODE, PURCHASE_STATUSES, exactCents, percentage, purchaseCsv } from './purchase-domain.ts';
+
+export async function purchaseJob(id: string) {
+  const job = await getJob(id);
+  need(job.mode === PURCHASE_MODE, 'Relatório de compras não encontrado.', 404, 'NOT_FOUND');
+  return job;
+}
+/** Caller owns the same job lease used by upload and provider processing. */
+export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
+  const id = job._id, stage = await collection('lookupStage'), rows = await collection('purchaseLines');
+  const count = await stage.countDocuments(scope({jobId: id}));
+  need(count === job.expectedRows && job.uploaded === count, 'Envio incompleto ou expirado. Reenvie a planilha.', 409, 'INCOMPLETE');
+  const groups = await stage.aggregate([
+    {$match: scope({jobId: id})}, {$sort: {index: 1}},
+    {$group: {_id: {$cond: ['$valid', '$cnpj', {$concat: ['NON_CNPJ:', '$documentKind']}]}, valid: {$first: '$valid'}, name: {$first: '$name'},
+      documentKind: {$first: '$documentKind'}, occurrences: {$sum: 1}, totalCents: {$sum: '$totalCents'}}}
+  ], {allowDiskUse: true, maxTimeMS: 20000}).toArray();
+  const valid = groups.filter(g => g.valid), invalid = groups.filter(g => !g.valid).reduce((sum, g) => sum + g.occurrences, 0);
+  const totalCents = exactCents(groups.reduce((sum, g) => sum + exactCents(g.totalCents), 0));
+  // Persist only the four selected columns plus row/document identity. Never retain the uploaded workbook.
+  await stage.aggregate([
+    {$match: scope({jobId: id})},
+    {$project: {_id: 1, workspaceId: 1, jobId: 1, index: 1, document: 1, documentKind: 1, cnpj: 1, name: 1, quantity: 1, totalCents: 1, valid: 1}},
+    {$merge: {into: 'purchaseLines', on: '_id', whenMatched: 'keepExisting', whenNotMatched: 'insert'}}
+  ], {maxTimeMS: 20000}).toArray();
+  need(await rows.countDocuments(scope({jobId: id})) === count, 'Cópia financeira incompleta.', 409, 'RESULT_COUNT');
+  const items = await collection('lookupItems');
+  for (let p = 0; p < valid.length; p += 500) {
+    await items.bulkWrite(valid.slice(p, p + 500).map(g => ({updateOne: {filter: scope({_id: `${id}:${g._id}`}), update: {$setOnInsert: {
+      ...scope(), jobId: id, clientId: job.clientId, cnpj: g._id, submittedName: g.name, kind: 'FORNECEDOR', uf: '', occurrences: g.occurrences,
+      totalCents: exactCents(g.totalCents), state: 'PENDING', attempts: 0, createdAt: new Date()
+    }}, upsert: true}})));
+  }
+  need(await items.countDocuments(scope({jobId: id})) === valid.length, 'Quantidade de fornecedores inconsistente.', 409, 'RESULT_COUNT');
+  const summary = {lines: count, unique: valid.length, invalid, duplicates: count - invalid - valid.length};
+  const update: any = {summary, purchaseInput: {totalCents, cnpjCents: exactCents(valid.reduce((sum, g) => sum + g.totalCents, 0))}, status: 'PROCESSING', received: 0, startedAt: new Date()};
+  // All-CPF files still produce a useful complete financial report, with zero CNPJ denominator.
+  if (!valid.length) { update.status = 'COMPLETED'; update.completedAt = new Date(); }
+  await (await collection('lookupJobs')).updateOne(scope({_id: id}), {$set: update});
+  await stage.deleteMany(scope({jobId: id}));
+  await audit(actor._id, 'purchases.validated', id);
+  return getJob(id);
+}
+
+/** Reconcile against immutable stored lines and scoped provider snapshots before any report/download. */
+export async function purchaseSummary(id: string, requireComplete = true) {
+  const job = await purchaseJob(id);
+  if (requireComplete) need(job.status === 'COMPLETED', 'Conclua a consulta para emitir o relatório de compras.', 409, 'INCOMPLETE');
+  need(job.summary && job.purchaseInput, 'Resumo financeiro ausente.', 409, 'INCOMPLETE');
+  const grouped = await (await collection('purchaseLines')).aggregate([
+    {$match: scope({jobId: id})},
+    {$group: {_id: {$cond: ['$valid', '$cnpj', {$concat: ['NON_CNPJ:', '$documentKind']}]}, valid: {$first: '$valid'}, documentKind: {$first: '$documentKind'},
+      lines: {$sum: 1}, totalCents: {$sum: '$totalCents'}}}
+  ], {allowDiskUse: true, maxTimeMS: 20000}).toArray();
+  const items = await (await collection('lookupItems')).aggregate([
+    {$match: scope({jobId: id})},
+    {$lookup: {from: 'cnpjStates', let: {state: '$stateId', identity: '$cnpj'}, pipeline: [{$match: {$expr: {$and: [{$eq: ['$_id', '$$state']}, {$eq: ['$cnpj', '$$identity']}, {$eq: ['$workspaceId', scope().workspaceId]}]}}}, {$project: {status: 1}}], as: 'sourceState'}},
+    {$project: {cnpj: 1, clientId: 1, state: 1, stateId: 1, status: 1, occurrences: 1, totalCents: 1, sourceState: 1}}
+  ], {maxTimeMS: 20000}).toArray();
+  const valid = grouped.filter(g => g.valid), excluded = grouped.filter(g => !g.valid).map(g => ({documentKind: g.documentKind, lines: g.lines, totalCents: exactCents(g.totalCents)}));
+  const lines = grouped.reduce((sum, g) => sum + g.lines, 0), cnpjLines = valid.reduce((sum, g) => sum + g.lines, 0);
+  const cnpjCents = exactCents(valid.reduce((sum, g) => sum + exactCents(g.totalCents), 0)), nonCnpjCents = exactCents(excluded.reduce((sum, g) => sum + g.totalCents, 0));
+  const totalCents = exactCents(cnpjCents + nonCnpjCents);
+  need(lines === job.expectedRows && lines === job.summary.lines && valid.length === job.summary.unique && items.length === valid.length &&
+    lines - cnpjLines === job.summary.invalid && cnpjLines - valid.length === job.summary.duplicates && job.purchaseInput.totalCents === totalCents && job.purchaseInput.cnpjCents === cnpjCents,
+    'Linhas, fornecedores ou valores divergentes do snapshot. Emissão bloqueada.', 409, 'RESULT_COUNT');
+  const indexed = new Map(items.map(item => [item.cnpj, item]));
+  const groups = PURCHASE_STATUSES.map(status => ({status, count: 0, lines: 0, totalCents: 0, countPercent: 0, valuePercent: 0}));
+  for (const line of valid) {
+    const item = indexed.get(line._id);
+    need(item && item.clientId === job.clientId && item.state === 'DONE' && item.occurrences === line.lines && item.totalCents === line.totalCents && PURCHASE_STATUSES.includes(item.status),
+      'Snapshot de fornecedor incompleto ou divergente.', 409, 'RESULT_COUNT');
+    need(item.stateId ? item.sourceState.length === 1 && item.sourceState[0].status === item.status : item.status === 'NAO_CONFIRMADO',
+      'Estado de origem ausente ou divergente.', 409, 'RESULT_COUNT');
+    const group = groups.find(g => g.status === item.status)!;
+    group.count++; group.lines += line.lines; group.totalCents = exactCents(group.totalCents + line.totalCents);
+  }
+  for (const group of groups) { group.countPercent = percentage(group.count, valid.length); group.valuePercent = percentage(group.totalCents, cnpjCents); }
+  return {job, totals: {lines, uniqueCnpjs: valid.length, cnpjLines, nonCnpjLines: lines - cnpjLines, totalCents, cnpjCents, nonCnpjCents}, groups, excluded,
+    denominators: {count: 'CNPJs válidos distintos deste relatório, incluindo os não confirmados.', value: 'Soma de Q somente das linhas com CNPJ válido, incluindo os não confirmados. CPF e outros documentos ficam separados.'},
+    source: 'Minha Receita — enquadramento observado na consulta; não comprova o regime na data da compra.'};
+}
+export function purchaseFilter(value: string) {
+  need(['ALL', ...PURCHASE_STATUSES, 'NON_CNPJ'].includes(value), 'Grupo de compras inválido.'); return value;
+}
+export async function purchaseHistory(clientId: string, page: number) {
+  const query = scope({mode: PURCHASE_MODE, ...(clientId ? {clientId} : {})});
+  const jobs = await collection('lookupJobs');
+  return {items: await jobs.find(query).sort({createdAt: -1, _id: 1}).skip((page - 1) * 30).limit(30).toArray(), total: await jobs.countDocuments(query), page};
+}
+async function linePage(id: string, status: string, page: number, pageSize: number) {
+  const match: any = scope({jobId: id});
+  if (status === 'NON_CNPJ') match.valid = false;
+  else if (status !== 'ALL') match.valid = true;
+  const stages: any[] = [{$match: match}, {$lookup: {from: 'lookupItems', let: {identity: '$cnpj'}, pipeline: [{$match: {...scope({jobId: id}), $expr: {$eq: ['$cnpj', '$$identity']}}}, {$project: {status: 1, checkedAt: 1}}], as: 'lookup'}}];
+  stages.push({$set: {status: {$cond: ['$valid', {$arrayElemAt: ['$lookup.status', 0]}, 'NON_CNPJ']}, checkedAt: {$arrayElemAt: ['$lookup.checkedAt', 0]}}});
+  if (status !== 'ALL' && status !== 'NON_CNPJ') stages.push({$match: {status}});
+  const [result] = await (await collection('purchaseLines')).aggregate([...stages, {$facet: {items: [{$sort: {index: 1}}, {$skip: (page - 1) * pageSize}, {$limit: pageSize}, {$project: {workspaceId: 0, lookup: 0}}], count: [{$count: 'total'}]}}], {maxTimeMS: 20000}).toArray();
+  return {items: result?.items || [], total: result?.count?.[0]?.total || 0, page, pageSize};
+}
+export async function purchaseRows(id: string, status: string, page: number, lines = false) {
+  await purchaseSummary(id); purchaseFilter(status);
+  if (lines || status === 'NON_CNPJ') {
+    const result = await linePage(id, status, page, 100);
+    return {...result, items: result.items.map((row: any) => ({...row, submittedName: row.name, occurrences: 1}))};
+  }
+  const query = scope({jobId: id, ...(status === 'ALL' ? {} : {status})});
+  const [result] = await (await collection('lookupItems')).aggregate([
+    {$match: query}, {$facet: {items: [{$sort: {cnpj: 1}}, {$skip: (page - 1) * 100}, {$limit: 100},
+      {$lookup: {from: 'cnpjStates', let: {state: '$stateId', identity: '$cnpj'}, pipeline: [{$match: {$expr: {$and: [{$eq: ['$_id', '$$state']}, {$eq: ['$cnpj', '$$identity']}, {$eq: ['$workspaceId', scope().workspaceId]}]}}}], as: 'details'}},
+      {$set: {details: {$arrayElemAt: ['$details', 0]}, document: '$cnpj', documentKind: 'CNPJ'}}, {$project: {workspaceId: 0}}], count: [{$count: 'total'}]}}
+  ], {maxTimeMS: 20000}).toArray();
+  return {items: result?.items || [], total: result?.count?.[0]?.total || 0, page, pageSize: 100};
+}
+export async function purchaseExport(id: string, status: string, part: number) {
+  const summary = await purchaseSummary(id); purchaseFilter(status);
+  const result = await linePage(id, status, part, 2000), parts = Math.max(1, Math.ceil(result.total / 2000));
+  integer(part, 1, parts);
+  const content = purchaseCsv(summary.job, result.items);
+  need(Buffer.byteLength(content, 'utf8') <= 4_000_000, 'Arquivo acima do limite. Escolha um grupo menor.', 413, 'REPORT_TOO_LARGE');
+  return {fileName: `compras-${summary.job.clientCode || 'empresa'}-${id}-${status}-parte-${part}-de-${parts}.csv`, content, mimeType: 'text/csv;charset=utf-8', total: result.total, parts, part};
+}

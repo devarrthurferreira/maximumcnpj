@@ -10,6 +10,8 @@ export function ensureLookupIndexes() {
       (await collection('lookupJobs')).createIndex({workspaceId:1,clientId:1,createdAt:-1}),
       (await collection('lookupStage')).createIndex({workspaceId:1,jobId:1,index:1},{unique:true}),
       (await collection('lookupStage')).createIndex({expiresAt:1},{expireAfterSeconds:0}),
+      (await collection('purchaseLines')).createIndex({workspaceId:1,jobId:1,index:1},{unique:true}),
+      (await collection('purchaseLines')).createIndex({workspaceId:1,jobId:1,cnpj:1}),
       (await collection('lookupItems')).createIndex({workspaceId:1,jobId:1,cnpj:1},{unique:true}),
       (await collection('lookupItems')).createIndex({workspaceId:1,jobId:1,state:1,nextAt:1}),
       (await collection('lookupItems')).createIndex({workspaceId:1,cnpj:1,checkedAt:-1}),

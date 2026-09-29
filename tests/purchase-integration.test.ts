@@ -1,0 +1,95 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { database, collection, scope, closeDatabase } from '../src/store.ts';
+import { resetLookupIndexes, withJob } from '../src/lookup-db.ts';
+import { importCatalog } from '../src/lookup-catalog.ts';
+import { createLookup, uploadLookup, finalizeLookup, processLookup, repeatLookup, cancelLookup } from '../src/lookup-jobs.ts';
+import { PURCHASE_MODE } from '../src/purchase-domain.ts';
+import { purchaseSummary, purchaseRows, purchaseExport, purchaseHistory } from '../src/purchase-store.ts';
+import { routeV4 } from '../src/lookup-http.ts';
+import { digits } from '../src/domain.ts';
+
+test('MongoDB compras: idempotência, CNPJ único, CPF separado, somas exatas e snapshot reconciliado', {skip:!process.env.MONGODB_URI, timeout:120000}, async () => {
+  const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
+  process.env.MONGODB_DB = 'maximum_purchase_test_' + randomUUID().replaceAll('-', ''); process.env.WORKSPACE_ID = 'purchases_test'; resetLookupIndexes();
+  const actor = {_id:'tester',role:'admin',name:'Teste',email:'test@example.test'};
+  const ids = ['000000000001', '111111110001', '222222220001'].map(base => base + digits(base));
+  let calls = 0;
+  const transport = (async (url: string | URL | Request) => {
+    calls++; const cnpj = String(url).split('/').pop();
+    if (cnpj === ids[2]) return new Response('', {status:404});
+    return Response.json({cnpj,razao_social:'Fornecedor sintético',opcao_pelo_simples:cnpj===ids[0],opcao_pelo_mei:false});
+  }) as typeof fetch;
+  try {
+    const catalog = await importCatalog(actor, [{code:'936',name:'Empresa A'}, {code:'937',name:'Empresa B'}]);
+    const clientId = catalog.items[0].id;
+    const rows = [
+      {document:ids[0],name:'Fornecedor sintético',quantity:'99',totalCents:10001},
+      {document:ids[0],name:'Fornecedor sintético',quantity:'2',totalCents:9},
+      {document:ids[1],name:'Fornecedor sintético',quantity:'1',totalCents:20000},
+      {document:ids[2],name:'Fornecedor sintético',quantity:'1',totalCents:9990},
+      {document:'12345678900',name:'Pessoa sintética',quantity:'1',totalCents:3000}
+    ];
+    const input = {importId:randomUUID(),clientId,fileName:'sintetico.csv',expectedRows:rows.length};
+    const job = await createLookup(actor, input, PURCHASE_MODE);
+    assert.equal((await createLookup(actor, input, PURCHASE_MODE))._id, job._id);
+    let acquired!: () => void, release!: () => void;
+    const locked = new Promise<void>(resolve => { acquired = resolve; });
+    const unlock = new Promise<void>(resolve => { release = resolve; });
+    const held = withJob(job._id, async () => { acquired(); await unlock; });
+    await locked;
+    try { await assert.rejects(uploadLookup(actor, job._id, {offset:0,rows:[rows[0]]}), (error:any) => error.code === 'JOB_BUSY'); } finally { release(); await held; }
+    await assert.rejects(createLookup(actor, input));
+    await assert.rejects(uploadLookup(actor, job._id, {offset:1,rows:[rows[0]]}));
+    await uploadLookup(actor, job._id, {offset:0,rows:rows.slice(0,2)});
+    await uploadLookup(actor, job._id, {offset:0,rows:rows.slice(0,2)});
+    await assert.rejects(uploadLookup(actor, job._id, {offset:0,rows:[{...rows[0],totalCents:1},rows[1]]}));
+    await assert.rejects(finalizeLookup(actor,job._id));
+    await uploadLookup(actor, job._id, {offset:2,rows:rows.slice(2)});
+    const processing = await finalizeLookup(actor, job._id);
+    assert.deepEqual(processing.summary, {lines:5,unique:3,invalid:1,duplicates:1});
+    assert.equal(processing.purchaseInput.totalCents, 43000);
+    assert.equal(await (await collection('lookupStage')).countDocuments(scope({jobId:job._id})), 0);
+    await assert.rejects(purchaseSummary(job._id));
+    await (await collection('providerControl')).deleteMany({});
+    const complete = await processLookup(actor, job._id, transport);
+    assert.equal(complete.status, 'COMPLETED'); assert.equal(calls, 3);
+    const summary = await purchaseSummary(job._id);
+    assert.deepEqual(summary.totals, {lines:5,uniqueCnpjs:3,cnpjLines:4,nonCnpjLines:1,totalCents:43000,cnpjCents:40000,nonCnpjCents:3000});
+    assert.deepEqual(summary.groups.map(g=>[g.status,g.count,g.totalCents,g.countPercent,g.valuePercent]), [
+      ['OPTANTE',1,10010,33.33,25.03], ['NAO_OPTANTE',1,20000,33.33,50], ['NAO_CONFIRMADO',1,9990,33.33,24.98]
+    ]);
+    const cnpjs = await purchaseRows(job._id, 'ALL', 1); assert.equal(cnpjs.total, 3);
+    const excluded = await purchaseRows(job._id, 'NON_CNPJ', 1); assert.equal(excluded.total, 1); assert.equal(excluded.items[0].documentKind, 'CPF');
+    const csv = await purchaseExport(job._id, 'ALL', 1); assert.equal(csv.total, 5); assert(csv.content.includes('"99";"100,01"')); assert.equal(csv.parts, 1);
+    await assert.rejects(purchaseExport(job._id, 'ALL', 2));
+    await assert.rejects(routeV4(actor,'GET',new URL('https://test/api/v4/purchases/'+job._id+'/csv'),{}));
+    const exported:any = await routeV4(actor,'POST',new URL('https://test/api/v4/purchases/'+job._id+'/csv'),{status:'ALL',part:1}); assert.equal(exported.total,5);
+    await assert.rejects(repeatLookup(actor,job._id)); await assert.rejects(cancelLookup(actor,job._id));
+    assert.equal((await purchaseHistory(clientId, 1)).total, 1);
+    const genericHistory:any = await routeV4(actor,'GET',new URL('https://test/api/v4/history?clientId='+clientId),{}); assert.equal(genericHistory.total,0); assert.equal((await purchaseHistory(catalog.items[1].id, 1)).total, 0);
+    await assert.rejects(routeV4(actor,'POST',new URL('https://test/api/v4/purchases'),{...input,importId:randomUUID(),type:'SALES'}));
+    await assert.rejects(routeV4({...actor,role:'viewer'},'POST',new URL('https://test/api/v4/purchases'),{...input,importId:randomUUID()}));
+    await (await collection('lookupJobs')).updateOne(scope({_id:job._id}),{$inc:{'purchaseInput.totalCents':1}});
+    await assert.rejects(purchaseSummary(job._id));
+    await (await collection('lookupJobs')).updateOne(scope({_id:job._id}),{$inc:{'purchaseInput.totalCents':-1}});
+    const target = await (await collection('lookupItems')).findOne(scope({jobId:job._id,cnpj:ids[0]}));
+    await (await collection('lookupItems')).updateOne(scope({_id:target!._id}),{$inc:{totalCents:1}});
+    await assert.rejects(purchaseSummary(job._id));
+    await (await collection('lookupItems')).updateOne(scope({_id:target!._id}),{$inc:{totalCents:-1}});
+    await (await collection('lookupItems')).updateOne(scope({_id:target!._id}),{$set:{stateId:'missing'}});
+    await assert.rejects(purchaseExport(job._id,'ALL',1));
+    await (await collection('lookupItems')).updateOne(scope({_id:target!._id}),{$set:{stateId:target!.stateId}});
+    process.env.WORKSPACE_ID = 'another_workspace'; await assert.rejects(purchaseSummary(job._id)); process.env.WORKSPACE_ID = 'purchases_test';
+    const allCpf = await createLookup(actor,{...input,importId:randomUUID(),expectedRows:1},PURCHASE_MODE);
+    await uploadLookup(actor,allCpf._id,{offset:0,rows:[rows[4]]});
+    assert.equal((await finalizeLookup(actor,allCpf._id)).status,'COMPLETED');
+    const cpfSummary = await purchaseSummary(allCpf._id); assert.equal(cpfSummary.totals.cnpjCents,0); assert.equal(cpfSummary.totals.totalCents,3000); assert(cpfSummary.groups.every(g=>g.countPercent===0&&g.valuePercent===0));
+    assert.equal((await purchaseSummary(job._id)).totals.totalCents,43000); assert.equal(await (await collection('clients')).countDocuments(scope()),2);
+  } finally {
+    await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
+    if(oldDb===undefined)delete process.env.MONGODB_DB;else process.env.MONGODB_DB=oldDb;
+    if(oldWs===undefined)delete process.env.WORKSPACE_ID;else process.env.WORKSPACE_ID=oldWs;
+  }
+});

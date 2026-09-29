@@ -1,0 +1,298 @@
+import {formatCnpj} from './domain.js';
+
+const $ = q => document.querySelector(q);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+const number = v => Number(v || 0).toLocaleString('pt-BR');
+const money = v => (Number(v || 0) / 100).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
+const percent = v => Number(v || 0).toLocaleString('pt-BR', {maximumFractionDigits:2}) + '%';
+const date = v => v ? new Date(v).toLocaleString('pt-BR', {timeZone:'America/Sao_Paulo'}) : 'Não informada';
+const labels = {OPTANTE:'Optantes pelo Simples', NAO_OPTANTE:'Não optantes', NAO_CONFIRMADO:'Não confirmados', NON_CNPJ:'CPF e não consultáveis', ALL:'Todos os enquadramentos'};
+const jobLabels = {UPLOADING:'Importação incompleta', PROCESSING:'Consulta em andamento', COMPLETED:'Concluído', CANCELLED:'Cancelado'};
+const kinds = {CPF:'CPF', INVALIDO:'Documento inválido', AUSENTE:'Documento ausente', CNO_OU_OUTRO:'CNO ou outro documento'};
+const S = {user:null, clients:[], company:'', worker:null, file:null, review:null, pending:null, busy:false, job:null, summary:null, historyPage:1, historyTotal:0, status:'ALL', page:1, total:0, view:'suppliers', seq:0, rowsSeq:0, jobsSeq:0, running:false, paused:true, timer:null};
+const writable = () => ['admin','operator'].includes(S.user?.role);
+const path = suffix => '/api/v4/purchases' + (suffix || '');
+
+function error(e) { $('#purchase-error').textContent = e.message || String(e); }
+function clearError() { $('#purchase-error').textContent = ''; }
+function status(text) { if ($('#purchase-progress-text')) $('#purchase-progress-text').textContent = text; }
+async function api(url, method = 'GET', data) {
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 55000);
+  try {
+    const r = await fetch(url, {method, credentials:'same-origin', headers:method === 'GET' ? {} : {'Content-Type':'application/json'}, body:data === undefined ? undefined : JSON.stringify(data), signal:controller.signal});
+    let d;
+    try { d = await r.json(); } catch { throw new Error('Resposta inesperada do servidor. Confira a implantação e tente novamente.'); }
+    if (!r.ok) {
+      if (r.status === 401) throw new Error('Sua sessão expirou. Entre novamente pelo painel.');
+      throw new Error(d.message || 'Não foi possível concluir a operação.');
+    }
+    return d;
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('O servidor excedeu o tempo de resposta. Retome o mesmo relatório para continuar do progresso salvo.');
+    throw e;
+  } finally { clearTimeout(timeout); }
+}
+
+function shell() {
+  $('#purchase-app').innerHTML = `
+    <div class="purchase-types" role="group" aria-label="Tipo de relatório"><button type="button" aria-pressed="true">Compras <span aria-hidden="true">↙</span></button><button type="button" disabled title="O relatório de vendas estará disponível em uma próxima etapa">Vendas <small>Indisponível por enquanto</small></button></div>
+    <section id="purchase-company-card" class="card stack"><h2 class="purchase-step"><span>1</span> Selecione a empresa</h2><label>Empresa responsável (Código / ID)<select id="purchase-company"><option value="">Escolha uma empresa cadastrada</option>${S.clients.map(c => `<option value="${esc(c._id)}">${esc(c.code || 'Sem código')} · ${esc(c.name)}${c.active ? '' : ' (inativa)'}</option>`).join('')}</select></label><p class="hint">O relatório ficará vinculado somente à empresa escolhida. Seus cadastros atuais continuam disponíveis.</p>${S.clients.length ? '' : '<p>Nenhuma empresa cadastrada. <a href="/#clients">Cadastre ou importe suas empresas no painel</a> para continuar.</p>'}</section>
+    ${writable() ? `<section id="purchase-import" class="card stack purchase-section"><h2 class="purchase-step"><span>2</span> Importe o relatório de compras</h2><div class="purchase-grid"><label>Arquivo de compras (.csv, .xlsx ou .xls)<input type="file" id="purchase-file" accept=".csv,.xlsx,.xls" disabled></label><label>Codificação do CSV<select id="purchase-encoding" disabled><option value="auto">Detectar automaticamente</option><option value="windows-1252">Windows-1252 (Excel em português)</option><option value="utf-8">UTF-8</option></select></label></div><p class="hint">Até 10 MiB e 50.000 linhas. O arquivo original fica no navegador; somente os campos abaixo são importados.</p><div class="purchase-map"><div><strong>A</strong>CNPJ do fornecedor<small>CPF e inválidos separados</small></div><div><strong>I</strong>Razão social<small>Nome informado no relatório</small></div><div><strong>P</strong>Quantidade<small>Preservada por linha</small></div><div><strong>Q</strong>Valor Total<small>Valor a somar em reais</small></div></div><p class="hint">Somamos o valor de Q de cada linha, sem multiplicar pela quantidade de P. Repetições do CNPJ somam os valores e contam uma vez no número de fornecedores.</p><div id="purchase-file-preview"></div><div id="purchase-review"></div><p id="purchase-progress-text" class="purchase-status" role="status" aria-live="polite"></p></section>` : '<div class="warning info purchase-readonly">Seu acesso permite consultar e baixar os relatórios existentes.</div>'}
+    <div id="purchase-report-view"></div><section class="card purchase-history"><div class="card-header"><h2>Histórico de compras da empresa</h2><p>Abra um relatório concluído ou retome uma consulta em andamento.</p></div><div id="purchase-history-list" class="purchase-empty"><p>Selecione uma empresa para ver o histórico.</p></div><div class="pagination"><button id="purchase-history-prev" disabled>Anterior</button><span id="purchase-history-page"></span><button id="purchase-history-next" disabled>Próxima</button></div></section>`;
+  $('#purchase-company').onchange = companyChanged;
+  $('#purchase-history-prev').onclick = () => loadHistory(S.historyPage - 1).catch(error);
+  $('#purchase-history-next').onclick = () => loadHistory(S.historyPage + 1).catch(error);
+  if (writable()) {
+    $('#purchase-file').onchange = () => openFile().catch(error);
+    $('#purchase-encoding').onchange = () => { if (S.file) openFile().catch(error); };
+  }
+}
+
+function stopProcessing() { S.paused = true; clearTimeout(S.timer); }
+function resetPreview() {
+  S.worker?.terminate(); S.worker = null; S.review = null; S.file = null;
+  if ($('#purchase-file')) $('#purchase-file').value = '';
+  if ($('#purchase-file-preview')) $('#purchase-file-preview').innerHTML = '';
+  if ($('#purchase-review')) $('#purchase-review').innerHTML = '';
+  status('');
+}
+function setBusy(busy) {
+  S.busy = busy;
+  $('#purchase-company').disabled = busy || !!S.pending;
+  for (const selector of ['#purchase-file','#purchase-encoding','#purchase-sheet','#purchase-header','#purchase-validate']) {
+    if ($(selector)) $(selector).disabled = busy || !!S.pending || !S.company;
+  }
+  document.querySelectorAll('[data-open-purchase]').forEach(b => b.disabled = busy || !!S.pending);
+}
+async function companyChanged() {
+  if (S.busy || S.pending) { $('#purchase-company').value = S.company; return; }
+  stopProcessing(); S.seq++; S.rowsSeq++; S.company = $('#purchase-company').value; S.job = null; S.summary = null;
+  clearError(); resetPreview(); $('#purchase-report-view').innerHTML = ''; setBusy(false);
+  if (!S.company) {
+    S.jobsSeq++; $('#purchase-history-list').innerHTML = '<div class="purchase-empty"><p>Selecione uma empresa para ver o histórico.</p></div>';
+    $('#purchase-history-prev').disabled = true; $('#purchase-history-next').disabled = true; $('#purchase-history-page').textContent = ''; return;
+  }
+  history.replaceState(null, '', '/purchases.html?client=' + encodeURIComponent(S.company));
+  await loadHistory(1).catch(error);
+}
+async function loadHistory(page = 1) {
+  if (!S.company) return;
+  const seq = ++S.jobsSeq, company = S.company;
+  $('#purchase-history-list').innerHTML = '<p>Carregando relatórios…</p>';
+  const d = await api(path('?' + new URLSearchParams({clientId:company, page})));
+  if (seq !== S.jobsSeq || company !== S.company) return;
+  S.historyPage = page; S.historyTotal = d.total;
+  $('#purchase-history-list').innerHTML = d.items.length ? `<div class="purchase-table"><table><thead><tr><th>Relatório</th><th>Importado em</th><th>Situação</th><th>Linhas</th><th></th></tr></thead><tbody>${d.items.map(j => `<tr><td>${esc(j.fileName)}<small>${esc(j.clientCode || 'Sem código')} · ${esc(j.clientName)}</small></td><td>${date(j.createdAt)}</td><td>${esc(jobLabels[j.status] || j.status)}</td><td>${number(j.summary?.lines ?? j.uploaded)} / ${number(j.expectedRows)}</td><td><button data-open-purchase="${esc(j._id)}" ${S.busy || S.pending ? 'disabled' : ''}>${j.status === 'COMPLETED' ? 'Ver relatório' : 'Abrir'}</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="purchase-empty"><h3>A primeira análise começa aqui</h3><p>Importe o relatório de compras desta empresa para ver os fornecedores e seus valores por enquadramento.</p></div>';
+  const size = d.pageSize || 30;
+  $('#purchase-history-page').textContent = `${page} / ${Math.max(1, Math.ceil(d.total / size))}`;
+  $('#purchase-history-prev').disabled = page <= 1; $('#purchase-history-next').disabled = page * size >= d.total;
+  document.querySelectorAll('[data-open-purchase]').forEach(b => b.onclick = () => openJob(b.dataset.openPurchase).catch(error));
+}
+
+async function openFile() {
+  if (!S.company || S.pending || S.busy) return;
+  const file = $('#purchase-file').files[0];
+  if (!file) return;
+  clearError(); S.worker?.terminate(); S.review = null; S.file = file;
+  $('#purchase-file-preview').innerHTML = '<p>Lendo o relatório no navegador…</p>'; $('#purchase-review').innerHTML = ''; status('');
+  if (file.size > 10 * 1024 * 1024) throw new Error('Arquivo acima de 10 MiB. Divida o relatório.');
+  S.worker = new Worker('/purchase-import-worker.js');
+  const worker = S.worker;
+  worker.onerror = () => { if (S.worker === worker) error(new Error('O leitor da planilha não iniciou. Recarregue a página e tente novamente.')); };
+  worker.onmessage = ({data:d}) => {
+    if (S.worker !== worker) return;
+    if (d.type === 'error') { error(new Error(d.message)); status('Não foi possível validar o relatório. Corrija o arquivo e tente novamente.'); return; }
+    if (d.type === 'sheets') {
+      $('#purchase-file-preview').innerHTML = `<div class="purchase-grid"><label>Aba do arquivo<select id="purchase-sheet">${d.sheets.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('')}</select></label><label>Linha do cabeçalho<select id="purchase-header"></select></label></div><p id="purchase-file-info" class="hint mt"></p><div id="purchase-source-preview" class="purchase-preview"></div><button id="purchase-validate" class="mt">Conferir colunas A, I, P e Q</button>`;
+      $('#purchase-sheet').onchange = () => { S.review = null; $('#purchase-review').innerHTML = ''; worker.postMessage({action:'sheet', name:$('#purchase-sheet').value}); };
+      $('#purchase-header').onchange = () => { S.review = null; $('#purchase-review').innerHTML = ''; };
+      $('#purchase-validate').onclick = () => { clearError(); status('Conferindo documentos, quantidades e valores…'); worker.postMessage({action:'validate', header:Number($('#purchase-header').value)}); };
+      worker.postMessage({action:'sheet', name:d.sheets[0]});
+    }
+    if (d.type === 'preview') {
+      $('#purchase-header').innerHTML = d.rows.map((r,i) => `<option value="${i}">Linha ${i + 1} · ${esc(String(r[0] || 'Sem título').slice(0,65))}</option>`).join('');
+      $('#purchase-file-info').textContent = `${file.name} · ${number(d.total)} linhas lidas${d.encoding ? ' · ' + d.encoding.toUpperCase() : ''}. Confira o cabeçalho e os campos abaixo.`;
+      $('#purchase-source-preview').innerHTML = `<table><thead><tr><th>Linha</th><th>A · Documento</th><th>I · Razão social</th><th>P · Quantidade</th><th>Q · Valor Total</th></tr></thead><tbody>${d.rows.slice(0,7).map((r,i) => `<tr><td>${i + 1}</td><td>${esc(r[0])}</td><td>${esc(r[8])}</td><td>${esc(r[15])}</td><td>${esc(r[16])}</td></tr>`).join('')}</tbody></table>`;
+      const code = file.name.match(/^(\d+)[\s_-]/)?.[1]?.replace(/^0+(?=\d)/, ''), company = S.clients.find(c => c._id === S.company);
+      if (code && company?.code !== code) status(`Atenção: o arquivo começa com o código ${code}, mas a empresa selecionada tem código ${company?.code || 'não informado'}. Confira a responsável antes de importar.`);
+    }
+    if (d.type === 'validated') showReview(d);
+  };
+  const buffer = await file.arrayBuffer();
+  if (S.worker !== worker) return;
+  worker.postMessage({action:'open', name:file.name, encoding:$('#purchase-encoding').value, buffer}, [buffer]);
+}
+function showReview(review) {
+  S.review = review; status('');
+  const company = S.clients.find(c => c._id === S.company);
+  if (review.errors.length || !review.rows.length) {
+    $('#purchase-review').innerHTML = `<div class="warning purchase-validation"><h3>Revise o arquivo antes de importar</h3><p>${number(review.errors.length)} linha(s) com pendências. Nenhuma linha foi enviada.</p>${review.errors.length ? `<ul>${review.errors.slice(0,20).map(e => `<li>Linha ${number(e.line)}: ${esc(e.message)}</li>`).join('')}</ul>${review.errors.length > 20 ? '<p>Exibindo as primeiras 20 pendências. Corrija o arquivo e valide novamente.</p>' : ''}` : '<p>Não há linhas de dados após o cabeçalho selecionado.</p>'}</div>`;
+    return;
+  }
+  $('#purchase-review').innerHTML = `<div class="purchase-section"><h2>Confira antes de importar</h2><p class="hint mt">Empresa: <strong>${esc(company?.code || 'Sem código')} · ${esc(company?.name)}</strong></p><div class="import-totals">${[['Linhas de compras', review.rows.length], ['CNPJs únicos', review.uniqueCnpjs], ['Linhas sem CNPJ válido', review.nonCnpjLines]].map(([l,v]) => `<div><b>${number(v)}</b><span>${l}</span></div>`).join('')}<div><b>${money(review.totalCents)}</b><span>Soma de Q · arquivo completo</span></div></div><div class="warning info purchase-validation">CPF, CNO e documentos inválidos terão seus valores apresentados separadamente. Não serão consultados na API e não entram nos percentuais de CNPJ. Falhas de consulta serão “Não confirmados”.</div><div class="purchase-preview"><table><thead><tr><th>Documento</th><th>Razão social</th><th>Quantidade</th><th>Valor Total</th></tr></thead><tbody>${review.rows.slice(0,8).map(r => `<tr><td>${esc(r.document || 'Ausente')}</td><td>${esc(r.name || 'Não informada')}</td><td>${esc(r.quantity)}</td><td>${money(r.totalCents)}</td></tr>`).join('')}</tbody></table></div><button id="purchase-confirm" class="primary mt">Confirmar empresa e consultar ${number(review.uniqueCnpjs)} CNPJs</button></div>`;
+  $('#purchase-confirm').onclick = () => upload().catch(error);
+}
+
+async function upload() {
+  if (!S.review || S.review.errors.length || S.busy) return;
+  clearError(); stopProcessing(); S.seq++; S.rowsSeq++;
+  S.pending ??= {importId:crypto.randomUUID(), clientId:S.company, fileName:S.file.name, rows:S.review.rows, offset:0};
+  const pending = S.pending, button = $('#purchase-confirm');
+  setBusy(true); button.disabled = true;
+  try {
+    await api(path(), 'POST', {importId:pending.importId, clientId:pending.clientId, fileName:pending.fileName, expectedRows:pending.rows.length, type:'PURCHASES'});
+    while (pending.offset < pending.rows.length) {
+      const d = await api(path(`/${pending.importId}/rows`), 'POST', {offset:pending.offset, rows:pending.rows.slice(pending.offset, pending.offset + 250)});
+      if (d.uploaded <= pending.offset) throw new Error('O envio não avançou. Clique em retomar para continuar o mesmo relatório.');
+      pending.offset = d.uploaded;
+      status(`${number(pending.offset)} / ${number(pending.rows.length)} linhas enviadas…`);
+    }
+    await api(path(`/${pending.importId}/finalize`), 'POST', {});
+    S.pending = null; setBusy(false); button.disabled = true; button.textContent = 'Relatório importado';
+    status('Relatório salvo. Consultando os CNPJs únicos…');
+    await loadHistory(1); await openJob(pending.importId, true);
+  } catch (e) {
+    button.textContent = 'Retomar envio deste relatório'; button.disabled = false;
+    status('O progresso salvo será retomado. Mantenha esta página aberta para reenviar somente o que falta.');
+    throw e;
+  } finally { setBusy(false); }
+}
+
+async function openJob(id, auto = false) {
+  if (S.busy || S.pending) return;
+  stopProcessing(); const seq = ++S.seq; S.rowsSeq++; clearError();
+  $('#purchase-report-view').innerHTML = '<div class="initial">Carregando relatório de compras…</div>';
+  const job = await api(path('/' + encodeURIComponent(id)));
+  if (seq !== S.seq) return;
+  if (job.clientId !== S.company) throw new Error('Este relatório pertence a outra empresa. Selecione a empresa correspondente.');
+  S.job = job; S.summary = null; S.page = 1; S.status = 'ALL'; S.view = 'suppliers';
+  history.replaceState(null, '', '/purchases.html?' + new URLSearchParams({client:S.company, job:job._id}));
+  await renderJob(seq);
+  if (auto && S.job.status === 'PROCESSING') { S.paused = false; scheduleProcess(seq); }
+}
+function jobTitle(job) {
+  return `<div class="purchase-view-title purchase-section"><div class="eyebrow">RELATÓRIO DE COMPRAS</div><h2>${esc(job.clientCode || 'Sem código')} · ${esc(job.clientName)}</h2><p class="purchase-file">${esc(job.fileName)}</p><p class="hint purchase-meta">Importado em ${date(job.createdAt)}${job.completedAt ? ' · Concluído em ' + date(job.completedAt) : ''}<br>Identificação da consulta: ${esc(job._id)}</p></div>`;
+}
+async function renderJob(seq = S.seq) {
+  const job = S.job;
+  if (job.status === 'COMPLETED') {
+    const summary = await api(path(`/${job._id}/summary`));
+    if (seq !== S.seq) return;
+    S.summary = summary; renderSummary(); await loadRows(1); return;
+  }
+  $('#purchase-report-view').innerHTML = `${jobTitle(job)}<section class="card stack"><div class="purchase-split"><h2>${esc(jobLabels[job.status] || job.status)}</h2><span class="badge">${number(job.uploaded)} linhas importadas</span></div>${job.status === 'PROCESSING' ? `<p>${number(job.received)} / ${number(job.summary?.unique)} CNPJs com consulta concluída.</p><progress class="purchase-progress" value="${Number(job.received || 0)}" max="${Math.max(1, Number(job.summary?.unique || 0))}"></progress><p class="hint">Mantenha esta tela aberta para consultar. Você pode pausar e voltar ao histórico para retomar. Cada CNPJ válido é consultado uma vez neste relatório.</p>${writable() ? '<div class="row wrap"><button id="purchase-process" class="primary">Consultar / retomar</button><button id="purchase-pause">Pausar nesta tela</button></div>' : ''}<p id="purchase-process-status" class="hint" role="status"></p>` : job.status === 'UPLOADING' ? '<p>A importação ainda não foi finalizada. Se a página de envio continua aberta, retome nela. Se já a fechou, cancele este registro incompleto e importe o arquivo novamente.</p>' : '<p>Este relatório foi cancelado. Os registros concluídos foram preservados no histórico; ele não gera indicadores finais.</p>'}${!['COMPLETED','CANCELLED'].includes(job.status) && writable() ? '<button id="purchase-cancel" class="danger">Cancelar relatório</button>' : ''}</section>`;
+  if ($('#purchase-process')) $('#purchase-process').onclick = () => { S.paused = false; clearError(); process(seq); };
+  if ($('#purchase-pause')) $('#purchase-pause').onclick = () => { stopProcessing(); $('#purchase-process-status').textContent = 'Pausado nesta tela. Uma chamada já iniciada pode terminar; o progresso fica salvo.'; };
+  if ($('#purchase-cancel')) $('#purchase-cancel').onclick = async () => {
+    if (!confirm('Cancelar este relatório? Os registros já salvos ficam no histórico, sem emitir indicadores finais.')) return;
+    stopProcessing();
+    try { await api(path(`/${job._id}/cancel`), 'POST', {}); await openJob(job._id); await loadHistory(S.historyPage); } catch (e) { error(e); }
+  };
+}
+function scheduleProcess(seq) {
+  clearTimeout(S.timer);
+  if (!S.paused && S.job?.status === 'PROCESSING' && seq === S.seq && writable()) S.timer = setTimeout(() => process(seq), Math.max(700, Number(S.job.nextPollMs || 1200)));
+}
+async function process(seq) {
+  if (seq !== S.seq || S.paused) return;
+  if (S.running) { scheduleProcess(seq); return; }
+  S.running = true; if ($('#purchase-process')) $('#purchase-process').disabled = true;
+  if ($('#purchase-process-status')) $('#purchase-process-status').textContent = 'Consultando a fonte. Aguarde…';
+  try {
+    await api(path(`/${S.job._id}/process`), 'POST', {});
+    if (seq !== S.seq) return;
+    const job = await api(path(`/${S.job._id}`));
+    if (seq !== S.seq) return;
+    S.job = job; await renderJob(seq);
+    if (job.status === 'COMPLETED') { stopProcessing(); await loadHistory(1); }
+  } catch (e) { if (seq === S.seq) { stopProcessing(); error(e); } }
+  finally { S.running = false; if (seq === S.seq) { if ($('#purchase-process')) $('#purchase-process').disabled = false; scheduleProcess(seq); } }
+}
+
+function renderSummary() {
+  const m = S.summary, t = m.totals;
+  $('#purchase-report-view').innerHTML = `${jobTitle(S.job)}<section class="card purchase-hero"><div><h2>Total de compras do relatório</h2><strong class="purchase-money">${money(t.totalCents)}</strong><p>${number(t.lines)} linhas · soma da coluna Q</p></div><div class="purchase-stat"><h2>Compras com CNPJ válido</h2><strong class="purchase-money">${money(t.cnpjCents)}</strong><p>${number(t.uniqueCnpjs)} fornecedores únicos · ${number(t.cnpjLines)} linhas</p></div></section><div class="purchase-cards" role="group" aria-label="Resultados por enquadramento">${m.groups.map(g => `<button class="purchase-group" data-status="${esc(g.status)}" aria-pressed="false"><span>${esc(labels[g.status])}</span><strong>${money(g.totalCents)}</strong><span class="purchase-bar" aria-hidden="true"><span style="width:${Math.min(100, Math.max(0, Number(g.valuePercent || 0)))}%"></span></span><small><b>${percent(g.valuePercent)}</b> do valor com CNPJ válido<br><b>${number(g.count)} fornecedores · ${percent(g.countPercent)}</b> dos CNPJs únicos<br>${number(g.lines)} linhas de compras</small></button>`).join('')}</div><section class="card"><h2>Como ler os percentuais</h2><p class="hint purchase-meta">Fornecedores: quantidade do grupo ÷ ${number(t.uniqueCnpjs)} CNPJs válidos únicos.<br>Valores: soma de Q do grupo ÷ ${money(t.cnpjCents)} das linhas com CNPJ válido.</p><p class="hint purchase-meta">CNPJs repetidos contam uma vez, mas todas as linhas de compras entram no valor. A participação em reais usa os valores efetivos de Q de cada fornecedor. Não confirmados permanecem nas duas bases de cálculo.</p></section><section class="card purchase-section purchase-excluded"><div><h2>CPF e documentos não consultáveis</h2><p class="hint mt">${number(t.nonCnpjLines)} linhas fora da consulta e dos percentuais de CNPJ.</p><p class="hint mt">${m.excluded?.length ? m.excluded.map(e => `${esc(kinds[e.documentKind] || e.documentKind)}: ${number(e.lines)} linhas · ${money(e.totalCents)}`).join('<br>') : 'Nenhum documento não consultável neste relatório.'}</p></div><div><strong class="purchase-money">${money(t.nonCnpjCents)}</strong><button id="purchase-show-excluded">Ver documentos não consultáveis</button></div></section><section class="card purchase-section"><div class="purchase-split"><div><h2>Relatório e arquivos</h2><p class="hint mt">Resumo completo em PDF e linhas detalhadas em CSV, com quantidade e valor.</p></div><div class="purchase-view-actions"><button id="purchase-pdf" class="primary">Baixar resumo PDF</button><button id="purchase-print">Imprimir resumo</button></div></div><p id="purchase-download-status" class="purchase-status" role="status"></p><p class="purchase-print-note">Resumo financeiro completo. A relação detalhada de linhas está disponível no CSV do relatório.</p></section><section class="card purchase-section" id="purchase-results"><div class="card-header"><h2>Explore os fornecedores e valores</h2><p>Compare os fornecedores ou confira cada linha do arquivo importado.</p></div><div class="purchase-toolbar"><label>Enquadramento<select id="purchase-status-filter">${Object.entries(labels).map(([key,label]) => `<option value="${key}" ${key === S.status ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Visualização<select id="purchase-view-filter"><option value="suppliers">Fornecedores agrupados</option><option value="lines">Linhas do relatório</option></select></label></div><div id="purchase-result-list"></div><div class="pagination"><button id="purchase-prev">Anterior</button><span id="purchase-page"></span><button id="purchase-next">Próxima</button></div><div class="purchase-controls mt"><label>Parte do CSV (linhas do grupo)<select id="purchase-csv-part"></select></label><button id="purchase-csv">Baixar CSV das linhas</button></div><p id="purchase-csv-note" class="hint mt"></p></section><div class="warning info purchase-disclosure">Fonte: Minha Receita. Estes valores reproduzem o arquivo importado e a classificação observada na consulta. A data da consulta não comprova atualização da base fiscal. Ausências e falhas nunca são classificadas automaticamente como não optantes. O histórico preserva o resultado desta consulta.</div>`;
+  document.querySelectorAll('.purchase-group').forEach(b => b.onclick = () => filterStatus(b.dataset.status));
+  $('#purchase-show-excluded').onclick = () => filterStatus('NON_CNPJ');
+  $('#purchase-status-filter').onchange = () => filterStatus($('#purchase-status-filter').value);
+  $('#purchase-view-filter').onchange = () => { S.view = $('#purchase-view-filter').value; loadRows(1).catch(error); };
+  $('#purchase-prev').onclick = () => loadRows(S.page - 1).catch(error);
+  $('#purchase-next').onclick = () => loadRows(S.page + 1).catch(error);
+  $('#purchase-pdf').onclick = () => downloadPdf().catch(error);
+  $('#purchase-csv').onclick = () => downloadCsv().catch(error);
+  $('#purchase-print').onclick = () => window.print();
+  updateCsvParts();
+}
+function filterStatus(value) {
+  S.status = value; $('#purchase-status-filter').value = value;
+  document.querySelectorAll('.purchase-group').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.status === value)));
+  updateCsvParts(); loadRows(1).catch(error);
+}
+function groupLines() {
+  if (S.status === 'ALL') return S.summary.totals.lines;
+  if (S.status === 'NON_CNPJ') return S.summary.totals.nonCnpjLines;
+  return S.summary.groups.find(g => g.status === S.status)?.lines || 0;
+}
+function updateCsvParts() {
+  const lines = groupLines(), parts = Math.max(1, Math.ceil(lines / 2000));
+  $('#purchase-csv-part').innerHTML = Array.from({length:parts}, (_,i) => `<option value="${i + 1}">${i + 1} / ${parts}</option>`).join('');
+  $('#purchase-csv-note').textContent = `${number(lines)} linhas neste grupo. CSV em partes de até 2.000 linhas; baixe todas as ${parts} parte(s) para obter a relação completa. O PDF sempre contém o resumo completo da empresa e da consulta.`;
+  $('#purchase-csv').disabled = !lines;
+}
+async function loadRows(page) {
+  const ticket = ++S.rowsSeq, seq = S.seq, view = S.view;
+  $('#purchase-result-list').innerHTML = '<p>Carregando resultados…</p>'; $('#purchase-prev').disabled = true; $('#purchase-next').disabled = true;
+  const d = await api(path(`/${S.job._id}/${view === 'lines' ? 'lines' : 'results'}?` + new URLSearchParams({page, status:S.status})));
+  if (seq !== S.seq || ticket !== S.rowsSeq) return;
+  S.page = page; S.total = d.total;
+  $('#purchase-result-list').innerHTML = d.items.length ? `<div class="purchase-table"><table><thead><tr><th>Documento</th><th>Razão social</th><th>Enquadramento</th><th>${view === 'lines' ? 'Quantidade (P)' : 'Linhas'}</th><th class="numeric">Valor Total (Q)</th><th>Consultado em</th></tr></thead><tbody>${d.items.map(r => `<tr><td>${esc(r.cnpj ? formatCnpj(r.cnpj) : r.document || 'Ausente')}<small>${esc(kinds[r.documentKind] || '')}</small></td><td>${esc(r.submittedName || r.name || 'Não informada')}<small>${r.details?.name ? 'API: ' + esc(r.details.name) : ''}</small></td><td>${esc(labels[r.status] || (r.documentKind !== 'CNPJ' ? labels.NON_CNPJ : labels.NAO_CONFIRMADO))}<small>${esc(r.reason || '')}</small></td><td class="purchase-quantity">${view === 'lines' ? esc(r.quantity ?? '—') : number(r.occurrences ?? 1)}</td><td class="numeric">${money(r.totalCents)}</td><td>${r.documentKind === 'CNPJ' || r.cnpj ? date(r.checkedAt) : 'Não se aplica'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="purchase-empty"><h3>Nenhum resultado neste grupo</h3><p>Selecione outro enquadramento para ver os demais dados do relatório.</p></div>';
+  const parts = Math.max(1, Math.ceil(d.total / (d.pageSize || 100)));
+  $('#purchase-page').textContent = `${page} / ${parts} · ${number(d.total)} ${view === 'lines' ? 'linhas' : 'registros'}`;
+  $('#purchase-prev').disabled = page <= 1; $('#purchase-next').disabled = page >= parts;
+}
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+async function downloadPdf() {
+  const button = $('#purchase-pdf'), seq = S.seq;
+  button.disabled = true; clearError(); $('#purchase-download-status').textContent = 'Gerando o resumo em PDF…';
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 55000);
+  try {
+    const r = await fetch('/api/reports', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'pdf', jobId:S.job._id, clientId:S.job.clientId, layout:'summary', status:'ALL', kind:'ALL', part:1}), signal:controller.signal});
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.message || 'Não foi possível gerar o PDF. Confira a função de relatórios.'); }
+    const name = r.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || `maximum_compras_${S.job._id}.pdf`;
+    saveBlob(await r.blob(), name); if (seq === S.seq) $('#purchase-download-status').textContent = 'Resumo PDF gerado com os totais completos.';
+  } catch (e) {
+    if (seq === S.seq) $('#purchase-download-status').textContent = 'PDF não gerado. Você pode tentar novamente.';
+    if (e.name === 'AbortError') throw new Error('A geração do PDF excedeu o tempo de resposta. Tente novamente.');
+    throw e;
+  } finally { clearTimeout(timeout); button.disabled = false; }
+}
+async function downloadCsv() {
+  const button = $('#purchase-csv'), seq = S.seq; button.disabled = true; clearError();
+  try {
+    const d = await api(path(`/${S.job._id}/csv`), 'POST', {part:Number($('#purchase-csv-part').value), status:S.status});
+    saveBlob(new Blob([d.content], {type:d.mimeType || 'text/csv;charset=utf-8'}), d.fileName);
+    if (seq === S.seq) $('#purchase-download-status').textContent = `CSV gerado: parte ${d.part} de ${d.parts}.`;
+  } finally { button.disabled = false; }
+}
+async function boot() {
+  try {
+    S.user = (await api('/api/auth/session')).user;
+    if (!S.user || S.user.mustChangePassword) {
+      $('#purchase-app').innerHTML = `<section class="card stack"><h2>${S.user?.mustChangePassword ? 'Redefina sua senha para continuar' : 'Entre para continuar'}</h2><p>${S.user?.mustChangePassword ? 'A senha inicial precisa ser alterada antes de consultar empresas e relatórios.' : 'O módulo de compras usa a mesma conta e sessão do painel.'}</p><a href="/" class="report-links">Acessar painel</a></section>`; return;
+    }
+    S.clients = (await api('/api/v4/clients')).items; shell();
+    const query = new URLSearchParams(location.search), jobId = query.get('job'), client = query.get('client');
+    let selected = client;
+    if (jobId && /^[a-f0-9-]{36}$/i.test(jobId)) {
+      const job = await api(path('/' + encodeURIComponent(jobId))); selected = job.clientId;
+    }
+    if (selected && S.clients.some(c => c._id === selected)) {
+      $('#purchase-company').value = selected; await companyChanged();
+      if (jobId && /^[a-f0-9-]{36}$/i.test(jobId)) await openJob(jobId);
+    }
+  } catch (e) { error(e); }
+}
+window.addEventListener('beforeunload', e => { if (S.busy || S.pending) { e.preventDefault(); e.returnValue = ''; } });
+boot();

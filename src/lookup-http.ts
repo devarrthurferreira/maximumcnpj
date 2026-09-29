@@ -1,6 +1,8 @@
 import { collection, scope } from './store.ts';
 import { need, integer, escapeRegex } from './security.ts';
 import { normalizeCnpj } from './domain.ts';
+import { routePurchases } from './purchase-http.ts';
+import { PURCHASE_MODE } from './purchase-domain.ts';
 import { ensureLookupIndexes, getJob } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { listCatalog, importCatalog } from './lookup-catalog.ts';
@@ -14,7 +16,7 @@ async function items(id:string,page:number,status:string,search:string){
   return {items:result?.items||[],total:result?.count?.[0]?.total||0,page};
 }
 async function history(clientId:string,page:number,cnpj:string){
-  const q:any=scope(clientId?{clientId}:{});
+  const q:any=scope({...(clientId?{clientId}:{}),mode:{$ne:PURCHASE_MODE}});
   if(cnpj){const d=normalizeCnpj(cnpj);need(d.valid,'Informe CNPJ válido para o histórico.');const ids=await (await collection('lookupItems')).distinct('jobId',scope({cnpj:d.cnpj,...(clientId?{clientId}:{})}));q._id={$in:ids};}
   const c=await collection('lookupJobs');return {items:await c.find(q).sort({createdAt:-1}).skip((page-1)*30).limit(30).toArray(),total:await c.countDocuments(q),page};
 }
@@ -26,7 +28,9 @@ async function dashboard(clientId:string){
   return {metrics:{total,optants,nonOptants,unknown,optantsPercent:p(optants),nonOptantsPercent:p(nonOptants),unknownPercent:p(unknown),coverage:p(optants+nonOptants)},recent:(await history(clientId,1,'')).items.slice(0,8),entities:await (await collection('cnpjEntities')).countDocuments(scope()),clientCount:await (await collection('clients')).countDocuments(scope({active:true})),source:'Minha Receita',sourceReferenceDate:null};
 }
 export async function routeV4(actor:LookupActor,method:string,url:URL,input:any){
-  await ensureLookupIndexes();const path=url.pathname.replace('/api/v4',''),p=integer(url.searchParams.get('page')||1,1,100000),client=url.searchParams.get('clientId')||'';
+  await ensureLookupIndexes();
+  if(url.pathname.startsWith('/api/v4/purchases') || url.pathname.startsWith('/api/v4/sales'))return routePurchases(actor,method,url,input);
+  const path=url.pathname.replace('/api/v4',''),p=integer(url.searchParams.get('page')||1,1,100000),client=url.searchParams.get('clientId')||'';
   if(path==='/clients'&&method==='GET')return listCatalog();
   if(path==='/clients/import'&&method==='POST')return importCatalog(actor,input.rows);
   if(path==='/dashboard'&&method==='GET')return dashboard(client);

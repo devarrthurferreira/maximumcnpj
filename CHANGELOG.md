@@ -1,5 +1,25 @@
 # Histórico de alterações
 
+## [0.6.0] — 2026-09-29
+
+### Acessos Maximum
+- Provisionamento aditivo de 18 operadores tributários e administrador de programação, sem redefinir contas existentes.
+- Senha temporária de 8 caracteres aceita apenas no provisionamento da equipe; acesso bloqueado até redefinição para senha de 12–128 caracteres diferente da atual.
+- Script, configuração privada opcional e endpoint exclusivo de administrador para provisionamento; nenhum segredo real versionado.
+
+### Relatórios de compras
+- Empresa existente obrigatória e importação CSV UTF-8/Windows-1252, XLS/XLSX com A/I/P/Q.
+- Valores financeiros em centavos: soma de Q por linha, sem multiplicar quantidade P; consulta e contagem deduplicadas por CNPJ completo.
+- Percentuais por fornecedores e valores com denominadores explícitos; não confirmados e CPF/outros documentos separados.
+- Histórico financeiro por empresa, consulta externa reaproveitando pipeline existente, snapshot reconciliado e exports PDF Python/CSV em partes.
+- Vendas desabilitada na interface e recusada pelo backend.
+- Preservados cadastros, contas anteriores, consultas e relatórios cadastrais. README v0.5.1 arquivado, plano de ação atualizado.
+
+### Validação
+- Testes de parsing, valores, duplicidades, autenticação, troca obrigatória, isolamento, relatórios e navegação com dados sintéticos.
+- CI com MongoDB descartável, Node 22 e Python; verificar execução do SHA final para evidência de aprovação.
+- Arquivo real utilizado somente para conferir formato e totais, sem inclusão no repositório.
+
 ## [0.5.1] — 2026-09-28
 
 ### Identidade visual

@@ -47,6 +47,8 @@ jobs:
         run: npm run test:integration
       - name: Consultas com API simulada e compartilhamento de registros
         run: npm run test:lookup-integration
+      - name: Compras, valores e isolamento com MongoDB descartável
+        run: npm run test:purchases-integration
       - name: Conta efêmera para teste
         run: npm run seed
       - name: Chromium para testes

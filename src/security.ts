@@ -16,6 +16,10 @@ export async function hashPassword(password: string): Promise<string> {
 export async function hashInitialAdminPassword(password: string): Promise<string> {
   return createPasswordHash(password, 10);
 }
+/** Private, one-time provisioning only. Every new team account must replace it. */
+export async function hashInitialTeamPassword(password: string): Promise<string> {
+  return createPasswordHash(password, 8);
+}
 export async function verifyPassword(password: unknown, stored: string): Promise<boolean> {
   if (typeof password !== 'string' || password.length > 128) return false;
   const [type, salt, hex] = stored.split(':');
