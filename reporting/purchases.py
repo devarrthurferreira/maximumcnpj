@@ -109,9 +109,13 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     by_cnpj, indexes = {}, set()
     total_cents = non_cnpj_cents = excluded_lines = 0
     quantity = Decimal(0)
+    # v0.8.0 dropped the redundant partner kind when copying financial lines.
+    # Its server-owned SALES_V1 job still identifies buyers; explicit mismatches
+    # and missing kinds in newer snapshots remain invalid.
+    legacy_line_kind = partner_kind if not sales or job.get('version') == '0.8.0' else None
     for row in lines:
         _check(row.get('workspaceId') == workspace and row.get('jobId') == job['_id'])
-        _check(row.get('kind', None if sales else partner_kind) == partner_kind)
+        _check(row.get('kind', legacy_line_kind) == partner_kind)
         index = _integer(row.get('index'), expected - 1)
         _check(index not in indexes)
         indexes.add(index)

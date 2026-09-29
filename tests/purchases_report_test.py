@@ -104,6 +104,23 @@ class PurchaseReportTests(unittest.TestCase):
                 with self.assertRaises(ReportError):
                     reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
 
+    def test_v080_sales_without_redundant_line_kind_preserve_existing_reports(self):
+        job, lines, items = sales_fixture()
+        job['version'] = '0.8.0'
+        for line in lines:
+            del line['kind']
+        meta = reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
+        self.assertEqual(meta['reportType'], 'SALES')
+        self.assertEqual(meta['totalCents'], 100000)
+        self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+        lines[0]['kind'] = 'FORNECEDOR'
+        with self.assertRaises(ReportError):
+            reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
+        del lines[0]['kind']
+        job['version'] = '0.8.1'
+        with self.assertRaises(ReportError):
+            reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
+
     def test_net_formula_components_and_managerial_unknown_preserve_source(self):
         job, lines, items = net_fixture()
         meta = reconcile_purchase_snapshot(job, lines, items, WORKSPACE)

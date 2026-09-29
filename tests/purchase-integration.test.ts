@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { database, collection, scope, closeDatabase } from '../src/store.ts';
 import { resetLookupIndexes, withJob } from '../src/lookup-db.ts';
 import { importCatalog } from '../src/lookup-catalog.ts';
@@ -10,7 +11,7 @@ import { purchaseSummary, purchaseRows, purchaseExport, purchaseHistory } from '
 import { routeV4 } from '../src/lookup-http.ts';
 import { digits } from '../src/domain.ts';
 
-test('MongoDB compras: idempotência, CNPJ único, CPF separado, somas exatas e snapshot reconciliado', {skip:!process.env.MONGODB_URI, timeout:120000}, async () => {
+test('MongoDB compras e vendas: idempotência, isolamento, cálculos e PDF Python do snapshot real', {skip:!process.env.MONGODB_URI, timeout:120000}, async () => {
   const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
   process.env.MONGODB_DB = 'maximum_purchase_test_' + randomUUID().replaceAll('-', ''); process.env.WORKSPACE_ID = 'purchases_test'; resetLookupIndexes();
   const actor = {_id:'tester',role:'admin',name:'Teste',email:'test@example.test'};
@@ -104,6 +105,33 @@ test('MongoDB compras: idempotência, CNPJ único, CPF separado, somas exatas e 
     assert.equal(salesCnpjs.total,3); assert(salesCnpjs.items.every((row:any)=>row.kind==='CLIENTE'));
     const salesLines:any = await routeV4(actor,'GET',new URL('https://test/api/v4/sales/'+sales._id+'/lines'),{});
     assert.equal(salesLines.total,5); assert(salesLines.items.every((row:any)=>row.quantity==='0'));
+    const storedSalesLines = await (await collection('purchaseLines')).find(scope({jobId:sales._id})).toArray();
+    assert.equal(storedSalesLines.length,salesRows.length);
+    assert(storedSalesLines.every(row=>row.kind==='CLIENTE'), 'A projeção persistida deve preservar CLIENTE em todas as linhas de vendas, incluindo CPF.');
+    // Read the exact documents written by the Node pipeline through Python's production report loader.
+    // Independent Python fixtures would not detect a field discarded by the Node Mongo projection.
+    const pythonPdf = spawnSync('python', ['-c', `
+import json, os, sys
+from pymongo import MongoClient
+from reporting.purchases import purchase_metadata, render_purchase_pdf
+connection = MongoClient(os.environ['MONGODB_URI'], serverSelectionTimeoutMS=8000, tz_aware=True)
+try:
+    db, workspace = connection[os.environ['MONGODB_DB']], os.environ['WORKSPACE_ID']
+    reports = []
+    for job_id in sys.argv[1:]:
+        job = db.lookupJobs.find_one({'_id': job_id, 'workspaceId': workspace})
+        assert job is not None
+        meta = purchase_metadata(db, job, workspace)
+        pdf = render_purchase_pdf(meta)
+        assert pdf.startswith(b'%PDF') and 1000 < len(pdf) <= 4_000_000
+        reports.append({key: meta[key] for key in ('reportType', 'lineCount', 'uniqueSuppliers', 'totalCents', 'cnpjCents', 'components')})
+    print(json.dumps(reports))
+finally:
+    connection.close()
+`, job._id, sales._id], {encoding:'utf8', env:process.env, timeout:30000, maxBuffer:100000});
+    assert.equal(pythonPdf.error,undefined, 'O processo Python dos PDFs deve executar.');
+    assert.equal(pythonPdf.status,0, `O PDF deve aceitar o snapshot persistido pelo Node: ${pythonPdf.stderr}`);
+    assert.deepEqual(JSON.parse(pythonPdf.stdout), ['PURCHASES','SALES'].map(reportType=>({reportType,lineCount:5,uniqueSuppliers:3,totalCents:43000,cnpjCents:40000,components:summary.components})));
     const salesCsv:any = await routeV4(actor,'POST',new URL('https://test/api/v4/sales/'+sales._id+'/csv'),{status:'ALL',part:1});
     assert.match(salesCsv.fileName,/^vendas-/); assert(salesCsv.content.includes('Comprador (I)'));
     assert.equal((await purchaseHistory(clientId,1,SALES_MODE)).total,1); assert.equal((await purchaseHistory(clientId,1)).total,1);

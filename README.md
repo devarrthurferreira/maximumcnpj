@@ -1,4 +1,4 @@
-# Maximum CNPJ · v0.8.0
+# Maximum CNPJ · v0.8.1
 
 Node.js + TypeScript + MongoDB para consultas e histórico. Python para PDFs. Identidade Maximum, empresas compartilhadas no mesmo workspace e acesso autenticado. Sem Google Cloud.
 
@@ -14,6 +14,10 @@ Node.js + TypeScript + MongoDB para consultas e histórico. Python para PDFs. Id
 - [x] Acessos da equipe, troca obrigatória, empresas existentes e relatórios anteriores preservados.
 
 Os resultados refletem a resposta da base Minha Receita na data da consulta. A inclusão de não confirmados em não optantes é uma regra de agrupamento gerencial solicitada pela Maximum: a origem continua identificada como não confirmada, sem alterar o retorno da fonte. O enquadramento observado não comprova o regime na data da nota.
+
+### Correção de compatibilidade do PDF · v0.8.1
+
+A cópia das linhas financeiras passa a preservar o tipo de parceiro definido pelo servidor. PDFs de vendas importadas na v0.8.0 continuam disponíveis mesmo quando esse campo redundante não foi salvo nas linhas, usando o modo de vendas do próprio lote. Tipos explícitos divergentes, componentes monetários incorretos e snapshots incompletos continuam bloqueados. A integração testa a emissão Python a partir do lote realmente criado pelo fluxo Node/MongoDB.
 
 ## Acesso da equipe
 
@@ -90,7 +94,7 @@ A quantidade e o valor dos não confirmados ficam identificados dentro do grupo 
 
 Novas importações usam `calculationVersion=NET_V2`. Relatórios anteriores sem essa marca continuam sob a regra `Q_V1` (soma de Q), com identificação da regra original. Seus descontos, fretes e abatimentos não eram armazenados; por isso, uma nova importação é necessária para obter a nova conta. Nenhum histórico é recalculado com valores inventados.
 
-CSV admite UTF-8 e Windows-1252, separador ponto e vírgula e números brasileiros. Linhas completamente vazias são ignoradas. Cabeçalho, alinhamento e valores são conferidos antes do envio; separadores não escapados que desloquem campos precisam ser corrigidos na origem. Fórmulas nas colunas utilizadas devem ser convertidas para valores.
+CSV admite UTF-8 e Windows-1252, separador ponto e vírgula e números brasileiros. Linhas completamente vazias são ignoradas. Cabeçalho, alinhamento e valores são conferidos antes do envio; separadores não escapados que desloquem campos precisam ser corrigidos na origem. Quando a descrição contém ponto e vírgula, o CSV deve envolver a descrição inteira em aspas duplas; apenas abrir o CSV desalinhado e salvá-lo novamente não restaura as posições. A exportação direta em XLSX, com os campos nas colunas correspondentes, também é aceita. Fórmulas nas colunas utilizadas devem ser convertidas para valores.
 
 ## Dados, segurança e limites
 

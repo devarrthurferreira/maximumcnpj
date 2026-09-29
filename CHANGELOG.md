@@ -1,5 +1,12 @@
 # Histórico de alterações
 
+## [0.8.1] — 2026-09-29
+
+- Corrigida a cópia das linhas financeiras para conservar o tipo de parceiro e permitir a emissão do PDF de vendas criado pelo fluxo real Node/MongoDB.
+- Compatibilidade específica para snapshots de vendas v0.8.0 sem esse campo redundante; tipos divergentes e erros de cálculo continuam bloqueados.
+- Teste de integração cruza o lote criado pelo Node com a emissão do PDF em Python, além dos testes sintéticos.
+- Documentada a correção de CSV com ponto e vírgula dentro de descrições. Nenhuma linha real é descartada nem corrigida silenciosamente.
+
 ## [0.8.0] — 2026-09-29
 
 ### Vendas disponível
