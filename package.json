@@ -1,6 +1,6 @@
 {
   "name": "maximum-cnpj",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "description": "Consultas CNPJ, hist\u00f3rico por empresa e relat\u00f3rios Python com Node.js e MongoDB",

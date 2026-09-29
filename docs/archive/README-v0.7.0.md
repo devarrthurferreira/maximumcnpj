@@ -1,16 +1,16 @@
-# Maximum CNPJ · v0.8.0
+# Maximum CNPJ · v0.7.0
 
 Node.js + TypeScript + MongoDB para consultas e histórico. Python para PDFs. Identidade Maximum, empresas compartilhadas no mesmo workspace e acesso autenticado. Sem Google Cloud.
 
-## Entrega de 29/09/2026 — compras e vendas
+## Entrega de 29/09/2026 — geração por empresas
 
 - [x] Navegação unificada: **Navegação → Início, Empresas**; **Geração → Iniciar, Histórico**.
-- [x] Seleção de várias empresas e geração salva antes do envio, com escolha de compras, vendas ou ambos e acompanhamento dos relatórios que faltam.
-- [x] Histórico para abrir gerações, adicionar compras e vendas pendentes e retomar consultas.
+- [x] Seleção de várias empresas e geração salva antes do envio, com acompanhamento das compras que faltam.
+- [x] Histórico para abrir gerações, adicionar compras pendentes e retomar consultas.
 - [x] Novo total financeiro: **Q − Y + AA − AB**, em centavos inteiros. Z é informação de conferência, fora da fórmula.
 - [x] Não confirmados incluídos no grupo gerencial de não optantes; resposta original preservada nos detalhes e arquivos.
 - [x] PDF Python com memória de cálculo por empresa e consolidado da geração concluída.
-- [x] Vendas disponível: importação, consultas de compradores, histórico, CSV e PDF com a mesma regra financeira de compras.
+- [x] Formato de vendas preparado; importação e processamento permanecem indisponíveis.
 - [x] Acessos da equipe, troca obrigatória, empresas existentes e relatórios anteriores preservados.
 
 Os resultados refletem a resposta da base Minha Receita na data da consulta. A inclusão de não confirmados em não optantes é uma regra de agrupamento gerencial solicitada pela Maximum: a origem continua identificada como não confirmada, sem alterar o retorno da fonte. O enquadramento observado não comprova o regime na data da nota.
@@ -57,14 +57,13 @@ O endpoint retorna quantas contas foram criadas e quantas foram preservadas. É 
 
 1. Entre no sistema e conclua a redefinição quando solicitada.
 2. Em **Geração → Iniciar**, pesquise e selecione de 1 a 50 empresas pelo código e nome.
-3. Escolha os relatórios de **Compras**, **Vendas** ou ambos e inicie a geração. O rascunho fica salvo com os espaços correspondentes para cada empresa selecionada.
-4. Adicione cada relatório à empresa e ao tipo correspondente, confira aba/cabeçalho e prévia, depois confirme a importação. Compras consulta fornecedores; vendas consulta compradores.
-5. Acompanhe as consultas. A página conduz a fila; fechar a aba pausa sua continuidade. No **Histórico**, abra a geração para adicionar relatórios faltantes ou retomar consultas em processamento.
-6. Quando todos os relatórios escolhidos de todas as empresas estiverem concluídos, baixe o **PDF Python da geração** com os cálculos de cada empresa. São até 10 empresas por parte, com partes numeradas quando necessário.
-7. O detalhe de cada relatório conserva PDF individual, fornecedores ou compradores agrupados, linhas importadas e CSV em partes. Compras e vendas têm totais separados; não é calculado lucro ou tributo.
-8. Gerações anteriores continuam exigindo somente compras. Ao adicionar vendas a uma delas, vendas passa a ser necessária para todas as empresas dessa geração antes de emitir o novo consolidado. Os PDFs individuais de compras continuam acessíveis.
+3. Inicie a geração. O rascunho fica salvo com um espaço de compras para cada empresa selecionada.
+4. Adicione o relatório de compras da empresa correspondente, confira aba/cabeçalho e prévia, depois confirme a importação. Vendas permanece marcada como **Em breve** e não bloqueia a etapa de compras.
+5. Acompanhe as consultas. A página conduz a fila; fechar a aba pausa sua continuidade. No **Histórico**, abra a geração para adicionar compras faltantes ou retomar consultas em processamento.
+6. Quando as compras de todas as empresas estiverem concluídas, baixe o **PDF Python da geração** com os cálculos de cada empresa. São até 10 empresas por parte, com partes numeradas quando necessário.
+7. O detalhe de cada compra conserva PDF individual, fornecedores agrupados, linhas importadas e CSV em partes. O histórico anterior continua acessível.
 
-| Coluna | Compras | Vendas | Uso |
+| Coluna | Compras | Vendas (preparado) | Uso |
 |---|---|---|---|
 | A | CNPJ do fornecedor | CNPJ do comprador | Identidade completa, normalizada |
 | I | Razão social | Comprador | Nome informado, sem inferir enquadramento |
@@ -77,13 +76,13 @@ O endpoint retorna quantas contas foram criadas e quantas foram preservadas. É 
 
 **Novo Total = Q − Y + AA − AB.** A aplicação lê os componentes separadamente e recalcula no servidor. Ajustes vazios em colunas presentes equivalem a zero; colunas necessárias ausentes, valores inválidos e resultado negativo bloqueiam a linha para correção. Não há multiplicação por P nem redução silenciosa a zero.
 
-Uma nota pode aparecer em várias linhas de produtos: todas as linhas e seus valores são preservados. O CNPJ é deduplicado somente para consulta e contagem de fornecedores ou compradores. Matriz e filial com CNPJs completos diferentes contam separadamente.
+Uma nota pode aparecer em várias linhas de produtos: todas as linhas e seus valores são preservados. O CNPJ é deduplicado somente para consulta e contagem de fornecedores. Matriz e filial com CNPJs completos diferentes contam separadamente.
 
 | Indicador | Numerador | Denominador |
 |---|---|---|
-| % de fornecedores/compradores optantes | CNPJs distintos com resposta optante | Todos os CNPJs válidos distintos |
-| % de fornecedores/compradores não optantes (grupo gerencial) | CNPJs distintos não optantes + não confirmados | A mesma base de CNPJs válidos distintos |
-| % financeiro do grupo | Novo Total das linhas dos fornecedores/compradores do grupo | Novo Total de todas as linhas com CNPJ válido |
+| % de fornecedores optantes | CNPJs distintos com resposta optante | Todos os CNPJs válidos distintos |
+| % de fornecedores não optantes (grupo gerencial) | CNPJs distintos não optantes + não confirmados | A mesma base de CNPJs válidos distintos |
+| % financeiro do grupo | Novo Total das linhas dos fornecedores do grupo | Novo Total de todas as linhas com CNPJ válido |
 | Total importado | Novo Total de todas as linhas, inclusive CPF/outros documentos | Não se aplica |
 
 A quantidade e o valor dos não confirmados ficam identificados dentro do grupo de não optantes. Os detalhes/CSV preservam a situação original. CPF, CNO e documentos inválidos não são enviados à API CNPJ nem entram nesses percentuais: seus valores ficam separados e permanecem no total importado. Uma base sem CNPJ válido admite relatório com denominador zero.
@@ -95,7 +94,7 @@ CSV admite UTF-8 e Windows-1252, separador ponto e vírgula e números brasileir
 ## Dados, segurança e limites
 
 - Coleções `clients`, consultas antigas e estados existentes são mantidos. Nenhuma migração destrutiva.
-- Compras usam `lookupJobs.mode=PURCHASES_V1` e vendas `SALES_V1`, com `lookupItems` e `cnpjStates` compartilhados. `purchaseLines` conserva documento, nome, quantidade, componentes monetários selecionados e identidade da linha/importação; não armazena a planilha original. `generations` guarda as empresas selecionadas, os tipos exigidos e os vínculos com compras e vendas, sem duplicar linhas financeiras. Os endpoints validam o tipo do lote para impedir mistura entre compras e vendas.
+- Compras usam `lookupJobs.mode=PURCHASES_V1`, `lookupItems` e `cnpjStates` compartilhados. `purchaseLines` conserva documento, nome, quantidade, componentes monetários selecionados e identidade da linha/importação; não armazena a planilha original. `generations` guarda as empresas selecionadas e os vínculos com as compras, sem duplicar linhas financeiras.
 - Cada lote exige empresa ativa, workspace e usuário autenticado. Upload em partes de até 250 linhas, ordem validada, hash da parte e repetição idempotente.
 - Até 50.000 linhas e 10 MiB de arquivo. Cada linha admite até R$ 1 bilhão, sem valores negativos; sinais e dados fora do contrato geram erro explícito.
 - Conclusão e downloads conciliam linhas, CNPJs únicos, ocorrências, valores e estados da fonte. Divergência ou snapshot parcial bloqueia emissão.
@@ -106,9 +105,9 @@ CSV admite UTF-8 e Windows-1252, separador ponto e vírgula e números brasileir
 
 ## Compatibilidade e identidade
 
-As consultas cadastrais e a central `/reports.html` continuam acessíveis pelo histórico. Gerações, compras e vendas financeiras têm sua própria memória de cálculo. Cadastros, contas e snapshots anteriores são preservados, sem migração destrutiva ou redefinição de senhas.
+As consultas cadastrais e a central `/reports.html` continuam acessíveis pelo histórico. Gerações e compras financeiras têm sua própria memória de cálculo. Cadastros, contas e snapshots anteriores são preservados, sem migração destrutiva ou redefinição de senhas.
 
-A identidade usa bordô `#750207`, branco, superfícies claras e ícones na navegação. Logos e PDFs usam imagens locais. As documentações anteriores estão em [`docs/archive/README-v0.7.0.md`](docs/archive/README-v0.7.0.md), [`docs/archive/README-v0.6.0.md`](docs/archive/README-v0.6.0.md) e [`docs/archive/README-v0.5.1.md`](docs/archive/README-v0.5.1.md).
+A identidade usa bordô `#750207`, branco, superfícies claras e ícones na navegação. Logos e PDFs usam imagens locais. As documentações anteriores estão em [`docs/archive/README-v0.6.0.md`](docs/archive/README-v0.6.0.md) e [`docs/archive/README-v0.5.1.md`](docs/archive/README-v0.5.1.md).
 
 ## Configuração
 
@@ -145,12 +144,13 @@ REPORT_TEST_MONGO=1 npm run test:reports
 npm run test:e2e
 ```
 
-A validação desta entrega cobre componentes monetários de compras e vendas, agrupamento gerencial, compatibilidade dos snapshots anteriores, isolamento entre tipos e empresas, retomada, PDF Python e fluxo de navegador em computador/celular. Consulte a CI do SHA final para o resultado completo da execução.
+A validação desta entrega cobre componentes monetários, agrupamento gerencial, compatibilidade dos snapshots anteriores, isolamento das gerações, retomada, PDF Python e fluxo de navegador em computador/celular. Consulte a CI do SHA final para o resultado completo da execução.
 
 Os testes financeiros usam dados sintéticos e fonte simulada. Testes com MongoDB devem usar banco descartável. A CI executa MongoDB 7, Node 22, Python 3.12 e Chromium, incluindo regras financeiras, autenticação, isolamento e navegação. Confira a execução vinculada ao commit entregue; existência de testes não significa aprovação em produção ou homologação fiscal. Arquivos reais de clientes não são versionados.
 
 ## Próximas etapas
 
+- [ ] Homologar a importação de vendas com o formato preparado antes de habilitá-la.
 - [ ] Definir a próxima etapa após a memória de cálculo consolidada.
 - [ ] Fila independente da aba para lotes extensos.
 - [ ] Relatórios assíncronos completos/ZIP para grandes volumes.

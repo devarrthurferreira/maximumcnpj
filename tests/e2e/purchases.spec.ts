@@ -13,16 +13,17 @@ const csv = () => {
   return [header, ...lines.map(l => {const row = Array(28).fill(''); row[0] = l.document; row[8] = l.name; row[15] = l.quantity; row[16] = (l.grossCents / 100).toFixed(2).replace('.', ',');[l.discountCents,l.accessoryCents,l.freightCents,l.abatementCents].forEach((v,i)=>row[24+i]=(v/100).toFixed(2).replace('.',',')); return row;})].map(row => row.join(';')).join('\r\n');
 };
 
-test('Compras imports cp1252 columns, keeps financial values and provides snapshot downloads', async ({page}, testInfo) => {
+for (const type of ['PURCHASES','SALES']) test(`${type} imports cp1252 columns, keeps financial values and provides snapshot downloads`, async ({page}, testInfo) => {
+  const sales=type==='SALES', report=sales?'vendas':'compras', endpoint=sales?'sales':'purchases';
   let job:any = null, posted:any[] = [], pdfBody:any, csvBody:any;
   const pageErrors:string[] = []; page.on('pageerror', e => pageErrors.push(e.message));
   await page.route('**/api/auth/session', route => route.fulfill({json:{user:{_id:'test',role:'operator',mustChangePassword:false}}}));
   await page.route('**/api/v4/clients', route => route.fulfill({json:{items:[client]}}));
-  await page.route(/\/api\/v4\/purchases(?:[/?]|$)/, async route => {
+  await page.route(new RegExp(`/api/v4/${endpoint}(?:[/?]|$)`), async route => {
     const url = new URL(route.request().url()), method = route.request().method(), p = method === 'POST' ? route.request().postDataJSON() : {};
-    if (url.pathname === '/api/v4/purchases') {
+    if (url.pathname === `/api/v4/${endpoint}`) {
       if (method === 'GET') return route.fulfill({json:{items:job ? [job] : [],total:job ? 1 : 0,page:1}});
-      expect(p.clientId).toBe(clientId); expect(p.type).toBe('PURCHASES'); expect(p.expectedRows).toBe(3);
+      expect(p.clientId).toBe(clientId); expect(p.type).toBe(type); expect(p.expectedRows).toBe(3);
       job = {_id:p.importId,calculationVersion:'NET_V2',clientId,clientCode:'000',clientName:client.name,fileName:p.fileName,expectedRows:3,uploaded:0,status:'UPLOADING',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:1,invalid:1,duplicates:1}};
       return route.fulfill({json:job});
     }
@@ -33,34 +34,36 @@ test('Compras imports cp1252 columns, keeps financial values and provides snapsh
       const excluded = url.searchParams.get('status') === 'NON_CNPJ';
       return route.fulfill({json:{items:excluded ? [{...lines[2],submittedName:lines[2].name,documentKind:'CPF',status:'NON_CNPJ'}] : [{cnpj:'11222333000181',documentKind:'CNPJ',submittedName:lines[0].name,status:'OPTANTE',occurrences:2,totalCents:11520,checkedAt:'2026-09-29T12:01:00Z'}],total:1,page:1,pageSize:100}});
     }
-    if (url.pathname.endsWith('/csv')) {expect(method).toBe('POST');csvBody=p;return route.fulfill({json:{content:'\uFEFFDocumento;Valor\n12345678900;50,00',fileName:'compras-ficticias.csv',mimeType:'text/csv;charset=utf-8',part:1,parts:1,total:1}});}
+    if (url.pathname.endsWith('/csv')) {expect(method).toBe('POST');csvBody=p;return route.fulfill({json:{content:'\uFEFFDocumento;Valor\n12345678900;50,00',fileName:`${report}-ficticias.csv`,mimeType:'text/csv;charset=utf-8',part:1,parts:1,total:1}});}
     return route.fulfill({json:job});
   });
-  await page.route('**/api/reports', route => {pdfBody=route.request().postDataJSON();return route.fulfill({contentType:'application/pdf',headers:{'Content-Disposition':'attachment; filename="compras-resumo.pdf"'},body:'%PDF-1.4\n%%EOF'});});
-  await page.goto('/purchases.html');
-  await expect(page.getByRole('button',{name:/Vendas/})).toBeDisabled();
+  await page.route('**/api/reports', route => {pdfBody=route.request().postDataJSON();return route.fulfill({contentType:'application/pdf',headers:{'Content-Disposition':`attachment; filename="${report}-resumo.pdf"`},body:'%PDF-1.4\n%%EOF'});});
+  await page.goto('/purchases.html'+(sales?'?type=SALES':''));
+  await expect(page.getByRole('button',{name:/Vendas/})).toBeEnabled();
+  await expect(page.getByRole('button',{name:sales?/Vendas/:/Compras/})).toHaveAttribute('aria-pressed','true');
   await expect(page.locator('#purchase-file')).toBeDisabled();
   await page.getByLabel('Empresa responsável (Código / ID)').selectOption(clientId);
-  await page.locator('#purchase-file').setInputFiles({name:'000-COMPRAS.csv',mimeType:'text/csv',buffer:Buffer.from(csv(),'latin1')});
+  await page.locator('#purchase-file').setInputFiles({name:`000-${report.toUpperCase()}.csv`,mimeType:'text/csv',buffer:Buffer.from(csv(),'latin1')});
   await page.getByRole('button',{name:'Conferir colunas e valores'}).click();
   await expect(page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'})).toBeVisible();
   await page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'}).click();
-  await expect(page.getByRole('heading',{name:'Total de compras do relatório'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:`Total de ${report} do relatório`})).toBeVisible();
   expect(posted).toEqual(lines);
+  if (sales) {await expect(page.getByRole('heading',{name:'Explore os compradores e valores'})).toBeVisible();await expect(page).toHaveURL(/type=SALES/);}
   await expect(page.locator('.purchase-hero')).toContainText('165,20');
   await expect(page.locator('.purchase-group').first()).toContainText('115,20');
   await expect(page.locator('.purchase-group').first()).toContainText('100%');
   await page.getByRole('button',{name:'Ver documentos não consultáveis'}).click();
   await expect(page.locator('#purchase-result-list')).toContainText('PESSOA FICTÍCIA');
   const csvDownload = page.waitForEvent('download'); await page.getByRole('button',{name:'Baixar CSV das linhas'}).click();
-  expect((await csvDownload).suggestedFilename()).toBe('compras-ficticias.csv'); expect(csvBody).toEqual({status:'NON_CNPJ',part:1});
+  expect((await csvDownload).suggestedFilename()).toBe(`${report}-ficticias.csv`); expect(csvBody).toEqual({status:'NON_CNPJ',part:1});
   const pdfDownload = page.waitForEvent('download'); await page.getByRole('button',{name:'Baixar resumo PDF'}).click();
-  expect((await pdfDownload).suggestedFilename()).toBe('compras-resumo.pdf'); expect(pdfBody).toMatchObject({action:'pdf',clientId,layout:'summary',status:'ALL',kind:'ALL'});
-  const desktop = testInfo.outputPath('compras-desktop.png');
-  await page.screenshot({path:desktop,fullPage:true}); await testInfo.attach('Compras desktop',{path:desktop,contentType:'image/png'});
+  expect((await pdfDownload).suggestedFilename()).toBe(`${report}-resumo.pdf`); expect(pdfBody).toMatchObject({action:'pdf',clientId,layout:'summary',status:'ALL',kind:'ALL'});
+  const desktop = testInfo.outputPath(`${report}-desktop.png`);
+  await page.screenshot({path:desktop,fullPage:true}); await testInfo.attach(`${report} desktop`,{path:desktop,contentType:'image/png'});
   await page.setViewportSize({width:390,height:844});
-  const mobile = testInfo.outputPath('compras-mobile.png');
-  await page.screenshot({path:mobile,fullPage:true}); await testInfo.attach('Compras mobile',{path:mobile,contentType:'image/png'});
+  const mobile = testInfo.outputPath(`${report}-mobile.png`);
+  await page.screenshot({path:mobile,fullPage:true}); await testInfo.attach(`${report} mobile`,{path:mobile,contentType:'image/png'});
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   expect(pageErrors).toEqual([]);
 });
@@ -108,22 +111,38 @@ test('Excel starting at row 5 keeps fixed source coordinates and CNPJ leading ze
   await expect(reviewRows.nth(2)).toContainText('FORNECEDOR LINHA 8');await expect(reviewRows.nth(2)).toContainText('80,00');
 });
 
-test('Purchases resumes the original upload within its generation and keeps source failures distinct',async({page})=>{
+for (const type of ['PURCHASES','SALES']) test(`${type} resumes the original upload within its generation and keeps source failures distinct`,async({page})=>{
+ const sales=type==='SALES',report=sales?'vendas':'compras',endpoint=sales?'sales':'purchases';
  const generationId='00000000-0000-4000-8000-000000000070',jobId='00000000-0000-4000-8000-000000000071';
- let attached:any,rows:any,requestedHistory=false;
+ let attached:any,rows:any,requestedHistory=false,attachPath='';
  const job:any={_id:jobId,generationId,clientId,clientCode:'000',clientName:client.name,fileName:'000-COMPRAS.csv',calculationVersion:'NET_V2',expectedRows:3,uploaded:2,status:'UPLOADING',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:1,invalid:1,duplicates:1}};
  await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'test',role:'operator'}}}));await page.route('**/api/v4/clients',r=>r.fulfill({json:{items:[client]}}));
- await page.route(/\/api\/v4\/generations(?:[/?]|$)/,r=>{if(r.request().method()==='POST')attached=r.request().postDataJSON();return r.fulfill({json:{_id:generationId,companies:[{clientId}],generation:{_id:generationId},job}});});
- await page.route(/\/api\/v4\/purchases(?:[/?]|$)/,r=>{
-  const url=new URL(r.request().url());if(url.pathname==='/api/v4/purchases'){requestedHistory=true;return r.fulfill({json:{items:[],total:0}});}
+ await page.route(/\/api\/v4\/generations(?:[/?]|$)/,r=>{if(r.request().method()==='POST'){attached=r.request().postDataJSON();attachPath=new URL(r.request().url()).pathname;}return r.fulfill({json:{_id:generationId,companies:[{clientId}],generation:{_id:generationId},job}});});
+ await page.route(new RegExp(`/api/v4/${endpoint}(?:[/?]|$)`),r=>{
+  const url=new URL(r.request().url());if(url.pathname===`/api/v4/${endpoint}`){requestedHistory=true;return r.fulfill({json:{items:[],total:0}});}
   if(url.pathname.endsWith('/rows')){rows=r.request().postDataJSON();job.uploaded=3;return r.fulfill({json:{uploaded:3}});}
   if(url.pathname.endsWith('/finalize')){job.status='COMPLETED';return r.fulfill({json:job});}
   if(url.pathname.endsWith('/summary'))return r.fulfill({json:{job,calculationVersion:'NET_V2',totals:{lines:3,uniqueCnpjs:1,cnpjLines:2,nonCnpjLines:1,totalCents:16520,cnpjCents:11520,nonCnpjCents:5000},groups:[{status:'OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_CONFIRMADO',count:1,lines:2,totalCents:11520,countPercent:100,valuePercent:100}],reportingGroups:[{status:'OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_OPTANTE',count:1,lines:2,totalCents:11520,countPercent:100,valuePercent:100,unconfirmedCount:1,unconfirmedCents:11520}],excluded:[]}});
   if(url.pathname.endsWith('/results'))return r.fulfill({json:{items:[{cnpj:'11222333000181',submittedName:'FORNECEDOR FICTÍCIO',documentKind:'CNPJ',status:'NAO_CONFIRMADO',reportingStatus:'NAO_OPTANTE',reason:'Fonte sem resposta',totalCents:11520,occurrences:2}],page:1,total:1,pageSize:100}});
   return r.fulfill({json:job});
  });
- await page.goto(`/purchases.html?generation=${generationId}&client=${clientId}&job=${jobId}`);await expect(page.getByRole('heading',{name:'Importação incompleta'})).toBeVisible();await expect(page.locator('#purchase-company')).toBeDisabled();await expect(page.locator('.purchase-history')).toBeHidden();
+ await page.goto(`/purchases.html?generation=${generationId}&client=${clientId}&job=${jobId}${sales?'&type=SALES':''}`);await expect(page.getByRole('heading',{name:'Importação incompleta'})).toBeVisible();await expect(page.locator('#purchase-company')).toBeDisabled();await expect(page.locator('.purchase-history')).toBeHidden();
  await page.locator('#purchase-file').setInputFiles({name:'000-COMPRAS.csv',mimeType:'text/csv',buffer:Buffer.from(csv(),'latin1')});await page.getByRole('button',{name:'Conferir colunas e valores'}).click();await page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'}).click();
- await expect(page.getByRole('heading',{name:'Total de compras do relatório'})).toBeVisible();expect(attached).toMatchObject({importId:jobId,clientId,expectedRows:3});expect(rows.offset).toBe(0);expect(rows.rows).toEqual(lines);expect(requestedHistory).toBe(false);await expect(page).toHaveURL(new RegExp(`generation=${generationId}`));
+ await expect(page.getByRole('heading',{name:`Total de ${report} do relatório`})).toBeVisible();expect(attached).toMatchObject({importId:jobId,clientId,expectedRows:3,type});expect(attachPath).toBe(`/api/v4/generations/${generationId}/${endpoint}`);expect(rows.offset).toBe(0);expect(rows.rows).toEqual(lines);expect(requestedHistory).toBe(false);await expect(page).toHaveURL(new RegExp(`generation=${generationId}`));
  await expect(page.locator('.purchase-group')).toHaveCount(2);await expect(page.locator('[data-status="NAO_OPTANTE"]')).toContainText('Inclui 1 não confirmado(s)');await expect(page.locator('#purchase-result-list')).toContainText('Origem: não confirmado. Fonte sem resposta');await expect(page.getByRole('link',{name:'← Voltar à geração e às outras empresas'})).toHaveAttribute('href','/generations.html?id='+generationId);
+});
+
+
+test('Sales accepts its model without P and blocks misaligned CSV before upload',async({page})=>{
+ let writes=0;
+ await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'test',role:'operator'}}}));
+ await page.route('**/api/v4/clients',r=>r.fulfill({json:{items:[client]}}));
+ await page.route(/\/api\/v4\/sales(?:[/?]|$)/,r=>{if(r.request().method()==='POST')writes++;return r.fulfill({json:{items:[],total:0}});});
+ const matrix=csv().split('\r\n').map(row=>row.split(';'));matrix.forEach(row=>row[15]='');matrix[0][0]='CNPJ Comprador';matrix[0][8]='Comprador';
+ await page.goto('/purchases.html?type=SALES');await page.getByLabel('Empresa responsável (Código / ID)').selectOption(clientId);
+ await page.locator('#purchase-file').setInputFiles({name:'000-VENDAS.csv',mimeType:'text/csv',buffer:Buffer.from(matrix.map(row=>row.join(';')).join('\r\n'),'latin1')});
+ await page.getByRole('button',{name:'Conferir colunas e valores'}).click();await expect(page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'})).toBeVisible();await expect(page.locator('#purchase-review')).toContainText('165,20');
+ matrix[1][14]='Descrição; com separador indevido';
+ await page.locator('#purchase-file').setInputFiles({name:'000-VENDAS-REVISAR.csv',mimeType:'text/csv',buffer:Buffer.from(matrix.map(row=>row.join(';')).join('\r\n'),'latin1')});
+ await page.getByRole('button',{name:'Conferir colunas e valores'}).click();await expect(page.getByRole('heading',{name:'Revise o arquivo antes de importar'})).toBeVisible();await expect(page.locator('#purchase-confirm')).toHaveCount(0);expect(writes).toBe(0);
 });

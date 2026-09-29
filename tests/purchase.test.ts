@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compactPurchaseLine, exactCents, percentage, purchaseCsv, MAX_LINE_CENTS } from '../src/purchase-domain.ts';
+import { compactPurchaseLine, calculationVersion, exactCents, percentage, purchaseCsv, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind } from '../src/purchase-domain.ts';
 
 const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050};
 test('Compras: valida componentes no servidor, centavos exatos e não multiplica P por Q', () => {
@@ -39,4 +39,22 @@ test('NET_V2 exige componentes, recalcula o total e não inclui Z; Q_V1 mantém 
   const csv = purchaseCsv({_id:'legacy',clientName:'Empresa',fileName:'legado.csv'}, [{...legacy,index:0,status:'NAO_CONFIRMADO'}]);
   assert(csv.includes('"Q";"Q_V1";"NAO_OPTANTE";"NAO_CONFIRMADO"'));
   assert(csv.includes('"1,00";"";"";"";"";"1,00"'));
+});
+
+test('Vendas: comprador CLIENTE, quantidade opcional e mesma fórmula sem Z', () => {
+  const sales = compactPurchaseLine({...row, quantity:undefined, kind:'FORNECEDOR'}, 'NET_V2', SALES_MODE);
+  assert.equal(sales.kind, 'CLIENTE'); assert.equal(sales.quantity, '0'); assert.equal(sales.totalCents, 1050);
+  assert.equal(compactPurchaseLine({...row, quantity:''}, 'NET_V2', SALES_MODE).quantity, '0');
+  assert.equal(compactPurchaseLine({...row, quantity:'2.50'}, 'NET_V2', SALES_MODE).quantity, '2.5');
+  assert.throws(() => compactPurchaseLine({...row, quantity:'Kit'}, 'NET_V2', SALES_MODE), /Quantidade/);
+  assert.throws(() => compactPurchaseLine({...row, quantity:undefined}), /Quantidade/);
+  assert.throws(() => compactPurchaseLine(row, 'Q_V1', SALES_MODE), /fórmula/);
+  assert.throws(() => calculationVersion({mode:SALES_MODE}), /fórmula/);
+  assert.throws(() => calculationVersion({mode:SALES_MODE,calculationVersion:'Q_V1'}), /fórmula/);
+  assert.equal(calculationVersion({mode:SALES_MODE,calculationVersion:'NET_V2'}), 'NET_V2');
+  assert(isFinancialMode(SALES_MODE)); assert(isFinancialMode(PURCHASE_MODE)); assert(!isFinancialMode('SALES'));
+  assert.equal(financialKind(SALES_MODE), 'CLIENTE'); assert.equal(financialKind(PURCHASE_MODE), 'FORNECEDOR');
+  const csv = purchaseCsv({mode:SALES_MODE,calculationVersion:'NET_V2',_id:'sales',clientName:'Empresa',fileName:'vendas.csv'}, [{...sales,index:0,status:'NAO_CONFIRMADO'}]);
+  assert(csv.includes('Comprador (I)')); assert(csv.includes('Quantidade (P) — opcional'));
+  assert(csv.includes('"10,50";"Q - Y + AA - AB";"NET_V2";"NAO_OPTANTE";"NAO_CONFIRMADO"'));
 });

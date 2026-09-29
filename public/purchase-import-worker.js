@@ -1,4 +1,4 @@
-/* Only A/I/P/Q/Y/Z/AA/AB leave this worker as approved purchase data; source file stays local. */
+/* Only A/I/P/Q/Y/Z/AA/AB leave this worker as approved financial data; source file stays local. */
 let book, matrix, encoding;
 self.onmessage = async ({data}) => {
   try {
@@ -39,6 +39,6 @@ self.onmessage = async ({data}) => {
       }
       self.postMessage({type:'preview', rows:matrix.slice(0,21), total:matrix.length, encoding});
     }
-    if (data.action === 'validate') self.postMessage({type:'validated', ...parser.parsePurchaseMatrix(matrix, Number(data.header), {type:data.reportType || 'PURCHASES', calculationVersion:data.calculationVersion || 'NET_V2'})});
+    if (data.action === 'validate') self.postMessage({type:'validated', ...parser.parsePurchaseMatrix(matrix, Number(data.header), {type:data.reportType || data.type || 'PURCHASES', calculationVersion:data.calculationVersion || 'NET_V2'})});
   } catch (error) { self.postMessage({type:'error', message:error.message || 'Não foi possível ler o relatório.'}); }
 };

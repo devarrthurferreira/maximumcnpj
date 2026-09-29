@@ -58,18 +58,20 @@ class handler(BaseHTTPRequestHandler):
             if action == 'jobs':
                 return self.send(200, json.dumps(jobs(db, workspace, options['clientId'], options['page']), default=iso, ensure_ascii=False).encode())
             job = get_job(db, options['jobId'], workspace, options['clientId'])
-            if job.get('mode') == 'PURCHASES_V1':
-                # A purchase snapshot must never fall through to a quantity-only export.
-                require(options['clientId'] == job.get('clientId'), message='Selecione a empresa do relatório de compras.')
+            if job.get('mode') in ('PURCHASES_V1', 'SALES_V1'):
+                # Financial snapshots must never fall through to quantity-only exports.
+                label = 'vendas' if job['mode'] == 'SALES_V1' else 'compras'
+                require(options['clientId'] == job.get('clientId'), message=f'Selecione a empresa do relatório de {label}.')
                 require(action == 'pdf' and options['layout'] == 'summary' and options['status'] == 'ALL' and
                         options['kind'] == 'ALL' and options['part'] == 1,
-                        400, 'PURCHASE_REPORT_MODE', 'Use o resumo PDF na área de Compras; os CSVs ficam nessa mesma área.')
+                        400, 'PURCHASE_REPORT_MODE' if label == 'compras' else 'SALES_REPORT_MODE',
+                        f'Use o resumo PDF na área de {label.capitalize()}; os CSVs ficam nessa mesma área.')
                 from reporting.purchases import purchase_metadata, render_purchase_pdf
                 purchase_meta = purchase_metadata(db, job, workspace)
                 content = render_purchase_pdf(purchase_meta)
-                require(len(content) <= MAX_RESPONSE_BYTES, 413, 'REPORT_TOO_LARGE', 'Relatório de compras acima do limite de resposta.')
+                require(len(content) <= MAX_RESPONSE_BYTES, 413, 'REPORT_TOO_LARGE', f'Relatório de {label} acima do limite de resposta.')
                 code = ''.join(c for c in str(job.get('clientCode') or 'empresa') if c.isascii() and c.isalnum())[:20]
-                return self.send(200, content, 'application/pdf', f'compras-{code}-{job["_id"]}-resumo.pdf')
+                return self.send(200, content, 'application/pdf', f'{label}-{code}-{job["_id"]}-resumo.pdf')
             # Validate completed count before any final report, including exports.
             meta = metadata(db, job, workspace, options['kind'])
             if action == 'summary':

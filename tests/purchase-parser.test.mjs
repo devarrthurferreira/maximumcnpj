@@ -71,7 +71,7 @@ test('NET_V2 aplica Q-Y+AA-AB, preserva Z informativa e denuncia total negativo'
   assert.equal(legacy.totalCents,10000); assert.equal(legacy.components,null); assert(!('grossCents' in legacy.rows[0]));
 });
 
-test('vendas preparado rejeita colunas deslocadas mesmo com mesma largura do cabeçalho', () => {
+test('vendas rejeita colunas deslocadas mesmo com mesma largura do cabeçalho', () => {
   const salesHeader = [...header,'Código','Chave',''];
   const normal = [...row('11222333000181','Comprador','1','100,00'),'936','chave',''];
   assert.equal(parsePurchaseMatrix([salesHeader,normal],0,{type:'SALES'}).totalCents,10000);
@@ -80,4 +80,17 @@ test('vendas preparado rejeita colunas deslocadas mesmo com mesma largura do cab
   shifted[30]=''; assert.match(parsePurchaseMatrix([salesHeader,shifted],0,{type:'SALES'}).errors[0].message,/Quantidade/);
   const sparseHeader = [...header]; sparseHeader[15]=''; const sparse = row('11222333000181','Comprador','','100,00');
   assert.equal(parsePurchaseMatrix([sparseHeader,sparse],0,{type:'SALES'}).rows[0].quantity,'0');
+});
+
+test('vendas usa comprador A/I, admite P vazio e calcula Q-Y+AA-AB sem Z', () => {
+  const input = row('11222333000181','Comprador sintético','','100,00');
+  input[24]='20,10'; input[25]='999,99'; input[26]='2,20'; input[27]='0,50';
+  const result = parsePurchaseMatrix([header,input], 0, {type:'SALES'});
+  assert.equal(result.errors.length, 0); assert.equal(result.reportType,'SALES');
+  assert.equal(result.totalCents, 8160); assert.equal(result.components.accessoryCents, 99999);
+  assert.equal(result.rows[0].document, '11222333000181'); assert.equal(result.rows[0].name, 'Comprador sintético');
+  assert.equal(result.rows[0].quantity, '0');
+  assert.equal(parsePurchaseMatrix([header,input]).errors.length, 1);
+  input[8]=''; assert.match(parsePurchaseMatrix([header,input],0,{type:'SALES'}).errors[0].message,/Comprador/);
+  assert.throws(() => parsePurchaseMatrix([header,input],0,{type:'SALES',calculationVersion:'Q_V1'}), /fórmula/);
 });

@@ -1,5 +1,16 @@
 # Histórico de alterações
 
+## [0.8.0] — 2026-09-29
+
+### Vendas disponível
+- Importação de vendas por empresa com comprador em A/I e componentes Q, Y, Z, AA e AB. Quantidade P opcional; não multiplica os valores.
+- Compras e vendas usam Q − Y + AA − AB. Z permanece informativa; validações em centavos e bloqueio de linhas desalinhadas preservados.
+- Geração permite escolher compras, vendas ou ambos; histórico mostra os relatórios faltantes e permite retomar cada tipo.
+- Gerações anteriores conservam compras como única exigência. Adicionar vendas amplia a exigência para todas as empresas da geração, preservando os snapshots anteriores.
+- PDF Python individual e consolidado com totais de compras e vendas separados, memória de cálculo e agrupamento gerencial de não confirmados em não optantes.
+- Endpoints isolam modos de compras/vendas; relatórios cadastrais não misturam lotes financeiros. Contas, empresas e senhas preservadas.
+- Testes de regras, isolamento, fluxos de geração, PDFs e navegador ampliados para vendas; conferir a CI do commit final.
+
 ## [0.7.0] — 2026-09-29
 
 ### Geração e navegação

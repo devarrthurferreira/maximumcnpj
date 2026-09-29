@@ -9,11 +9,13 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from reporting.core import ReportError, utcnow, MAX_RESPONSE_BYTES
-from reporting.purchases import reconcile_purchase_snapshot, render_purchase_pdf, money, percentage, _integer, MAX_SAFE_INTEGER, COMPONENT_FIELDS
+from reporting.purchases import (reconcile_purchase_snapshot, render_purchase_pdf, purchase_story, purchase_pdf_styles,
+                                money, percentage, _integer, MAX_SAFE_INTEGER, COMPONENT_FIELDS)
 
 JOB = '00000000-0000-4000-8000-000000000071'
 CLIENT = '00000000-0000-4000-8000-000000000072'
 WORKSPACE = 'synthetic-purchases'
+SALES_JOB = '00000000-0000-4000-8000-000000000073'
 
 
 def fixture():
@@ -51,6 +53,16 @@ def net_fixture():
     return job, lines, items
 
 
+def sales_fixture():
+    job, lines, items = net_fixture()
+    job.update(_id=SALES_JOB, mode='SALES_V1', fileName='vendas-sinteticas.csv')
+    for line in lines:
+        line.update(_id=f'{SALES_JOB}:{line["index"]}', jobId=SALES_JOB, kind='CLIENTE', name='COMPRADOR FICTÍCIO')
+    for item in items:
+        item.update(_id=f'{SALES_JOB}:{item["cnpj"]}', jobId=SALES_JOB, kind='CLIENTE')
+    return job, lines, items
+
+
 def large_double_fixture():
     """BSON doubles as emitted by Node for cent values above the Int32 range."""
     job, lines, items = fixture()
@@ -61,6 +73,37 @@ def large_double_fixture():
 
 
 class PurchaseReportTests(unittest.TestCase):
+    def test_sales_use_net_formula_and_buyer_labels_with_separate_source_status(self):
+        job, lines, items = sales_fixture()
+        meta = reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
+        self.assertEqual(meta['reportType'], 'SALES')
+        self.assertEqual(meta['totalCents'], 100000)
+        self.assertEqual(meta['components']['accessoryCents'], 885)
+        self.assertEqual(meta['managerialGroups'][1]['totalCents'], 50000)
+        self.assertEqual(meta['unconfirmed']['totalCents'], 10000)
+        text = '\n'.join(part.getPlainText() for part in purchase_story(meta, 778, purchase_pdf_styles())
+                         if hasattr(part, 'getPlainText'))
+        self.assertIn('Vendas - enquadramento', text)
+        self.assertIn('Cada comprador conta uma vez', text)
+        self.assertIn('A = CNPJ comprador; I = comprador;', text)
+        self.assertIn('Q - Y + AA - AB', text)
+        self.assertNotIn('fornecedor', text)
+        self.assertNotIn('Quantidade P total', text)
+        self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+
+    def test_sales_reject_legacy_formula_and_wrong_partner_kind(self):
+        def legacy(job, lines, items): job.pop('calculationVersion')
+        def wrong_line(job, lines, items): lines[0]['kind'] = 'FORNECEDOR'
+        def missing_line_kind(job, lines, items): lines[0].pop('kind')
+        def wrong_item(job, lines, items): items[0]['kind'] = 'FORNECEDOR'
+        def wrong_mode(job, lines, items): job['mode'] = 'LOOKUP_V1'
+        for change in (legacy, wrong_line, missing_line_kind, wrong_item, wrong_mode):
+            with self.subTest(change=change.__name__):
+                job, lines, items = sales_fixture()
+                change(job, lines, items)
+                with self.assertRaises(ReportError):
+                    reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
+
     def test_net_formula_components_and_managerial_unknown_preserve_source(self):
         job, lines, items = net_fixture()
         meta = reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
@@ -179,15 +222,15 @@ class PurchaseMongoTests(unittest.TestCase):
         cls.db.users.insert_one({'_id': 'synthetic-user', 'workspaceId': WORKSPACE, 'active': True, 'role': 'operator'})
         cls.db.sessions.insert_one({'_id': hashlib.sha256(cls.raw.encode()).hexdigest(), 'workspaceId': WORKSPACE,
                                    'userId': 'synthetic-user', 'expiresAt': utcnow() + timedelta(minutes=10)})
-        job, lines, items = fixture()
-        cls.db.lookupJobs.insert_one(job)
-        cls.db.purchaseLines.insert_many(lines)
-        for item in items:
-            source = item.pop('sourceState', [])
-            if source:
-                cls.db.cnpjStates.insert_one({'_id': item['stateId'], 'workspaceId': WORKSPACE,
-                                              'cnpj': item['cnpj'], 'status': source[0]['status']})
-            cls.db.lookupItems.insert_one(item)
+        for job, lines, items in (fixture(), sales_fixture()):
+            cls.db.lookupJobs.insert_one(job)
+            cls.db.purchaseLines.insert_many(lines)
+            for item in items:
+                source = item.pop('sourceState', [])
+                if source:
+                    cls.db.cnpjStates.update_one({'_id': item['stateId']}, {'$set': {'workspaceId': WORKSPACE,
+                                                  'cnpj': item['cnpj'], 'status': source[0]['status']}}, upsert=True)
+                cls.db.lookupItems.insert_one(item)
 
     @classmethod
     def tearDownClass(cls):
@@ -200,6 +243,8 @@ class PurchaseMongoTests(unittest.TestCase):
         from reporting.service import get_job, jobs
         job = get_job(self.db, JOB, WORKSPACE, CLIENT)
         self.assertEqual(purchase_metadata(self.db, job, WORKSPACE)['totalCents'], 100000)
+        sales = get_job(self.db, SALES_JOB, WORKSPACE, CLIENT)
+        self.assertEqual(purchase_metadata(self.db, sales, WORKSPACE)['reportType'], 'SALES')
         self.assertEqual(jobs(self.db, WORKSPACE, CLIENT, 1)['total'], 0)
         self.db.cnpjStates.update_one({'_id': 'synthetic-state-0'}, {'$set': {'workspaceId': 'another-workspace'}})
         try:
@@ -248,6 +293,14 @@ class PurchaseMongoTests(unittest.TestCase):
                     self.assertEqual(response.status, 200)
                     self.assertIn('compras-', response.headers['Content-Disposition'])
                     self.assertTrue(response.read().startswith(b'%PDF'))
+                with call({'jobId': SALES_JOB}) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertIn('vendas-', response.headers['Content-Disposition'])
+                    self.assertTrue(response.read().startswith(b'%PDF'))
+                with self.assertRaises(HTTPError) as error:
+                    call({'jobId': SALES_JOB, 'action': 'csv'})
+                self.assertEqual(error.exception.code, 400)
+                self.assertEqual(json.loads(error.exception.read())['error'], 'SALES_REPORT_MODE')
                 for extra in ({'clientId': ''}, {'layout': 'detailed'}, {'action': 'csv'}, {'status': 'OPTANTE'}):
                     with self.subTest(extra=extra), self.assertRaises(HTTPError) as error:
                         call(extra)

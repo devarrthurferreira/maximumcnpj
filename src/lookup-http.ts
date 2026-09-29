@@ -3,7 +3,7 @@ import { need, integer, escapeRegex } from './security.ts';
 import { normalizeCnpj } from './domain.ts';
 import { routePurchases } from './purchase-http.ts';
 import { routeGenerations } from './generation-http.ts';
-import { PURCHASE_MODE } from './purchase-domain.ts';
+import { PURCHASE_MODE, SALES_MODE, isFinancialMode } from './purchase-domain.ts';
 import { ensureLookupIndexes, getJob } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { listCatalog, importCatalog } from './lookup-catalog.ts';
@@ -17,7 +17,7 @@ async function items(id:string,page:number,status:string,search:string){
   return {items:result?.items||[],total:result?.count?.[0]?.total||0,page};
 }
 async function history(clientId:string,page:number,cnpj:string){
-  const q:any=scope({...(clientId?{clientId}:{}),mode:{$ne:PURCHASE_MODE}});
+  const q:any=scope({...(clientId?{clientId}:{}),mode:{$nin:[PURCHASE_MODE,SALES_MODE]}});
   if(cnpj){const d=normalizeCnpj(cnpj);need(d.valid,'Informe CNPJ válido para o histórico.');const ids=await (await collection('lookupItems')).distinct('jobId',scope({cnpj:d.cnpj,...(clientId?{clientId}:{})}));q._id={$in:ids};}
   const c=await collection('lookupJobs');return {items:await c.find(q).sort({createdAt:-1}).skip((page-1)*30).limit(30).toArray(),total:await c.countDocuments(q),page};
 }
@@ -31,7 +31,7 @@ async function dashboard(clientId:string){
 export async function routeV4(actor:LookupActor,method:string,url:URL,input:any){
   await ensureLookupIndexes();
   if(url.pathname==='/api/v4/generations' || url.pathname.startsWith('/api/v4/generations/'))return routeGenerations(actor,method,url,input);
-  if(url.pathname.startsWith('/api/v4/purchases') || url.pathname.startsWith('/api/v4/sales'))return routePurchases(actor,method,url,input);
+  if(/^\/api\/v4\/(?:purchases|sales)(?:\/|$)/.test(url.pathname))return routePurchases(actor,method,url,input);
   const path=url.pathname.replace('/api/v4',''),p=integer(url.searchParams.get('page')||1,1,100000),client=url.searchParams.get('clientId')||'';
   if(path==='/clients'&&method==='GET')return listCatalog();
   if(path==='/clients/import'&&method==='POST')return importCatalog(actor,input.rows);
@@ -40,6 +40,7 @@ export async function routeV4(actor:LookupActor,method:string,url:URL,input:any)
   if(path==='/lookups'&&method==='POST')return createLookup(actor,input);
   const match=path.match(/^\/lookups\/([a-f0-9-]{36})(?:\/(rows|finalize|process|cancel|repeat|results))?$/);
   if(match){const id=match[1],action=match[2];
+    const job=await getJob(id);need(!isFinancialMode(job.mode),'Consulta não encontrada.',404,'NOT_FOUND');
     if(!action&&method==='GET')return getJob(id);
     if(action==='results'&&method==='GET')return items(id,p,url.searchParams.get('status')||'',url.searchParams.get('search')||'');
     if(method==='POST'){

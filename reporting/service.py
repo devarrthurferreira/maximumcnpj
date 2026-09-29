@@ -58,7 +58,7 @@ def get_job(db, job_id, workspace, client_id=''):
 def jobs(db, workspace, client_id, page):
     # Financial purchase reports use their own history and reconciled monetary exports.
     # Legacy snapshots without a mode remain available in this general report list.
-    q = {'workspaceId': workspace, 'status': 'COMPLETED', 'mode': {'$ne': 'PURCHASES_V1'}}
+    q = {'workspaceId': workspace, 'status': 'COMPLETED', 'mode': {'$nin': ['PURCHASES_V1', 'SALES_V1']}}
     if client_id:
         q['clientId'] = client_id
     fields = {'_id': 1, 'clientId': 1, 'clientCode': 1, 'clientName': 1, 'fileName': 1,

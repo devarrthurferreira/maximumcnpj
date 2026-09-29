@@ -47,7 +47,7 @@ jobs:
         run: npm run test:integration
       - name: Consultas com API simulada e compartilhamento de registros
         run: npm run test:lookup-integration
-      - name: Compras, valores e isolamento com MongoDB descartável
+      - name: Compras, vendas e isolamento com MongoDB descartável
         run: npm run test:purchases-integration
       - name: Gerações por empresa, retomada e isolamento
         run: npm run test:generations-integration

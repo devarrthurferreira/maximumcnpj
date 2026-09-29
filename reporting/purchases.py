@@ -1,4 +1,4 @@
-"""Financial purchase reports from reconciled, immutable database snapshots only."""
+"""Purchase and sales reports from reconciled, immutable financial snapshots only."""
 from __future__ import annotations
 
 from html import escape
@@ -22,6 +22,8 @@ from .brand import draw_brand_header
 from .core import VERSION, display_date, number, percent, require, utcnow
 
 PURCHASES_MODE = 'PURCHASES_V1'
+SALES_MODE = 'SALES_V1'
+FINANCIAL_MODES = (PURCHASES_MODE, SALES_MODE)
 GROUP_LABELS = {
     'OPTANTE': 'Optantes pelo Simples',
     'NAO_OPTANTE': 'Não optantes',
@@ -52,7 +54,7 @@ def percentage(value, denominator):
 
 def _check(condition):
     require(condition, 409, 'RESULT_COUNT',
-            'Linhas, fornecedores ou valores divergentes do snapshot. Emissão bloqueada para conferência.')
+            'Linhas, CNPJs ou valores divergentes do snapshot. Emissão bloqueada para conferência.')
 
 
 def _integer(value, maximum=MAX_SAFE_INTEGER):
@@ -88,11 +90,13 @@ def _document_kind(document):
 
 def reconcile_purchase_snapshot(job, lines, items, workspace):
     """Pure reconciliation also exercised by synthetic tests; never trusts cached UI totals."""
-    _check(job.get('workspaceId') == workspace and job.get('mode') == PURCHASES_MODE)
-    require(job.get('status') == 'COMPLETED', 409, 'INCOMPLETE', 'Conclua a consulta de compras para emitir o relatório.')
+    _check(job.get('workspaceId') == workspace and job.get('mode') in FINANCIAL_MODES)
+    sales = job['mode'] == SALES_MODE
+    label, partner_kind = ('vendas', 'CLIENTE') if sales else ('compras', 'FORNECEDOR')
+    require(job.get('status') == 'COMPLETED', 409, 'INCOMPLETE', f'Conclua a consulta de {label} para emitir o relatório.')
     _check(isinstance(job.get('clientId'), str) and bool(job['clientId']))
     version = job.get('calculationVersion', 'Q_V1')
-    _check(version in ('Q_V1', 'NET_V2'))
+    _check(version in ('Q_V1', 'NET_V2') and (not sales or version == 'NET_V2'))
     summary, financial = job.get('summary') or {}, job.get('purchaseInput') or {}
     components = {key: 0 for key in (*COMPONENT_FIELDS, 'totalCents')} if version == 'NET_V2' else None
     expected = _integer(job.get('expectedRows'), 50_000)
@@ -107,6 +111,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     quantity = Decimal(0)
     for row in lines:
         _check(row.get('workspaceId') == workspace and row.get('jobId') == job['_id'])
+        _check(row.get('kind', None if sales else partner_kind) == partner_kind)
         index = _integer(row.get('index'), expected - 1)
         _check(index not in indexes)
         indexes.add(index)
@@ -150,6 +155,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         cnpj = item.get('cnpj')
         _check(item.get('workspaceId') == workspace and item.get('jobId') == job['_id'] and
                item.get('clientId') == job['clientId'] and cnpj in by_cnpj and cnpj not in seen)
+        _check(item.get('kind', None if sales else partner_kind) == partner_kind)
         seen.add(cnpj)
         supplier = by_cnpj[cnpj]
         _check(item.get('state') == 'DONE' and item.get('status') in tuple(GROUP_LABELS)[:3] and
@@ -182,7 +188,8 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         valuePercent=percentage(managerial_nonoptant['totalCents'], cnpj_cents),
         fileValuePercent=percentage(managerial_nonoptant['totalCents'], total_cents))
     quantity_text = format(quantity, 'f').rstrip('0').rstrip('.') if '.' in format(quantity, 'f') else format(quantity, 'f')
-    return {'job': {key: job.get(key) for key in ('_id', 'clientId', 'clientCode', 'clientName', 'fileName', 'completedAt')},
+    return {'job': {key: job.get(key) for key in ('_id', 'mode', 'clientId', 'clientCode', 'clientName', 'fileName', 'completedAt')},
+            'reportType': 'SALES' if sales else 'PURCHASES',
             'totalCents': total_cents, 'cnpjCents': cnpj_cents, 'nonCnpjCents': non_cnpj_cents,
             'lineCount': line_count, 'uniqueSuppliers': unique, 'groups': list(groups.values()),
             'managerialGroups': [groups['OPTANTE'], managerial_nonoptant, groups['NAO_CONSULTAVEL']],
@@ -195,7 +202,7 @@ def purchase_metadata(db, job, workspace):
     """Read only the selected job and join states by workspace, exact identity and state ID."""
     query = {'workspaceId': workspace, 'jobId': job['_id']}
     lines = db.purchaseLines.find(query, {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'index': 1, 'document': 1,
-                                        'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'totalCents': 1, 'valid': 1,
+                                        'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'totalCents': 1, 'valid': 1, 'kind': 1,
                                         **{key: 1 for key in COMPONENT_FIELDS}})
     lines = lines.limit(50_001).batch_size(500).max_time_ms(20000)
     items = db.lookupItems.aggregate([
@@ -205,7 +212,7 @@ def purchase_metadata(db, job, workspace):
                          {'$eq': ['$_id', '$$ref']}, {'$eq': ['$cnpj', '$$identity']}]}}},
                                   {'$project': {'_id': 0, 'status': 1}}], 'as': 'sourceState'}},
         {'$project': {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'clientId': 1, 'cnpj': 1, 'state': 1,
-                      'stateId': 1, 'status': 1, 'occurrences': 1, 'totalCents': 1, 'checkedAt': 1, 'sourceState': 1}}
+                      'stateId': 1, 'status': 1, 'occurrences': 1, 'totalCents': 1, 'checkedAt': 1, 'sourceState': 1, 'kind': 1}}
     ], maxTimeMS=20000)
     return reconcile_purchase_snapshot(job, lines, items, workspace)
 
@@ -253,16 +260,18 @@ def purchase_table(rows, fractions, width, styles, total_row=False, padding=7):
 def purchase_story(meta, width, styles):
     """The same reconciled per-company memory is used in single and consolidated PDFs."""
     job = meta['job']
+    sales = job.get('mode') == SALES_MODE
+    report_label, partner = ('Vendas', 'comprador') if sales else ('Compras', 'fornecedor')
     p = lambda value, style='body': purchase_paragraph(value, styles, style)
     title = f'{job.get("clientCode") or "Sem código"} - {job.get("clientName") or "Empresa"}'
     calculation_label = 'atual' if meta['calculationVersion'] == 'NET_V2' else 'anterior'
-    story = [p('Compras - enquadramento e memória de cálculo', 'heading'), p(title, 'title'),
+    story = [p(f'{report_label} - enquadramento e memória de cálculo', 'heading'), p(title, 'title'),
              p(f'Arquivo: {job.get("fileName") or "Não informado"}'),
              p(f'Consulta: {job["_id"]} | Conclusão: {display_date(job.get("completedAt"))} | '
                f'Emissão: {display_date(meta["generatedAt"])}', 'small'),
              p(f'Total: {money(meta["totalCents"])} | {number(meta["lineCount"])} linhas | '
                f'{number(meta["uniqueSuppliers"])} CNPJs únicos consultáveis | Cálculo {calculation_label}', 'heading')]
-    rows = [['Grupo gerencial', 'CNPJs únicos', '% dos CNPJs', 'Linhas', 'Valor de compras', '% valor CNPJs', '% valor arquivo']]
+    rows = [['Grupo gerencial', 'CNPJs únicos', '% dos CNPJs', 'Linhas', f'Valor de {report_label.lower()}', '% valor CNPJs', '% valor arquivo']]
     for group in meta['managerialGroups']:
         consultable = group['status'] != 'NAO_CONSULTAVEL'
         rows.append([group['label'], number(group['suppliers']) if consultable else 'Fora da base',
@@ -289,13 +298,14 @@ def purchase_story(meta, width, styles):
     story += [
         p(f'Bases dos percentuais: CNPJs = {number(meta["uniqueSuppliers"])} documentos válidos distintos; '
           f'valor CNPJs = {money(meta["cnpjCents"])}; valor arquivo = {money(meta["totalCents"])}. '
-          'Cada fornecedor conta uma vez; todas as suas linhas compõem o valor. CPF e demais documentos não consultáveis '
+          f'Cada {partner} conta uma vez; todas as suas linhas compõem o valor. CPF e demais documentos não consultáveis '
           'ficam fora das bases de CNPJ. Base zero resulta em 0,00%.', 'small'),
-        p(f'Valores somados por linha, sem multiplicar por P. Quantidade P total: {meta["quantityDisplay"]}. '
-          'A = documento; I = razão social; P = quantidade; Q = valor bruto; Y = desconto; '
+        p(('Valores somados por linha. A = CNPJ comprador; I = comprador; ' if sales else
+           f'Valores somados por linha, sem multiplicar por P. Quantidade P total: {meta["quantityDisplay"]}. '
+           'A = CNPJ fornecedor; I = razão social; P = quantidade; ') + 'Q = valor bruto; Y = desconto; '
           'Z = despesa acessória; AA = frete; AB = abatimento não tributado.', 'small'),
         p(f'Fonte: Minha Receita. Chamadas de {display_date(meta.get("firstCheck"))} a {display_date(meta.get("lastCheck"))}. '
-          'A observação salva não comprova o regime na data da compra nem a atualização fiscal da base. '
+          f'A observação salva não comprova o regime na data da {"venda" if sales else "compra"} nem a atualização fiscal da base. '
           'Referência fiscal não informada. Este PDF lê o snapshot reconciliado e não faz nova consulta.', 'small'),
     ]
     return story
@@ -319,10 +329,11 @@ def purchase_page_callback(footer):
 
 def render_purchase_pdf(meta):
     stream = BytesIO()
+    label = 'Vendas' if meta['job'].get('mode') == SALES_MODE else 'Compras'
     doc = SimpleDocTemplate(stream, pagesize=landscape(A4), rightMargin=32, leftMargin=32,
                             topMargin=86, bottomMargin=40,
-                            title='Maximum CNPJ - Relatório de compras', author='Maximum CNPJ', pageCompression=1)
+                            title=f'Maximum CNPJ - Relatório de {label.lower()}', author='Maximum CNPJ', pageCompression=1)
     story = purchase_story(meta, landscape(A4)[0] - 64, purchase_pdf_styles())
-    on_page = purchase_page_callback(f'Compras {meta["job"]["_id"]}')
+    on_page = purchase_page_callback(f'{label} {meta["job"]["_id"]}')
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
     return stream.getvalue()

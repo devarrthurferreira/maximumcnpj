@@ -34,12 +34,13 @@ export function amountCents(value, field = 'Valor Total (Q)') {
 export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   const type = options.type || 'PURCHASES', version = options.calculationVersion || 'NET_V2';
   if (!['PURCHASES', 'SALES'].includes(type) || !['NET_V2', 'Q_V1'].includes(version)) throw new Error('Formato de relatório inválido.');
+  if (type === 'SALES' && version !== 'NET_V2') throw new Error('Relatório de vendas requer a fórmula Q - Y + AA - AB.');
   const net = version === 'NET_V2';
   if (!Number.isInteger(headerIndex) || headerIndex < 0 || headerIndex > 20) throw new Error('Escolha a linha de cabeçalho entre 1 e 21.');
   const header = matrix[headerIndex] || [], required = net ? [0,8,16,24,25,26,27] : [0,8,16];
   if (header.length < (net ? 28 : 17) || required.some(index => !String(header[index] ?? '').trim())) throw new Error(`O relatório precisa conter cabeçalhos nas colunas ${net ? 'A, I, Q, Y, Z, AA e AB' : 'A, I e Q'}. Confira a aba e o cabeçalho.`);
   const lastHeader = header.findLastIndex(value => String(value ?? '').trim());
-  const quantityRequired = type === 'PURCHASES' || !!String(header[15] ?? '').trim();
+  const quantityRequired = type === 'PURCHASES';
   const components = net ? {grossCents:0, discountCents:0, accessoryCents:0, freightCents:0, abatementCents:0, totalCents:0} : null;
   const rows = [], errors = [], unique = new Set();
   let nonCnpjLines = 0, ignored = 0, totalCents = 0;
@@ -52,9 +53,9 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       if (raw.slice(lastHeader + 1).some(value => String(value ?? '').trim())) throw new Error('Colunas desalinhadas: há valores após o último cabeçalho. Revise separadores e campos com ponto e vírgula.');
       const document = String(raw[0] ?? '').trim(), name = String(raw[8] ?? '').trim();
       if (document.length > 40 || name.length > 200) throw new Error('Documento ou razão social acima do limite.');
-      if (!name) throw new Error('Razão social (I): preenchimento obrigatório.');
+      if (!name) throw new Error(`${type === 'SALES' ? 'Comprador' : 'Razão social'} (I): preenchimento obrigatório.`);
       if ([0,8,15,16,...(net ? [24,25,26,27] : [])].map(index => raw[index]).some(v => String(v).includes('[FORMULA_NAO_SUPORTADA]'))) throw new Error('Cole as fórmulas como valores antes de importar.');
-      const quantity = quantityRequired ? decimal(raw[15], 6, 'Quantidade (P)') : '0';
+      const quantity = quantityRequired || String(raw[15] ?? '').trim() ? decimal(raw[15], 6, 'Quantidade (P)') : '0';
       if (quantity.split('.')[0].length > 9) throw new Error('Quantidade (P): use até 9 dígitos inteiros.');
       const grossCents = amountCents(raw[16]);
       const adjustments = net ? Object.fromEntries([['discountCents',24,'Desconto (Y)'],['accessoryCents',25,'Despesa acessória (Z)'],['freightCents',26,'Frete (AA)'],['abatementCents',27,'Abatimento (AB)']].map(([field,column,label]) => [field, String(raw[column] ?? '').trim() ? amountCents(raw[column], label) : 0])) : {};
@@ -71,7 +72,7 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       rows.push({document, name, quantity, ...financial});
     } catch (error) { errors.push({line:index + 1, message:error.message}); }
   }
-  return {rows, errors, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, components, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
+  return {rows, errors, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, components, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
 }
 
 export function decodePurchaseCsv(buffer, encoding = 'auto') {

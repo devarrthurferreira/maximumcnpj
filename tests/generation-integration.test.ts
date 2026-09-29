@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { database, collection, scope, closeDatabase } from '../src/store.ts';
 import { resetLookupIndexes } from '../src/lookup-db.ts';
 import { importCatalog } from '../src/lookup-catalog.ts';
-import { createGeneration, getGeneration, generationHistory, attachGenerationPurchase, withGeneration } from '../src/generation-store.ts';
+import { createGeneration, getGeneration, generationHistory, attachGenerationPurchase, attachGenerationSale, withGeneration } from '../src/generation-store.ts';
 import { uploadLookup, finalizeLookup, cancelLookup, processLookup } from '../src/lookup-jobs.ts';
 import { purchaseSummary, purchaseHistory } from '../src/purchase-store.ts';
 import { routeV4 } from '../src/lookup-http.ts';
@@ -22,7 +22,7 @@ test('MongoDB gerações: empresas, retomada, concorrência, conclusão conjunta
   try {
     const catalog = await importCatalog(actor, [{code: '936', name: 'Empresa A'}, {code: '937', name: 'Empresa B'}, {code: '938', name: 'Empresa C'}]);
     const [first, second, outside] = catalog.items.map((client: any) => client.id);
-    const input = {generationId: randomUUID(), clientIds: [first, second]};
+    const input = {generationId: randomUUID(), clientIds: [first, second], requiredReports: ['PURCHASES']};
     const id = input.generationId;
     await assert.rejects(createGeneration(viewer, input), errorCode('FORBIDDEN'));
     await assert.rejects(createGeneration(actor, {...input, clientIds: []}));
@@ -87,7 +87,8 @@ test('MongoDB gerações: empresas, retomada, concorrência, conclusão conjunta
     assert.equal(complete.status, 'COMPLETED');
     assert.equal(complete.completedCount, 2);
     assert.equal(complete.missingCount, 0);
-    assert.equal(complete.salesAvailable, false);
+    assert.equal(complete.salesAvailable, true);
+    assert.deepEqual(complete.requiredReports, ['PURCHASES']);
     assert.equal(complete.companies[1].purchase.generationId, id);
     assert.equal((await purchaseHistory(second, 1)).total, 2);
     const metrics = (await routeV4(actor, 'GET', new URL('https://test/api/v4/dashboard'), {}) as any).metrics;
@@ -101,8 +102,8 @@ test('MongoDB gerações: empresas, retomada, concorrência, conclusão conjunta
     assert.equal(visible._id, id);
     assert.equal(visible.leaseOwner, undefined);
     assert.equal(visible.workspaceId, undefined);
-    await assert.rejects(routeV4(actor, 'POST', new URL('https://test/api/v4/generations/' + id + '/sales'), {}), errorCode('SALES_UNAVAILABLE'));
-    await assert.rejects(routeV4(actor, 'POST', new URL('https://test/api/v4/generations/' + id + '/purchases'), {...attachInput, type: 'SALES'}), errorCode('SALES_UNAVAILABLE'));
+    await assert.rejects(routeV4(actor, 'POST', new URL('https://test/api/v4/generations/' + id + '/sales'), {}), errorCode('VALIDATION'));
+    await assert.rejects(routeV4(actor, 'POST', new URL('https://test/api/v4/generations/' + id + '/purchases'), {...attachInput, type: 'SALES'}), errorCode('VALIDATION'));
     const oldClientId = complete.companies[0].clientId;
     await (await collection('lookupJobs')).updateOne(scope({_id: attached.job._id}), {$set: {clientId: outside}});
     await assert.rejects(getGeneration(id), errorCode('GENERATION_INCONSISTENT'));
@@ -120,6 +121,107 @@ test('MongoDB gerações: empresas, retomada, concorrência, conclusão conjunta
     process.env.WORKSPACE_ID = 'generation_test';
     assert.equal(await (await collection('clients')).countDocuments(scope()), 3);
     assert.equal((await (await collection('lookupJobs')).findOne(scope({_id: cancelled.job._id})))?.status, 'CANCELLED');
+  } finally {
+    await (await database()).dropDatabase();
+    await closeDatabase();
+    resetLookupIndexes();
+    if (oldDb === undefined) delete process.env.MONGODB_DB; else process.env.MONGODB_DB = oldDb;
+    if (oldWs === undefined) delete process.env.WORKSPACE_ID; else process.env.WORKSPACE_ID = oldWs;
+  }
+});
+
+test('MongoDB gerações: vendas e compras independentes, requisitos e histórico legado', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
+  const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
+  process.env.MONGODB_DB = 'maximum_generation_sales_test_' + randomUUID().replaceAll('-', '');
+  process.env.WORKSPACE_ID = 'generation_sales_test';
+  resetLookupIndexes();
+  const actor = {_id: 'tester', role: 'admin', name: 'Teste', email: 'test@example.test'};
+  const colleague = {...actor, _id: 'colleague', role: 'operator'};
+  const errorCode = (code: string) => (error: any) => error.code === code;
+  const row = {document: '12345678900', name: 'Pessoa sintética', quantity: '2', grossCents: 10000, discountCents: 2000,
+    accessoryCents: 999, freightCents: 500, abatementCents: 300, totalCents: 8200};
+  const finish = async (job: any) => {
+    await uploadLookup(actor, job._id, {offset: 0, rows: [row]});
+    await finalizeLookup(actor, job._id);
+  };
+  const upload = (clientId: string, sales = false) => ({clientId, importId: randomUUID(), fileName: sales ? 'vendas.csv' : 'compras.csv', expectedRows: 1});
+  try {
+    const catalog = await importCatalog(actor, [{code: '936', name: 'Empresa A'}, {code: '937', name: 'Empresa B'}]);
+    const [first, second] = catalog.items.map((client: any) => client.id);
+    const id = randomUUID(), input = {generationId: id, clientIds: [first, second]};
+    for (const requiredReports of [[], null, ['SALES', 'SALES'], ['OTHER'], ['PURCHASES', 'SALES', 'OTHER']]) {
+      await assert.rejects(createGeneration(actor, {...input, requiredReports}), errorCode('VALIDATION'));
+    }
+    const generation = await createGeneration(actor, input);
+    assert.deepEqual(generation.requiredReports, ['PURCHASES', 'SALES']);
+    assert.equal(generation.salesAvailable, true);
+    assert(generation.companies.every((company: any) => company.purchase === null && company.sales === null && company.salesJobIds.length === 0));
+    assert.equal((await createGeneration(actor, {...input, requiredReports: ['SALES', 'PURCHASES']}))._id, id);
+    await assert.rejects(createGeneration(actor, {...input, requiredReports: ['SALES']}), errorCode('GENERATION_EXISTS'));
+    const salesInput = upload(first, true);
+    await assert.rejects(attachGenerationSale({...actor, role: 'viewer'}, id, salesInput), errorCode('FORBIDDEN'));
+    await assert.rejects(attachGenerationSale(actor, id, {...salesInput, type: 'PURCHASES'}), errorCode('VALIDATION'));
+    const sales = await routeV4(actor, 'POST', new URL('https://test/api/v4/generations/' + id + '/sales'), salesInput) as any;
+    assert.equal(sales.job.mode, 'SALES_V1');
+    assert.deepEqual(sales.generation.companies[0].salesJobIds, [sales.job._id]);
+    assert.equal(sales.generation.missingCount, 2);
+    assert.equal((await attachGenerationSale(colleague, id, salesInput)).job._id, sales.job._id);
+    await assert.rejects(attachGenerationSale(colleague, id, {...salesInput, fileName: 'diferente.csv'}), errorCode('GENERATION_SALES_EXISTS'));
+    await assert.rejects(attachGenerationPurchase(actor, id, salesInput));
+    await finish(sales.job);
+    assert.equal((await getGeneration(id)).completedCount, 0);
+    const purchases = await attachGenerationPurchase(actor, id, upload(first));
+    await finish(purchases.job);
+    assert.equal((await getGeneration(id)).completedCount, 1);
+    const purchaseSecond = await attachGenerationPurchase(actor, id, upload(second));
+    await finish(purchaseSecond.job);
+    assert.equal((await getGeneration(id)).status, 'MISSING');
+    const secondInput = upload(second, true);
+    const cancelled = await attachGenerationSale(actor, id, secondInput);
+    assert.equal(cancelled.generation.status, 'IN_PROGRESS');
+    await cancelLookup(actor, cancelled.job._id);
+    assert.equal((await getGeneration(id)).status, 'MISSING');
+    const replacement = await attachGenerationSale(actor, id, {...secondInput, importId: randomUUID()});
+    assert.deepEqual(replacement.generation.companies[1].salesJobIds, [cancelled.job._id, replacement.job._id]);
+    await assert.rejects(attachGenerationSale(actor, id, secondInput), errorCode('GENERATION_SALES_EXISTS'));
+    await finish(replacement.job);
+    const completed = await getGeneration(id);
+    assert.equal(completed.status, 'COMPLETED');
+    assert.equal(completed.completedCount, 2);
+    assert(completed.companies.every((company: any) => company.purchase.mode === 'PURCHASES_V1' && company.sales.mode === 'SALES_V1'));
+    await (await collection('lookupJobs')).updateOne(scope({_id: sales.job._id}), {$set: {mode: 'PURCHASES_V1'}});
+    await assert.rejects(getGeneration(id), errorCode('GENERATION_INCONSISTENT'));
+    await (await collection('lookupJobs')).updateOne(scope({_id: sales.job._id}), {$set: {mode: 'SALES_V1'}});
+
+    const legacy = await createGeneration(actor, {generationId: randomUUID(), clientIds: [first], requiredReports: ['PURCHASES']});
+    const legacyPurchase = await attachGenerationPurchase(actor, legacy._id, upload(first));
+    await finish(legacyPurchase.job);
+    await (await collection('generations')).updateOne(scope({_id: legacy._id}), {$unset: {requiredReports: '', 'companies.$[].salesJobId': '', 'companies.$[].salesJobIds': ''}});
+    const legacyCompleted = await getGeneration(legacy._id);
+    assert.equal(legacyCompleted.status, 'COMPLETED');
+    assert.deepEqual(legacyCompleted.requiredReports, ['PURCHASES']);
+    assert.equal(legacyCompleted.companies[0].sales, null);
+    const legacySales = await attachGenerationSale(actor, legacy._id, upload(first, true));
+    assert.deepEqual(legacySales.generation.requiredReports, ['PURCHASES', 'SALES']);
+    assert.equal(legacySales.generation.status, 'IN_PROGRESS');
+    assert.equal(legacySales.generation.companies[0].purchaseJobId, legacyPurchase.job._id);
+    await finish(legacySales.job);
+    assert.equal((await getGeneration(legacy._id)).status, 'COMPLETED');
+
+    const salesOnly = await createGeneration(actor, {generationId: randomUUID(), clientIds: [second], requiredReports: ['SALES']});
+    const only = await attachGenerationSale(actor, salesOnly._id, upload(second, true));
+    await finish(only.job);
+    const onlyComplete = await getGeneration(salesOnly._id);
+    assert.equal(onlyComplete.status, 'COMPLETED');
+    assert.equal(onlyComplete.companies[0].purchase, null);
+    assert.deepEqual(onlyComplete.requiredReports, ['SALES']);
+    const additionalPurchase = await attachGenerationPurchase(actor, salesOnly._id, upload(second));
+    assert.equal(additionalPurchase.generation.status, 'IN_PROGRESS');
+    assert.deepEqual(additionalPurchase.generation.requiredReports, ['PURCHASES', 'SALES']);
+    await finish(additionalPurchase.job);
+    assert.equal((await getGeneration(salesOnly._id)).status, 'COMPLETED');
+    await (await collection('generations')).updateOne(scope({_id: salesOnly._id}), {$set: {requiredReports: []}});
+    await assert.rejects(getGeneration(salesOnly._id), errorCode('GENERATION_INCONSISTENT'));
   } finally {
     await (await database()).dropDatabase();
     await closeDatabase();
