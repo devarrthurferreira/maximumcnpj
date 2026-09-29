@@ -13,11 +13,12 @@ const csv = () => {
   return [header, ...lines.map(l => {const row = Array(17).fill(''); row[0] = l.document; row[8] = l.name; row[15] = l.quantity; row[16] = (l.totalCents / 100).toFixed(2).replace('.', ','); return row;})].map(row => row.join(';')).join('\r\n');
 };
 
-test('Compras imports cp1252 columns, keeps financial values and provides snapshot downloads', async ({page}) => {
+test('Compras imports cp1252 columns, keeps financial values and provides snapshot downloads', async ({page}, testInfo) => {
   let job:any = null, posted:any[] = [], pdfBody:any, csvBody:any;
+  const pageErrors:string[] = []; page.on('pageerror', e => pageErrors.push(e.message));
   await page.route('**/api/auth/session', route => route.fulfill({json:{user:{_id:'test',role:'operator',mustChangePassword:false}}}));
   await page.route('**/api/v4/clients', route => route.fulfill({json:{items:[client]}}));
-  await page.route('**/api/v4/purchases**', async route => {
+  await page.route(/\/api\/v4\/purchases(?:[/?]|$)/, async route => {
     const url = new URL(route.request().url()), method = route.request().method(), p = method === 'POST' ? route.request().postDataJSON() : {};
     if (url.pathname === '/api/v4/purchases') {
       if (method === 'GET') return route.fulfill({json:{items:job ? [job] : [],total:job ? 1 : 0,page:1}});
@@ -55,8 +56,13 @@ test('Compras imports cp1252 columns, keeps financial values and provides snapsh
   expect((await csvDownload).suggestedFilename()).toBe('compras-ficticias.csv'); expect(csvBody).toEqual({status:'NON_CNPJ',part:1});
   const pdfDownload = page.waitForEvent('download'); await page.getByRole('button',{name:'Baixar resumo PDF'}).click();
   expect((await pdfDownload).suggestedFilename()).toBe('compras-resumo.pdf'); expect(pdfBody).toMatchObject({action:'pdf',clientId,layout:'summary',status:'ALL',kind:'ALL'});
+  const desktop = testInfo.outputPath('compras-desktop.png');
+  await page.screenshot({path:desktop,fullPage:true}); await testInfo.attach('Compras desktop',{path:desktop,contentType:'image/png'});
   await page.setViewportSize({width:390,height:844});
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  const mobile = testInfo.outputPath('compras-mobile.png');
+  await page.screenshot({path:mobile,fullPage:true}); await testInfo.attach('Compras mobile',{path:mobile,contentType:'image/png'});
+  expect(pageErrors).toEqual([]);
 });
 
 test('Compras requires password reset before exposing company data', async ({page}) => {
@@ -72,7 +78,7 @@ test('Compras preview blocks a missing reason/social name before any upload', as
   let writes = 0;
   await page.route('**/api/auth/session', route => route.fulfill({json:{user:{_id:'test',role:'operator'}}}));
   await page.route('**/api/v4/clients', route => route.fulfill({json:{items:[client]}}));
-  await page.route('**/api/v4/purchases**', route => {if(route.request().method()==='POST')writes++;return route.fulfill({json:{items:[],total:0}});});
+  await page.route(/\/api\/v4\/purchases(?:[/?]|$)/, route => {if(route.request().method()==='POST')writes++;return route.fulfill({json:{items:[],total:0}});});
   await page.goto('/purchases.html'); await page.getByLabel('Empresa responsável (Código / ID)').selectOption(clientId);
   await page.locator('#purchase-file').setInputFiles({name:'fixture.csv',mimeType:'text/csv',buffer:Buffer.from(csv().replaceAll('FORNECEDOR FICTÍCIO',''))});
   await page.getByRole('button',{name:'Conferir colunas A, I, P e Q'}).click();
@@ -83,7 +89,7 @@ test('Compras preview blocks a missing reason/social name before any upload', as
 test('Excel starting at row 5 keeps fixed source coordinates and CNPJ leading zeros', async ({page}) => {
   await page.route('**/api/auth/session', route => route.fulfill({json:{user:{_id:'test',role:'operator'}}}));
   await page.route('**/api/v4/clients', route => route.fulfill({json:{items:[client]}}));
-  await page.route('**/api/v4/purchases**', route => route.fulfill({json:{items:[],total:0}}));
+  await page.route(/\/api\/v4\/purchases(?:[/?]|$)/, route => route.fulfill({json:{items:[],total:0}}));
   const sheet:XLSX.WorkSheet = {'!ref':'A5:Q8',A5:{t:'s',v:'Documento'},I5:{t:'s',v:'Razão Social'},P5:{t:'s',v:'Quantidade'},Q5:{t:'s',v:'Valor Total'}};
   for(let r=6;r<=8;r++) {
     sheet['A'+r]={t:'n',v:r===6?4252011000110:11222333000181,z:'00000000000000'};

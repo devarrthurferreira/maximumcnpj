@@ -17,6 +17,7 @@
 
 ### Validação
 - Testes de parsing, valores, duplicidades, autenticação, troca obrigatória, isolamento, relatórios e navegação com dados sintéticos.
+- Matcher do E2E de compras abrange subrotas de upload, consulta e download; evita que uma requisição simulada alcance o servidor sem sessão.
 - CI com MongoDB descartável, Node 22 e Python; verificar execução do SHA final para evidência de aprovação.
 - Arquivo real utilizado somente para conferir formato e totais, sem inclusão no repositório.
 
