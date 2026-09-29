@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.9.0] — 2026-09-29
+
+- Recuperação conservadora do CSV do modelo conhecido quando separadores sem aspas dividem a descrição O e deslocam o restante da linha. Cabeçalhos, código da empresa, chave e valores são conferidos; prévia indica as linhas recuperadas.
+- Dois grupos gerenciais em compras, vendas e apresentações cadastrais: Simples somente para OPTANTE explícito; Não optante para todos os demais. Resposta original da fonte permanece disponível para auditoria.
+- CPF, CNO, documentos inválidos/ausentes e não confirmados entram no total e nos percentuais financeiros de Não optante. Documentos repetidos são deduplicados na contagem; todas as linhas compõem os valores.
+- Percentuais financeiros usam o total completo do arquivo; contagem usa documentos distintos, com linhas sem documento tratadas individualmente. Dois grupos somam 100% quando a base é positiva.
+- Filtros, históricos, CSV e PDFs individuais/consolidados acompanham a regra, preservando empresas, usuários e componentes dos snapshots.
+- Testes de leitura, totais, agrupamento, consulta isolada, Node/Mongo/Python e navegador; arquivos reais usados somente na conferência local.
+
 ## [0.8.1] — 2026-09-29
 
 - Corrigida a cópia das linhas financeiras para conservar o tipo de parceiro e permitir a emissão do PDF de vendas criado pelo fluxo real Node/MongoDB.

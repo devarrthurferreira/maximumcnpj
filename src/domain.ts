@@ -1,10 +1,12 @@
-export const VERSION = '0.8.1';
+export const VERSION = '0.9.0';
 export const MAX_ROWS = 50_000;
 export const MAX_COLUMNS = 80;
 export type Status = 'OPTANTE' | 'NAO_OPTANTE' | 'NAO_CONFIRMADO';
 export type Row = { index: number; values: string[]; original: string; name: string; cnpj: string; valid: boolean; reason: string | null; duplicate: boolean; warnings: string[] };
 export type Result = { cnpj: string; name: string | null; status: Status; mei: boolean | null; reason: string | null; rawSimples: unknown; rawMei: unknown; sourceCount: number; optionDate: string | null; meiDate: string | null; uf: string | null };
 export const LABELS: Record<Status, string> = { OPTANTE: 'Optante', NAO_OPTANTE: 'Não optante', NAO_CONFIRMADO: 'Não confirmado' };
+export const REPORTING_LABELS = { OPTANTE: 'Simples', NAO_OPTANTE: 'Não optante' };
+export function reportingStatus(status: unknown): 'OPTANTE' | 'NAO_OPTANTE' { return status === 'OPTANTE' ? 'OPTANTE' : 'NAO_OPTANTE'; }
 
 /** Receita Federal: ASCII - 48 e módulo 11. Identificação não comprova existência. */
 export function digits(base: string): string {
@@ -62,7 +64,7 @@ export function statistics(results: { cnpj: string; status: Status; mei?: boolea
   const total = unique.length, optants = unique.filter(r => r.status === 'OPTANTE').length;
   const nonOptants = unique.filter(r => r.status === 'NAO_OPTANTE').length, unknown = total - optants - nonOptants;
   const percent = (n: number) => total ? Math.round(n * 10000 / total) / 100 : 0;
-  return { total, optants, nonOptants, unknown, mei: unique.filter(r => r.status === 'OPTANTE' && r.mei === true).length, optantsPercent: percent(optants), nonOptantsPercent: percent(nonOptants), unknownPercent: percent(unknown), coverage: percent(optants + nonOptants) };
+  return { total, optants, nonOptants, unknown, reportingNonOptants: total - optants, reportingNonOptantsPercent: total ? (10000 - Math.round(percent(optants) * 100)) / 100 : 0, unknownIncludedInNonOptants: true, mei: unique.filter(r => r.status === 'OPTANTE' && r.mei === true).length, optantsPercent: percent(optants), nonOptantsPercent: percent(nonOptants), unknownPercent: percent(unknown), coverage: percent(optants + nonOptants) };
 }
 export function safeCell(value: unknown): string {
   const text = String(value ?? '');

@@ -8,6 +8,10 @@ export type FinancialMode = typeof PURCHASE_MODE | typeof SALES_MODE;
 export function isFinancialMode(mode: unknown): mode is FinancialMode { return mode === PURCHASE_MODE || mode === SALES_MODE; }
 export function financialKind(mode: FinancialMode): 'FORNECEDOR' | 'CLIENTE' { return mode === SALES_MODE ? 'CLIENTE' : 'FORNECEDOR'; }
 export function financialLabel(mode: FinancialMode) { return mode === SALES_MODE ? 'vendas' : 'compras'; }
+/** Managerial grouping never overwrites the provider's original status. */
+export function financialReportingStatus(row: {valid?: boolean; documentKind?: string; status?: unknown}) {
+  return row.valid === true && row.documentKind === 'CNPJ' && row.status === 'OPTANTE' ? 'OPTANTE' : 'NAO_OPTANTE';
+}
 export const PURCHASE_STATUSES = ['OPTANTE', 'NAO_OPTANTE', 'NAO_CONFIRMADO'] as const;
 export const PURCHASE_CALCULATION_VERSION = 'NET_V2';
 export const COMPONENT_FIELDS = ['grossCents', 'discountCents', 'accessoryCents', 'freightCents', 'abatementCents'] as const;
@@ -70,7 +74,7 @@ export function purchaseCsv(job: any, rows: any[]): string {
     ...rows.map(row => [job.clientCode || '', job.clientName, job._id, job.fileName, job.completedAt?.toISOString?.() || job.completedAt || '', row.index + 1,
       row.document, row.documentKind, row.name, row.quantity, moneyText(net ? row.grossCents : row.totalCents),
       ...['discountCents', 'accessoryCents', 'freightCents', 'abatementCents'].map(field => net ? moneyText(row[field]) : ''),
-      moneyText(row.totalCents), purchaseFormula(version), version, row.status === 'NAO_CONFIRMADO' ? 'NAO_OPTANTE' : row.status, row.status,
+      moneyText(row.totalCents), purchaseFormula(version), version, financialReportingStatus(row), row.status,
       row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado'])
   ]);
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compactPurchaseLine, calculationVersion, exactCents, percentage, purchaseCsv, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind } from '../src/purchase-domain.ts';
+import { compactPurchaseLine, calculationVersion, exactCents, percentage, purchaseCsv, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus } from '../src/purchase-domain.ts';
 
 const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050};
 test('Compras: valida componentes no servidor, centavos exatos e não multiplica P por Q', () => {
@@ -57,4 +57,19 @@ test('Vendas: comprador CLIENTE, quantidade opcional e mesma fórmula sem Z', ()
   const csv = purchaseCsv({mode:SALES_MODE,calculationVersion:'NET_V2',_id:'sales',clientName:'Empresa',fileName:'vendas.csv'}, [{...sales,index:0,status:'NAO_CONFIRMADO'}]);
   assert(csv.includes('Comprador (I)')); assert(csv.includes('Quantidade (P) — opcional'));
   assert(csv.includes('"10,50";"Q - Y + AA - AB";"NET_V2";"NAO_OPTANTE";"NAO_CONFIRMADO"'));
+});
+
+test('Classificação gerencial: somente CNPJ com OPTANTE explícito é Simples; demais valores preservam a fonte', () => {
+  const cnpj = compactPurchaseLine(row);
+  assert.equal(financialReportingStatus({...cnpj,status:'OPTANTE'}),'OPTANTE');
+  for (const status of ['NAO_OPTANTE','NAO_CONFIRMADO','NON_CNPJ','',undefined,null,'OTHER']) {
+    assert.equal(financialReportingStatus({...cnpj,status}),'NAO_OPTANTE');
+  }
+  for (const document of ['12345678900','123456789012','abc-123','']) {
+    const nonCnpj = compactPurchaseLine({...row,document});
+    assert.equal(financialReportingStatus({...nonCnpj,status:'NON_CNPJ'}),'NAO_OPTANTE');
+    assert.equal(financialReportingStatus({...nonCnpj,status:'OPTANTE'}),'NAO_OPTANTE');
+    const csv = purchaseCsv({mode:PURCHASE_MODE,calculationVersion:'NET_V2',_id:'snapshot',clientName:'Empresa',fileName:'arquivo.csv'}, [{...nonCnpj,index:0,status:'NON_CNPJ'}]);
+    assert(csv.includes('"NAO_OPTANTE";"NON_CNPJ"')); assert(csv.includes('"Não consultado"'));
+  }
 });

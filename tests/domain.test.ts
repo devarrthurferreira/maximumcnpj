@@ -48,3 +48,10 @@ test('Limites de células e XLSX inválido bloqueados',()=>{
  assert.throws(()=>prepareRows([[cnpj(0),'x'.repeat(2001)]],0,1),/2.000/);
  assert.throws(()=>inspectXlsxZip(new ArrayBuffer(30)),/XLSX/);
 });
+
+test('Agrupamento gerencial tem dois grupos sem alterar a situação original',()=>{
+ const r=statistics([{cnpj:'a',status:'OPTANTE'},{cnpj:'b',status:'NAO_OPTANTE'},{cnpj:'c',status:'NAO_CONFIRMADO'}]);
+ assert.equal(r.reportingNonOptants,2);assert.equal(r.reportingNonOptantsPercent,66.67);
+ assert.equal(r.optantsPercent+r.reportingNonOptantsPercent,100);assert.equal(r.nonOptants,1);assert.equal(r.unknown,1);
+ assert.equal(statistics([]).reportingNonOptantsPercent,0);
+});

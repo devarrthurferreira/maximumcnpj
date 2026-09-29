@@ -79,7 +79,7 @@ class PurchaseReportTests(unittest.TestCase):
         self.assertEqual(meta['reportType'], 'SALES')
         self.assertEqual(meta['totalCents'], 100000)
         self.assertEqual(meta['components']['accessoryCents'], 885)
-        self.assertEqual(meta['managerialGroups'][1]['totalCents'], 50000)
+        self.assertEqual(meta['managerialGroups'][1]['totalCents'], 70000)
         self.assertEqual(meta['unconfirmed']['totalCents'], 10000)
         text = '\n'.join(part.getPlainText() for part in purchase_story(meta, 778, purchase_pdf_styles())
                          if hasattr(part, 'getPlainText'))
@@ -128,8 +128,10 @@ class PurchaseReportTests(unittest.TestCase):
         self.assertEqual(meta['components'], {'grossCents': 102500, 'discountCents': 1000,
             'accessoryCents': 885, 'freightCents': 500, 'abatementCents': 2000, 'totalCents': 100000})
         nonoptant = meta['managerialGroups'][1]
-        self.assertEqual((nonoptant['suppliers'], nonoptant['lines'], nonoptant['totalCents']), (2, 2, 50000))
-        self.assertEqual((nonoptant['supplierPercent'], nonoptant['valuePercent']), (66.67, 62.5))
+        self.assertEqual((nonoptant['suppliers'], nonoptant['lines'], nonoptant['totalCents']), (3, 3, 70000))
+        self.assertEqual((nonoptant['supplierPercent'], nonoptant['valuePercent']), (75, 70))
+        self.assertEqual(len(meta['managerialGroups']), 2)
+        self.assertEqual([group['label'] for group in meta['managerialGroups']], ['Simples', 'Não optante'])
         self.assertEqual(meta['unconfirmed']['totalCents'], 10000)
         self.assertEqual(items[2]['status'], 'NAO_CONFIRMADO')
         self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
@@ -188,8 +190,52 @@ class PurchaseReportTests(unittest.TestCase):
                    purchaseInput={'totalCents': 0, 'cnpjCents': 0})
         meta = reconcile_purchase_snapshot(job, [line], [], WORKSPACE)
         self.assertEqual(meta['uniqueSuppliers'], 0)
+        self.assertEqual(meta['uniqueDocuments'], 1)
+        self.assertEqual(meta['nonCnpjDocumentCount'], 1)
+        self.assertEqual([group['countPercent'] for group in meta['reportingGroups']], [0, 100])
+        self.assertEqual([group['valuePercent'] for group in meta['reportingGroups']], [0, 0])
         self.assertTrue(all(group['supplierPercent'] == 0 and group['fileValuePercent'] == 0 for group in meta['groups']))
         self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+
+    def test_all_documents_count_once_except_missing_values_and_all_amounts_are_included(self):
+        job, lines, items = net_fixture()
+        for document, kind, cents in [('12345678901', 'CPF', 100), ('123456789012', 'CNO_OU_OUTRO', 200),
+                                      ('INVALIDO', 'INVALIDO', 300), ('', 'AUSENTE', 400), ('', 'AUSENTE', 500)]:
+            index = len(lines)
+            lines.append({**lines[-1], '_id': f'{JOB}:{index}', 'index': index, 'document': document,
+                          'documentKind': kind, 'cnpj': '', 'valid': False, 'totalCents': cents,
+                          'grossCents': cents + 500, 'discountCents': 200, 'accessoryCents': 177,
+                          'freightCents': 100, 'abatementCents': 400})
+        job.update(expectedRows=10, uploaded=10, summary={'lines': 10, 'unique': 3, 'invalid': 6, 'duplicates': 1})
+        job['purchaseInput'] = {'totalCents': 101500, 'cnpjCents': 80000,
+                               'components': {key: sum(line[key] for line in lines) for key in (*COMPONENT_FIELDS, 'totalCents')}}
+        meta = reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
+        self.assertEqual((meta['uniqueDocuments'], meta['nonCnpjDocumentCount']), (8, 5))
+        self.assertEqual(meta['reportingGroups'], [
+            {'status': 'OPTANTE', 'count': 1, 'lines': 2, 'totalCents': 30000, 'countPercent': 12.5,
+             'valuePercent': 29.56, 'unconfirmedCount': 0, 'unconfirmedCents': 0, 'nonCnpjCount': 0, 'nonCnpjCents': 0},
+            {'status': 'NAO_OPTANTE', 'count': 7, 'lines': 8, 'totalCents': 71500, 'countPercent': 87.5,
+             'valuePercent': 70.44, 'unconfirmedCount': 1, 'unconfirmedCents': 10000,
+             'nonCnpjCount': 5, 'nonCnpjCents': 21500}])
+        self.assertEqual(len(items), 3)
+        self.assertEqual(items[-1]['status'], 'NAO_CONFIRMADO')
+        tables = [part for part in purchase_story(meta, 778, purchase_pdf_styles()) if hasattr(part, '_cellvalues')]
+        self.assertEqual(len(tables[0]._cellvalues), 4)
+        self.assertEqual([row[0].getPlainText() for row in tables[0]._cellvalues], ['Grupo gerencial', 'Simples', 'Não optante', 'TOTAL'])
+
+    def test_half_up_percentages_have_an_exact_complement(self):
+        for cents_by_line, expected in (([1, 0, 15, 15, 1], [3.13, 96.87]),
+                                        ([10010, 0, 15000, 10000, 4990], [25.03, 74.97])):
+            with self.subTest(cents=cents_by_line):
+                job, lines, items = fixture()
+                for line, cents in zip(lines, cents_by_line):
+                    line['totalCents'] = cents
+                for item in items:
+                    item['totalCents'] = sum(line['totalCents'] for line in lines if line['cnpj'] == item['cnpj'])
+                job['purchaseInput'] = {'totalCents': sum(cents_by_line), 'cnpjCents': sum(cents_by_line[:-1])}
+                meta = reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
+                self.assertEqual([group['valuePercent'] for group in meta['reportingGroups']], expected)
+                self.assertEqual(sum(group['valuePercent'] for group in meta['reportingGroups']), 100)
 
     def test_missing_or_tampered_snapshots_block_report(self):
         def alter_job(job, lines, items): job['purchaseInput']['totalCents'] += 1

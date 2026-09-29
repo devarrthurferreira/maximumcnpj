@@ -22,9 +22,9 @@ def fixture(count=3):
            'summary':{'lines':count+4,'unique':count,'duplicates':3,'invalid':1}}
     groups = [{'status':s,'label':label,'count':count if s=='OPTANTE' else 0,
                'percent':100 if count and s=='OPTANTE' else 0,'batchPercent':100 if count and s=='OPTANTE' else 0}
-              for s,label in list(STATUSES.items())[1:]]
+              for s,label in list(REPORTING_STATUSES.items())[1:]]
     meta = {'job':job,'total':count,'denominator':count,'kind':'ALL','groups':groups,'coverage':100 if count else 0,
-            'occurrences':count+3,'firstCheck':now,'lastCheck':now,'nameWarnings':1,'generatedAt':now,
+            'occurrences':count+3,'firstCheck':now,'lastCheck':now,'nameWarnings':1,'generatedAt':now,'unconfirmedCount':0,
             'kinds':[{'kind':'CLIENTE','label':'Clientes','count':count}]}
     row = {'cnpj':'11222333000181','submittedName':'NOME FICTÍCIO & <img src="https://invalid/">',
            'status':'OPTANTE','kind':'CLIENTE','uf':'MG','occurrences':1,'checkedAt':now,'nameMatch':'COMPATIVEL',
@@ -53,6 +53,7 @@ class PureTests(unittest.TestCase):
     def test_date_and_zero_denominator(self):
         self.assertEqual(percentage(3,0),0)
         self.assertEqual(percentage(1,3),33.33)
+        self.assertEqual(percentage(1,32),3.13)
         self.assertEqual(display_date('2020-01-01'),'01/01/2020')
         self.assertEqual(display_date('bad'),'Não informada')
     def test_csv_neutralizes_formulas_and_preserves_cnpj(self):
@@ -61,6 +62,10 @@ class PureTests(unittest.TestCase):
         rows=list(csv.reader(io.StringIO(data),delimiter=';'))
         self.assertTrue(rows[1][4].startswith("'="));self.assertEqual(rows[1][3],'11222333000181')
         self.assertEqual(len(rows),2)
+        r['items'][0]['status'] = 'NAO_CONFIRMADO'
+        audit = list(csv.reader(io.StringIO(csv_bytes(m['job'],r['items']).decode('utf-8-sig')),delimiter=';'))
+        self.assertEqual(audit[0][6:8], ['GRUPO GERENCIAL', 'SITUACAO ORIGINAL DA FONTE'])
+        self.assertEqual(audit[1][6:8], ['Não optante', 'Não confirmados'])
     def test_summary_and_empty_pdf(self):
         for size in (0,3):
             m,r,o=fixture(size);o['layout']='summary'
@@ -104,6 +109,16 @@ class MongoTests(unittest.TestCase):
         job=get_job(self.db,JOB,self.ws);m=metadata(self.db,job,self.ws,'CLIENTE')
         self.assertEqual(m['total'],3);self.assertEqual(m['denominator'],2)
         self.assertEqual(m['groups'][0]['percent'],50)
+        self.assertEqual(len(m['groups']),2)
+        full = metadata(self.db,job,self.ws,'ALL')
+        self.assertEqual([group['count'] for group in full['groups']], [1,2])
+        self.assertEqual([group['percent'] for group in full['groups']], [33.33,66.67])
+        self.assertEqual(full['unconfirmedCount'],1)
+        self.assertEqual([group['count'] for group in full['sourceGroups']], [1,1,1])
+        nonoptant = result_rows(self.db,JOB,self.ws,validate({'jobId':JOB,'status':'NAO_OPTANTE'}))
+        self.assertEqual(nonoptant['total'],2)
+        self.assertEqual({row['status'] for row in nonoptant['items']}, {'NAO_OPTANTE','NAO_CONFIRMADO'})
+        self.assertEqual({row['reportingStatus'] for row in nonoptant['items']}, {'NAO_OPTANTE'})
         o=validate({'jobId':JOB,'kind':'CLIENTE','status':'OPTANTE'})
         data=result_rows(self.db,JOB,self.ws,o,1,1);self.assertEqual(data['total'],1);self.assertEqual(data['items'][0]['details']['name'],'API 0')
         o=validate({'jobId':JOB,'search':'API 2'});self.assertEqual(result_rows(self.db,JOB,self.ws,o)['total'],1)

@@ -8,7 +8,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, LongTable
-from .core import (VERSION, STATUSES, KINDS, NOTICE, display_date, number, percent,
+from .core import (VERSION, STATUSES, REPORTING_STATUSES, reporting_status, KINDS, NOTICE, display_date, number, percent,
                    percentage, cnpj_mask, PDF_PART_SIZE)
 
 INK = colors.HexColor('#222222')
@@ -55,7 +55,7 @@ def render_pdf(meta, result, options):
         canvas.drawRightString(page_width-32,20,f'Página {document.page} | Horários de Brasília')
         canvas.restoreState()
     title = f'{job.get("clientCode") or "Sem código"} · {job.get("clientName") or "Empresa"}'
-    group_label = STATUSES[options['status']]
+    group_label = REPORTING_STATUSES.get(options['status'], 'Não confirmados na fonte (auditoria)')
     story = [p('Relatório de enquadramento','heading'), p(title,'title'),
              p(f'Arquivo: {job.get("fileName") or "Não informado"}'),
              p(f'Grupo: {group_label} | Tipo: {KINDS[options["kind"]]}'),
@@ -73,7 +73,9 @@ def render_pdf(meta, result, options):
               p(f'Tipo selecionado: {number(meta["denominator"])} CNPJs; cobertura de respostas explícitas: {percent(meta["coverage"])}. '
                 f'Nomes semelhantes ou divergentes para revisão: {number(meta["nameWarnings"])}.'),
               p(f'Verificações deste tipo: {display_date(meta["firstCheck"])} até {display_date(meta["lastCheck"])}.','small'),
-              p('Percentuais por tipo incluem os não confirmados. Repetições não aumentam os totais; matriz e filial com CNPJs completos diferentes são distintas. '
+              p(f'Não confirmados na fonte já incluídos em Não optante: {number(meta["unconfirmedCount"])} CNPJs. '
+                'Somente optantes confirmados integram Simples; a classificação original permanece na auditoria. '
+                'Repetições não aumentam os totais; matriz e filial com CNPJs completos diferentes são distintas. '
                 'O filtro de tipo usa o primeiro tipo informado para cada CNPJ na importação; não reconstrói linhas descartadas pela deduplicação.','small'),
               Spacer(1,6), p(NOTICE,'small')]
     story += [Spacer(1,8), p('Distribuição por tipo no lote completo','heading'),
@@ -84,12 +86,13 @@ def render_pdf(meta, result, options):
         story += [PageBreak(), p(f'{group_label} · listagem detalhada','title'),
                   p(f'Parte {result["page"]} de {result["parts"]} | {number(len(result["items"]))} de {number(result["total"])} CNPJs do grupo.'),
                   p(f'Limite de {PDF_PART_SIZE} CNPJs por parte; baixe todas as partes para a relação completa. O resumo acima sempre considera o lote/tipo completo.','small'),Spacer(1,8)]
-        data = [[p(x,'head') for x in ('CNPJ / Simples','Nome informado / API','Tipo / UF / repetições','Conferência e cadastro','Datas de opção / exclusão','Consultado em')]]
+        data = [[p(x,'head') for x in ('CNPJ / Grupo gerencial','Nome informado / API','Tipo / UF / repetições','Conferência e cadastro','Datas de opção / exclusão','Consultado em')]]
         for row in result['items']:
             d = row.get('details') or {}
             names = f'Informado: {row.get("submittedName") or "Não informado"}\nAPI: {d.get("name") or "Não retornado"}'
             if d.get('tradeName'): names += '\nFantasia: ' + d['tradeName']
-            data.append([p(cnpj_mask(row['cnpj'])+'\n'+STATUSES[row['status']],'cell'),p(names,'cell'),
+            data.append([p(cnpj_mask(row['cnpj'])+'\n'+REPORTING_STATUSES[reporting_status(row['status'])]+
+                           '\nFonte: '+STATUSES[row['status']],'cell'),p(names,'cell'),
               p(f'{row.get("kind") or "Sem tipo"}\nUF: {d.get("uf") or row.get("uf") or "—"}\nOcorrências: {row.get("occurrences",1)}','cell'),
               p(f'{row.get("nameMatch") or "Não informada"}\n{row.get("reason") or "Sem impedimento registrado"}\nCadastro: {d.get("registryStatus") or "Não informado"}\nMEI: '+('Sim' if d.get('mei') is True else 'Não' if d.get('mei') is False else 'Não confirmado'),'cell'),
               p(f'Opção: {display_date(d.get("optionDate"))}\nExclusão: {display_date(d.get("exclusionDate"))}','cell'),

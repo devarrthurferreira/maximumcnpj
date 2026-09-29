@@ -6,6 +6,11 @@ import { need, integer } from './security.ts';
 import { PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialLabel, type FinancialMode, PURCHASE_STATUSES, COMPONENT_FIELDS, MAX_LINE_CENTS, calculationVersion, purchaseFormula, exactCents, percentage, purchaseCsv } from './purchase-domain.ts';
 
 const FINANCIAL_FIELDS = [...COMPONENT_FIELDS, 'totalCents'] as const;
+// Stored documents are already normalized. An absent identifier represents its own row, never a shared person.
+function documentIdentity() {
+  return {$cond: ['$valid', '$cnpj', {$cond: [{$ne: ['$document', '']},
+    {$concat: ['NON_CNPJ:', '$documentKind', ':', '$document']}, {$concat: ['MISSING:', {$toString: '$index'}]}]}]};
+}
 function validLineCents(field: string) {
   return {$cond: [{$isNumber: '$' + field}, {$and: [{$gte: ['$' + field, 0]}, {$lte: ['$' + field, MAX_LINE_CENTS]}, {$eq: ['$' + field, {$trunc: '$' + field}]}]}, false]};
 }
@@ -15,7 +20,7 @@ async function financialGroups(name: string, id: string, job: Doc) {
   const valid = net ? {$cond: [numeric, {$eq: ['$totalCents', {$subtract: [{$add: [{$subtract: ['$grossCents', '$discountCents']}, '$freightCents']}, '$abatementCents']}]}, false]} : numeric;
   const groups = await (await collection(name)).aggregate([
     {$match: scope({jobId: id})}, {$sort: {index: 1}},
-    {$group: {_id: {$cond: ['$valid', '$cnpj', {$concat: ['NON_CNPJ:', '$documentKind']}]}, valid: {$first: '$valid'}, name: {$first: '$name'}, documentKind: {$first: '$documentKind'},
+    {$group: {_id: documentIdentity(), valid: {$first: '$valid'}, name: {$first: '$name'}, documentKind: {$first: '$documentKind'},
       lines: {$sum: 1}, invalidAmounts: {$sum: {$cond: [valid, 0, 1]}}, totalCents: {$sum: '$totalCents'},
       ...(net ? Object.fromEntries(COMPONENT_FIELDS.map(field => [field, {$sum: '$' + field}])) : {})}}
   ], {allowDiskUse: true, maxTimeMS: 20000}).toArray();
@@ -25,15 +30,21 @@ async function financialGroups(name: string, id: string, job: Doc) {
 function componentTotals(groups: any[]) {
   return Object.fromEntries(FINANCIAL_FIELDS.map(field => [field, exactCents(groups.reduce((sum, group) => sum + exactCents(group[field]), 0))]));
 }
-function reportingGroups(groups: any[], unique: number, cents: number) {
+function reportingGroups(groups: any[], unique: number, cents: number, nonCnpj: {count: number; lines: number; totalCents: number}) {
   const optant = groups.find(group => group.status === 'OPTANTE')!;
   const nonOptant = groups.find(group => group.status === 'NAO_OPTANTE')!;
   const unconfirmed = groups.find(group => group.status === 'NAO_CONFIRMADO')!;
-  const combined = {status: 'NAO_OPTANTE', count: nonOptant.count + unconfirmed.count, lines: nonOptant.lines + unconfirmed.lines,
-    totalCents: exactCents(nonOptant.totalCents + unconfirmed.totalCents), unconfirmedCount: unconfirmed.count, unconfirmedCents: unconfirmed.totalCents};
-  return [{...optant, unconfirmedCount: 0, unconfirmedCents: 0}, {...combined, countPercent: percentage(combined.count, unique), valuePercent: percentage(combined.totalCents, cents)}];
+  const countPercent = percentage(optant.count, unique), valuePercent = percentage(optant.totalCents, cents);
+  const combined = {status: 'NAO_OPTANTE', count: nonOptant.count + unconfirmed.count + nonCnpj.count,
+    lines: nonOptant.lines + unconfirmed.lines + nonCnpj.lines,
+    totalCents: exactCents(nonOptant.totalCents + unconfirmed.totalCents + nonCnpj.totalCents),
+    unconfirmedCount: unconfirmed.count, unconfirmedCents: unconfirmed.totalCents,
+    nonCnpjCount: nonCnpj.count, nonCnpjCents: nonCnpj.totalCents};
+  // Complement the second rounded percentage so the two displayed groups reconcile to exactly 100%.
+  return [{...optant, countPercent, valuePercent, unconfirmedCount: 0, unconfirmedCents: 0, nonCnpjCount: 0, nonCnpjCents: 0},
+    {...combined, countPercent: unique ? (10000 - Math.round(countPercent * 100)) / 100 : 0,
+      valuePercent: cents ? (10000 - Math.round(valuePercent * 100)) / 100 : 0}];
 }
-function statusMatch(status: string) { return status === 'NAO_OPTANTE' ? {$in: ['NAO_OPTANTE', 'NAO_CONFIRMADO']} : status; }
 export async function purchaseJob(id: string, mode: FinancialMode = PURCHASE_MODE) {
   const job = await getJob(id);
   need(isFinancialMode(mode) && job.mode === mode, `Relatório de ${financialLabel(mode)} não encontrado.`, 404, 'NOT_FOUND');
@@ -65,7 +76,7 @@ export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
   need(await items.countDocuments(scope({jobId: id})) === valid.length, 'Quantidade de CNPJs inconsistente.', 409, 'RESULT_COUNT');
   const summary = {lines: count, unique: valid.length, invalid, duplicates: count - invalid - valid.length};
   const update: any = {summary, purchaseInput: {totalCents, cnpjCents: exactCents(valid.reduce((sum, g) => sum + g.totalCents, 0)), ...(calculationVersion(job) === 'NET_V2' ? {components: componentTotals(groups)} : {})}, status: 'PROCESSING', received: 0, startedAt: new Date()};
-  // All-CPF files still produce a useful complete financial report, with zero CNPJ denominator.
+  // Non-CNPJ documents do not need provider lookups; they all join managerial Não optantes.
   if (!valid.length) { update.status = 'COMPLETED'; update.completedAt = new Date(); }
   await (await collection('lookupJobs')).updateOne(scope({_id: id}), {$set: update});
   await stage.deleteMany(scope({jobId: id}));
@@ -87,7 +98,14 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
     {$lookup: {from: 'cnpjStates', let: {state: '$stateId', identity: '$cnpj'}, pipeline: [{$match: {$expr: {$and: [{$eq: ['$_id', '$$state']}, {$eq: ['$cnpj', '$$identity']}, {$eq: ['$workspaceId', scope().workspaceId]}]}}}, {$project: {status: 1}}], as: 'sourceState'}},
     {$project: {cnpj: 1, clientId: 1, kind: 1, state: 1, stateId: 1, status: 1, occurrences: 1, totalCents: 1, sourceState: 1}}
   ], {maxTimeMS: 20000}).toArray();
-  const valid = grouped.filter(g => g.valid), excluded = grouped.filter(g => !g.valid).map(g => ({documentKind: g.documentKind, lines: g.lines, totalCents: exactCents(g.totalCents)}));
+  const valid = grouped.filter(g => g.valid), nonCnpj = grouped.filter(g => !g.valid);
+  const excludedByKind = new Map<string, {documentKind: string; count: number; lines: number; totalCents: number}>();
+  for (const group of nonCnpj) {
+    const excluded = excludedByKind.get(group.documentKind) || {documentKind: group.documentKind, count: 0, lines: 0, totalCents: 0};
+    excluded.count++; excluded.lines += group.lines; excluded.totalCents = exactCents(excluded.totalCents + exactCents(group.totalCents));
+    excludedByKind.set(group.documentKind, excluded);
+  }
+  const excluded = [...excludedByKind.values()];
   const lines = grouped.reduce((sum, g) => sum + g.lines, 0), cnpjLines = valid.reduce((sum, g) => sum + g.lines, 0);
   const cnpjCents = exactCents(valid.reduce((sum, g) => sum + exactCents(g.totalCents), 0)), nonCnpjCents = exactCents(excluded.reduce((sum, g) => sum + g.totalCents, 0));
   const totalCents = exactCents(cnpjCents + nonCnpjCents);
@@ -106,8 +124,11 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
     group.count++; group.lines += line.lines; group.totalCents = exactCents(group.totalCents + line.totalCents);
   }
   for (const group of groups) { group.countPercent = percentage(group.count, valid.length); group.valuePercent = percentage(group.totalCents, cnpjCents); }
-  return {job, calculationVersion: version, formula, components, reportingGroups: reportingGroups(groups, valid.length, cnpjCents), totals: {lines, uniqueCnpjs: valid.length, cnpjLines, nonCnpjLines: lines - cnpjLines, totalCents, cnpjCents, nonCnpjCents}, groups, excluded,
-    denominators: {count: 'CNPJs válidos distintos deste relatório, incluindo os não confirmados.', value: `Soma de ${formula} somente das linhas com CNPJ válido, incluindo os não confirmados. CPF e outros documentos ficam separados.`},
+  const uniqueDocuments = grouped.length, nonCnpjDocumentCount = nonCnpj.length;
+  return {job, calculationVersion: version, formula, components,
+    reportingGroups: reportingGroups(groups, uniqueDocuments, totalCents, {count: nonCnpjDocumentCount, lines: lines - cnpjLines, totalCents: nonCnpjCents}),
+    totals: {lines, uniqueCnpjs: valid.length, uniqueDocuments, nonCnpjDocumentCount, cnpjLines, nonCnpjLines: lines - cnpjLines, totalCents, cnpjCents, nonCnpjCents}, groups, excluded,
+    denominators: {count: 'Documentos distintos do relatório, incluindo CPF, CNO e inválidos. Cada linha sem documento conta separadamente.', value: `Soma de ${formula} de todas as linhas do relatório. Apenas optantes confirmados entram em Simples; todo o restante integra Não optantes no agrupamento gerencial.`},
     source: `Minha Receita — enquadramento observado na consulta; não comprova o regime na data da ${mode === SALES_MODE ? 'venda' : 'compra'}.`};
 }
 export function purchaseFilter(value: string) {
@@ -119,33 +140,44 @@ export async function purchaseHistory(clientId: string, page: number, mode: Fina
   const jobs = await collection('lookupJobs');
   return {items: await jobs.find(query).sort({createdAt: -1, _id: 1}).skip((page - 1) * 30).limit(30).toArray(), total: await jobs.countDocuments(query), page};
 }
-async function linePage(id: string, status: string, page: number, pageSize: number) {
+async function financialPage(id: string, status: string, page: number, pageSize: number, grouped = false) {
   const match: any = scope({jobId: id});
   if (status === 'NON_CNPJ') match.valid = false;
-  else if (status !== 'ALL') match.valid = true;
-  const stages: any[] = [{$match: match}, {$lookup: {from: 'lookupItems', let: {identity: '$cnpj'}, pipeline: [{$match: {...scope({jobId: id}), $expr: {$eq: ['$cnpj', '$$identity']}}}, {$project: {status: 1, checkedAt: 1}}], as: 'lookup'}}];
-  stages.push({$set: {status: {$cond: ['$valid', {$arrayElemAt: ['$lookup.status', 0]}, 'NON_CNPJ']}, checkedAt: {$arrayElemAt: ['$lookup.checkedAt', 0]}}});
-  if (status !== 'ALL' && status !== 'NON_CNPJ') stages.push({$match: {status: statusMatch(status)}});
-  const [result] = await (await collection('purchaseLines')).aggregate([...stages, {$facet: {items: [{$sort: {index: 1}}, {$skip: (page - 1) * pageSize}, {$limit: pageSize}, {$project: {workspaceId: 0, lookup: 0}}], count: [{$count: 'total'}]}}], {maxTimeMS: 20000}).toArray();
-  return {items: (result?.items || []).map((row: any) => ({...row, reportingStatus: row.status === 'NAO_CONFIRMADO' ? 'NAO_OPTANTE' : row.status})), total: result?.count?.[0]?.total || 0, page, pageSize};
+  else if (status === 'OPTANTE' || status === 'NAO_CONFIRMADO') match.valid = true;
+  const stages: any[] = [{$match: match}];
+  if (grouped) stages.push({$sort: {index: 1}}, {$group: {
+    _id: documentIdentity(), index: {$first: '$index'}, document: {$first: '$document'}, documentKind: {$first: '$documentKind'},
+    cnpj: {$first: '$cnpj'}, name: {$first: '$name'}, valid: {$first: '$valid'}, kind: {$first: '$kind'},
+    occurrences: {$sum: 1}, totalCents: {$sum: '$totalCents'}
+  }});
+  stages.push({$lookup: {from: 'lookupItems', let: {identity: '$cnpj'}, pipeline: [
+    {$match: {...scope({jobId: id}), $expr: {$eq: ['$cnpj', '$$identity']}}},
+    {$project: {status: 1, checkedAt: 1, stateId: 1, reason: 1, source: 1}}
+  ], as: 'lookup'}}, {$set: {
+    status: {$cond: ['$valid', {$arrayElemAt: ['$lookup.status', 0]}, 'NON_CNPJ']},
+    checkedAt: {$arrayElemAt: ['$lookup.checkedAt', 0]}, stateId: {$arrayElemAt: ['$lookup.stateId', 0]},
+    reason: {$cond: ['$valid', {$arrayElemAt: ['$lookup.reason', 0]}, '$documentKind']},
+    source: {$cond: ['$valid', {$arrayElemAt: ['$lookup.source', 0]}, 'Não consultado']}, submittedName: '$name'
+  }}, {$set: {reportingStatus: {$cond: [{$and: ['$valid', {$eq: ['$status', 'OPTANTE']}]}, 'OPTANTE', 'NAO_OPTANTE']}}});
+  if (status === 'OPTANTE' || status === 'NAO_OPTANTE') stages.push({$match: {reportingStatus: status}});
+  else if (status === 'NAO_CONFIRMADO') stages.push({$match: {status}});
+  const pageStages: any[] = [{$sort: grouped ? {document: 1, index: 1} : {index: 1}}, {$skip: (page - 1) * pageSize}, {$limit: pageSize}];
+  if (grouped) pageStages.push({$lookup: {from: 'cnpjStates', let: {state: '$stateId', identity: '$cnpj'}, pipeline: [
+    {$match: {$expr: {$and: [{$eq: ['$_id', '$$state']}, {$eq: ['$cnpj', '$$identity']}, {$eq: ['$workspaceId', scope().workspaceId]}]}}}
+  ], as: 'details'}}, {$set: {details: {$arrayElemAt: ['$details', 0]}}});
+  pageStages.push({$project: {workspaceId: 0, lookup: 0}});
+  const [result] = await (await collection('purchaseLines')).aggregate([
+    ...stages, {$facet: {items: pageStages, count: [{$count: 'total'}]}}
+  ], {allowDiskUse: true, maxTimeMS: 20000}).toArray();
+  return {items: (result?.items || []).map((row: any) => grouped ? row : {...row, occurrences: 1}), total: result?.count?.[0]?.total || 0, page, pageSize};
 }
 export async function purchaseRows(id: string, status: string, page: number, lines = false, mode: FinancialMode = PURCHASE_MODE) {
   await purchaseSummary(id, true, mode); purchaseFilter(status);
-  if (lines || status === 'NON_CNPJ') {
-    const result = await linePage(id, status, page, 100);
-    return {...result, items: result.items.map((row: any) => ({...row, submittedName: row.name, occurrences: 1}))};
-  }
-  const query = scope({jobId: id, ...(status === 'ALL' ? {} : {status: statusMatch(status)})});
-  const [result] = await (await collection('lookupItems')).aggregate([
-    {$match: query}, {$facet: {items: [{$sort: {cnpj: 1}}, {$skip: (page - 1) * 100}, {$limit: 100},
-      {$lookup: {from: 'cnpjStates', let: {state: '$stateId', identity: '$cnpj'}, pipeline: [{$match: {$expr: {$and: [{$eq: ['$_id', '$$state']}, {$eq: ['$cnpj', '$$identity']}, {$eq: ['$workspaceId', scope().workspaceId]}]}}}], as: 'details'}},
-      {$set: {details: {$arrayElemAt: ['$details', 0]}, document: '$cnpj', documentKind: 'CNPJ'}}, {$project: {workspaceId: 0}}], count: [{$count: 'total'}]}}
-  ], {maxTimeMS: 20000}).toArray();
-  return {items: (result?.items || []).map((row: any) => ({...row, reportingStatus: row.status === 'NAO_CONFIRMADO' ? 'NAO_OPTANTE' : row.status})), total: result?.count?.[0]?.total || 0, page, pageSize: 100};
+  return financialPage(id, status, page, 100, !lines);
 }
 export async function purchaseExport(id: string, status: string, part: number, mode: FinancialMode = PURCHASE_MODE) {
   const summary = await purchaseSummary(id, true, mode); purchaseFilter(status);
-  const result = await linePage(id, status, part, 2000), parts = Math.max(1, Math.ceil(result.total / 2000));
+  const result = await financialPage(id, status, part, 2000), parts = Math.max(1, Math.ceil(result.total / 2000));
   integer(part, 1, parts);
   const content = purchaseCsv(summary.job, result.items);
   need(Buffer.byteLength(content, 'utf8') <= 4_000_000, 'Arquivo acima do limite. Escolha um grupo menor.', 413, 'REPORT_TOO_LARGE');

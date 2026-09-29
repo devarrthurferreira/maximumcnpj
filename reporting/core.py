@@ -10,9 +10,10 @@ from http.cookies import SimpleCookie, CookieError
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-VERSION = '0.8.1'
+VERSION = '0.9.0'
 STATUSES = {'ALL': 'Todos os CNPJs', 'OPTANTE': 'Optantes pelo Simples',
             'NAO_OPTANTE': 'Não optantes', 'NAO_CONFIRMADO': 'Não confirmados'}
+REPORTING_STATUSES = {'ALL': 'Todos os CNPJs', 'OPTANTE': 'Simples', 'NAO_OPTANTE': 'Não optante'}
 KINDS = {'ALL': 'Clientes e fornecedores', 'CLIENTE': 'Clientes',
          'FORNECEDOR': 'Fornecedores', 'AMBOS': 'Clientes e fornecedores (ambos)',
          'OUTROS': 'Tipo não identificado'}
@@ -61,7 +62,11 @@ def display_date(value):
 
 
 def percentage(count, total):
-    return round(count * 100 / total, 2) if total else 0
+    return ((count * 20_000 + total) // (total * 2)) / 100 if total else 0
+
+
+def reporting_status(status):
+    return 'OPTANTE' if status == 'OPTANTE' else 'NAO_OPTANTE'
 
 
 def number(value):
@@ -153,7 +158,7 @@ def csv_bytes(job, rows):
     out = io.StringIO(newline='')
     writer = csv.writer(out, delimiter=';', quoting=csv.QUOTE_ALL)
     writer.writerow(['CODIGO EMPRESA', 'EMPRESA', 'ID CONSULTA', 'CNPJ', 'NOME INFORMADO',
-                     'RAZAO SOCIAL API', 'SIMPLES', 'MEI', 'TIPO', 'UF', 'OCORRENCIAS',
+                     'RAZAO SOCIAL API', 'GRUPO GERENCIAL', 'SITUACAO ORIGINAL DA FONTE', 'MEI', 'TIPO', 'UF', 'OCORRENCIAS',
                      'CONFERENCIA NOME', 'MOTIVO', 'CONSULTADO EM', 'OPCAO SIMPLES',
                      'EXCLUSAO SIMPLES', 'FONTE', 'REFERENCIA FISCAL'])
     def safe(value):
@@ -162,7 +167,7 @@ def csv_bytes(job, rows):
     for row in rows:
         d = row.get('details') or {}
         values = [job.get('clientCode'), job.get('clientName'), job['_id'], row['cnpj'],
-                  row.get('submittedName'), d.get('name'), STATUSES[row['status']],
+                  row.get('submittedName'), d.get('name'), REPORTING_STATUSES[reporting_status(row['status'])], STATUSES[row['status']],
                   'Sim' if d.get('mei') is True else 'Não' if d.get('mei') is False else 'Não confirmado',
                   row.get('kind'), d.get('uf') or row.get('uf'), row.get('occurrences'),
                   row.get('nameMatch'), row.get('reason'), iso(row.get('checkedAt')),

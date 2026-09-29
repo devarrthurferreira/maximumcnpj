@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { collection, scope, audit } from './store.ts';
 import type { Doc } from './store.ts';
 import { need, text, integer, digest, escapeRegex } from './security.ts';
-import { prepareRows, statistics, VERSION, MAX_ROWS, normalizeCnpj, LABELS } from './domain.ts';
+import { prepareRows, statistics, VERSION, MAX_ROWS, normalizeCnpj, LABELS, REPORTING_LABELS, reportingStatus } from './domain.ts';
 import type { Status } from './domain.ts';
 import { IMPORT_MODE, importedStatus, mergeImportedStatuses } from './imported.ts';
 export type Actor = { _id: string; role: string; name: string; email: string };
@@ -152,7 +152,7 @@ export async function dashboard(clientId?: string) {
   const optants = sum('OPTANTE'), nonOptants = sum('NAO_OPTANTE'), unknown = sum('NAO_CONFIRMADO'), total = optants+nonOptants+unknown;
   const p = (n: number) => total ? Math.round(n/total*10000)/100 : 0;
   const recent = await (await collection('batches')).find(f).sort({ createdAt: -1 }).limit(12).toArray();
-  return { metrics: { total, optants, nonOptants, unknown, optantsPercent:p(optants), nonOptantsPercent:p(nonOptants), unknownPercent:p(unknown), coverage:p(optants+nonOptants), mei:results.find(r=>r._id==='OPTANTE')?.mei||0 }, recent, clientCount: await (await collection('clients')).countDocuments(scope({ active:true })), batchCount: await (await collection('batches')).countDocuments(f) };
+  return { metrics: { total, optants, nonOptants, unknown, optantsPercent:p(optants), nonOptantsPercent:p(nonOptants), unknownPercent:p(unknown), coverage:p(optants+nonOptants), reportingNonOptants:total-optants, reportingNonOptantsPercent:total?(10000-Math.round(p(optants)*100))/100:0, unknownIncludedInNonOptants:true, mei:results.find(r=>r._id==='OPTANTE')?.mei||0 }, recent, clientCount: await (await collection('clients')).countDocuments(scope({ active:true })), batchCount: await (await collection('batches')).countDocuments(f) };
 }
 export async function listBatches(clientId?: string, page = 1) {
   const q = scope(clientId ? { clientId } : {}), c = await collection('batches');
@@ -161,10 +161,10 @@ export async function listBatches(clientId?: string, page = 1) {
 export async function listResults(id: string, page = 1, status = '', search = '') {
   const b = await batch(id); need(b.status === 'COMPLETED', 'Os resultados só são publicados depois da conferência completa do lote.', 409);
   const q: Record<string, unknown> = scope({ batchId: id });
-  if (status) { need(Object.hasOwn(LABELS, status), 'Status inválido.'); q.status = status; }
+  if (status) { need(Object.hasOwn(LABELS, status), 'Status inválido.'); q.status = status === 'NAO_OPTANTE' ? {$ne:'OPTANTE'} : status; }
   if (search) q.$or = [{ cnpj: { $regex: escapeRegex(search.slice(0,100)), $options:'i' } }, { name: { $regex: escapeRegex(search.slice(0,100)), $options:'i' } }];
   const c = await collection('results');
-  return { items: await c.find(q).sort({ cnpj:1 }).skip((page-1)*50).limit(50).toArray(), total: await c.countDocuments(q), page };
+  return { items: (await c.find(q).sort({ cnpj:1 }).skip((page-1)*50).limit(50).toArray()).map(row=>({...row,reportingStatus:reportingStatus(row.status)})), total: await c.countDocuments(q), page };
 }
 export async function exportRows(id: string, offset: number) {
   const b = await batch(id); need(['COMPLETED','INVALID','READY','ESTIMATED'].includes(b.status), 'Aguarde o processamento antes de exportar.', 409);
@@ -176,5 +176,5 @@ export async function exportRows(id: string, offset: number) {
   const map = new Map(results.map(r=>[r.cnpj,r]));
   const first = await (await collection('rows')).aggregate([{ $match: scope({ batchId:id, valid:true, cnpj:{$in:rows.map(r=>r.cnpj)} }) }, { $group:{ _id:'$cnpj', index:{$min:'$index'} } }]).toArray();
   const firstIndex = new Map(first.map(r=>[r._id,r.index]));
-  return { headers:[...b.headers,'CNPJ_NORMALIZADO','VALIDACAO','DUPLICADO','SIMPLES','MEI','MOTIVO','FONTE','REFERENCIA_BASE','REGISTRADO_EM'], rows: rows.map(r => { const a=map.get(r.cnpj); return [...r.values, r.cnpj, r.valid?'Válido':'Inválido', r.valid && firstIndex.get(r.cnpj)!==r.index?'Sim':'Não', a?LABELS[a.status as Status]:'Não confirmado', a?.mei===true?'Sim':a?.mei===false?'Não':'Não confirmado', r.reason || a?.reason || (a?'':'SEM_ENQUADRAMENTO'), a?.source?.label || a?.source?.table || '', a?.source?.referenceDate || '', a?.observedAt?.toISOString() || '']; }), next: offset+rows.length < b.expectedRows ? offset+rows.length : null };
+  return { headers:[...b.headers,'CNPJ_NORMALIZADO','VALIDACAO','DUPLICADO','SIMPLES','MEI','MOTIVO','FONTE','REFERENCIA_BASE','REGISTRADO_EM','SITUACAO_ORIGINAL'], rows: rows.map(r => { const a=map.get(r.cnpj); return [...r.values, r.cnpj, r.valid?'Válido':'Inválido', r.valid && firstIndex.get(r.cnpj)!==r.index?'Sim':'Não', REPORTING_LABELS[reportingStatus(r.valid ? a?.status : undefined)], a?.mei===true?'Sim':a?.mei===false?'Não':'Não confirmado', r.reason || a?.reason || (a?'':'SEM_ENQUADRAMENTO'), a?.source?.label || a?.source?.table || '', a?.source?.referenceDate || '', a?.observedAt?.toISOString() || '', a?LABELS[a.status as Status]:'Não consultado']; }), next: offset+rows.length < b.expectedRows ? offset+rows.length : null };
 }

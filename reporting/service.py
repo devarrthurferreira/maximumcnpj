@@ -84,7 +84,7 @@ def cohort(stages, kind, status='ALL'):
     result = list(stages)
     q = {}
     if kind != 'ALL': q['reportKind'] = kind
-    if status != 'ALL': q['status'] = status
+    if status != 'ALL': q['status'] = {'$in': ['NAO_OPTANTE', 'NAO_CONFIRMADO']} if status == 'NAO_OPTANTE' else status
     if q: result.append({'$match': q})
     return result
 
@@ -110,16 +110,22 @@ def metadata(db, job, workspace, kind):
     require(total == job.get('summary', {}).get('unique'), 409, 'RESULT_COUNT', 'Contagem do histórico inconsistente. Relatório bloqueado para conferência.')
     selected = [v for v in values if kind == 'ALL' or v['_id']['kind'] == kind]
     denominator = sum(v['count'] for v in selected)
-    groups = [{'status': s, 'label': label, 'count': sum(v['count'] for v in selected if v['_id']['status'] == s)}
+    source_groups = [{'status': s, 'label': label, 'count': sum(v['count'] for v in selected if v['_id']['status'] == s)}
               for s, label in list(STATUSES.items())[1:]]
-    for group in groups:
+    for group in source_groups:
         group['percent'] = percentage(group['count'], denominator)
         group['batchPercent'] = percentage(group['count'], total)
+    optant = source_groups[0]
+    groups = [{**optant, 'label': 'Simples'},
+              {'status': 'NAO_OPTANTE', 'label': 'Não optante', 'count': denominator - optant['count'],
+               'percent': (10000 - round(optant['percent'] * 100)) / 100 if denominator else 0,
+               'batchPercent': (round(percentage(denominator, total) * 100) - round(optant['batchPercent'] * 100)) / 100}]
     checkdates = [v[key] for v in selected for key in ('firstCheck', 'lastCheck') if v.get(key)]
     return {'job': {k: job.get(k) for k in ('_id', 'clientId', 'clientCode', 'clientName', 'fileName', 'createdAt', 'completedAt', 'source', 'summary')},
-            'total': total, 'denominator': denominator, 'kind': kind, 'groups': groups,
+            'total': total, 'denominator': denominator, 'kind': kind, 'groups': groups, 'sourceGroups': source_groups,
+            'unconfirmedCount': source_groups[2]['count'],
             'kinds': [{'kind': k, 'label': label, 'count': sum(v['count'] for v in values if v['_id']['kind'] == k)} for k, label in list(KINDS.items())[1:]],
-            'coverage': percentage(sum(g['count'] for g in groups if g['status'] != 'NAO_CONFIRMADO'), denominator),
+            'coverage': percentage(sum(g['count'] for g in source_groups if g['status'] != 'NAO_CONFIRMADO'), denominator),
             'nameWarnings': sum(v['nameWarnings'] for v in selected),
             'occurrences': sum(v['occurrences'] for v in selected),
             'firstCheck': min(checkdates) if checkdates else None, 'lastCheck': max(checkdates) if checkdates else None,
@@ -146,6 +152,8 @@ def result_rows(db, job_id, workspace, options, size=PAGE_SIZE, page=1):
     output = list(db.lookupItems.aggregate(stages + [{'$facet': {'items': selected, 'count': [{'$count': 'total'}]}}], maxTimeMS=20000))[0]
     total = output['count'][0]['total'] if output['count'] else 0
     require(page == 1 or (page-1)*size < total, 400, 'PART_RANGE', 'Parte ou página fora do intervalo.')
+    for row in output['items']:
+        row['reportingStatus'] = 'OPTANTE' if row['status'] == 'OPTANTE' else 'NAO_OPTANTE'
     return {'items': output['items'], 'total': total, 'page': page, 'parts': max(1, math.ceil(total/size)), 'pageSize': size}
 
 

@@ -1,20 +1,23 @@
-# Maximum CNPJ · v0.9.0
+# Maximum CNPJ · v0.8.1
 
 Node.js + TypeScript + MongoDB para consultas e histórico. Python para PDFs. Identidade Maximum, empresas compartilhadas no mesmo workspace e acesso autenticado. Sem Google Cloud.
 
-## Entrega de 29/09/2026 — leitura do CSV e dois grupos gerenciais
+## Entrega de 29/09/2026 — compras e vendas
 
 - [x] Navegação unificada: **Navegação → Início, Empresas**; **Geração → Iniciar, Histórico**.
 - [x] Seleção de várias empresas e geração salva antes do envio, com escolha de compras, vendas ou ambos e acompanhamento dos relatórios que faltam.
 - [x] Histórico para abrir gerações, adicionar compras e vendas pendentes e retomar consultas.
 - [x] Novo total financeiro: **Q − Y + AA − AB**, em centavos inteiros. Z é informação de conferência, fora da fórmula.
-- [x] Dois grupos em telas, filtros e arquivos: **Simples** somente para OPTANTE explícito; **Não optante** para todos os demais, inclusive CPF, CNO, documento inválido/ausente e não confirmados. A situação original continua preservada.
-- [x] Recuperação automática de separadores extras na descrição do CSV do modelo conhecido, com validação do alinhamento e indicação das linhas recuperadas antes de confirmar.
+- [x] Não confirmados incluídos no grupo gerencial de não optantes; resposta original preservada nos detalhes e arquivos.
 - [x] PDF Python com memória de cálculo por empresa e consolidado da geração concluída.
 - [x] Vendas disponível: importação, consultas de compradores, histórico, CSV e PDF com a mesma regra financeira de compras.
 - [x] Acessos da equipe, troca obrigatória, empresas existentes e relatórios anteriores preservados.
 
-Os resultados refletem a resposta da base Minha Receita na data da consulta. A inclusão de CPF, outros documentos e não confirmados em Não optante é uma regra gerencial solicitada pela Maximum; ela não altera o retorno da fonte nem representa uma consulta fiscal de CPF. O enquadramento observado não comprova o regime na data da nota.
+Os resultados refletem a resposta da base Minha Receita na data da consulta. A inclusão de não confirmados em não optantes é uma regra de agrupamento gerencial solicitada pela Maximum: a origem continua identificada como não confirmada, sem alterar o retorno da fonte. O enquadramento observado não comprova o regime na data da nota.
+
+### Correção de compatibilidade do PDF · v0.8.1
+
+A cópia das linhas financeiras passa a preservar o tipo de parceiro definido pelo servidor. PDFs de vendas importadas na v0.8.0 continuam disponíveis mesmo quando esse campo redundante não foi salvo nas linhas, usando o modo de vendas do próprio lote. Tipos explícitos divergentes, componentes monetários incorretos e snapshots incompletos continuam bloqueados. A integração testa a emissão Python a partir do lote realmente criado pelo fluxo Node/MongoDB.
 
 ## Acesso da equipe
 
@@ -78,24 +81,20 @@ O endpoint retorna quantas contas foram criadas e quantas foram preservadas. É 
 
 **Novo Total = Q − Y + AA − AB.** A aplicação lê os componentes separadamente e recalcula no servidor. Ajustes vazios em colunas presentes equivalem a zero; colunas necessárias ausentes, valores inválidos e resultado negativo bloqueiam a linha para correção. Não há multiplicação por P nem redução silenciosa a zero.
 
-Uma nota pode aparecer em várias linhas de produtos: todas as linhas e seus valores são preservados. O CNPJ é deduplicado somente para consulta. Na contagem de compradores/fornecedores do relatório financeiro, cada documento normalizado conta uma vez, inclusive CPF. Cada linha sem documento tem identidade própria para não unir pessoas desconhecidas. Matriz e filial com CNPJs completos diferentes contam separadamente.
+Uma nota pode aparecer em várias linhas de produtos: todas as linhas e seus valores são preservados. O CNPJ é deduplicado somente para consulta e contagem de fornecedores ou compradores. Matriz e filial com CNPJs completos diferentes contam separadamente.
 
 | Indicador | Numerador | Denominador |
 |---|---|---|
-| % de documentos Simples | CNPJs distintos com resposta OPTANTE | Todos os documentos distintos do arquivo; cada linha sem documento conta individualmente |
-| % de documentos Não optante | Demais documentos, incluindo CPF e não confirmados | A mesma base de documentos |
-| % financeiro do grupo | Novo Total das linhas pertencentes ao grupo | Novo Total de todas as linhas do arquivo |
-| Total importado | Novo Total de todas as linhas | Não se aplica |
+| % de fornecedores/compradores optantes | CNPJs distintos com resposta optante | Todos os CNPJs válidos distintos |
+| % de fornecedores/compradores não optantes (grupo gerencial) | CNPJs distintos não optantes + não confirmados | A mesma base de CNPJs válidos distintos |
+| % financeiro do grupo | Novo Total das linhas dos fornecedores/compradores do grupo | Novo Total de todas as linhas com CNPJ válido |
+| Total importado | Novo Total de todas as linhas, inclusive CPF/outros documentos | Não se aplica |
 
-Os grupos somam o valor integral do arquivo. Quando a base é positiva, os dois percentuais exibidos somam 100%; o grupo Não optante recebe o complemento do percentual arredondado de Simples. Com base zero, ambos os percentuais são zero.
-
-CPF, CNO e documentos inválidos não são enviados à API CNPJ. Seus valores, linhas e documentos já estão incluídos em Não optante, com subtotal de conferência. O retorno não confirmado da fonte também aparece nesse grupo. Detalhes e CSV conservam a situação original; os relatórios cadastrais anteriores continuam usando seu universo de CNPJs armazenados, sem reconstruir documentos descartados em versões anteriores.
+A quantidade e o valor dos não confirmados ficam identificados dentro do grupo de não optantes. Os detalhes/CSV preservam a situação original. CPF, CNO e documentos inválidos não são enviados à API CNPJ nem entram nesses percentuais: seus valores ficam separados e permanecem no total importado. Uma base sem CNPJ válido admite relatório com denominador zero.
 
 Novas importações usam `calculationVersion=NET_V2`. Relatórios anteriores sem essa marca continuam sob a regra `Q_V1` (soma de Q), com identificação da regra original. Seus descontos, fretes e abatimentos não eram armazenados; por isso, uma nova importação é necessária para obter a nova conta. Nenhum histórico é recalculado com valores inventados.
 
-CSV admite UTF-8 e Windows-1252, separador ponto e vírgula e números brasileiros. Linhas completamente vazias são ignoradas. No modelo conhecido com Descrição em O, Quantidade em P, Valor Total em Q, Código Empresa em AC e Chave Lançamento em AD, separadores extras dentro da descrição podem ser recuperados automaticamente quando o alinhamento é inequívoco, o código corresponde à empresa selecionada e os valores são válidos. A prévia identifica as linhas recuperadas; nenhuma venda é descartada. Planilhas XLS/XLSX e formatos diferentes não recebem essa recuperação de CSV. Casos ambíguos, campos faltantes, fórmulas ou valores incorretos continuam bloqueados.
-
-O arquivo original permanece local. Para produzir um CSV já alinhado, a origem deve envolver descrições que contenham ponto e vírgula em aspas duplas. A exportação direta em XLSX com campos nas colunas correspondentes também é aceita.
+CSV admite UTF-8 e Windows-1252, separador ponto e vírgula e números brasileiros. Linhas completamente vazias são ignoradas. Cabeçalho, alinhamento e valores são conferidos antes do envio; separadores não escapados que desloquem campos precisam ser corrigidos na origem. Quando a descrição contém ponto e vírgula, o CSV deve envolver a descrição inteira em aspas duplas; apenas abrir o CSV desalinhado e salvá-lo novamente não restaura as posições. A exportação direta em XLSX, com os campos nas colunas correspondentes, também é aceita. Fórmulas nas colunas utilizadas devem ser convertidas para valores.
 
 ## Dados, segurança e limites
 
@@ -111,9 +110,9 @@ O arquivo original permanece local. Para produzir um CSV já alinhado, a origem 
 
 ## Compatibilidade e identidade
 
-As consultas cadastrais e a central `/reports.html` continuam acessíveis pelo histórico. Gerações, compras e vendas financeiras têm sua própria memória de cálculo. PDFs de vendas da v0.8.0 sem o tipo redundante nas linhas continuam compatíveis, e novas gravações preservam esse campo. Cadastros, contas e snapshots anteriores são preservados, sem migração destrutiva ou redefinição de senhas.
+As consultas cadastrais e a central `/reports.html` continuam acessíveis pelo histórico. Gerações, compras e vendas financeiras têm sua própria memória de cálculo. Cadastros, contas e snapshots anteriores são preservados, sem migração destrutiva ou redefinição de senhas.
 
-A identidade usa bordô `#750207`, branco, superfícies claras e ícones na navegação. Logos e PDFs usam imagens locais. As documentações anteriores estão em [`docs/archive/README-v0.8.1.md`](docs/archive/README-v0.8.1.md), [`docs/archive/README-v0.7.0.md`](docs/archive/README-v0.7.0.md), [`docs/archive/README-v0.6.0.md`](docs/archive/README-v0.6.0.md) e [`docs/archive/README-v0.5.1.md`](docs/archive/README-v0.5.1.md).
+A identidade usa bordô `#750207`, branco, superfícies claras e ícones na navegação. Logos e PDFs usam imagens locais. As documentações anteriores estão em [`docs/archive/README-v0.7.0.md`](docs/archive/README-v0.7.0.md), [`docs/archive/README-v0.6.0.md`](docs/archive/README-v0.6.0.md) e [`docs/archive/README-v0.5.1.md`](docs/archive/README-v0.5.1.md).
 
 ## Configuração
 
@@ -150,7 +149,7 @@ REPORT_TEST_MONGO=1 npm run test:reports
 npm run test:e2e
 ```
 
-A validação desta entrega cobre recuperação de separadores na descrição, componentes monetários de compras e vendas, os dois grupos gerenciais com CPF, compatibilidade dos snapshots anteriores, isolamento entre tipos e empresas, retomada, PDF Python e fluxo de navegador em computador/celular. Consulte a CI do SHA final para o resultado completo da execução.
+A validação desta entrega cobre componentes monetários de compras e vendas, agrupamento gerencial, compatibilidade dos snapshots anteriores, isolamento entre tipos e empresas, retomada, PDF Python e fluxo de navegador em computador/celular. Consulte a CI do SHA final para o resultado completo da execução.
 
 Os testes financeiros usam dados sintéticos e fonte simulada. Testes com MongoDB devem usar banco descartável. A CI executa MongoDB 7, Node 22, Python 3.12 e Chromium, incluindo regras financeiras, autenticação, isolamento e navegação. Confira a execução vinculada ao commit entregue; existência de testes não significa aprovação em produção ou homologação fiscal. Arquivos reais de clientes não são versionados.
 

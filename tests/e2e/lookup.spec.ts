@@ -21,3 +21,18 @@ test('Novo painel: sessão, importação de códigos e leitura do modelo cliente
  }
  await page.setViewportSize({width:390,height:844});await page.goto('/#overview');await expect(page.getByRole('heading',{name:'Sua carteira, em perspectiva.'})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);expect(errors).toEqual([]);
 });
+
+test('Dashboard and lookup history expose two groups while preserving source failures',async({page})=>{
+ const jobId='00000000-0000-4000-8000-000000000099';let selected='';
+ await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'test',name:'Equipe Teste',role:'viewer'}}}));
+ await page.route('**/api/v4/clients',r=>r.fulfill({json:{items:[]}}));
+ await page.route(/\/api\/v4\/dashboard(?:\?|$)/,r=>r.fulfill({json:{metrics:{total:3,optants:1,nonOptants:1,unknown:1,optantsPercent:33.33,nonOptantsPercent:33.33,unknownPercent:33.33,reportingNonOptants:2,reportingNonOptantsPercent:66.67,coverage:66.67},clientCount:1,entities:3,recent:[]}}));
+ await page.route(/\/api\/v4\/lookups\//,r=>{
+  const url=new URL(r.request().url());
+  if(url.pathname.endsWith('/results')){selected=url.searchParams.get('status')||'';return r.fulfill({json:{items:[{cnpj:'11222333000181',submittedName:'EMPRESA FICTÍCIA',status:'NAO_CONFIRMADO',reportingStatus:'NAO_OPTANTE',reason:'Fonte sem resposta',occurrences:1}],total:1,page:1}});}
+  return r.fulfill({json:{_id:jobId,clientCode:'1234',clientName:'EMPRESA DEMONSTRAÇÃO',fileName:'fixture.csv',status:'COMPLETED',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:3,duplicates:0,invalid:0},resultSummary:{total:3,optants:1,nonOptants:1,unknown:1,optantsPercent:33.33,nonOptantsPercent:33.33,unknownPercent:33.33,reportingNonOptants:2,reportingNonOptantsPercent:66.67}}});
+ });
+ await page.goto('/');await expect(page.locator('.metric-label')).toHaveText(['CNPJs únicos','Simples','Não optante','Empresas ativas']);await expect(page.locator('.metric').nth(2)).toContainText('66,67%');
+ await page.goto('/#job/'+jobId);await expect(page.locator('#result-status option')).toHaveText(['Todos os enquadramentos','Simples','Não optante']);await page.locator('#result-status').selectOption('NAO_OPTANTE');await page.locator('#result-filter').click();
+ await expect.poll(()=>selected).toBe('NAO_OPTANTE');await expect(page.locator('#result-table')).toContainText('Não optante');await expect(page.locator('#result-table')).toContainText('Origem: não confirmado');await expect(page.locator('#result-table')).toContainText('Fonte sem resposta');
+});

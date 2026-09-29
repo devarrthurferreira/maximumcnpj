@@ -1,5 +1,5 @@
 /* Only A/I/P/Q/Y/Z/AA/AB leave this worker as approved financial data; source file stays local. */
-let book, matrix, encoding;
+let book, matrix, encoding, csvSource = null;
 self.onmessage = async ({data}) => {
   try {
     const parser = await import('./purchase-parser.js');
@@ -7,9 +7,11 @@ self.onmessage = async ({data}) => {
       if (data.buffer.byteLength > 10 * 1024 * 1024) throw new Error('Arquivo acima de 10 MiB. Divida o relatório.');
       if (/\.csv$/i.test(data.name)) {
         book = null;
-        ({matrix, encoding} = parser.decodePurchaseCsv(data.buffer, data.encoding));
+        csvSource = parser.decodePurchaseCsv(data.buffer, data.encoding);
+        ({matrix, encoding} = csvSource);
         self.postMessage({type:'sheets', sheets:['CSV'], encoding});
       } else if (/\.xlsx?$/i.test(data.name)) {
+        csvSource = null;
         const D = await import('./domain.js');
         if (/\.xlsx$/i.test(data.name)) D.inspectXlsxZip(data.buffer);
         if (!self.XLSX) importScripts('/vendor/xlsx.full.min.js');
@@ -39,6 +41,7 @@ self.onmessage = async ({data}) => {
       }
       self.postMessage({type:'preview', rows:matrix.slice(0,21), total:matrix.length, encoding});
     }
-    if (data.action === 'validate') self.postMessage({type:'validated', ...parser.parsePurchaseMatrix(matrix, Number(data.header), {type:data.reportType || data.type || 'PURCHASES', calculationVersion:data.calculationVersion || 'NET_V2'})});
+    if (data.action === 'validate') self.postMessage({type:'validated', ...parser.parsePurchaseMatrix(matrix, Number(data.header), {type:data.reportType || data.type || 'PURCHASES', calculationVersion:data.calculationVersion || 'NET_V2',
+      companyCode:data.companyCode, ...(csvSource ? {sourceFormat:'CSV', delimiter:csvSource.delimiter, sourceLines:csvSource.sourceLines, recoverDescriptionSeparators:true} : {})})});
   } catch (error) { self.postMessage({type:'error', message:error.message || 'Não foi possível ler o relatório.'}); }
 };

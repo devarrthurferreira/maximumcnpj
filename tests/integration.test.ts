@@ -39,8 +39,9 @@ test('HTTP + MongoDB: 10.001 únicos, conflitos, retomada, exportação e permis
     assert.equal((await req(`/api/batches/${id}/process`,'POST',{})).data.received,10001);
     assert.equal((await req('/api/dashboard')).data.metrics.total,10001);
     assert.equal((await req(`/api/batches/${id}/results`)).data.items.length,50);
-    const conflict=(await req(`/api/batches/${id}/results?search=${key(1)}`)).data.items[0];assert.equal(conflict.reason,'CONFLITO_NA_PLANILHA');
-    const exported=(await req(`/api/batches/${id}/export?offset=10000`)).data;assert.equal(exported.rows.length,4);assert.equal(exported.rows[1][5],'Sim');assert.equal(exported.rows[2][6],'Não confirmado');assert.ok(exported.rows[0][9].includes('planilha'));
+    const conflict=(await req(`/api/batches/${id}/results?search=${key(1)}`)).data.items[0];assert.equal(conflict.reason,'CONFLITO_NA_PLANILHA');assert.equal(conflict.status,'NAO_CONFIRMADO');assert.equal(conflict.reportingStatus,'NAO_OPTANTE');
+    const grouped=(await req(`/api/batches/${id}/results?status=NAO_OPTANTE&search=${key(1)}`)).data;assert.equal(grouped.total,1);assert.equal(grouped.items[0].status,'NAO_CONFIRMADO');
+    const exported=(await req(`/api/batches/${id}/export?offset=10000`)).data;assert.equal(exported.rows.length,4);assert.equal(exported.rows[1][5],'Sim');assert.equal(exported.rows[2][6],'Não optante');assert.equal(exported.rows[2].at(-1),'Não confirmado');assert.equal(exported.rows[3][6],'Não optante');assert.ok(exported.rows[0][9].includes('planilha'));
     const id2=randomUUID();await req('/api/batches','POST',{...meta,importId:id2,expectedRows:1,statusColumn:-1});
     await req(`/api/batches/${id2}/rows`,'POST',{offset:0,rows:[rows[0]]});await req(`/api/batches/${id2}/finalize`,'POST',{});await req(`/api/batches/${id2}/process`,'POST',{});
     const metrics=(await req('/api/dashboard')).data.metrics;assert.equal(metrics.total,10001);assert.equal(metrics.unknown,2);

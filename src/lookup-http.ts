@@ -1,6 +1,6 @@
 import { collection, scope } from './store.ts';
 import { need, integer, escapeRegex } from './security.ts';
-import { normalizeCnpj } from './domain.ts';
+import { normalizeCnpj, reportingStatus } from './domain.ts';
 import { routePurchases } from './purchase-http.ts';
 import { routeGenerations } from './generation-http.ts';
 import { PURCHASE_MODE, SALES_MODE, isFinancialMode } from './purchase-domain.ts';
@@ -10,11 +10,11 @@ import { listCatalog, importCatalog } from './lookup-catalog.ts';
 import { createLookup,uploadLookup,finalizeLookup,processLookup,cancelLookup,repeatLookup } from './lookup-jobs.ts';
 async function items(id:string,page:number,status:string,search:string){
   const job=await getJob(id);need(job.status==='COMPLETED','Aguarde a conclusão para ver o resultado consolidado.',409);
-  const q:any=scope({jobId:id});if(status){need(['OPTANTE','NAO_OPTANTE','NAO_CONFIRMADO'].includes(status),'Situação inválida.');q.status=status;}
+  const q:any=scope({jobId:id});if(status){need(['OPTANTE','NAO_OPTANTE','NAO_CONFIRMADO'].includes(status),'Situação inválida.');q.status=status === 'NAO_OPTANTE' ? {$ne:'OPTANTE'} : status;}
   const stages:any[]=[{$match:q},{$lookup:{from:'cnpjStates',localField:'stateId',foreignField:'_id',as:'details'}},{$set:{details:{$arrayElemAt:['$details',0]}}}];
   if(search){const term=escapeRegex(search.slice(0,100));stages.push({$match:{$or:[{cnpj:{$regex:term,$options:'i'}},{submittedName:{$regex:term,$options:'i'}},{'details.name':{$regex:term,$options:'i'}}]}});}
   const [result]=await (await collection('lookupItems')).aggregate([...stages,{$facet:{items:[{$sort:{cnpj:1}},{$skip:(page-1)*100},{$limit:100},{$project:{workspaceId:0}}],count:[{$count:'total'}]}}],{maxTimeMS:20000}).toArray();
-  return {items:result?.items||[],total:result?.count?.[0]?.total||0,page};
+  return {items:(result?.items||[]).map((row:any)=>({...row,reportingStatus:reportingStatus(row.status)})),total:result?.count?.[0]?.total||0,page};
 }
 async function history(clientId:string,page:number,cnpj:string){
   const q:any=scope({...(clientId?{clientId}:{}),mode:{$nin:[PURCHASE_MODE,SALES_MODE]}});
@@ -26,7 +26,7 @@ async function dashboard(clientId:string){
   const values=await (await collection('lookupItems')).aggregate([{$match:{...q,state:'DONE'}},{$lookup:{from:'lookupJobs',localField:'jobId',foreignField:'_id',as:'job'}},{$match:{'job.status':'COMPLETED'}},{$sort:{cnpj:1,checkedAt:-1,jobId:-1}},{$group:{_id:'$cnpj',status:{$first:'$status'}}},{$group:{_id:'$status',count:{$sum:1}}}],{allowDiskUse:true,maxTimeMS:20000}).toArray();
   const get=(s:string)=>values.find(v=>v._id===s)?.count||0;const optants=get('OPTANTE'),nonOptants=get('NAO_OPTANTE'),unknown=get('NAO_CONFIRMADO'),reportingNonOptants=nonOptants+unknown,total=optants+nonOptants+unknown;
   const p=(v:number)=>total?Math.round(v/total*10000)/100:0;
-  return {metrics:{total,optants,nonOptants,unknown,optantsPercent:p(optants),nonOptantsPercent:p(nonOptants),unknownPercent:p(unknown),coverage:p(optants+nonOptants),reportingNonOptants,reportingNonOptantsPercent:p(reportingNonOptants),unknownIncludedInNonOptants:true},recent:(await history(clientId,1,'')).items.slice(0,8),entities:await (await collection('cnpjEntities')).countDocuments(scope()),clientCount:await (await collection('clients')).countDocuments(scope({active:true})),source:'Minha Receita',sourceReferenceDate:null};
+  return {metrics:{total,optants,nonOptants,unknown,optantsPercent:p(optants),nonOptantsPercent:p(nonOptants),unknownPercent:p(unknown),coverage:p(optants+nonOptants),reportingNonOptants,reportingNonOptantsPercent:total?(10000-Math.round(p(optants)*100))/100:0,unknownIncludedInNonOptants:true},recent:(await history(clientId,1,'')).items.slice(0,8),entities:await (await collection('cnpjEntities')).countDocuments(scope()),clientCount:await (await collection('clients')).countDocuments(scope({active:true})),source:'Minha Receita',sourceReferenceDate:null};
 }
 export async function routeV4(actor:LookupActor,method:string,url:URL,input:any){
   await ensureLookupIndexes();

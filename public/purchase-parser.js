@@ -31,6 +31,66 @@ export function amountCents(value, field = 'Valor Total (Q)') {
   return cents;
 }
 
+// Recovery is limited to the known semicolon CSV export. Workbook columns are never shifted.
+const EXPORT_SUFFIX = ['Descrição', 'Quantidade', 'Valor Total', 'CST ICMS', 'Base Cálculo ICMS',
+  'Alíquota ICMS', 'Valor ICMS', 'Valor IPI', 'Valor ISS', 'Valor Substituição Tributária',
+  'Valor Desconto', 'Valor Despesa Acessória', 'Valor Frete', 'Abatimento não Tributado', 'Codigo Empresa', 'Chave Lancamento'];
+const EXPORT_PREFIX_ANCHORS = ['Estado', 'Contribuinte ICMS', 'Natureza', 'Classificação Fiscal', 'Produto'];
+const normalizedHeader = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const numericId = value => /^\d{1,18}$/.test(String(value ?? '').trim()) && /[1-9]/.test(String(value));
+function isDescriptionText(value) {
+  if (typeof value !== 'string' || !/\p{L}/u.test(value) || !value.trim()) return false;
+  try { decimal(value, 6, 'Descrição'); return false; } catch { return true; }
+}
+
+function recoveryCompany(matrix, headerIndex, header, options) {
+  if (options.sourceFormat !== 'CSV' || options.delimiter !== ';' || options.recoverDescriptionSeparators !== true ||
+      options.calculationVersion === 'Q_V1' || header.findLastIndex(value => String(value ?? '').trim()) !== 29 ||
+      EXPORT_SUFFIX.some((label, index) => normalizedHeader(header[index + 14]) !== normalizedHeader(label)) ||
+      EXPORT_PREFIX_ANCHORS.some((label, index) => normalizedHeader(header[index + 9]) !== normalizedHeader(label))) return null;
+  if (options.companyCode !== undefined && options.companyCode !== null && options.companyCode !== '') {
+    const code = String(options.companyCode).trim();
+    return numericId(code) ? code : null;
+  }
+  // Without a selected-company anchor, require a single code from already aligned rows.
+  const codes = new Set();
+  for (const row of matrix.slice(headerIndex + 1)) {
+    if (!row.slice(30).some(value => String(value ?? '').trim()) && numericId(row[28]) && numericId(row[29])) {
+      try { validateExportSuffix(row); codes.add(String(row[28]).trim()); } catch { /* Not an anchor. */ }
+    }
+  }
+  return codes.size === 1 ? [...codes][0] : null;
+}
+
+function validateExportSuffix(row) {
+  // Every original numerical field in P:AD must remain valid; no number is synthesized or rounded.
+  const quantity = decimal(row[15], 6, 'Quantidade (P)');
+  if (quantity.split('.')[0].length > 9) throw new Error('Quantidade fora do limite.');
+  if (!/^\d{1,3}$/.test(String(row[17] ?? '').trim())) throw new Error('CST inválido.');
+  if (decimal(row[19], 6, 'Alíquota ICMS (T)').split('.')[0].length > 9) throw new Error('Alíquota fora do limite.');
+  for (const column of [16,18,20,21,22,23,24,25,26,27]) amountCents(row[column], 'Campo numérico do CSV');
+  if (!numericId(row[28]) || !numericId(row[29])) throw new Error('Identificadores finais inválidos.');
+}
+
+function recoverDescription(raw, companyCode) {
+  if (!companyCode) return null;
+  // These untouched fields immediately before O rule out separators split inside an earlier name/field.
+  if (!/^[A-Z]{2}$/.test(String(raw[9] ?? '').trim()) || !['sim','nao'].includes(normalizedHeader(raw[10])) ||
+      !/^\d{4,10}$/.test(String(raw[11] ?? '').trim()) || !/^\d{4}\.?\d{2}\.?\d{2}$/.test(String(raw[12] ?? '').trim()) ||
+      !numericId(raw[13])) return null;
+  const surplus = raw.findLastIndex(value => String(value ?? '').trim()) - 29;
+  if (surplus < 1) return null;
+  const description = raw.slice(14, 15 + surplus);
+  // A numerical fragment or blank extra field could be a displaced financial value, so it is ambiguous.
+  if (description.length !== surplus + 1 || !description.every(isDescriptionText)) return null;
+  const joined = description.join(';');
+  if (joined.length > 2000) return null;
+  const candidate = [...raw.slice(0, 14), joined, ...raw.slice(15 + surplus)];
+  if (String(candidate[28] ?? '').trim() !== companyCode || candidate.slice(30).some(value => String(value ?? '').trim())) return null;
+  try { validateExportSuffix(candidate); } catch { return null; }
+  return {row:candidate, descriptionSeparators:surplus};
+}
+
 export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   const type = options.type || 'PURCHASES', version = options.calculationVersion || 'NET_V2';
   if (!['PURCHASES', 'SALES'].includes(type) || !['NET_V2', 'Q_V1'].includes(version)) throw new Error('Formato de relatório inválido.');
@@ -42,15 +102,22 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   const lastHeader = header.findLastIndex(value => String(value ?? '').trim());
   const quantityRequired = type === 'PURCHASES';
   const components = net ? {grossCents:0, discountCents:0, accessoryCents:0, freightCents:0, abatementCents:0, totalCents:0} : null;
-  const rows = [], errors = [], unique = new Set();
+  const rows = [], errors = [], repairs = [], unique = new Set();
+  const recoveryCode = recoveryCompany(matrix, headerIndex, header, options);
   let nonCnpjLines = 0, ignored = 0, totalCents = 0;
   for (let index = headerIndex + 1; index < matrix.length; index++) {
-    const raw = matrix[index];
+    let raw = matrix[index];
+    const sourceLine = Number.isSafeInteger(options.sourceLines?.[index]) && options.sourceLines[index] > 0 ? options.sourceLines[index] : index + 1;
+    let repaired = null;
     if (!raw.some(v => String(v ?? '').trim())) { ignored++; continue; }
     if (rows.length + errors.length >= MAX_ROWS) throw new Error('O relatório aceita até 50.000 linhas de dados. Divida o arquivo.');
     try {
       if (raw.length > MAX_COLUMNS) throw new Error('Máximo de 80 colunas por linha.');
-      if (raw.slice(lastHeader + 1).some(value => String(value ?? '').trim())) throw new Error('Colunas desalinhadas: há valores após o último cabeçalho. Revise separadores e campos com ponto e vírgula.');
+      if (raw.slice(lastHeader + 1).some(value => String(value ?? '').trim())) {
+        repaired = recoverDescription(raw, recoveryCode);
+        if (!repaired) throw new Error('Colunas desalinhadas: não foi possível realinhar a descrição com segurança. Revise separadores e campos com ponto e vírgula.');
+        raw = repaired.row;
+      }
       const document = String(raw[0] ?? '').trim(), name = String(raw[8] ?? '').trim();
       if (document.length > 40 || name.length > 200) throw new Error('Documento ou razão social acima do limite.');
       if (!name) throw new Error(`${type === 'SALES' ? 'Comprador' : 'Razão social'} (I): preenchimento obrigatório.`);
@@ -70,9 +137,11 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       const kind = documentKind(document);
       if (kind === 'CNPJ') unique.add(normalizeCnpj(document).cnpj); else nonCnpjLines++;
       rows.push({document, name, quantity, ...financial});
-    } catch (error) { errors.push({line:index + 1, message:error.message}); }
+      if (repaired) repairs.push({line:sourceLine, descriptionSeparators:repaired.descriptionSeparators,
+        reason:'Separadores extras da descrição (O) recompostos; colunas P a AD realinhadas com os valores originais.'});
+    } catch (error) { errors.push({line:sourceLine, message:error.message}); }
   }
-  return {rows, errors, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, components, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
+  return {rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, components, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
 }
 
 export function decodePurchaseCsv(buffer, encoding = 'auto') {
@@ -81,5 +150,30 @@ export function decodePurchaseCsv(buffer, encoding = 'auto') {
     try { text = new TextDecoder('utf-8', {fatal:true}).decode(buffer); usedEncoding = 'utf-8'; }
     catch { text = new TextDecoder('windows-1252').decode(buffer); usedEncoding = 'windows-1252'; }
   } else text = new TextDecoder(encoding).decode(buffer);
-  return {matrix:csvParse(text), encoding:usedEncoding};
+  const first = text.replace(/^\uFEFF/, '').split(/\r?\n/, 1)[0];
+  const delimiter = [';', ',', '\t'].sort((a, b) => first.split(b).length - first.split(a).length)[0];
+  const matrix = csvParse(text, delimiter);
+  return {matrix, encoding:usedEncoding, delimiter, sourceLines:csvSourceLines(text, delimiter)};
+}
+
+// Match csvParse's quote/empty-row handling, retaining physical row starts for diagnostics.
+function csvSourceLines(input, delimiter) {
+  const text = input.replace(/^\uFEFF/, ''), sourceLines = [];
+  let cell = '', quoted = false, rowHasValue = false, physicalLine = 1, rowStart = 1;
+  const finish = () => { if (rowHasValue || cell !== '') sourceLines.push(rowStart); cell = ''; rowHasValue = false; };
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '\r' || (c === '\n' && text[i - 1] !== '\r')) physicalLine++;
+    if (c === '"') {
+      if (quoted && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (!cell || quoted) quoted = !quoted;
+      else cell += c;
+    } else if (c === delimiter && !quoted) { rowHasValue ||= cell !== ''; cell = ''; }
+    else if ((c === '\n' || c === '\r') && !quoted) {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      finish(); rowStart = physicalLine;
+    } else cell += c;
+  }
+  if (cell || rowHasValue) finish();
+  return sourceLines;
 }

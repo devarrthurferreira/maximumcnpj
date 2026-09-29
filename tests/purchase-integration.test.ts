@@ -58,20 +58,26 @@ test('MongoDB compras e vendas: idempotência, isolamento, cálculos e PDF Pytho
     const complete = await processLookup(actor, job._id, transport);
     assert.equal(complete.status, 'COMPLETED'); assert.equal(calls, 3);
     const summary = await purchaseSummary(job._id);
-    assert.deepEqual(summary.totals, {lines:5,uniqueCnpjs:3,cnpjLines:4,nonCnpjLines:1,totalCents:43000,cnpjCents:40000,nonCnpjCents:3000});
+    assert.deepEqual(summary.totals, {lines:5,uniqueCnpjs:3,uniqueDocuments:4,nonCnpjDocumentCount:1,cnpjLines:4,nonCnpjLines:1,totalCents:43000,cnpjCents:40000,nonCnpjCents:3000});
     assert.deepEqual(summary.groups.map(g=>[g.status,g.count,g.totalCents,g.countPercent,g.valuePercent]), [
       ['OPTANTE',1,10010,33.33,25.03], ['NAO_OPTANTE',1,20000,33.33,50], ['NAO_CONFIRMADO',1,9990,33.33,24.98]
     ]);
     assert.deepEqual(summary.components, {grossCents:45500,discountCents:3000,accessoryCents:495,freightCents:750,abatementCents:250,totalCents:43000});
     assert.equal(summary.calculationVersion,'NET_V2'); assert.equal(summary.formula,'Q - Y + AA - AB');
     assert.deepEqual(summary.reportingGroups.map(g=>[g.status,g.count,g.totalCents,g.countPercent,g.valuePercent,g.unconfirmedCount,g.unconfirmedCents]), [
-      ['OPTANTE',1,10010,33.33,25.03,0,0], ['NAO_OPTANTE',2,29990,66.67,74.98,1,9990]
+      ['OPTANTE',1,10010,25,23.28,0,0], ['NAO_OPTANTE',3,32990,75,76.72,1,9990]
     ]);
-    assert.equal((await purchaseRows(job._id,'NAO_OPTANTE',1)).total,2);
+    assert.equal(summary.reportingGroups.reduce((sum,g)=>sum+g.totalCents,0),summary.totals.totalCents);
+    assert.equal(summary.reportingGroups.reduce((sum,g)=>sum+g.valuePercent,0),100);
+    assert.equal(summary.reportingGroups.reduce((sum,g)=>sum+g.countPercent,0),100);
+    assert.equal(summary.reportingGroups[1].nonCnpjCount,1); assert.equal(summary.reportingGroups[1].nonCnpjCents,3000);
+    assert.equal((await purchaseRows(job._id,'NAO_OPTANTE',1)).total,3);
     assert.equal((await purchaseRows(job._id,'NAO_CONFIRMADO',1)).total,1);
-    assert.equal((await purchaseRows(job._id,'NAO_OPTANTE',1,true)).total,2);
-    const combinedCsv = await purchaseExport(job._id,'NAO_OPTANTE',1); assert.equal(combinedCsv.total,2); assert(combinedCsv.content.includes('"NAO_OPTANTE";"NAO_CONFIRMADO"'));
-    const cnpjs = await purchaseRows(job._id, 'ALL', 1); assert.equal(cnpjs.total, 3);
+    assert.equal((await purchaseRows(job._id,'NAO_OPTANTE',1,true)).total,3);
+    const combinedCsv = await purchaseExport(job._id,'NAO_OPTANTE',1); assert.equal(combinedCsv.total,3); assert(combinedCsv.content.includes('"NAO_OPTANTE";"NAO_CONFIRMADO"'));
+    assert(combinedCsv.content.includes('"NAO_OPTANTE";"NON_CNPJ"'));
+    const cnpjs = await purchaseRows(job._id, 'ALL', 1); assert.equal(cnpjs.total, 4);
+    assert.equal(cnpjs.items.reduce((sum:any,row:any)=>sum+row.totalCents,0),summary.totals.totalCents);
     const excluded = await purchaseRows(job._id, 'NON_CNPJ', 1); assert.equal(excluded.total, 1); assert.equal(excluded.items[0].documentKind, 'CPF');
     const csv = await purchaseExport(job._id, 'ALL', 1); assert.equal(csv.total, 5); assert(csv.content.includes('"99";"105,01";"6,00";"0,99";"1,50";"0,50";"100,01"')); assert.equal(csv.parts, 1);
     await assert.rejects(purchaseExport(job._id, 'ALL', 2));
@@ -102,7 +108,7 @@ test('MongoDB compras e vendas: idempotência, isolamento, cálculos e PDF Pytho
     assert.deepEqual(salesSummary.totals,summary.totals); assert.deepEqual(salesSummary.components,summary.components);
     assert.deepEqual(salesSummary.reportingGroups,summary.reportingGroups); assert.match(salesSummary.source,/data da venda/);
     const salesCnpjs:any = await routeV4(actor,'GET',new URL('https://test/api/v4/sales/'+sales._id+'/results?status=ALL'),{});
-    assert.equal(salesCnpjs.total,3); assert(salesCnpjs.items.every((row:any)=>row.kind==='CLIENTE'));
+    assert.equal(salesCnpjs.total,4); assert(salesCnpjs.items.every((row:any)=>row.kind==='CLIENTE'));
     const salesLines:any = await routeV4(actor,'GET',new URL('https://test/api/v4/sales/'+sales._id+'/lines'),{});
     assert.equal(salesLines.total,5); assert(salesLines.items.every((row:any)=>row.quantity==='0'));
     const storedSalesLines = await (await collection('purchaseLines')).find(scope({jobId:sales._id})).toArray();
@@ -124,14 +130,14 @@ try:
         meta = purchase_metadata(db, job, workspace)
         pdf = render_purchase_pdf(meta)
         assert pdf.startswith(b'%PDF') and 1000 < len(pdf) <= 4_000_000
-        reports.append({key: meta[key] for key in ('reportType', 'lineCount', 'uniqueSuppliers', 'totalCents', 'cnpjCents', 'components')})
+        reports.append({key: meta[key] for key in ('reportType', 'lineCount', 'uniqueSuppliers', 'uniqueDocuments', 'nonCnpjDocumentCount', 'totalCents', 'cnpjCents', 'components', 'reportingGroups')})
     print(json.dumps(reports))
 finally:
     connection.close()
 `, job._id, sales._id], {encoding:'utf8', env:process.env, timeout:30000, maxBuffer:100000});
     assert.equal(pythonPdf.error,undefined, 'O processo Python dos PDFs deve executar.');
     assert.equal(pythonPdf.status,0, `O PDF deve aceitar o snapshot persistido pelo Node: ${pythonPdf.stderr}`);
-    assert.deepEqual(JSON.parse(pythonPdf.stdout), ['PURCHASES','SALES'].map(reportType=>({reportType,lineCount:5,uniqueSuppliers:3,totalCents:43000,cnpjCents:40000,components:summary.components})));
+    assert.deepEqual(JSON.parse(pythonPdf.stdout), ['PURCHASES','SALES'].map(reportType=>({reportType,lineCount:5,uniqueSuppliers:3,uniqueDocuments:4,nonCnpjDocumentCount:1,totalCents:43000,cnpjCents:40000,components:summary.components,reportingGroups:summary.reportingGroups})));
     const salesCsv:any = await routeV4(actor,'POST',new URL('https://test/api/v4/sales/'+sales._id+'/csv'),{status:'ALL',part:1});
     assert.match(salesCsv.fileName,/^vendas-/); assert(salesCsv.content.includes('Comprador (I)'));
     assert.equal((await purchaseHistory(clientId,1,SALES_MODE)).total,1); assert.equal((await purchaseHistory(clientId,1)).total,1);
@@ -167,6 +173,33 @@ finally:
     await uploadLookup(actor,allCpf._id,{offset:0,rows:[rows[4]]});
     assert.equal((await finalizeLookup(actor,allCpf._id)).status,'COMPLETED');
     const cpfSummary = await purchaseSummary(allCpf._id); assert.equal(cpfSummary.totals.cnpjCents,0); assert.equal(cpfSummary.totals.totalCents,3000); assert(cpfSummary.groups.every(g=>g.countPercent===0&&g.valuePercent===0));
+    assert.equal(cpfSummary.totals.uniqueDocuments,1);
+    assert.equal(cpfSummary.reportingGroups[1].totalCents,3000); assert.equal(cpfSummary.reportingGroups[1].countPercent,100); assert.equal(cpfSummary.reportingGroups[1].valuePercent,100);
+    // Repeated CPF/CNO/invalid documents are identities; missing documents always remain separate rows.
+    const nonCnpjInputs = ['123.456.789-00','12345678900','123456789012','123456789012','abc-123','ABC123','','']
+      .map((document,index)=>({...rows[4],document,totalCents:(index+1)*100,grossCents:(index+1)*100+500}));
+    const nonCnpjJob = await createLookup(actor,{...input,importId:randomUUID(),expectedRows:nonCnpjInputs.length},PURCHASE_MODE);
+    await uploadLookup(actor,nonCnpjJob._id,{offset:0,rows:nonCnpjInputs});
+    assert.equal((await finalizeLookup(actor,nonCnpjJob._id)).status,'COMPLETED');
+    assert.equal(calls,6, 'CPF, CNO, inválidos e ausentes não são enviados ao provedor CNPJ.');
+    const nonCnpjSummary = await purchaseSummary(nonCnpjJob._id);
+    assert.equal(nonCnpjSummary.totals.uniqueCnpjs,0); assert.equal(nonCnpjSummary.totals.uniqueDocuments,5);
+    assert.equal(nonCnpjSummary.totals.nonCnpjDocumentCount,5); assert.equal(nonCnpjSummary.totals.totalCents,3600);
+    assert.deepEqual(nonCnpjSummary.reportingGroups.map(g=>[g.status,g.count,g.lines,g.totalCents,g.countPercent,g.valuePercent]),[
+      ['OPTANTE',0,0,0,0,0], ['NAO_OPTANTE',5,8,3600,100,100]
+    ]);
+    const allNonOptants = await purchaseRows(nonCnpjJob._id,'NAO_OPTANTE',1);
+    assert.equal(allNonOptants.total,5); assert.equal((await purchaseRows(nonCnpjJob._id,'ALL',1)).total,5);
+    assert.equal((await purchaseRows(nonCnpjJob._id,'NON_CNPJ',1)).total,5);
+    assert.equal((await purchaseRows(nonCnpjJob._id,'NAO_OPTANTE',1,true)).total,8);
+    assert(allNonOptants.items.every((row:any)=>row.status==='NON_CNPJ'&&row.reportingStatus==='NAO_OPTANTE'));
+    assert.equal(allNonOptants.items.filter((row:any)=>row.document==='').length,2);
+    const cpf = allNonOptants.items.find((row:any)=>row.documentKind==='CPF'); assert.equal(cpf.occurrences,2); assert.equal(cpf.totalCents,300);
+    assert.equal((await purchaseExport(nonCnpjJob._id,'NAO_OPTANTE',1)).total,8);
+    const zeroJob = await createLookup(actor,{...input,importId:randomUUID(),expectedRows:1},PURCHASE_MODE);
+    await uploadLookup(actor,zeroJob._id,{offset:0,rows:[{...rows[4],document:'',totalCents:0,grossCents:500}]});
+    await finalizeLookup(actor,zeroJob._id); const zeroSummary = await purchaseSummary(zeroJob._id);
+    assert.equal(zeroSummary.reportingGroups[1].countPercent,100); assert(zeroSummary.reportingGroups.every(g=>g.valuePercent===0));
     const legacy = await createLookup(actor,{...input,importId:randomUUID(),expectedRows:1},PURCHASE_MODE);
     await (await collection('lookupJobs')).updateOne(scope({_id:legacy._id}),{$unset:{calculationVersion:''}});
     await uploadLookup(actor,legacy._id,{offset:0,rows:[{document:'12345678900',name:'Legado',quantity:'1',totalCents:12345}]});

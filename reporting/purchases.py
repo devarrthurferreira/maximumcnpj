@@ -33,8 +33,8 @@ GROUP_LABELS = {
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 COMPONENT_FIELDS = ('grossCents', 'discountCents', 'accessoryCents', 'freightCents', 'abatementCents')
 COMPONENT_LABELS = ('Q - Valor bruto', 'Y - Desconto', 'Z - Despesa acessória', 'AA - Frete', 'AB - Abatimento', 'Novo total')
-MANAGEMENT_NOTE = ('Não confirmados integram Não optantes no agrupamento gerencial solicitado. '
-                   'A situação original da fonte permanece não confirmada; essa inclusão não comprova negativa fiscal.')
+MANAGEMENT_NOTE = ('Somente optantes confirmados integram Simples. Os demais documentos integram Não optante '
+                   'no agrupamento gerencial solicitado; a situação original da fonte permanece preservada.')
 
 
 @lru_cache(maxsize=1)
@@ -106,7 +106,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     _integer(financial.get('totalCents'))
     _integer(financial.get('cnpjCents'))
 
-    by_cnpj, indexes = {}, set()
+    by_cnpj, indexes, non_cnpj_documents = {}, set(), set()
     total_cents = non_cnpj_cents = excluded_lines = 0
     quantity = Decimal(0)
     # v0.8.0 dropped the redundant partner kind when copying financial lines.
@@ -142,6 +142,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         else:
             excluded_lines += 1
             non_cnpj_cents = _integer(non_cnpj_cents + cents)
+            non_cnpj_documents.add((row['documentKind'], document) if document else ('AUSENTE', index))
     line_count, unique = len(indexes), len(by_cnpj)
     cnpj_cents = total_cents - non_cnpj_cents
     _check(line_count == expected == summary['lines'] and unique == summary['unique'] and
@@ -184,19 +185,31 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         group['valuePercent'] = percentage(group['totalCents'], cnpj_cents) if group['status'] != 'NAO_CONSULTAVEL' else None
         group['fileValuePercent'] = percentage(group['totalCents'], total_cents)
     unknown = dict(groups['NAO_CONFIRMADO'])
-    managerial_nonoptant = dict(groups['NAO_OPTANTE'])
-    for key in ('suppliers', 'lines', 'totalCents'):
-        managerial_nonoptant[key] += unknown[key]
-    managerial_nonoptant.update(label='Não optantes (inclui não confirmados)',
-        supplierPercent=percentage(managerial_nonoptant['suppliers'], unique),
-        valuePercent=percentage(managerial_nonoptant['totalCents'], cnpj_cents),
-        fileValuePercent=percentage(managerial_nonoptant['totalCents'], total_cents))
+    unique_documents = unique + len(non_cnpj_documents)
+    optant = groups['OPTANTE']
+    optant_count_basis_points = (optant['suppliers'] * 20_000 + unique_documents) // (unique_documents * 2) if unique_documents else 0
+    optant_value_basis_points = (optant['totalCents'] * 20_000 + total_cents) // (total_cents * 2) if total_cents else 0
+    reporting_groups = [
+        {'status': 'OPTANTE', 'count': optant['suppliers'], 'lines': optant['lines'], 'totalCents': optant['totalCents'],
+         'countPercent': optant_count_basis_points / 100, 'valuePercent': optant_value_basis_points / 100,
+         'unconfirmedCount': 0, 'unconfirmedCents': 0, 'nonCnpjCount': 0, 'nonCnpjCents': 0},
+        {'status': 'NAO_OPTANTE', 'count': unique_documents - optant['suppliers'],
+         'lines': line_count - optant['lines'], 'totalCents': total_cents - optant['totalCents'],
+         'countPercent': (10000 - optant_count_basis_points) / 100 if unique_documents else 0,
+         'valuePercent': (10000 - optant_value_basis_points) / 100 if total_cents else 0,
+         'unconfirmedCount': unknown['suppliers'], 'unconfirmedCents': unknown['totalCents'],
+         'nonCnpjCount': len(non_cnpj_documents), 'nonCnpjCents': non_cnpj_cents},
+    ]
+    managerial_groups = [{**group, 'label': 'Simples' if group['status'] == 'OPTANTE' else 'Não optante',
+                          'suppliers': group['count'], 'supplierPercent': group['countPercent'],
+                          'fileValuePercent': group['valuePercent']} for group in reporting_groups]
     quantity_text = format(quantity, 'f').rstrip('0').rstrip('.') if '.' in format(quantity, 'f') else format(quantity, 'f')
     return {'job': {key: job.get(key) for key in ('_id', 'mode', 'clientId', 'clientCode', 'clientName', 'fileName', 'completedAt')},
             'reportType': 'SALES' if sales else 'PURCHASES',
             'totalCents': total_cents, 'cnpjCents': cnpj_cents, 'nonCnpjCents': non_cnpj_cents,
             'lineCount': line_count, 'uniqueSuppliers': unique, 'groups': list(groups.values()),
-            'managerialGroups': [groups['OPTANTE'], managerial_nonoptant, groups['NAO_CONSULTAVEL']],
+            'uniqueDocuments': unique_documents, 'nonCnpjDocumentCount': len(non_cnpj_documents),
+            'reportingGroups': reporting_groups, 'managerialGroups': managerial_groups,
             'unconfirmed': unknown, 'components': components, 'calculationVersion': version,
             'quantityDisplay': quantity_text.replace('.', ','), 'generatedAt': utcnow(),
             'firstCheck': min(checks) if checks else None, 'lastCheck': max(checks) if checks else None}
@@ -274,19 +287,18 @@ def purchase_story(meta, width, styles):
              p(f'Consulta: {job["_id"]} | Conclusão: {display_date(job.get("completedAt"))} | '
                f'Emissão: {display_date(meta["generatedAt"])}', 'small'),
              p(f'Total: {money(meta["totalCents"])} | {number(meta["lineCount"])} linhas | '
-               f'{number(meta["uniqueSuppliers"])} CNPJs únicos consultáveis | Cálculo {calculation_label}', 'heading')]
-    rows = [['Grupo gerencial', 'CNPJs únicos', '% dos CNPJs', 'Linhas', f'Valor de {report_label.lower()}', '% valor CNPJs', '% valor arquivo']]
+               f'{number(meta["uniqueDocuments"])} documentos na base | Cálculo {calculation_label}', 'heading')]
+    rows = [['Grupo gerencial', 'Documentos', '% dos documentos', 'Linhas', f'Valor de {report_label.lower()}', '% do valor total']]
     for group in meta['managerialGroups']:
-        consultable = group['status'] != 'NAO_CONSULTAVEL'
-        rows.append([group['label'], number(group['suppliers']) if consultable else 'Fora da base',
-                     percent(group['supplierPercent']) if consultable else '-', number(group['lines']),
-                     money(group['totalCents']), percent(group['valuePercent']) if consultable else '-', percent(group['fileValuePercent'])])
-    rows.append(['TOTAL', number(meta['uniqueSuppliers']), percent(100 if meta['uniqueSuppliers'] else 0),
-                 number(meta['lineCount']), money(meta['totalCents']), '-', percent(100 if meta['totalCents'] else 0)])
-    story += [purchase_table(rows, (.25, .10, .115, .07, .19, .14, .135), width, styles, True), Spacer(1, 6)]
+        rows.append([group['label'], number(group['count']), percent(group['countPercent']), number(group['lines']),
+                     money(group['totalCents']), percent(group['valuePercent'])])
+    rows.append(['TOTAL', number(meta['uniqueDocuments']), percent(100 if meta['uniqueDocuments'] else 0),
+                 number(meta['lineCount']), money(meta['totalCents']), percent(100 if meta['totalCents'] else 0)])
+    story += [purchase_table(rows, (.24, .12, .16, .08, .24, .16), width, styles, True), Spacer(1, 6)]
     unknown = meta['unconfirmed']
-    story.append(p(f'Subtotal não confirmado, já incluído em Não optantes: {number(unknown["suppliers"])} CNPJs, '
-                   f'{number(unknown["lines"])} linhas e {money(unknown["totalCents"])}. {MANAGEMENT_NOTE}', 'small'))
+    story.append(p(f'Já incluídos em Não optante: não confirmados na fonte = {number(unknown["suppliers"])} CNPJs '
+                   f'e {money(unknown["totalCents"])}; CPF e demais documentos não consultáveis = '
+                   f'{number(meta["nonCnpjDocumentCount"])} documentos e {money(meta["nonCnpjCents"])}. {MANAGEMENT_NOTE}', 'small'))
     story += [Spacer(1, 3), p('Memória dos valores importados', 'heading')]
     if meta['components'] is not None:
         values = meta['components']
@@ -300,10 +312,10 @@ def purchase_story(meta, width, styles):
                     'Os ajustes Y, Z, AA e AB não foram armazenados neste lote. Reimporte o arquivo em uma nova consulta '
                     'para aplicar Q - Y + AA - AB; este histórico mantém o cálculo original.', 'small')]
     story += [
-        p(f'Bases dos percentuais: CNPJs = {number(meta["uniqueSuppliers"])} documentos válidos distintos; '
-          f'valor CNPJs = {money(meta["cnpjCents"])}; valor arquivo = {money(meta["totalCents"])}. '
-          f'Cada {partner} conta uma vez; todas as suas linhas compõem o valor. CPF e demais documentos não consultáveis '
-          'ficam fora das bases de CNPJ. Base zero resulta em 0,00%.', 'small'),
+        p(f'Bases dos percentuais: {number(meta["uniqueDocuments"])} documentos e '
+          f'{money(meta["totalCents"])} do arquivo completo, incluindo CPF e demais documentos. '
+          f'Cada {partner} conta uma vez por documento; todas as suas linhas compõem o valor. '
+          'Cada linha sem documento conta separadamente. Base de valor zero resulta em 0,00%.', 'small'),
         p(('Valores somados por linha. A = CNPJ comprador; I = comprador; ' if sales else
            f'Valores somados por linha, sem multiplicar por P. Quantidade P total: {meta["quantityDisplay"]}. '
            'A = CNPJ fornecedor; I = razão social; P = quantidade; ') + 'Q = valor bruto; Y = desconto; '

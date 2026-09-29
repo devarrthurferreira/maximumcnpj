@@ -23,3 +23,4 @@
 .purchase-history[hidden]{display:none}
 
 .generation-report-types{border:1px solid #ececee;border-radius:13px;padding:18px;margin:22px 0 0}.generation-report-types legend{font-size:13px;font-weight:600;padding:0 6px}.generation-report-types>div{display:flex;gap:25px;flex-wrap:wrap;margin-top:15px}.generation-report-types label{display:flex;align-items:center;gap:9px;font-size:13px;cursor:pointer}.generation-report-types input{width:17px;height:17px}.generation-report-slot.optional{background:#fafafa;border-radius:9px;padding:16px}.generation-report-slot.optional .badge{font-size:9px}
+.purchase-source-details{margin-top:18px;border-top:1px solid var(--line);padding-top:15px}.purchase-source-details summary{cursor:pointer;font-weight:600;font-size:13px}.purchase-source-details .hint{line-height:1.7}.purchase-repairs{margin:18px 0}.purchase-repairs p{margin-top:8px;overflow-wrap:anywhere}

@@ -122,15 +122,16 @@ def render_generation_pdf(meta):
     for report_type in required:
         totals = meta['totalsByType'][report_type]
         story.append(p(f'{REPORTS[report_type]["label"]} {scope}: CNPJs = {money(totals["cnpjCents"])}; '
-                       f'CPF / outros = {money(totals["nonCnpjCents"])}; não confirmados já incluídos em Não optantes = '
+                       f'CPF / outros incluídos em Não optante = {money(totals["nonCnpjCents"])}; não confirmados também incluídos = '
                        f'{money(totals["unconfirmedCents"])}.', 'small'))
     story += [p('Como conferir esta geração', 'heading'),
               p('As próximas páginas apresentam, por empresa e tipo de relatório, os grupos gerenciais, as bases dos percentuais '
                 'e os valores usados no cálculo. Fórmula atual: Q - Y + AA - AB. A despesa acessória Z é informativa. '
                 'Compras anteriores preservam Q e exibem o aviso de reimportação.', 'small'),
-              p('Compras e vendas têm totais e percentuais próprios. Cada CNPJ conta uma vez dentro de cada relatório; '
+              p('Compras e vendas têm totais e percentuais próprios. Cada documento conta uma vez dentro de cada relatório; '
                 'os percentuais não são somados entre empresas ou entre compras e vendas. A situação original dos não '
-                'confirmados continua identificada no subtotal individual. CPF e outros documentos permanecem separados.', 'small'),
+                'confirmados continua identificada no subtotal individual. CPF e demais documentos integram Não optante '
+                'e as bases dos percentuais. Cada linha sem documento conta separadamente.', 'small'),
               p('Este documento usa somente os snapshots salvos e reconciliados da parte indicada.', 'small')]
     if parts > 1:
         story.append(p(f'Arquivo dividido em {parts} partes de até {GENERATION_PART_SIZE} empresas. '
