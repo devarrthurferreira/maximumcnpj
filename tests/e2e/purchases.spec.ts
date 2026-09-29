@@ -59,9 +59,9 @@ test('Compras imports cp1252 columns, keeps financial values and provides snapsh
   const desktop = testInfo.outputPath('compras-desktop.png');
   await page.screenshot({path:desktop,fullPage:true}); await testInfo.attach('Compras desktop',{path:desktop,contentType:'image/png'});
   await page.setViewportSize({width:390,height:844});
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   const mobile = testInfo.outputPath('compras-mobile.png');
   await page.screenshot({path:mobile,fullPage:true}); await testInfo.attach('Compras mobile',{path:mobile,contentType:'image/png'});
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   expect(pageErrors).toEqual([]);
 });
 

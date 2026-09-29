@@ -13,6 +13,7 @@
 - Percentuais por fornecedores e valores com denominadores explícitos; não confirmados e CPF/outros documentos separados.
 - Histórico financeiro por empresa, consulta externa reaproveitando pipeline existente, snapshot reconciliado e exports PDF Python/CSV em partes.
 - Vendas desabilitada na interface e recusada pelo backend.
+- Grades de importação responsivas mantêm tabelas extensas em contêineres próprios de rolagem no celular.
 - Preservados cadastros, contas anteriores, consultas e relatórios cadastrais. README v0.5.1 arquivado, plano de ação atualizado.
 
 ### Validação

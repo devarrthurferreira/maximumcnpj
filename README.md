@@ -135,7 +135,7 @@ REPORT_TEST_MONGO=1 npm run test:reports
 npm run test:e2e
 ```
 
-A primeira execução da CI desta entrega aprovou as regras, o build e todas as integrações Node/Python com MongoDB. A revisão seguinte corrige o matcher de requisições simuladas do teste de navegador para incluir subrotas de upload; consulte a CI do SHA final para a verificação completa.
+As execuções de validação aprovaram as regras, o build e todas as integrações Node/Python com MongoDB. A revisão de navegador inclui subrotas de upload, downloads e verificação de largura móvel: tabelas extensas rolam dentro do próprio cartão de importação. Consulte a CI do SHA final para a verificação completa.
 
 Os testes financeiros usam dados sintéticos e fonte simulada. Testes com MongoDB devem usar banco descartável. A CI executa MongoDB 7, Node 22, Python 3.12 e Chromium, incluindo regras financeiras, autenticação, isolamento e navegação. Confira a execução vinculada ao commit entregue; existência de testes não significa aprovação em produção ou homologação fiscal. Arquivos reais de clientes não são versionados.
 

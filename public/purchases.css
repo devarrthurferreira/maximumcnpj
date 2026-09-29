@@ -3,3 +3,13 @@
 @media(max-width:850px){body:has(#purchase-app) .sidebar{display:none}body:has(#purchase-app) .main{margin-left:0}.purchase-map{grid-template-columns:repeat(2,minmax(0,1fr))}.purchase-hero{grid-template-columns:1fr}.purchase-hero .purchase-stat{border-left:0;border-top:1px solid #b2797b;padding:18px 0 0}.purchase-types button{min-width:0;flex:1}.purchase-types{flex-wrap:wrap}.purchase-group strong{font-size:22px}.purchase-hero .purchase-money{font-size:30px}.purchase-controls>*{max-width:100%}.purchase-view-actions{width:100%}.purchase-toolbar label{width:100%;min-width:0}.purchase-toolbar button{flex:1}.purchase-file{max-width:100%}.purchase-cards{gap:12px}.purchase-group{padding:18px}.purchase-meta{overflow-wrap:anywhere}}
 @media print{.sidebar,.topbar,.skip,.purchase-types,#purchase-import,#purchase-company-card,.purchase-history,.purchase-view-actions,.purchase-controls,.purchase-toolbar,.pagination,#toast,#purchase-error{display:none!important}.main{margin:0!important}.content{padding:0!important;max-width:none!important}.purchase-hero{color:#222;background:#fff;border:1px solid #aaa}.purchase-hero p,.purchase-hero .hint{color:#333}.purchase-cards{grid-template-columns:repeat(3,minmax(0,1fr))}.purchase-group{display:flex;padding:12px;outline:0!important}.purchase-group strong{font-size:18px}.purchase-group .purchase-bar{display:none}#purchase-results{display:none}.card{break-inside:avoid}.purchase-view-title{margin-top:15px}.purchase-print-note{display:block!important}body{background:#fff}.page-heading{margin:0 0 18px}.page-heading h1{font-size:23px}}
 .purchase-print-note{display:none}
+/* Keep wide tables inside their own scroll containers instead of expanding grid tracks. */
+#purchase-import{grid-template-columns:minmax(0,1fr)}
+#purchase-import>* , .purchase-grid>*{min-width:0}
+.purchase-grid{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
+.purchase-preview,.purchase-table{max-width:100%}
+#purchase-review .import-totals{grid-template-columns:repeat(4,minmax(0,1fr))}
+#purchase-review .import-totals>div{min-width:0}
+#purchase-review .import-totals b{overflow-wrap:anywhere}
+@media(max-width:1100px){.purchase-grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:540px){#purchase-review .import-totals{grid-template-columns:repeat(2,minmax(0,1fr))}}
