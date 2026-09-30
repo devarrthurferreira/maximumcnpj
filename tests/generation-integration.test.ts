@@ -19,7 +19,7 @@ test('MongoDB gerações: empresas, retomada, concorrência, conclusão conjunta
   const actor = {_id: 'tester', role: 'admin', name: 'Teste', email: 'test@example.test'};
   const viewer = {...actor, role: 'viewer'};
   const errorCode = (code: string) => (error: any) => error.code === code;
-  const row = {document: '12345678900', name: 'Pessoa sintética', quantity: '2', grossCents: 10000, discountCents: 2000,
+  const row = {document: '12345678900', name: 'Pessoa sintética', serviceDate: '2026-08-15', quantity: '2', grossCents: 10000, discountCents: 2000,
     accessoryCents: 999, freightCents: 500, abatementCents: 300, totalCents: 8200};
   try {
     const catalog = await importCatalog(actor, [{code: '936', name: 'Empresa A'}, {code: '937', name: 'Empresa B'}, {code: '938', name: 'Empresa C'}]);

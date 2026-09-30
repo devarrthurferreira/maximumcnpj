@@ -30,6 +30,18 @@ test('monthly wizard retains source defaults and explicitly marks the estimated 
   assert.deepEqual(draft, snapshot);
 });
 
+test('new wizard uses explicit RBT12 instead of monthly revenue times twelve', () => {
+  const draft=createEmptyDraft(); for(const key of Object.keys(draft.values)) draft.values[key]=EXAMPLE_INPUT[key];
+  draft.rbt12=1_376_165.25;
+  const input=draftToInput(draft);
+  assert.equal(input.rbt12,1_376_165.25);
+  const projected=calculateSimulation(draft), memory=projected.memory.find(item=>item.id==='rbt12');
+  assert.equal(memory.label,'RBT12 do Simples Nacional');
+  assert.ok(projected.warnings.some(item=>item.code==='rbt12-source'));
+  assert.ok(!projected.warnings.some(item=>item.code==='estimated-rbt12'));
+  draft.rbt12=null; assert.equal(draftToInput(draft),null);
+});
+
 test('wizard rejects annual estimate overflow and unexpected or incomplete nested fields', () => {
   const draft = createEmptyDraft();
   for (const key of Object.keys(draft.values)) draft.values[key] = 0;

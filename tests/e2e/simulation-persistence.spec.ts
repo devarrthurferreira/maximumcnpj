@@ -68,7 +68,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     await post(page.request, origin, `/api/v4/${kind}/${attached.job._id}/rows`, {
       offset: 0,
       rows: [{
-        document: '12345678900', name: 'Pessoa sintética', quantity: '1',
+        document: '12345678900', name: 'Pessoa sintética', serviceDate: '2026-08-15', quantity: '1',
         grossCents: totalCents + 2_000, discountCents: 2_500, accessoryCents: 999,
         freightCents: 800, abatementCents: 300, totalCents,
       }],
@@ -81,10 +81,12 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   await page.goto(`/simulator.html?generation=${generationId}&client=${clientId}`);
   await expect(page.locator('#salesCpfCents')).toHaveValue('12000.00');
   await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('4500.00');
-  await page.locator('#period-months').selectOption('2');
-  await expect(page.locator('#salesRevenue')).toHaveValue('6000.00');
-  await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('2250.00');
-  await page.locator('#period-confirm').check();
+  await expect(page.locator('#period-months')).toBeDisabled();
+  await expect(page.locator('#period-months')).toHaveValue('1');
+  await expect(page.locator('#period-confirm')).toBeChecked();
+  await expect(page.locator('#salesRevenue')).toHaveValue('12000.00');
+  await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('4500.00');
+  await page.locator('#rbt12').fill('150000');
   const manual = { serviceRevenue: 1250.50, salaries: 900, benefits: 150, adminExpenses: 99.95, rent: 800, cardExpenses: 60 };
   for (const [id, value] of Object.entries(manual)) await page.locator(`#${id}`).fill(String(value));
   await page.locator('#simulation-year').selectOption('2028');
@@ -94,11 +96,11 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   const first = await generate(page);
   expect(first).toMatchObject({
     generationId, clientId, company: { code, name: companyName },
-    reportMonths: 2, periodConfirmed: true, monthlyGroupsUnit: 'BRL', parentSimulationId: null,
-    monthlyGroups: { salesOptantCents: 0, salesNonOptantCents: 0, salesCpfCents: 6000, purchasesOptantCents: 0, purchasesNonOptantCents: 2250 },
-    draft: { year: 2028, salesAnnex: 2, serviceAnnex: 5, values: { ...manual, salesRevenue: 6000, simplePurchases: 0, regularPurchases: 2250 } },
+    reportMonths: 1, periodBasis: 'COLUMN_H', periodConfirmed: true, monthlyGroupsUnit: 'BRL', parentSimulationId: null,
+    monthlyGroups: { salesOptantCents: 0, salesNonOptantCents: 0, salesCpfCents: 12000, purchasesOptantCents: 0, purchasesNonOptantCents: 4500 },
+    draft: { year: 2028, salesAnnex: 2, serviceAnnex: 5, rbt12: 150000, values: { ...manual, salesRevenue: 12000, simplePurchases: 0, regularPurchases: 4500 } },
     source: { purchases: { jobId: jobIds.purchases, totalCents: 450_000 }, sales: { jobId: jobIds.sales, totalCents: 1_200_000 } },
-    result: { annualRevenue: 87_006 },
+    result: { annualRevenue: 159_006 },
   });
   expect(first.result.regimes).toHaveLength(4);
   expect(first.result.memory.length).toBeGreaterThan(0);
@@ -130,8 +132,8 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     await expect(reopened.locator('#simulation-snapshot')).toBeVisible();
     await expect(reopened.locator('#simulator-form')).toHaveCount(0);
     await expect(reopened.locator('#simulation-snapshot .sim-detail-grid strong')).toHaveText([
-      'R$ 1.250,50', 'R$ 6.000,00', 'R$ 0,00', 'R$ 0,00', 'R$ 6.000,00', 'R$ 0,00',
-      'R$ 2.250,00', 'R$ 900,00', 'R$ 150,00', 'R$ 99,95', 'R$ 800,00', 'R$ 60,00',
+      'R$ 150.000,00', 'R$ 1.250,50', 'R$ 12.000,00', 'R$ 0,00', 'R$ 0,00', 'R$ 12.000,00', 'R$ 0,00',
+      'R$ 4.500,00', 'R$ 900,00', 'R$ 150,00', 'R$ 99,95', 'R$ 800,00', 'R$ 60,00',
     ]);
     await expect(reopened.locator('.sim-snapshot-meta')).toContainText('2028 · Vendas: Anexo II');
     await expect(reopened.locator('.sim-snapshot-meta')).toContainText('Serviços: Anexo V');
@@ -140,20 +142,22 @@ test('Real saved simulation survives a fresh login and a new version preserves e
 
     await reopened.locator('#create-version').click();
     await expect(reopened.locator('#simulator-form')).toBeVisible();
-    await expect(reopened.locator('#period-months')).toHaveValue('2');
+    await expect(reopened.locator('#period-months')).toHaveValue('1');
+    await expect(reopened.locator('#period-months')).toBeDisabled();
     await expect(reopened.locator('#serviceRevenue')).toHaveValue('1250.50');
-    await expect(reopened.locator('#purchasesNonOptantCents')).toHaveValue('2250.00');
+    await expect(reopened.locator('#purchasesNonOptantCents')).toHaveValue('4500.00');
     await expect(reopened.locator('#sales-annex')).toHaveValue('2');
     await expect(reopened.locator('#service-annex')).toHaveValue('5');
     await expect(reopened.locator('#simulation-year')).toHaveValue('2028');
-    await expect(reopened.locator('#period-confirm')).not.toBeChecked();
-    await reopened.locator('#period-confirm').check();
+    await expect(reopened.locator('#period-confirm')).toBeChecked();
+    await expect(reopened.locator('#period-confirm')).toBeDisabled();
+    await expect(reopened.locator('#rbt12')).toHaveValue('150000.00');
     await reopened.locator('#serviceRevenue').fill('1750.50');
     const second = await generate(reopened);
     expect(second._id).not.toBe(first._id);
     expect(second.parentSimulationId).toBe(first._id);
     expect(second.draft.values.serviceRevenue).toBe(1750.50);
-    expect(second.result.annualRevenue).toBe(93_006);
+    expect(second.result.annualRevenue).toBe(165_006);
     expect(second.source).toEqual(first.source);
     expect(second.result.regimes).not.toEqual(first.result.regimes);
     expect(await get(fresh.request, `/api/v4/simulations/${first._id}`)).toEqual(original);
