@@ -1,7 +1,34 @@
-# Maximum CNPJ · v0.11.0
+# Maximum CNPJ · v0.12.0
 
 Node.js + TypeScript + MongoDB para consultas e histórico. Python para PDFs. Identidade Maximum, empresas compartilhadas no mesmo workspace e acesso autenticado. Sem Google Cloud.
 
+## Entrega de 30/09/2026 — período fiscal pela coluna H e RBT12 do Simples
+
+- [x] **Coluna H — Data Escrituração/Serviço** passou a fazer parte do contrato de compras e vendas nas novas importações NET_V2. A data é normalizada sem deslocamento de fuso e preservada em cada linha.
+- [x] O sistema identifica automaticamente a primeira e a última data do arquivo e calcula o intervalo mensal inclusivo, aceitando de **1 a 12 meses**. Intervalos acima de 12 meses são bloqueados; meses sem movimento dentro do intervalo ficam sinalizados.
+- [x] Compras e vendas precisam pertencer exatamente ao mesmo intervalo para abrir o simulador. Quando ambos os snapshots têm a coluna H, a quantidade de meses fica automática e não depende mais de digitação do usuário. Históricos antigos continuam com confirmação manual para compatibilidade.
+- [x] CSV, prévia, histórico e PDF financeiro preservam/exibem o período fiscal. A fórmula financeira continua **Q − Y + AA − AB**; a coluna H só define o período.
+- [x] Novo leitor Python para **Extrato do Simples Nacional (PGDAS-D)**: tenta texto nativo com PyMuPDF e, quando o PDF é digitalizado, usa OCR como fallback.
+- [x] O leitor extrai PA, CNPJ básico, empresa, RPA, **RBT12**, RBA, RBAA, limite e receitas anteriores disponíveis. Quando as 12 competências anteriores ao PA estão legíveis, soma e concilia com a RBT12 impressa.
+- [x] O PDF do Simples é processado em memória; o MongoDB guarda apenas resultado estruturado, referência da leitura e hash SHA-256, não o arquivo fiscal original.
+- [x] O simulador ganhou campo de RBT12 com preenchimento manual ou pelo PDF. Novos cenários usam a RBT12 informada/extraída nas faixas do Simples; snapshots antigos continuam reproduzíveis com a estimativa histórica.
+- [x] A leitura do PDF fica vinculada à empresa e ao valor utilizado. Se a RBT12 for editada manualmente depois da leitura, o vínculo é removido e o cenário passa a registrar origem manual.
+
+### Período dos relatórios
+
+Para novas importações, o período é derivado da **menor e da maior Data Escrituração/Serviço (H)** do próprio arquivo. A quantidade de meses é inclusiva: por exemplo, 15/06/2026 a 20/08/2026 representa 3 meses (junho, julho e agosto), mesmo que julho não tenha lançamentos; nesse caso julho aparece como mês sem movimento. A ausência de movimento não reduz artificialmente o divisor mensal.
+
+| Coluna | Compras | Vendas | Uso |
+|---|---|---|---|
+| H | Data Escrituração/Serviço | Data Escrituração/Serviço | Define o período real do relatório (1–12 meses) |
+
+Compras e vendas de uma mesma simulação devem ter a mesma data inicial, data final e quantidade de meses. Isso evita dividir totais por um período escolhido manualmente que não corresponda aos arquivos.
+
+### RBT12 pelo Extrato do Simples
+
+No simulador, selecione o **Extrato do Simples Nacional em PDF** e use **Ler RBT12 do PDF**. O endpoint autenticado POST /api/simples?clientId=... recebe somente PDF de até 8 MiB, valida sessão/origem/empresa, extrai os dados e devolve a RBT12 em centavos. PDFs pesquisáveis usam texto nativo; documentos escaneados usam OCR.
+
+A RBT12 usada no cálculo é a **receita bruta acumulada nos 12 meses anteriores ao PA**, separada da projeção de faturamento anual do cenário. A projeção continua mostrando receita mensal × 12 para leitura gerencial, mas não substitui a RBT12 quando esta foi informada ou extraída.
 ## Entrega de 30/09/2026 — gráficos e histórico completo do simulador
 
 - [x] Painel visual do simulador com comparação dos regimes e composição de receitas, compras e despesas, em visualização anual ou mensal.
@@ -88,6 +115,7 @@ O endpoint retorna quantas contas foram criadas e quantas foram preservadas. É 
 | Coluna | Compras | Vendas | Uso |
 |---|---|---|---|
 | A | CNPJ do fornecedor | CNPJ do comprador | Identidade completa, normalizada |
+| H | Data Escrituração/Serviço | Data Escrituração/Serviço | Período fiscal real da linha e do relatório |
 | I | Razão social | Comprador | Nome informado, sem inferir enquadramento |
 | P | Quantidade | Opcional | Preservada; não multiplica os valores |
 | Q | Valor Total | Valor Total | Valor bruto da linha |
@@ -123,14 +151,15 @@ O arquivo original permanece local. Para produzir um CSV já alinhado, a origem 
 1. Em **Geração → Iniciar**, selecione a empresa e mantenha Compras e Vendas marcadas.
 2. Adicione compras, confira a prévia e conclua a consulta. Use **Continuar: importar vendas** para o segundo arquivo; cada arquivo é validado individualmente.
 3. Ao concluir os dois arquivos, clique em **Ir para o simulador** no relatório ou abaixo da empresa na geração.
-4. Confirme que os dois arquivos cobrem o mesmo período e informe de 1 a 12 meses. Os cinco campos ficam preenchidos com os totais/médias mensais. Arredondamento em centavos preserva a soma dos grupos.
-5. Informe receitas de serviços e despesas mensais; use zero explicitamente quando não houver. Não repita serviços já contidos nas vendas. Ajustes são permitidos sem alterar os relatórios de origem.
-6. Escolha ano/anexos e gere a simulação. Os três grupos de vendas somam a Receita de vendas; o enquadramento do comprador não altera as alíquotas deste modelo.
-7. Ao gerar, o sistema calcula e salva o cenário no servidor. Aguarde a confirmação de salvamento; se a rede falhar, use a opção de tentar novamente sem duplicar a simulação.
-8. Confira os gráficos, os quatro cenários e a faixa única de avisos. A DRE fica ao final; Indicador permanece fixo na rolagem horizontal.
-9. No menu **Simulações**, busque a empresa ou título, filtre o ano e use **Rever simulação**. Os detalhes refletem exatamente o cenário salvo. **Criar nova versão** abre uma cópia editável e conserva a original. A memória completa continua exportável em JSON.
+4. Em novas importações, confira o período identificado automaticamente pela coluna H; compras e vendas devem coincidir. Históricos sem essa informação mantêm a confirmação manual de 1 a 12 meses. Os cinco campos ficam preenchidos com totais/médias mensais e o arredondamento em centavos preserva a soma dos grupos.
+5. Informe a RBT12 manualmente ou leia o Extrato do Simples Nacional em PDF. O sistema registra a origem do valor e, quando possível, concilia as 12 competências anteriores ao PA.
+6. Informe receitas de serviços e despesas mensais; use zero explicitamente quando não houver. Não repita serviços já contidos nas vendas. Ajustes são permitidos sem alterar os relatórios de origem.
+7. Escolha ano/anexos e gere a simulação. Os três grupos de vendas somam a Receita de vendas; o enquadramento do comprador não altera as alíquotas deste modelo.
+8. Ao gerar, o sistema calcula e salva o cenário no servidor. Aguarde a confirmação de salvamento; se a rede falhar, use a opção de tentar novamente sem duplicar a simulação.
+9. Confira os gráficos, os quatro cenários e a faixa única de avisos. A DRE fica ao final; Indicador permanece fixo na rolagem horizontal.
+10. No menu **Simulações**, busque a empresa ou título, filtre o ano e use **Rever simulação**. Os detalhes refletem exatamente o cenário salvo. **Criar nova versão** abre uma cópia editável e conserva a original. A memória completa continua exportável em JSON.
 
-O simulador usa o motor e as premissas da calculadora Maximum, não constitui apuração fiscal. Bases de crédito presumidas pelo modelo não comprovam direito a crédito. Serviços/despesas não são inferidos dos arquivos. A receita de 12 meses é estimada, não consultada. Rascunhos de edição continuam na aba, separados por usuário/empresa/geração/relatórios; resultados concluídos passam a ser salvos no MongoDB. Uma alteração exige gerar e salvar uma nova versão, sem modificar o resultado anterior. Simulações da v0.10.0 que nunca foram salvas no servidor não podem ser reconstruídas automaticamente; abra a geração e gere novamente para registrar o cenário no novo histórico.
+O simulador usa o motor e as premissas da calculadora Maximum, não constitui apuração fiscal. Bases de crédito presumidas pelo modelo não comprovam direito a crédito. Serviços/despesas não são inferidos dos arquivos. Para novas simulações, a referência de RBT12 é informada manualmente ou extraída do Extrato do Simples; a receita anual projetada do painel continua sendo receita mensal × 12. Snapshots legados preservam a estimativa anterior para reprodução histórica. Rascunhos de edição continuam na aba, separados por usuário/empresa/geração/relatórios; resultados concluídos passam a ser salvos no MongoDB. Uma alteração exige gerar e salvar uma nova versão, sem modificar o resultado anterior. Simulações da v0.10.0 que nunca foram salvas no servidor não podem ser reconstruídas automaticamente; abra a geração e gere novamente para registrar o cenário no novo histórico.
 
 O endpoint autenticado `GET /api/v4/generations/:id/simulator?clientId=...` deriva os cinco campos dos snapshots reconciliados no servidor. Ambos devem ser NET_V2 e pertencer à mesma empresa, workspace e geração. Relatórios antigos Q_V1 permanecem acessíveis, mas exigem nova importação para simular.
 

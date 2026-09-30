@@ -1,5 +1,16 @@
 # Histórico de alterações
 
+## [0.12.0] — 2026-09-30
+
+- Coluna H (Data Escrituração/Serviço) incorporada ao parser, snapshot e exportação de compras e vendas; datas são normalizadas e validadas no navegador e novamente no servidor.
+- Período fiscal automático pela menor/maior data, com intervalo inclusivo de 1–12 meses, identificação de meses sem movimento e bloqueio acima de 12 meses.
+- Simulador exige que compras e vendas tenham o mesmo intervalo da coluna H e usa automaticamente essa quantidade de meses. Históricos sem período persistido mantêm o fluxo manual de compatibilidade.
+- PDFs financeiros Python passam a mostrar o período do snapshot.
+- Novo leitor Python do Extrato do Simples Nacional: texto nativo por PyMuPDF e OCR como fallback para scans, extraindo PA, RPA, RBT12, RBA, RBAA, limite e receitas anteriores.
+- As 12 competências anteriores ao PA são conciliadas com a RBT12 impressa quando legíveis; divergências e competências ausentes geram aviso em vez de inventar valor.
+- Novo endpoint autenticado POST /api/simples, limitado a PDF de 8 MiB e vinculado à empresa. O arquivo é processado em memória; somente hash e resultado estruturado são persistidos.
+- Novas simulações recebem RBT12 explícita (manual ou extraída) e registram sua proveniência. Edição manual posterior desfaz o vínculo com a extração. Snapshots antigos continuam reproduzíveis.
+- Testes ampliados para datas brasileiras/ISO/serial Excel, períodos de 1–12 meses, integração MongoDB, RBT12 explícita, persistência do simulador e parser do Extrato do Simples.
 ## [0.11.0] — 2026-09-30
 
 - Simulador com gráficos comparativos de resultado e composição financeira, mantendo os quatro regimes e fórmulas existentes.
