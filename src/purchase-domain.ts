@@ -25,8 +25,33 @@ export function calculationVersion(job: any): PurchaseCalculationVersion {
 }
 export function purchaseFormula(version: PurchaseCalculationVersion) { return version === 'NET_V2' ? 'Q - Y + AA - AB' : 'Q'; }
 export const MAX_LINE_CENTS = 100_000_000_000;
+export type ReportPeriod = {startDate: string; endDate: string; startMonth: string; endMonth: string; months: number; observedMonths: number; missingMonths: string[]};
+function canonicalFiscalDate(value: unknown) {
+  need(typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value), 'Data Escrituração/Serviço (H) inválida.');
+  const [year, month, day] = value.split('-').map(Number), date = new Date(Date.UTC(year, month - 1, day));
+  need(year >= 1900 && year <= 2200 && date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day,
+    'Data Escrituração/Serviço (H) inválida.');
+  return value;
+}
+export function reportPeriod(values: unknown[]): ReportPeriod {
+  need(values.length > 0, 'O relatório não possui datas na coluna H.');
+  const dates = values.map(canonicalFiscalDate).sort();
+  const startDate = dates[0], endDate = dates[dates.length - 1], [sy, sm] = startDate.split('-').map(Number), [ey, em] = endDate.split('-').map(Number);
+  const months = (ey - sy) * 12 + em - sm + 1;
+  need(months >= 1 && months <= 12, `O relatório cobre ${months} meses pela coluna H. Use um período entre 1 e 12 meses.`);
+  const observed = new Set(dates.map(value => value.slice(0, 7))), missingMonths: string[] = [];
+  for (let index = 0; index < months; index++) {
+    const absolute = sy * 12 + (sm - 1) + index, year = Math.floor(absolute / 12), month = absolute % 12 + 1;
+    const key = `${year}-${String(month).padStart(2, '0')}`;
+    if (!observed.has(key)) missingMonths.push(key);
+  }
+  return {startDate, endDate, startMonth: startDate.slice(0, 7), endMonth: endDate.slice(0, 7), months, observedMonths: observed.size, missingMonths};
+}
+export function sameReportPeriod(left: any, right: any) {
+  return !!left && !!right && left.startDate === right.startDate && left.endDate === right.endDate && left.months === right.months;
+}
 export type PurchaseLine = Partial<Omit<PurchaseComponents, 'totalCents'>> & {
-  document: string; documentKind: string; cnpj: string; name: string; quantity: string;
+  document: string; documentKind: string; cnpj: string; name: string; serviceDate: string | null; quantity: string;
   totalCents: number; valid: boolean; kind: 'FORNECEDOR' | 'CLIENTE'; uf: ''; reason: string | null; documentHint: string;
 };
 /** Browser parsing is only a convenience: the server validates the reduced financial payload. */
@@ -36,6 +61,7 @@ export function compactPurchaseLine(input: any, version: PurchaseCalculationVers
   need(input && typeof input === 'object' && !Array.isArray(input), 'Linha financeira inválida.');
   need(typeof input.document === 'string' && input.document.length <= 40, 'Documento deve ser texto de até 40 caracteres.');
   need(typeof input.name === 'string' && input.name.trim().length > 0 && input.name.length <= 200, 'Razão social obrigatória, até 200 caracteres.');
+  const serviceDate = version === 'NET_V2' ? canonicalFiscalDate(input.serviceDate) : null;
   const inputQuantity = mode === SALES_MODE && (input.quantity === undefined || input.quantity === null || input.quantity === '') ? '0' : input.quantity;
   need(typeof inputQuantity === 'string' && /^\d{1,9}(?:\.\d{1,6})?$/.test(inputQuantity), 'Quantidade P inválida. Envie decimal sem separador de milhar, com até 6 casas.');
   need(typeof input.totalCents === 'number' && Number.isSafeInteger(input.totalCents) && input.totalCents >= 0 && input.totalCents <= MAX_LINE_CENTS, `${version === 'NET_V2' ? 'Total calculado' : 'Valor Q'} inválido. Envie centavos inteiros não negativos.`);
@@ -53,7 +79,7 @@ export function compactPurchaseLine(input: any, version: PurchaseCalculationVers
   const document = input.document.trim().replace(/[.\/\-\s]/g, '').toUpperCase();
   const checked = normalizeCnpj(document), type = documentKind(document);
   const quantity = inputQuantity.replace(/^0+(?=\d)/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
-  return { document, documentKind: type, cnpj: checked.valid ? checked.cnpj : '', name: input.name.trim(), quantity,
+  return { document, documentKind: type, cnpj: checked.valid ? checked.cnpj : '', name: input.name.trim(), serviceDate, quantity,
     ...components, totalCents: input.totalCents, valid: checked.valid, kind: financialKind(mode), uf: '', reason: checked.valid ? null : type,
     documentHint: checked.valid ? checked.cnpj : type === 'CPF' ? 'CPF — não consultado' : 'Documento não consultável — revisar na origem' };
 }
@@ -83,8 +109,8 @@ export function moneyText(cents: number): string { return `${Math.floor(cents / 
 export function purchaseCsv(job: any, rows: any[]): string {
   const version = calculationVersion(job), net = version === 'NET_V2', sales = job.mode === SALES_MODE;
   return csvEncode([
-    ['Código da empresa', 'Empresa', 'Consulta', 'Arquivo', 'Conclusão', 'Linha importada', sales ? 'Documento do comprador (A)' : 'Documento do fornecedor (A)', 'Tipo de documento', sales ? 'Comprador (I)' : 'Razão social informada (I)', sales ? 'Quantidade (P) — opcional' : 'Quantidade (P)', 'Valor bruto Q (R$)', 'Desconto Y (R$)', 'Despesa acessória Z — informativa (R$)', 'Frete AA (R$)', 'Abatimento AB (R$)', 'Total calculado (R$)', 'Fórmula', 'Versão do cálculo', 'Grupo gerencial', 'Situação Simples na fonte', 'Data da consulta', 'Fonte'],
-    ...rows.map(row => [job.clientCode || '', job.clientName, job._id, job.fileName, job.completedAt?.toISOString?.() || job.completedAt || '', row.index + 1,
+    ['Código da empresa', 'Empresa', 'Consulta', 'Arquivo', 'Conclusão', 'Linha importada', 'Data Escrituração/Serviço (H)', sales ? 'Documento do comprador (A)' : 'Documento do fornecedor (A)', 'Tipo de documento', sales ? 'Comprador (I)' : 'Razão social informada (I)', sales ? 'Quantidade (P) — opcional' : 'Quantidade (P)', 'Valor bruto Q (R$)', 'Desconto Y (R$)', 'Despesa acessória Z — informativa (R$)', 'Frete AA (R$)', 'Abatimento AB (R$)', 'Total calculado (R$)', 'Fórmula', 'Versão do cálculo', 'Grupo gerencial', 'Situação Simples na fonte', 'Data da consulta', 'Fonte'],
+    ...rows.map(row => [job.clientCode || '', job.clientName, job._id, job.fileName, job.completedAt?.toISOString?.() || job.completedAt || '', row.index + 1, row.serviceDate || '',
       row.document, row.documentKind, row.name, row.quantity, moneyText(net ? row.grossCents : row.totalCents),
       ...['discountCents', 'accessoryCents', 'freightCents', 'abatementCents'].map(field => net ? moneyText(row[field]) : ''),
       moneyText(row.totalCents), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,

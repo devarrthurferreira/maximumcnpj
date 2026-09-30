@@ -3,7 +3,7 @@ import type { Doc } from './store.ts';
 import { getJob } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { need, integer } from './security.ts';
-import { PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialLabel, type FinancialMode, PURCHASE_STATUSES, COMPONENT_FIELDS, MAX_LINE_CENTS, calculationVersion, purchaseFormula, exactCents, percentage, reconciledPercentages, purchaseCsv } from './purchase-domain.ts';
+import { PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialLabel, type FinancialMode, PURCHASE_STATUSES, COMPONENT_FIELDS, MAX_LINE_CENTS, calculationVersion, purchaseFormula, exactCents, percentage, reconciledPercentages, purchaseCsv, reportPeriod, sameReportPeriod } from './purchase-domain.ts';
 
 const FINANCIAL_FIELDS = [...COMPONENT_FIELDS, 'totalCents'] as const;
 // Stored documents are already normalized. An absent identifier represents its own row, never a shared person.
@@ -29,6 +29,12 @@ async function financialGroups(name: string, id: string, job: Doc) {
 }
 function componentTotals(groups: any[]) {
   return Object.fromEntries(FINANCIAL_FIELDS.map(field => [field, exactCents(groups.reduce((sum, group) => sum + exactCents(group[field]), 0))]));
+}
+async function financialPeriod(name: string, id: string, job: Doc) {
+  if (calculationVersion(job) !== 'NET_V2') return null;
+  const rows = await (await collection(name)).find(scope({jobId: id})).project({serviceDate: 1}).sort({index: 1}).maxTimeMS(20000).toArray();
+  need(rows.length === job.expectedRows, 'Período fiscal incompleto. Reimporte o relatório.', 409, 'REPORT_PERIOD');
+  return reportPeriod(rows.map(row => row.serviceDate));
 }
 type DocumentTotals = {count: number; lines: number; totalCents: number};
 function reportingGroups(groups: any[], unique: number, cents: number, nonCnpj: DocumentTotals, cpf: DocumentTotals, mode: FinancialMode) {
@@ -69,12 +75,13 @@ export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
   const count = await stage.countDocuments(scope({jobId: id}));
   need(count === job.expectedRows && job.uploaded === count, 'Envio incompleto ou expirado. Reenvie a planilha.', 409, 'INCOMPLETE');
   const groups = await financialGroups('lookupStage', id, job);
+  const period = calculationVersion(job) === 'NET_V2' ? await financialPeriod('lookupStage', id, job) : null;
   const valid = groups.filter(g => g.valid), invalid = groups.filter(g => !g.valid).reduce((sum, g) => sum + g.lines, 0);
   const totalCents = exactCents(groups.reduce((sum, g) => sum + exactCents(g.totalCents), 0));
   // Persist only approved financial components plus row/document identity. Never retain the uploaded workbook.
   await stage.aggregate([
     {$match: scope({jobId: id})},
-    {$project: {_id: 1, workspaceId: 1, jobId: 1, index: 1, document: 1, documentKind: 1, cnpj: 1, name: 1, quantity: 1, totalCents: 1, valid: 1, kind: 1, ...Object.fromEntries(COMPONENT_FIELDS.map(field => [field, 1]))}},
+    {$project: {_id: 1, workspaceId: 1, jobId: 1, index: 1, document: 1, documentKind: 1, cnpj: 1, name: 1, serviceDate: 1, quantity: 1, totalCents: 1, valid: 1, kind: 1, ...Object.fromEntries(COMPONENT_FIELDS.map(field => [field, 1]))}},
     {$merge: {into: 'purchaseLines', on: '_id', whenMatched: 'keepExisting', whenNotMatched: 'insert'}}
   ], {maxTimeMS: 20000}).toArray();
   need(await rows.countDocuments(scope({jobId: id})) === count, 'Cópia financeira incompleta.', 409, 'RESULT_COUNT');
@@ -87,7 +94,7 @@ export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
   }
   need(await items.countDocuments(scope({jobId: id})) === valid.length, 'Quantidade de CNPJs inconsistente.', 409, 'RESULT_COUNT');
   const summary = {lines: count, unique: valid.length, invalid, duplicates: count - invalid - valid.length};
-  const update: any = {summary, purchaseInput: {totalCents, cnpjCents: exactCents(valid.reduce((sum, g) => sum + g.totalCents, 0)), ...(calculationVersion(job) === 'NET_V2' ? {components: componentTotals(groups)} : {})}, status: 'PROCESSING', received: 0, startedAt: new Date()};
+  const update: any = {summary, ...(period ? {reportPeriod: period} : {}), purchaseInput: {totalCents, cnpjCents: exactCents(valid.reduce((sum, g) => sum + g.totalCents, 0)), ...(calculationVersion(job) === 'NET_V2' ? {components: componentTotals(groups)} : {})}, status: 'PROCESSING', received: 0, startedAt: new Date()};
   // Non-CNPJ documents do not need provider lookups; sales CPF remains its own managerial group.
   if (!valid.length) { update.status = 'COMPLETED'; update.completedAt = new Date(); }
   await (await collection('lookupJobs')).updateOne(scope({_id: id}), {$set: update});
@@ -104,6 +111,10 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
   const version = calculationVersion(job), formula = purchaseFormula(version);
   const grouped = await financialGroups('purchaseLines', id, job);
   const components = version === 'NET_V2' ? componentTotals(grouped) : null;
+  const period = job.reportPeriod ? await financialPeriod('purchaseLines', id, job) : null;
+  if (job.reportPeriod) need(sameReportPeriod(period, job.reportPeriod) && period.observedMonths === job.reportPeriod.observedMonths &&
+    JSON.stringify(period.missingMonths) === JSON.stringify(job.reportPeriod.missingMonths),
+    'Período fiscal divergente do snapshot. Emissão bloqueada.', 409, 'REPORT_PERIOD');
   if (components) need(FINANCIAL_FIELDS.every(field => job.purchaseInput.components?.[field] === components[field]), 'Componentes divergentes do snapshot. Emissão bloqueada.', 409, 'PURCHASE_TOTAL');
   const items = await (await collection('lookupItems')).aggregate([
     {$match: scope({jobId: id})},
@@ -137,7 +148,7 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
   }
   for (const group of groups) { group.countPercent = percentage(group.count, valid.length); group.valuePercent = percentage(group.totalCents, cnpjCents); }
   const uniqueDocuments = grouped.length, nonCnpjDocumentCount = nonCnpj.length;
-  return {job, calculationVersion: version, formula, components,
+  return {job, calculationVersion: version, formula, components, period,
     reportingGroups: reportingGroups(groups, uniqueDocuments, totalCents, {count: nonCnpjDocumentCount, lines: lines - cnpjLines, totalCents: nonCnpjCents}, excludedByKind.get('CPF') || {count: 0, lines: 0, totalCents: 0}, mode),
     totals: {lines, uniqueCnpjs: valid.length, uniqueDocuments, nonCnpjDocumentCount, cnpjLines, nonCnpjLines: lines - cnpjLines, totalCents, cnpjCents, nonCnpjCents}, groups, excluded,
     denominators: {count: 'Documentos distintos do relatório, incluindo CPF, CNO e inválidos. Cada linha sem documento conta separadamente.', value: `Soma de ${formula} de todas as linhas do relatório. Apenas optantes confirmados entram em Simples; ${mode === SALES_MODE ? 'CPF tem grupo próprio nas vendas; os demais, incluindo não confirmados e outros documentos, integram Não optantes.' : 'todo o restante integra Não optantes no agrupamento gerencial.'}`},

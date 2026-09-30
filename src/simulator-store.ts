@@ -13,7 +13,7 @@ function valueFor(summary: FinancialSummary, status: string) {
 
 function sourceMetadata(summary: FinancialSummary) {
   return {jobId: summary.job._id, fileName: summary.job.fileName, totalCents: summary.totals.totalCents,
-    formula: summary.formula, calculationVersion: summary.calculationVersion, completedAt: summary.job.completedAt};
+    formula: summary.formula, calculationVersion: summary.calculationVersion, completedAt: summary.job.completedAt, period: summary.period || null};
 }
 
 /** Only reconciled server snapshots can prefill a simulator; the browser never supplies totals. */
@@ -50,15 +50,23 @@ export async function generationSimulator(id: string, clientId: string) {
     sales: {unconfirmedCount: saleOther.unconfirmedCount, unconfirmedCents: saleOther.unconfirmedCents,
       otherDocumentsCount: saleOther.nonCnpjCount, otherDocumentsCents: saleOther.nonCnpjCents}
   };
+  let period = null, reportMonths = null, periodBasis = 'MANUAL';
+  if (purchases.period && sales.period) {
+    need(purchases.period.startDate === sales.period.startDate && purchases.period.endDate === sales.period.endDate && purchases.period.months === sales.period.months,
+      `Compras e vendas cobrem períodos diferentes pela coluna H (${purchases.period.startDate} a ${purchases.period.endDate} vs. ${sales.period.startDate} a ${sales.period.endDate}). Use arquivos do mesmo período.`, 409, 'SIMULATOR_PERIOD');
+    period = purchases.period; reportMonths = period.months; periodBasis = 'COLUMN_H';
+  }
   const warnings = [
-    'Os valores representam o total dos arquivos, sem conversão automática para mês. Confirme que compras e vendas cobrem o mesmo período e informe quantos meses ele abrange.',
+    period ? `Período identificado automaticamente pela coluna H: ${period.startMonth} a ${period.endMonth} (${period.months} ${period.months === 1 ? 'mês' : 'meses'}).` :
+      'Histórico anterior sem período fiscal persistido: confirme manualmente quantos meses os dois arquivos representam.',
     'O enquadramento é o observado na consulta, sem comprovação retroativa para a data de cada nota. Não confirmados permanecem identificados na fonte.'
   ];
+  if ((purchases.period && !sales.period) || (!purchases.period && sales.period)) warnings.push('Somente um dos relatórios possui período automático. Para preservar compatibilidade histórica, confirme o período manualmente.');
   if (classification.purchases.unconfirmedCount || classification.sales.unconfirmedCount) {
     warnings.push('Há CNPJs não confirmados: seus valores estão em Não optantes, conforme a regra gerencial, e não equivalem a uma negativa fiscal.');
   }
   if (classification.purchases.nonCnpjCount) warnings.push('As compras de CPF e outros documentos não consultáveis estão em Compras de empresas fora do Simples, com subtotal disponível para conferência.');
   if (classification.sales.otherDocumentsCount) warnings.push('As vendas com CNO, documentos inválidos ou ausentes estão em Vendas Não Optantes SN. Vendas identificadas como CPF têm campo próprio.');
-  return {generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis: 'REPORT_TOTALS',
+  return {generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
     purchases: sourceMetadata(purchases), sales: sourceMetadata(sales), fields, classification, warnings};
 }
