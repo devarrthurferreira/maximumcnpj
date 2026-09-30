@@ -35,6 +35,9 @@ COMPONENT_FIELDS = ('grossCents', 'discountCents', 'accessoryCents', 'freightCen
 COMPONENT_LABELS = ('Q - Valor bruto', 'Y - Desconto', 'Z - Despesa acessória', 'AA - Frete', 'AB - Abatimento', 'Novo total')
 MANAGEMENT_NOTE = ('Somente optantes confirmados integram Simples. Os demais documentos integram Não optante '
                    'no agrupamento gerencial solicitado; a situação original da fonte permanece preservada.')
+SALES_MANAGEMENT_NOTE = ('Somente CNPJs optantes confirmados integram Optantes SN. CPFs ficam em um grupo próprio. '
+                         'Os demais documentos e os CNPJs não confirmados integram Não optantes SN; '
+                         'a situação original da fonte permanece preservada.')
 
 
 @lru_cache(maxsize=1)
@@ -50,6 +53,20 @@ def _fonts():
 def percentage(value, denominator):
     """Exact half-up rounding, matching the Node financial report even at .005 ties."""
     return ((value * 20_000 + denominator) // (denominator * 2)) / 100 if denominator else 0
+
+
+def reporting_percentages(values):
+    """Apportion hundredths of one percent; exact ties follow the reporting group order."""
+    denominator = sum(values)
+    if not denominator:
+        return [0 for _ in values]
+    quotients = [divmod(value * 10000, denominator) for value in values]
+    basis_points = [quotient for quotient, _ in quotients]
+    remaining = 10000 - sum(basis_points)
+    order = sorted(range(len(values)), key=lambda index: (-quotients[index][1], index))
+    for index in order[:remaining]:
+        basis_points[index] += 1
+    return [value / 100 for value in basis_points]
 
 
 def _check(condition):
@@ -106,8 +123,8 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     _integer(financial.get('totalCents'))
     _integer(financial.get('cnpjCents'))
 
-    by_cnpj, indexes, non_cnpj_documents = {}, set(), set()
-    total_cents = non_cnpj_cents = excluded_lines = 0
+    by_cnpj, indexes, non_cnpj_documents, cpf_documents = {}, set(), set(), set()
+    total_cents = non_cnpj_cents = excluded_lines = cpf_cents = cpf_lines = 0
     quantity = Decimal(0)
     # v0.8.0 dropped the redundant partner kind when copying financial lines.
     # Its server-owned SALES_V1 job still identifies buyers; explicit mismatches
@@ -143,6 +160,10 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             excluded_lines += 1
             non_cnpj_cents = _integer(non_cnpj_cents + cents)
             non_cnpj_documents.add((row['documentKind'], document) if document else ('AUSENTE', index))
+            if row['documentKind'] == 'CPF':
+                cpf_documents.add(document)
+                cpf_lines += 1
+                cpf_cents = _integer(cpf_cents + cents)
     line_count, unique = len(indexes), len(by_cnpj)
     cnpj_cents = total_cents - non_cnpj_cents
     _check(line_count == expected == summary['lines'] and unique == summary['unique'] and
@@ -200,7 +221,21 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
          'unconfirmedCount': unknown['suppliers'], 'unconfirmedCents': unknown['totalCents'],
          'nonCnpjCount': len(non_cnpj_documents), 'nonCnpjCents': non_cnpj_cents},
     ]
-    managerial_groups = [{**group, 'label': 'Simples' if group['status'] == 'OPTANTE' else 'Não optante',
+    if sales:
+        nonoptant = reporting_groups[1]
+        nonoptant.update(count=nonoptant['count'] - len(cpf_documents), lines=nonoptant['lines'] - cpf_lines,
+                         totalCents=nonoptant['totalCents'] - cpf_cents,
+                         nonCnpjCount=nonoptant['nonCnpjCount'] - len(cpf_documents),
+                         nonCnpjCents=nonoptant['nonCnpjCents'] - cpf_cents)
+        reporting_groups.append({'status': 'CPF', 'count': len(cpf_documents), 'lines': cpf_lines, 'totalCents': cpf_cents,
+                                 'unconfirmedCount': 0, 'unconfirmedCents': 0,
+                                 'nonCnpjCount': len(cpf_documents), 'nonCnpjCents': cpf_cents})
+        for metric, field in (('count', 'countPercent'), ('totalCents', 'valuePercent')):
+            for group, value in zip(reporting_groups, reporting_percentages([group[metric] for group in reporting_groups])):
+                group[field] = value
+    labels = {'OPTANTE': 'Optantes SN', 'NAO_OPTANTE': 'Não optantes SN', 'CPF': 'CPFs'} if sales else {
+        'OPTANTE': 'Simples', 'NAO_OPTANTE': 'Não optante'}
+    managerial_groups = [{**group, 'label': labels[group['status']],
                           'suppliers': group['count'], 'supplierPercent': group['countPercent'],
                           'fileValuePercent': group['valuePercent']} for group in reporting_groups]
     quantity_text = format(quantity, 'f').rstrip('0').rstrip('.') if '.' in format(quantity, 'f') else format(quantity, 'f')
@@ -209,6 +244,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             'totalCents': total_cents, 'cnpjCents': cnpj_cents, 'nonCnpjCents': non_cnpj_cents,
             'lineCount': line_count, 'uniqueSuppliers': unique, 'groups': list(groups.values()),
             'uniqueDocuments': unique_documents, 'nonCnpjDocumentCount': len(non_cnpj_documents),
+            'cpfCents': cpf_cents, 'cpfDocumentCount': len(cpf_documents), 'cpfLineCount': cpf_lines,
             'reportingGroups': reporting_groups, 'managerialGroups': managerial_groups,
             'unconfirmed': unknown, 'components': components, 'calculationVersion': version,
             'quantityDisplay': quantity_text.replace('.', ','), 'generatedAt': utcnow(),
@@ -296,9 +332,17 @@ def purchase_story(meta, width, styles):
                  number(meta['lineCount']), money(meta['totalCents']), percent(100 if meta['totalCents'] else 0)])
     story += [purchase_table(rows, (.24, .12, .16, .08, .24, .16), width, styles, True), Spacer(1, 6)]
     unknown = meta['unconfirmed']
-    story.append(p(f'Já incluídos em Não optante: não confirmados na fonte = {number(unknown["suppliers"])} CNPJs '
-                   f'e {money(unknown["totalCents"])}; CPF e demais documentos não consultáveis = '
-                   f'{number(meta["nonCnpjDocumentCount"])} documentos e {money(meta["nonCnpjCents"])}. {MANAGEMENT_NOTE}', 'small'))
+    if sales:
+        story.append(p(f'Já incluídos em Não optantes SN: não confirmados na fonte = {number(unknown["suppliers"])} CNPJs '
+                       f'e {money(unknown["totalCents"])}; outros documentos não consultáveis = '
+                       f'{number(meta["nonCnpjDocumentCount"] - meta["cpfDocumentCount"])} documentos e '
+                       f'{money(meta["nonCnpjCents"] - meta["cpfCents"])}. CPFs em grupo separado = '
+                       f'{number(meta["cpfDocumentCount"])} documentos e {money(meta["cpfCents"])}. '
+                       f'{SALES_MANAGEMENT_NOTE}', 'small'))
+    else:
+        story.append(p(f'Já incluídos em Não optante: não confirmados na fonte = {number(unknown["suppliers"])} CNPJs '
+                       f'e {money(unknown["totalCents"])}; CPF e demais documentos não consultáveis = '
+                       f'{number(meta["nonCnpjDocumentCount"])} documentos e {money(meta["nonCnpjCents"])}. {MANAGEMENT_NOTE}', 'small'))
     story += [Spacer(1, 3), p('Memória dos valores importados', 'heading')]
     if meta['components'] is not None:
         values = meta['components']
@@ -315,7 +359,8 @@ def purchase_story(meta, width, styles):
         p(f'Bases dos percentuais: {number(meta["uniqueDocuments"])} documentos e '
           f'{money(meta["totalCents"])} do arquivo completo, incluindo CPF e demais documentos. '
           f'Cada {partner} conta uma vez por documento; todas as suas linhas compõem o valor. '
-          'Cada linha sem documento conta separadamente. Base de valor zero resulta em 0,00%.', 'small'),
+          'Cada linha sem documento conta separadamente. Base de valor zero resulta em 0,00%.' +
+          (' Percentuais distribuídos em centésimos pelo maior resto para totalizar 100,00%.' if sales else ''), 'small'),
         p(('Valores somados por linha. A = CNPJ comprador; I = comprador; ' if sales else
            f'Valores somados por linha, sem multiplicar por P. Quantidade P total: {meta["quantityDisplay"]}. '
            'A = CNPJ fornecedor; I = razão social; P = quantidade; ') + 'Q = valor bruto; Y = desconto; '

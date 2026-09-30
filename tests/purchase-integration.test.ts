@@ -106,7 +106,19 @@ test('MongoDB compras e vendas: idempotência, isolamento, cálculos e PDF Pytho
     assert.equal((await processLookup(actor,sales._id,transport)).status,'COMPLETED'); assert.equal(calls,6);
     const salesSummary:any = await routeV4(actor,'GET',new URL('https://test/api/v4/sales/'+sales._id+'/summary'),{});
     assert.deepEqual(salesSummary.totals,summary.totals); assert.deepEqual(salesSummary.components,summary.components);
-    assert.deepEqual(salesSummary.reportingGroups,summary.reportingGroups); assert.match(salesSummary.source,/data da venda/);
+    assert.deepEqual(salesSummary.reportingGroups.map((g:any)=>[g.status,g.count,g.lines,g.totalCents,g.countPercent,g.valuePercent]), [
+      ['OPTANTE',1,2,10010,25,23.28], ['NAO_OPTANTE',2,2,29990,50,69.74], ['CPF',1,1,3000,25,6.98]
+    ]);
+    assert.equal(salesSummary.reportingGroups[1].unconfirmedCents,9990); assert.equal(salesSummary.reportingGroups[1].nonCnpjCents,0);
+    assert.equal(salesSummary.reportingGroups[2].nonCnpjCents,3000); assert.match(salesSummary.source,/data da venda/);
+    const cpfSales = await purchaseRows(sales._id,'CPF',1,false,SALES_MODE);
+    assert.equal(cpfSales.total,1); assert.equal(cpfSales.items[0].reportingStatus,'CPF'); assert.equal(cpfSales.items[0].status,'NON_CNPJ');
+    assert.equal((await purchaseRows(sales._id,'NAO_OPTANTE',1,false,SALES_MODE)).total,2);
+    assert.equal((await purchaseRows(sales._id,'NAO_OPTANTE',1,true,SALES_MODE)).total,2);
+    const cpfCsv = await purchaseExport(sales._id,'CPF',1,SALES_MODE);
+    assert.equal(cpfCsv.total,1); assert(cpfCsv.content.includes('"CPF";"NON_CNPJ"'));
+    assert(!(await purchaseExport(sales._id,'NAO_OPTANTE',1,SALES_MODE)).content.includes('12345678900'));
+    await assert.rejects(purchaseRows(job._id,'CPF',1));
     const salesCnpjs:any = await routeV4(actor,'GET',new URL('https://test/api/v4/sales/'+sales._id+'/results?status=ALL'),{});
     assert.equal(salesCnpjs.total,4); assert(salesCnpjs.items.every((row:any)=>row.kind==='CLIENTE'));
     const salesLines:any = await routeV4(actor,'GET',new URL('https://test/api/v4/sales/'+sales._id+'/lines'),{});
@@ -137,7 +149,7 @@ finally:
 `, job._id, sales._id], {encoding:'utf8', env:process.env, timeout:30000, maxBuffer:100000});
     assert.equal(pythonPdf.error,undefined, 'O processo Python dos PDFs deve executar.');
     assert.equal(pythonPdf.status,0, `O PDF deve aceitar o snapshot persistido pelo Node: ${pythonPdf.stderr}`);
-    assert.deepEqual(JSON.parse(pythonPdf.stdout), ['PURCHASES','SALES'].map(reportType=>({reportType,lineCount:5,uniqueSuppliers:3,uniqueDocuments:4,nonCnpjDocumentCount:1,totalCents:43000,cnpjCents:40000,components:summary.components,reportingGroups:summary.reportingGroups})));
+    assert.deepEqual(JSON.parse(pythonPdf.stdout), ['PURCHASES','SALES'].map(reportType=>({reportType,lineCount:5,uniqueSuppliers:3,uniqueDocuments:4,nonCnpjDocumentCount:1,totalCents:43000,cnpjCents:40000,components:summary.components,reportingGroups:reportType==='SALES'?salesSummary.reportingGroups:summary.reportingGroups})));
     const salesCsv:any = await routeV4(actor,'POST',new URL('https://test/api/v4/sales/'+sales._id+'/csv'),{status:'ALL',part:1});
     assert.match(salesCsv.fileName,/^vendas-/); assert(salesCsv.content.includes('Comprador (I)'));
     assert.equal((await purchaseHistory(clientId,1,SALES_MODE)).total,1); assert.equal((await purchaseHistory(clientId,1)).total,1);

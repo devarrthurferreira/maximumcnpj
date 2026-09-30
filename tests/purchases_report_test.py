@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from reporting.core import ReportError, utcnow, MAX_RESPONSE_BYTES
 from reporting.purchases import (reconcile_purchase_snapshot, render_purchase_pdf, purchase_story, purchase_pdf_styles,
-                                money, percentage, _integer, MAX_SAFE_INTEGER, COMPONENT_FIELDS)
+                                money, percentage, reporting_percentages, _integer, MAX_SAFE_INTEGER, COMPONENT_FIELDS)
 
 JOB = '00000000-0000-4000-8000-000000000071'
 CLIENT = '00000000-0000-4000-8000-000000000072'
@@ -79,7 +79,8 @@ class PurchaseReportTests(unittest.TestCase):
         self.assertEqual(meta['reportType'], 'SALES')
         self.assertEqual(meta['totalCents'], 100000)
         self.assertEqual(meta['components']['accessoryCents'], 885)
-        self.assertEqual(meta['managerialGroups'][1]['totalCents'], 70000)
+        self.assertEqual([group['totalCents'] for group in meta['managerialGroups']], [30000, 50000, 20000])
+        self.assertEqual([group['count'] for group in meta['managerialGroups']], [1, 2, 1])
         self.assertEqual(meta['unconfirmed']['totalCents'], 10000)
         text = '\n'.join(part.getPlainText() for part in purchase_story(meta, 778, purchase_pdf_styles())
                          if hasattr(part, 'getPlainText'))
@@ -87,9 +88,65 @@ class PurchaseReportTests(unittest.TestCase):
         self.assertIn('Cada comprador conta uma vez', text)
         self.assertIn('A = CNPJ comprador; I = comprador;', text)
         self.assertIn('Q - Y + AA - AB', text)
+        self.assertIn('CPFs em grupo separado = 1 documentos e R$ 200,00', text)
         self.assertNotIn('fornecedor', text)
         self.assertNotIn('Quantidade P total', text)
         self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+
+    def test_sales_separate_repeated_cpfs_keep_unknown_and_other_documents_in_nonoptant(self):
+        job, lines, items = sales_fixture()
+        for document, kind, cents in [('12345678901', 'CPF', 100), ('123456789012', 'CNO_OU_OUTRO', 200),
+                                      ('INVALIDO', 'INVALIDO', 300), ('', 'AUSENTE', 400), ('', 'AUSENTE', 500)]:
+            index = len(lines)
+            lines.append({**lines[-1], '_id': f'{SALES_JOB}:{index}', 'index': index, 'document': document,
+                          'documentKind': kind, 'cnpj': '', 'valid': False, 'totalCents': cents,
+                          'grossCents': cents + 500, 'discountCents': 200, 'accessoryCents': 177,
+                          'freightCents': 100, 'abatementCents': 400})
+        job.update(expectedRows=10, uploaded=10, summary={'lines': 10, 'unique': 3, 'invalid': 6, 'duplicates': 1})
+        job['purchaseInput'] = {'totalCents': 101500, 'cnpjCents': 80000,
+                               'components': {key: sum(line[key] for line in lines) for key in (*COMPONENT_FIELDS, 'totalCents')}}
+        meta = reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
+        self.assertEqual((meta['uniqueDocuments'], meta['nonCnpjDocumentCount']), (8, 5))
+        self.assertEqual((meta['cpfDocumentCount'], meta['cpfLineCount'], meta['cpfCents']), (1, 2, 20100))
+        self.assertEqual(meta['reportingGroups'], [
+            {'status': 'OPTANTE', 'count': 1, 'lines': 2, 'totalCents': 30000, 'countPercent': 12.5,
+             'valuePercent': 29.56, 'unconfirmedCount': 0, 'unconfirmedCents': 0, 'nonCnpjCount': 0, 'nonCnpjCents': 0},
+            {'status': 'NAO_OPTANTE', 'count': 6, 'lines': 6, 'totalCents': 51400, 'countPercent': 75,
+             'valuePercent': 50.64, 'unconfirmedCount': 1, 'unconfirmedCents': 10000,
+             'nonCnpjCount': 4, 'nonCnpjCents': 1400},
+            {'status': 'CPF', 'count': 1, 'lines': 2, 'totalCents': 20100, 'countPercent': 12.5,
+             'valuePercent': 19.8, 'unconfirmedCount': 0, 'unconfirmedCents': 0,
+             'nonCnpjCount': 1, 'nonCnpjCents': 20100}])
+        self.assertEqual(sum(group['totalCents'] for group in meta['reportingGroups']), meta['totalCents'])
+        self.assertEqual(sum(group['lines'] for group in meta['reportingGroups']), meta['lineCount'])
+        self.assertEqual(sum(group['count'] for group in meta['reportingGroups']), meta['uniqueDocuments'])
+        self.assertEqual(sum(group['valuePercent'] for group in meta['reportingGroups']), 100)
+        self.assertEqual([item['status'] for item in items], ['OPTANTE', 'NAO_OPTANTE', 'NAO_CONFIRMADO'])
+        self.assertEqual(meta['groups'][-1]['totalCents'], 21500)
+        self.assertEqual(meta['groups'][2]['totalCents'], 10000)
+        tables = [part for part in purchase_story(meta, 778, purchase_pdf_styles()) if hasattr(part, '_cellvalues')]
+        self.assertEqual([row[0].getPlainText() for row in tables[0]._cellvalues],
+                         ['Grupo gerencial', 'Optantes SN', 'Não optantes SN', 'CPFs', 'TOTAL'])
+        self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+
+    def test_sales_zero_value_cpf_report_has_three_groups_and_no_lookup(self):
+        job, lines, _ = sales_fixture()
+        line = {**lines[-1], 'index': 0, 'grossCents': 500, 'totalCents': 0}
+        job.update(expectedRows=1, uploaded=1, summary={'lines': 1, 'unique': 0, 'invalid': 1, 'duplicates': 0},
+                   purchaseInput={'totalCents': 0, 'cnpjCents': 0,
+                                  'components': {key: line[key] for key in (*COMPONENT_FIELDS, 'totalCents')}})
+        meta = reconcile_purchase_snapshot(job, [line], [], WORKSPACE)
+        self.assertEqual([group['countPercent'] for group in meta['reportingGroups']], [0, 0, 100])
+        self.assertEqual([group['valuePercent'] for group in meta['reportingGroups']], [0, 0, 0])
+        self.assertEqual([group['nonCnpjCount'] for group in meta['reportingGroups']], [0, 0, 1])
+        self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+
+    def test_sales_largest_remainder_percentages_balance_and_have_stable_ties(self):
+        for values, expected in (([0, 0, 0], [0, 0, 0]), ([1, 1, 1], [33.34, 33.33, 33.33]),
+                                 ([1, 2, 3], [16.67, 33.33, 50]), ([1, 1, 4], [16.67, 16.67, 66.66]),
+                                 ([0, 0, MAX_SAFE_INTEGER], [0, 0, 100])):
+            with self.subTest(values=values):
+                self.assertEqual(reporting_percentages(values), expected)
 
     def test_sales_reject_legacy_formula_and_wrong_partner_kind(self):
         def legacy(job, lines, items): job.pop('calculationVersion')

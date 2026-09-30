@@ -8,6 +8,8 @@ import { createGeneration, getGeneration, generationHistory, attachGenerationPur
 import { uploadLookup, finalizeLookup, cancelLookup, processLookup } from '../src/lookup-jobs.ts';
 import { purchaseSummary, purchaseHistory } from '../src/purchase-store.ts';
 import { routeV4 } from '../src/lookup-http.ts';
+import { generationSimulator } from '../src/simulator-store.ts';
+import { digits } from '../src/domain.ts';
 
 test('MongoDB gerações: empresas, retomada, concorrência, conclusão conjunta e isolamento', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
   const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
@@ -127,6 +129,78 @@ test('MongoDB gerações: empresas, retomada, concorrência, conclusão conjunta
     resetLookupIndexes();
     if (oldDb === undefined) delete process.env.MONGODB_DB; else process.env.MONGODB_DB = oldDb;
     if (oldWs === undefined) delete process.env.WORKSPACE_ID; else process.env.WORKSPACE_ID = oldWs;
+  }
+});
+
+test('MongoDB simulador: cinco campos vêm de snapshots conciliados, com CPF próprio e bloqueios de mistura/legado', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
+  const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
+  process.env.MONGODB_DB = 'maximum_simulator_test_' + randomUUID().replaceAll('-', '');
+  process.env.WORKSPACE_ID = 'simulator_test'; resetLookupIndexes();
+  const actor = {_id:'tester',role:'admin',name:'Teste',email:'test@example.test'};
+  const errorCode = (code: string) => (error: any) => error.code === code;
+  const ids = ['000000000001', '111111110001', '222222220001'].map(base => base + digits(base));
+  let calls = 0;
+  const transport = (async (url: string | URL | Request) => {
+    calls++; const cnpj = String(url).split('/').pop();
+    if (cnpj === ids[2]) return new Response('', {status:404});
+    return Response.json({cnpj,razao_social:'Empresa sintética',opcao_pelo_simples:cnpj===ids[0],opcao_pelo_mei:false});
+  }) as typeof fetch;
+  const rows = [[ids[0],10001],[ids[0],9],[ids[1],20000],[ids[2],9990],['12345678900',3000],['12345678900',1000],['123456789012',4000],['ABC',500],['',700]]
+    .map(([document,totalCents]) => ({document,name:'Parceiro sintético',quantity:'1',totalCents,grossCents:Number(totalCents)+500,discountCents:600,accessoryCents:99,freightCents:150,abatementCents:50}));
+  try {
+    const catalog = await importCatalog(actor, [{code:'936',name:'Empresa A'},{code:'937',name:'Empresa B'}]);
+    const [clientId, outside] = catalog.items.map((item:any)=>item.id);
+    const generation = await createGeneration(actor,{generationId:randomUUID(),clientIds:[clientId]});
+    const id = generation._id;
+    const url = new URL(`https://test/api/v4/generations/${id}/simulator?clientId=${clientId}`);
+    await assert.rejects(generationSimulator(id,''),errorCode('VALIDATION'));
+    await assert.rejects(generationSimulator(id,outside),errorCode('GENERATION_CLIENT'));
+    await assert.rejects(generationSimulator(id,clientId),errorCode('SIMULATOR_INCOMPLETE'));
+    const attachment = {clientId,importId:randomUUID(),fileName:'compras.csv',expectedRows:rows.length};
+    const purchases = await attachGenerationPurchase(actor,id,attachment);
+    const sales = await attachGenerationSale(actor,id,{...attachment,importId:randomUUID(),fileName:'vendas.csv'});
+    for (const job of [purchases.job,sales.job]) {
+      await uploadLookup(actor,job._id,{offset:0,rows}); await finalizeLookup(actor,job._id);
+      await assert.rejects(generationSimulator(id,clientId),errorCode('SIMULATOR_INCOMPLETE'));
+      await (await collection('providerControl')).deleteMany({}); await processLookup(actor,job._id,transport);
+    }
+    assert.equal(calls,6,'Somente CNPJs únicos de cada relatório vão à consulta.');
+    const snapshot:any = await routeV4({...actor,role:'viewer'},'GET',url,{salesCpfCents:999999});
+    assert.equal(snapshot.generationId,id); assert.equal(snapshot.clientId,clientId);
+    assert.deepEqual(snapshot.company,{name:'Empresa A',code:'936'});
+    assert.equal(snapshot.periodBasis,'REPORT_TOTALS');
+    assert.deepEqual(snapshot.fields,{salesOptantCents:10010,salesNonOptantCents:35190,salesCpfCents:4000,purchasesOptantCents:10010,purchasesNonOptantCents:39190});
+    assert.equal(snapshot.purchases.totalCents,49200); assert.equal(snapshot.sales.totalCents,49200);
+    assert.equal(snapshot.sales.jobId,sales.job._id); assert.equal(snapshot.sales.formula,'Q - Y + AA - AB');
+    assert.equal(snapshot.sales.calculationVersion,'NET_V2'); assert(snapshot.sales.completedAt);
+    assert.deepEqual(snapshot.classification,{purchases:{unconfirmedCount:1,unconfirmedCents:9990,nonCnpjCount:4,nonCnpjCents:9200},sales:{unconfirmedCount:1,unconfirmedCents:9990,otherDocumentsCount:3,otherDocumentsCents:5200}});
+    assert(snapshot.warnings.some((message:string)=>message.includes('mesmo período')));
+    assert(snapshot.warnings.some((message:string)=>message.includes('CNPJs não confirmados')));
+    await assert.rejects(routeV4(actor,'POST',url,{}),errorCode('NOT_FOUND'));
+    const jobs = await collection('lookupJobs');
+    await jobs.updateOne(scope({_id:sales.job._id}),{$set:{clientId:outside}});
+    await assert.rejects(generationSimulator(id,clientId),errorCode('GENERATION_INCONSISTENT'));
+    await jobs.updateOne(scope({_id:sales.job._id}),{$set:{clientId,generationId:randomUUID()}});
+    await assert.rejects(generationSimulator(id,clientId),errorCode('GENERATION_INCONSISTENT'));
+    await jobs.updateOne(scope({_id:sales.job._id}),{$set:{generationId:id}});
+    await jobs.updateOne(scope({_id:purchases.job._id}),{$unset:{calculationVersion:''}});
+    await assert.rejects(generationSimulator(id,clientId),errorCode('SIMULATOR_VERSION'));
+    await jobs.updateOne(scope({_id:purchases.job._id}),{$set:{calculationVersion:'NET_V2'}});
+    await jobs.updateOne(scope({_id:sales.job._id}),{$inc:{'purchaseInput.totalCents':1}});
+    await assert.rejects(generationSimulator(id,clientId),errorCode('RESULT_COUNT'));
+    await jobs.updateOne(scope({_id:sales.job._id}),{$inc:{'purchaseInput.totalCents':-1}});
+    const lines = await collection('purchaseLines'), target = scope({jobId:sales.job._id,index:0});
+    await lines.updateOne(target,{$inc:{grossCents:1}});
+    await assert.rejects(generationSimulator(id,clientId),errorCode('PURCHASE_TOTAL'));
+    await lines.updateOne(target,{$inc:{grossCents:-1}});
+    process.env.WORKSPACE_ID='another_workspace';
+    await assert.rejects(generationSimulator(id,clientId),errorCode('NOT_FOUND'));
+    process.env.WORKSPACE_ID='simulator_test';
+    assert.equal((await generationSimulator(id,clientId)).sales.totalCents,49200);
+  } finally {
+    await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
+    if(oldDb===undefined)delete process.env.MONGODB_DB;else process.env.MONGODB_DB=oldDb;
+    if(oldWs===undefined)delete process.env.WORKSPACE_ID;else process.env.WORKSPACE_ID=oldWs;
   }
 });
 

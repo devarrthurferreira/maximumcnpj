@@ -1,7 +1,7 @@
 .nav a {display:flex;gap:10px;padding:13px 12px;text-decoration:none;color:inherit;border-radius:10px;font-weight:600}
 .nav a[aria-current] {background:#F7F3F3;color:#750207}
 .report-tabs {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:22px 0}
-.report-tab {text-align:left;padding:18px;border:1px solid #EAD5D6;border-radius:14px;background:#fff;white-space:normal}
+.report-tab {display:block;min-width:0;overflow-wrap:anywhere;text-align:left;padding:18px;border:1px solid #EAD5D6;border-radius:14px;background:#fff;white-space:normal}
 .report-tab[aria-pressed=true] {outline:2px solid #750207;background:#F7F3F3}
 .report-tab strong {display:block;font-size:27px;line-height:1.5}
 .report-tab small {display:block;color:#750207}

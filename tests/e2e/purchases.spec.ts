@@ -29,10 +29,10 @@ for (const type of ['PURCHASES','SALES']) test(`${type} imports cp1252 columns, 
     }
     if (url.pathname.endsWith('/rows')) { posted = p.rows; job.uploaded = 3; return route.fulfill({json:{uploaded:3}}); }
     if (url.pathname.endsWith('/finalize')) {job.status = 'COMPLETED'; job.completedAt = '2026-09-29T12:01:00Z';return route.fulfill({json:job});}
-    if (url.pathname.endsWith('/summary')) return route.fulfill({json:{job,calculationVersion:'NET_V2',components:{grossCents:17030,discountCents:1000,accessoryCents:250,freightCents:500,abatementCents:10,totalCents:16520},totals:{lines:3,uniqueDocuments:2,nonCnpjDocumentCount:1,uniqueCnpjs:1,cnpjLines:2,nonCnpjLines:1,totalCents:16520,cnpjCents:11520,nonCnpjCents:5000},groups:[{status:'OPTANTE',count:1,lines:2,totalCents:11520,countPercent:100,valuePercent:100},{status:'NAO_OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_CONFIRMADO',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0}],reportingGroups:[{status:'OPTANTE',count:1,lines:2,totalCents:11520,countPercent:50,valuePercent:69.73},{status:'NAO_OPTANTE',count:1,lines:1,totalCents:5000,countPercent:50,valuePercent:30.27,unconfirmedCount:0,unconfirmedCents:0}],excluded:[{documentKind:'CPF',lines:1,totalCents:5000}]}});
+    if (url.pathname.endsWith('/summary')) return route.fulfill({json:{job,calculationVersion:'NET_V2',components:{grossCents:17030,discountCents:1000,accessoryCents:250,freightCents:500,abatementCents:10,totalCents:16520},totals:{lines:3,uniqueDocuments:2,nonCnpjDocumentCount:1,uniqueCnpjs:1,cnpjLines:2,nonCnpjLines:1,totalCents:16520,cnpjCents:11520,nonCnpjCents:5000},groups:[{status:'OPTANTE',count:1,lines:2,totalCents:11520,countPercent:100,valuePercent:100},{status:'NAO_OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_CONFIRMADO',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0}],reportingGroups:[{status:'OPTANTE',count:1,lines:2,totalCents:11520,countPercent:50,valuePercent:69.73},...(sales ? [{status:'NAO_OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0,unconfirmedCount:0,unconfirmedCents:0},{status:'CPF',count:1,lines:1,totalCents:5000,countPercent:50,valuePercent:30.27}] : [{status:'NAO_OPTANTE',count:1,lines:1,totalCents:5000,countPercent:50,valuePercent:30.27,unconfirmedCount:0,unconfirmedCents:0}])],excluded:[{documentKind:'CPF',lines:1,totalCents:5000}]}});
     if (url.pathname.endsWith('/results') || url.pathname.endsWith('/lines')) {
-      const excluded = url.searchParams.get('status') === 'NAO_OPTANTE';
-      return route.fulfill({json:{items:excluded ? [{...lines[2],submittedName:lines[2].name,documentKind:'CPF',status:'NON_CNPJ',reportingStatus:'NAO_OPTANTE'}] : [{cnpj:'11222333000181',documentKind:'CNPJ',submittedName:lines[0].name,status:'OPTANTE',occurrences:2,totalCents:11520,checkedAt:'2026-09-29T12:01:00Z'}],total:1,page:1,pageSize:100}});
+      const excluded = url.searchParams.get('status') === (sales ? 'CPF' : 'NAO_OPTANTE');
+      return route.fulfill({json:{items:excluded ? [{...lines[2],submittedName:lines[2].name,documentKind:'CPF',status:'NON_CNPJ',reportingStatus:sales?'CPF':'NAO_OPTANTE'}] : [{cnpj:'11222333000181',documentKind:'CNPJ',submittedName:lines[0].name,status:'OPTANTE',occurrences:2,totalCents:11520,checkedAt:'2026-09-29T12:01:00Z'}],total:1,page:1,pageSize:100}});
     }
     if (url.pathname.endsWith('/csv')) {expect(method).toBe('POST');csvBody=p;return route.fulfill({json:{content:'\uFEFFDocumento;Valor\n12345678900;50,00',fileName:`${report}-ficticias.csv`,mimeType:'text/csv;charset=utf-8',part:1,parts:1,total:1}});}
     return route.fulfill({json:job});
@@ -52,17 +52,17 @@ for (const type of ['PURCHASES','SALES']) test(`${type} imports cp1252 columns, 
   if (sales) {await expect(page.getByRole('heading',{name:'Explore os compradores e valores'})).toBeVisible();await expect(page).toHaveURL(/type=SALES/);}
   await expect(page.locator('.purchase-hero')).toContainText('165,20');
   await expect(page.locator('.purchase-group').first()).toContainText('115,20');
-  await expect(page.locator('.purchase-group')).toHaveCount(2);
-  await expect(page.locator('.purchase-group').first()).toContainText('Simples');
+  await expect(page.locator('.purchase-group')).toHaveCount(sales ? 3 : 2);
+  await expect(page.locator('.purchase-group').first()).toContainText(sales ? 'Faturamento vendas Optantes SN' : 'Compras de empresas do Simples');
   await expect(page.locator('.purchase-group').first()).toContainText('69,73%');
   await expect(page.locator('.purchase-group').first()).toContainText('50%');
-  await expect(page.locator('[data-status=NAO_OPTANTE]')).toContainText('30,27%');
-  await expect(page.locator('#purchase-status-filter option')).toHaveText(['Todos os enquadramentos','Simples','Não optante']);
-  await page.locator('[data-status=NAO_OPTANTE]').click();
+  await expect(page.locator(sales ? '[data-status=CPF]' : '[data-status=NAO_OPTANTE]')).toContainText('30,27%');
+  await expect(page.locator('#purchase-status-filter option')).toHaveText(['Todos os enquadramentos','Simples','Não optante',...(sales ? ['CPF'] : [])]);
+  await page.locator(sales ? '[data-status=CPF]' : '[data-status=NAO_OPTANTE]').click();
   await expect(page.locator('#purchase-result-list')).toContainText('PESSOA FICTÍCIA');
-  await expect(page.locator('#purchase-result-list')).toContainText('Não optante');
+  await expect(page.locator('#purchase-result-list')).toContainText(sales ? 'CPF' : 'Não optante');
   const csvDownload = page.waitForEvent('download'); await page.getByRole('button',{name:'Baixar CSV das linhas'}).click();
-  expect((await csvDownload).suggestedFilename()).toBe(`${report}-ficticias.csv`); expect(csvBody).toEqual({status:'NAO_OPTANTE',part:1});
+  expect((await csvDownload).suggestedFilename()).toBe(`${report}-ficticias.csv`); expect(csvBody).toEqual({status:sales?'CPF':'NAO_OPTANTE',part:1});
   const pdfDownload = page.waitForEvent('download'); await page.getByRole('button',{name:'Baixar resumo PDF'}).click();
   expect((await pdfDownload).suggestedFilename()).toBe(`${report}-resumo.pdf`); expect(pdfBody).toMatchObject({action:'pdf',clientId,layout:'summary',status:'ALL',kind:'ALL'});
   const desktop = testInfo.outputPath(`${report}-desktop.png`);
@@ -128,14 +128,14 @@ for (const type of ['PURCHASES','SALES']) test(`${type} resumes the original upl
   const url=new URL(r.request().url());if(url.pathname===`/api/v4/${endpoint}`){requestedHistory=true;return r.fulfill({json:{items:[],total:0}});}
   if(url.pathname.endsWith('/rows')){rows=r.request().postDataJSON();job.uploaded=3;return r.fulfill({json:{uploaded:3}});}
   if(url.pathname.endsWith('/finalize')){job.status='COMPLETED';return r.fulfill({json:job});}
-  if(url.pathname.endsWith('/summary'))return r.fulfill({json:{job,calculationVersion:'NET_V2',totals:{lines:3,uniqueDocuments:2,nonCnpjDocumentCount:1,uniqueCnpjs:1,cnpjLines:2,nonCnpjLines:1,totalCents:16520,cnpjCents:11520,nonCnpjCents:5000},groups:[{status:'OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_CONFIRMADO',count:1,lines:2,totalCents:11520,countPercent:100,valuePercent:100}],reportingGroups:[{status:'OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_OPTANTE',count:2,lines:3,totalCents:16520,countPercent:100,valuePercent:100,unconfirmedCount:1,unconfirmedCents:11520}],excluded:[]}});
+  if(url.pathname.endsWith('/summary'))return r.fulfill({json:{job,calculationVersion:'NET_V2',totals:{lines:3,uniqueDocuments:2,nonCnpjDocumentCount:1,uniqueCnpjs:1,cnpjLines:2,nonCnpjLines:1,totalCents:16520,cnpjCents:11520,nonCnpjCents:5000},groups:[{status:'OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_CONFIRMADO',count:1,lines:2,totalCents:11520,countPercent:100,valuePercent:100}],reportingGroups:[{status:'OPTANTE',count:0,lines:0,totalCents:0,countPercent:0,valuePercent:0},{status:'NAO_OPTANTE',count:sales?1:2,lines:sales?2:3,totalCents:sales?11520:16520,countPercent:sales?50:100,valuePercent:sales?69.73:100,unconfirmedCount:1,unconfirmedCents:11520},...(sales?[{status:'CPF',count:1,lines:1,totalCents:5000,countPercent:50,valuePercent:30.27}]:[])],excluded:[{documentKind:'CPF',lines:1,totalCents:5000}]}});
   if(url.pathname.endsWith('/results'))return r.fulfill({json:{items:[{cnpj:'11222333000181',submittedName:'FORNECEDOR FICTÍCIO',documentKind:'CNPJ',status:'NAO_CONFIRMADO',reportingStatus:'NAO_OPTANTE',reason:'Fonte sem resposta',totalCents:11520,occurrences:2}],page:1,total:1,pageSize:100}});
   return r.fulfill({json:job});
  });
  await page.goto(`/purchases.html?generation=${generationId}&client=${clientId}&job=${jobId}${sales?'&type=SALES':''}`);await expect(page.getByRole('heading',{name:'Importação incompleta'})).toBeVisible();await expect(page.locator('#purchase-company')).toBeDisabled();await expect(page.locator('.purchase-history')).toBeHidden();
  await page.locator('#purchase-file').setInputFiles({name:'000-COMPRAS.csv',mimeType:'text/csv',buffer:Buffer.from(csv(),'latin1')});await page.getByRole('button',{name:'Conferir colunas e valores'}).click();await page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'}).click();
  await expect(page.getByRole('heading',{name:`Total de ${report} do relatório`})).toBeVisible();expect(attached).toMatchObject({importId:jobId,clientId,expectedRows:3,type});expect(attachPath).toBe(`/api/v4/generations/${generationId}/${endpoint}`);expect(rows.offset).toBe(0);expect(rows.rows).toEqual(lines);expect(requestedHistory).toBe(false);await expect(page).toHaveURL(new RegExp(`generation=${generationId}`));
- await expect(page.locator('.purchase-group')).toHaveCount(2);await expect(page.locator('[data-status="NAO_OPTANTE"]')).toContainText('Inclui 1 não confirmado(s)');await expect(page.locator('#purchase-result-list')).toContainText('Origem: não confirmado. Fonte sem resposta');await expect(page.getByRole('link',{name:'← Voltar à geração e às outras empresas'})).toHaveAttribute('href','/generations.html?id='+generationId);
+ await expect(page.locator('.purchase-group')).toHaveCount(sales ? 3 : 2);await expect(page.locator('[data-status="NAO_OPTANTE"]')).toContainText('Inclui 1 não confirmado(s)');await expect(page.locator('#purchase-result-list')).toContainText('Origem: não confirmado. Fonte sem resposta');await expect(page.getByRole('link',{name:'← Voltar à geração e às outras empresas'})).toHaveAttribute('href','/generations.html?id='+generationId);
 });
 
 
@@ -170,4 +170,30 @@ test('Known CSV description separators are recovered visibly with original finan
  await expect(page.locator('.purchase-repairs')).toContainText('1 linha(s) alinhada(s) automaticamente');await expect(page.locator('.purchase-repairs')).toContainText('Linhas: 2.');await expect(page.locator('.purchase-repairs')).toContainText('valores originais foram preservados');
  await expect(page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'})).toBeVisible();await expect(page.locator('#purchase-review .import-totals')).toContainText('165,20');
  await expect(page.locator('#purchase-review tbody tr').first()).toContainText('100,10');await expect(page.locator('#purchase-review tbody tr').first()).toContainText('95,00');expect(writes).toBe(0);
+});
+
+test('Completed purchases continue to sales then unlock the company simulator',async({page})=>{
+ const generationId='00000000-0000-4000-8000-000000000070',purchaseId='00000000-0000-4000-8000-000000000071',salesId='00000000-0000-4000-8000-000000000072';
+ let salesDone=false;
+ const job=(sales:boolean)=>({_id:sales?salesId:purchaseId,generationId,clientId,clientCode:client.code,clientName:client.name,calculationVersion:'NET_V2',fileName:sales?'000-VENDAS.csv':'000-COMPRAS.csv',status:'COMPLETED',expectedRows:1,uploaded:1,createdAt:'2026-09-30T12:00:00Z'});
+ await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'test',role:'operator'}}}));
+ await page.route('**/api/v4/clients',r=>r.fulfill({json:{items:[client]}}));
+ await page.route('**/api/v4/generations/'+generationId,r=>r.fulfill({json:{_id:generationId,requiredReports:['PURCHASES','SALES'],companies:[{clientId,name:client.name,code:client.code,purchaseJobId:purchaseId,purchase:job(false),salesJobId:salesDone?salesId:null,sales:salesDone?job(true):null}]}}));
+ await page.route(/\/api\/v4\/(purchases|sales)\//,r=>{
+  const url=new URL(r.request().url()),sales=url.pathname.includes('/sales/');
+  if(url.pathname.endsWith('/summary'))return r.fulfill({json:{job:job(sales),calculationVersion:'NET_V2',components:{grossCents:10000,totalCents:10000},totals:{lines:1,uniqueDocuments:1,uniqueCnpjs:1,totalCents:10000},reportingGroups:[{status:'OPTANTE',count:1,lines:1,totalCents:10000,countPercent:100,valuePercent:100}]}});
+  if(url.pathname.endsWith('/results'))return r.fulfill({json:{items:[],total:0,pageSize:100}});
+  return r.fulfill({json:job(sales)});
+ });
+ await page.goto(`/purchases.html?generation=${generationId}&client=${clientId}&job=${purchaseId}`);
+ await expect(page.locator('#purchase-flow')).toContainText('Empresa selecionada');
+ await expect(page.locator('#purchase-next-step').getByRole('link',{name:'Continuar: importar vendas'})).toHaveAttribute('href',`/purchases.html?generation=${generationId}&client=${clientId}&type=SALES`);
+ await expect(page.getByRole('link',{name:'Ir para o simulador'})).toHaveCount(0);
+ await page.getByRole('link',{name:'Continuar: importar vendas'}).click();
+ await expect(page).toHaveURL(new RegExp(`generation=${generationId}&client=${clientId}&type=SALES`));
+ await expect(page.locator('#purchase-file')).toBeEnabled();await expect(page.locator('#purchase-company')).toBeDisabled();
+ salesDone=true;
+ await page.goto(`/purchases.html?generation=${generationId}&client=${clientId}&type=SALES&job=${salesId}`);
+ await expect(page.locator('#purchase-next-step').getByRole('link',{name:'Ir para o simulador'})).toHaveAttribute('href',`/simulator.html?generation=${generationId}&client=${clientId}`);
+ await expect(page.locator('#purchase-next-step')).toContainText('OS DOIS RELATÓRIOS ESTÃO PRONTOS');
 });

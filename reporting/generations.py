@@ -62,7 +62,8 @@ def generation_metadata(db, generation_id, workspace, part=1):
     selected = companies[start:start + GENERATION_PART_SIZE]
     sections = []
     totals_by_type = {report_type: {'totalCents': 0, 'cnpjCents': 0, 'nonCnpjCents': 0,
-                                   'lineCount': 0, 'unconfirmedCents': 0} for report_type in required}
+                                   'lineCount': 0, 'unconfirmedCents': 0, 'cpfCents': 0,
+                                   'optantCents': 0, 'nonoptantCents': 0} for report_type in required}
     for company in selected:
         reports = {}
         for report_type in required:
@@ -73,6 +74,9 @@ def generation_metadata(db, generation_id, workspace, part=1):
             for key in ('totalCents', 'cnpjCents', 'nonCnpjCents', 'lineCount'):
                 totals[key] = _integer(totals[key] + meta[key])
             totals['unconfirmedCents'] = _integer(totals['unconfirmedCents'] + meta['unconfirmed']['totalCents'])
+            for group in meta['reportingGroups']:
+                key = {'OPTANTE': 'optantCents', 'NAO_OPTANTE': 'nonoptantCents', 'CPF': 'cpfCents'}[group['status']]
+                totals[key] = _integer(totals[key] + group['totalCents'])
         sections.append({'company': company, 'reports': reports})
     # Keep the internal purchases list for consumers of older generation metadata.
     purchases = [section['reports']['PURCHASES'] for section in sections if 'PURCHASES' in section['reports']]
@@ -121,17 +125,27 @@ def render_generation_pdf(meta):
     story += [purchase_table(rows, fractions, width, styles, True, padding=5), Spacer(1, 8)]
     for report_type in required:
         totals = meta['totalsByType'][report_type]
-        story.append(p(f'{REPORTS[report_type]["label"]} {scope}: CNPJs = {money(totals["cnpjCents"])}; '
-                       f'CPF / outros incluídos em Não optante = {money(totals["nonCnpjCents"])}; não confirmados também incluídos = '
-                       f'{money(totals["unconfirmedCents"])}.', 'small'))
+        groups = [['Classificação de ' + REPORTS[report_type]['label'].lower(), f'Valor {scope}']]
+        if report_type == 'SALES':
+            groups.extend([['Faturamento de vendas a optantes SN', money(totals['optantCents'])],
+                           ['Faturamento de vendas a não optantes SN', money(totals['nonoptantCents'])],
+                           ['Faturamento de vendas a CPFs', money(totals['cpfCents'])]])
+        else:
+            groups.extend([['Compras de empresas do Simples Nacional', money(totals['optantCents'])],
+                           ['Compras de empresas fora do Simples', money(totals['nonoptantCents'])]])
+        groups.append(['TOTAL', money(totals['totalCents'])])
+        story += [purchase_table(groups, (.70, .30), width, styles, True, padding=5), Spacer(1, 6),
+                  p(f'{REPORTS[report_type]["label"]} {scope}: não confirmados na fonte já incluídos em '
+                    f'Não optante = {money(totals["unconfirmedCents"])}.', 'small')]
     story += [p('Como conferir esta geração', 'heading'),
               p('As próximas páginas apresentam, por empresa e tipo de relatório, os grupos gerenciais, as bases dos percentuais '
                 'e os valores usados no cálculo. Fórmula atual: Q - Y + AA - AB. A despesa acessória Z é informativa. '
                 'Compras anteriores preservam Q e exibem o aviso de reimportação.', 'small'),
               p('Compras e vendas têm totais e percentuais próprios. Cada documento conta uma vez dentro de cada relatório; '
                 'os percentuais não são somados entre empresas ou entre compras e vendas. A situação original dos não '
-                'confirmados continua identificada no subtotal individual. CPF e demais documentos integram Não optante '
-                'e as bases dos percentuais. Cada linha sem documento conta separadamente.', 'small'),
+                'confirmados continua identificada no subtotal individual. Em vendas, CPFs têm grupo próprio; '
+                'em compras, integram Não optante. Outros documentos não consultáveis integram Não optante nos dois '
+                'relatórios. Todos compõem as bases dos percentuais. Cada linha sem documento conta separadamente.', 'small'),
               p('Este documento usa somente os snapshots salvos e reconciliados da parte indicada.', 'small')]
     if parts > 1:
         story.append(p(f'Arquivo dividido em {parts} partes de até {GENERATION_PART_SIZE} empresas. '

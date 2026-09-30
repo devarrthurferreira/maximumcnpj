@@ -1,5 +1,17 @@
 # Histórico de alterações
 
+## [0.10.0] — 2026-09-30
+
+- Etapas explícitas de empresas, compras, vendas e simulador; avanço após cada relatório e botão por empresa liberado somente com os dois tipos concluídos.
+- Vendas com três grupos: Optantes SN, Não optantes SN e CPFs. Compras mantêm dois grupos; fonte original permanece intacta em todas as hipóteses.
+- Endpoint de pré-preenchimento concilia cinco totais, valida vínculos e conclusão e rejeita dados parciais/divergentes ou base antiga Q_V1.
+- Simulador integrado a partir de calculadora@d60e8bc, com mesmos quatro regimes/premissas, receitas/despesas mensais, ano e anexos. Receita anual estimada, sem fingir consulta à RBT12.
+- Período explícito de 1–12 meses, arredondamento balanceado, edição/restauração dos campos importados, rascunho isolado por aba e exportação da memória JSON.
+- DRE ao final com primeira coluna fixa e orientação para rolagem no celular. Alterações invalidam resultados anteriores.
+- CSV/PDF individual e consolidado acompanham CPF separado nas vendas e os cinco subtotais; porcentagens fecham em 100% com base positiva.
+- Regressões do motor original, cálculos dos grupos, conciliação Node/Python, isolamento de snapshots e navegação desktop/mobile.
+- Corrigida a disposição dos cartões da central de relatórios no celular, evitando largura excedente.
+
 ## [0.9.0] — 2026-09-29
 
 - Recuperação conservadora do CSV do modelo conhecido quando separadores sem aspas dividem a descrição O e deslocam o restante da linha. Cabeçalhos, código da empresa, chave e valores são conferidos; prévia indica as linhas recuperadas.

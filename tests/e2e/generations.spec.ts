@@ -42,3 +42,19 @@ test('Generation can require only sales and cannot start without any report type
  await page.locator('[data-report-choice][value="SALES"]').check();await page.getByRole('button',{name:'Continuar com as empresas'}).click();await expect(page.getByRole('heading',{name:'0 de 1 empresas concluídas'})).toBeVisible();expect(created.requiredReports).toEqual(['SALES']);
  await expect(page.locator('[data-report-slot="SALES"]')).toContainText('Adicionar relatório');await expect(page.locator('[data-report-slot="PURCHASES"]')).toContainText('Opcional');await expect(page.locator('[data-report-slot="SALES"] a')).toHaveAttribute('href',/type=SALES/);await expect(page.getByRole('button',{name:'Baixar relatório completo PDF'})).toBeDisabled();
 });
+
+test('Simulator unlocks only the two completed reports of the same company',async({page})=>{
+ await session(page);let salesStatus='PROCESSING';
+ await page.route('**/api/v4/generations/'+id,r=>r.fulfill({json:{...base,requiredReports:['PURCHASES','SALES'],completedCount:0,companies:[
+  {...base.companies[0],status:'IN_PROGRESS',salesJobId:'00000000-0000-4000-8000-000000000073',sales:{_id:'00000000-0000-4000-8000-000000000073',status:salesStatus,fileName:'936-VENDAS.csv',received:3,summary:{unique:7}}},
+  {...base.companies[1],status:'IN_PROGRESS',salesJobId:'00000000-0000-4000-8000-000000000074',sales:{_id:'00000000-0000-4000-8000-000000000074',status:'COMPLETED',fileName:'868-VENDAS.csv'}}
+ ]}}));
+ await page.goto('/generations.html?id='+id);
+ await expect(page.getByRole('button',{name:'Ir para o simulador',exact:true})).toHaveCount(2);
+ await expect(page.getByRole('link',{name:'Ir para o simulador'})).toHaveCount(0);
+ const first=page.locator(`[data-simulator-client="${clients[0]._id}"]`),second=page.locator(`[data-simulator-client="${clients[1]._id}"]`);
+ await expect(first).toContainText('1 de 2 relatórios concluídos');await expect(second).toContainText('1 de 2 relatórios concluídos');
+ salesStatus='COMPLETED';await page.getByRole('button',{name:'Atualizar situação'}).click();
+ await expect(first.getByRole('link',{name:'Ir para o simulador'})).toHaveAttribute('href',`/simulator.html?generation=${id}&client=${clients[0]._id}`);
+ await expect(second.getByRole('button',{name:'Ir para o simulador'})).toBeDisabled();
+});

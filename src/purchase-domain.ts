@@ -9,7 +9,8 @@ export function isFinancialMode(mode: unknown): mode is FinancialMode { return m
 export function financialKind(mode: FinancialMode): 'FORNECEDOR' | 'CLIENTE' { return mode === SALES_MODE ? 'CLIENTE' : 'FORNECEDOR'; }
 export function financialLabel(mode: FinancialMode) { return mode === SALES_MODE ? 'vendas' : 'compras'; }
 /** Managerial grouping never overwrites the provider's original status. */
-export function financialReportingStatus(row: {valid?: boolean; documentKind?: string; status?: unknown}) {
+export function financialReportingStatus(row: {valid?: boolean; documentKind?: string; status?: unknown}, mode: FinancialMode = PURCHASE_MODE) {
+  if (mode === SALES_MODE && row.documentKind === 'CPF') return 'CPF';
   return row.valid === true && row.documentKind === 'CNPJ' && row.status === 'OPTANTE' ? 'OPTANTE' : 'NAO_OPTANTE';
 }
 export const PURCHASE_STATUSES = ['OPTANTE', 'NAO_OPTANTE', 'NAO_CONFIRMADO'] as const;
@@ -66,6 +67,18 @@ export function percentage(value: number, denominator: number): number {
   const numerator = BigInt(value) * 10000n, base = BigInt(denominator);
   return Number((numerator * 2n + base) / (base * 2n)) / 100;
 }
+/** Largest-remainder apportionment keeps three rounded sales percentages at exactly 100%. */
+export function reconciledPercentages(values: number[], denominator: number): number[] {
+  need(values.every(value => Number.isSafeInteger(value) && value >= 0) && exactCents(values.reduce((sum, value) => sum + value, 0)) === exactCents(denominator),
+    'Grupos financeiros divergentes do total.', 409, 'PURCHASE_TOTAL');
+  if (!denominator) return values.map(() => 0);
+  const base = BigInt(denominator);
+  const parts = values.map((value, index) => ({index, units: Number(BigInt(value) * 10000n / base), remainder: BigInt(value) * 10000n % base}));
+  const remaining = 10000 - parts.reduce((sum, part) => sum + part.units, 0);
+  const ranked = [...parts].sort((a, b) => a.remainder === b.remainder ? a.index - b.index : a.remainder > b.remainder ? -1 : 1);
+  for (let index = 0; index < remaining; index++) ranked[index].units++;
+  return parts.map(part => part.units / 100);
+}
 export function moneyText(cents: number): string { return `${Math.floor(cents / 100)},${String(cents % 100).padStart(2, '0')}`; }
 export function purchaseCsv(job: any, rows: any[]): string {
   const version = calculationVersion(job), net = version === 'NET_V2', sales = job.mode === SALES_MODE;
@@ -74,7 +87,7 @@ export function purchaseCsv(job: any, rows: any[]): string {
     ...rows.map(row => [job.clientCode || '', job.clientName, job._id, job.fileName, job.completedAt?.toISOString?.() || job.completedAt || '', row.index + 1,
       row.document, row.documentKind, row.name, row.quantity, moneyText(net ? row.grossCents : row.totalCents),
       ...['discountCents', 'accessoryCents', 'freightCents', 'abatementCents'].map(field => net ? moneyText(row[field]) : ''),
-      moneyText(row.totalCents), purchaseFormula(version), version, financialReportingStatus(row), row.status,
+      moneyText(row.totalCents), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,
       row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado'])
   ]);
 }

@@ -67,6 +67,12 @@ class GenerationReportTests(unittest.TestCase):
         self.assertEqual(len(meta['sales']), 2)
         self.assertEqual(meta['totalsByType']['PURCHASES']['totalCents'], 200000)
         self.assertEqual(meta['totalsByType']['SALES']['totalCents'], 200000)
+        self.assertEqual([meta['totalsByType']['PURCHASES'][key] for key in ('optantCents', 'nonoptantCents', 'cpfCents')],
+                         [60000, 140000, 0])
+        self.assertEqual([meta['totalsByType']['SALES'][key] for key in ('optantCents', 'nonoptantCents', 'cpfCents')],
+                         [60000, 100000, 40000])
+        for totals in meta['totalsByType'].values():
+            self.assertEqual(sum(totals[key] for key in ('optantCents', 'nonoptantCents', 'cpfCents')), totals['totalCents'])
         self.assertEqual(meta['sections'][0]['reports']['SALES']['reportType'], 'SALES')
         self.assertTrue(render_generation_pdf(meta).startswith(b'%PDF'))
 

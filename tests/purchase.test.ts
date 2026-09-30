@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compactPurchaseLine, calculationVersion, exactCents, percentage, purchaseCsv, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus } from '../src/purchase-domain.ts';
+import { compactPurchaseLine, calculationVersion, exactCents, percentage, reconciledPercentages, purchaseCsv, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus } from '../src/purchase-domain.ts';
 
 const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050};
 test('Compras: valida componentes no servidor, centavos exatos e não multiplica P por Q', () => {
@@ -72,4 +72,26 @@ test('Classificação gerencial: somente CNPJ com OPTANTE explícito é Simples;
     const csv = purchaseCsv({mode:PURCHASE_MODE,calculationVersion:'NET_V2',_id:'snapshot',clientName:'Empresa',fileName:'arquivo.csv'}, [{...nonCnpj,index:0,status:'NON_CNPJ'}]);
     assert(csv.includes('"NAO_OPTANTE";"NON_CNPJ"')); assert(csv.includes('"Não consultado"'));
   }
+});
+
+test('Vendas: CPF tem grupo próprio sem alterar situação fiscal nem agrupar outros documentos como CPF', () => {
+  const cpf = compactPurchaseLine({...row, document:'12345678900'}, 'NET_V2', SALES_MODE);
+  assert.equal(financialReportingStatus({...cpf, status:'NON_CNPJ'}, SALES_MODE), 'CPF');
+  assert.equal(financialReportingStatus({...cpf, status:'NON_CNPJ'}, PURCHASE_MODE), 'NAO_OPTANTE');
+  for (const document of ['123456789012', 'abc', '']) {
+    assert.equal(financialReportingStatus({...compactPurchaseLine({...row, document}, 'NET_V2', SALES_MODE),status:'NON_CNPJ'}, SALES_MODE), 'NAO_OPTANTE');
+  }
+  const csv = purchaseCsv({mode:SALES_MODE, calculationVersion:'NET_V2',_id:'cpf-sales', clientName:'Empresa',fileName:'vendas.csv'}, [{...cpf,index:0,status:'NON_CNPJ'}]);
+  assert(csv.includes('"CPF";"NON_CNPJ"')); assert(csv.includes('"Não consultado"'));
+});
+
+test('Três percentuais de vendas conciliam 100% sem grupo negativo, inclusive empates e base zero', () => {
+  assert.deepEqual(reconciledPercentages([1,1,1], 3), [33.34,33.33,33.33]);
+  assert.deepEqual(reconciledPercentages([10001,0,9999], 20000), [50.01,0,49.99]);
+  assert.deepEqual(reconciledPercentages([0,0,0], 0), [0,0,0]);
+  assert.deepEqual(reconciledPercentages([0,0,3], 3), [0,0,100]);
+  assert.deepEqual(reconciledPercentages([10010,29990,3000], 43000), [23.28,69.74,6.98]);
+  assert.throws(() => reconciledPercentages([1,2,3], 5));
+  assert.throws(() => reconciledPercentages([1,-1,3], 3));
+  assert.throws(() => reconciledPercentages([0.5,0.5,0], 1));
 });

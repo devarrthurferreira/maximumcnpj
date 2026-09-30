@@ -11,7 +11,7 @@ Leia README, CHANGELOG e estado real da branch. v0.5.0: Node.js/TypeScript, Mong
 ## Invariantes
 - Código = ID de origem. Responsável escolhida explicitamente. UUID interno é diferente do Código.
 - CNPJ completo é identidade. CPF/CNO/inválidos não vão à API CNPJ. A partir da v0.9.0, por solicitação expressa da Maximum, esses registros entram no grupo gerencial Não optante; percentuais financeiros usam o arquivo completo, e contagens financeiras usam documentos distintos (ausência de documento conta por linha).
-- Nome auxilia, mas não comprova enquadramento. Erro/ausência nunca viram negativa fiscal na fonte. Na apresentação gerencial há somente Simples (OPTANTE explícito) e Não optante (todos os demais, incluindo não confirmados e documentos não consultáveis). Preserve a situação original e os subtotais para conferência.
+- Nome auxilia, mas não comprova enquadramento. Erro/ausência nunca viram negativa fiscal na fonte. Na apresentação gerencial, compras e consultas cadastrais têm Simples (OPTANTE explícito) e Não optante (demais). A partir da v0.10.0, vendas têm terceiro grupo CPF; não confirmados e demais documentos permanecem em Não optante. Preserve a situação original e os subtotais para conferência.
 - Novo lote consulta novamente a API. Relatório só lê o snapshot, não é nova consulta.
 - Compartilhe estados iguais no banco; preserve data e vínculo de cada busca.
 - Relatórios precisam de sessão/usuário ativo/workspace/origem; não aceite cliente enviando resultados como verdade.
