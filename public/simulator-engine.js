@@ -18,7 +18,7 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
-export const MODEL_VERSION = '1.0.0-2027-2028';
+export const MODEL_VERSION = '1.1.0-rbt12-2027-2028';
 export const MONTHS = 12;
 export const SUBLIMIT = 3_600_000;
 export const SIMPLES_LIMIT = 4_800_000;
@@ -948,15 +948,18 @@ export function createEmptyDraft() {
 /** Same assumptions and default credit bases as calculadora/src/lib/simulation.ts. */
 export function draftToInput(draft) {
   try {
-    strictObject(draft, ['year', 'salesAnnex', 'serviceAnnex', 'values']);
+    const explicitRbt12 = Object.hasOwn(draft, 'rbt12');
+    strictObject(draft, explicitRbt12 ? ['year', 'salesAnnex', 'serviceAnnex', 'values', 'rbt12'] : ['year', 'salesAnnex', 'serviceAnnex', 'values']);
     checkChoices(draft);
     strictObject(draft.values, SIMULATION_VALUE_FIELDS, ['values']);
     for (const key of SIMULATION_VALUE_FIELDS) checkNumber(draft.values[key], VALUE_LIMIT, ['values', key]);
     const values = draft.values;
+    const rbt12 = explicitRbt12 ? draft.rbt12 : (values.serviceRevenue + values.salesRevenue) * 12;
+    checkNumber(rbt12, VALUE_LIMIT, ['rbt12']);
     return taxInputSchema.parse({
       ...values, year: draft.year, salesAnnex: draft.salesAnnex, serviceAnnex: draft.serviceAnnex,
       simpleRegularPurchases: 0, extraPayroll: 0, icmsOutside: false,
-      rbt12: (values.serviceRevenue + values.salesRevenue) * 12,
+      rbt12,
       rates: { ...DEFAULT_RATES },
       credits: {
         simple: { base: values.simplePurchases, cbsRate: .015, ibsRate: .0002 },
@@ -967,14 +970,21 @@ export function draftToInput(draft) {
   } catch { return null; }
 }
 
-/** Display-ready projection. The RBT12 proxy is explicitly identified in its memory. */
+/** Display-ready projection. Novas simulações usam a RBT12 informada/extraída; snapshots antigos mantêm a estimativa histórica. */
 export function calculateSimulation(draft) {
+  const explicitRbt12 = Object.hasOwn(draft, 'rbt12');
   const input = draftToInput(draft);
   if (!input) throw new TypeError('Preencha todos os campos com valores válidos. Informe 0 quando não houver valor.');
   const result = calculateTax(input);
   const rbt12 = result.memory.find(row => row.id === 'rbt12');
-  rbt12.label = 'Receita estimada em 12 meses';
-  rbt12.formula = 'Receita mensal de serviços + receita mensal de vendas, multiplicadas por 12. Estimativa usada como referência da simulação; não é a receita real dos últimos 12 meses.';
-  result.warnings.push({ code: 'estimated-rbt12', severity: 'info', title: 'Receita de 12 meses estimada', detail: 'A referência para as faixas do Simples é a receita mensal × 12. A simulação não consultou o faturamento real dos últimos 12 meses. As alíquotas e bases de crédito seguem as premissas da calculadora Maximum.' });
+  if (explicitRbt12) {
+    rbt12.label = 'RBT12 do Simples Nacional';
+    rbt12.formula = 'Receita bruta acumulada nos 12 meses anteriores ao período de apuração, informada manualmente ou extraída do Extrato do Simples Nacional.';
+    result.warnings.push({ code: 'rbt12-source', severity: 'info', title: 'RBT12 informada', detail: 'A faixa do Simples usa a RBT12 fornecida para este cenário. Quando o valor veio do PDF, confira a conciliação exibida no leitor do extrato.' });
+  } else {
+    rbt12.label = 'Receita estimada em 12 meses';
+    rbt12.formula = 'Receita mensal de serviços + receita mensal de vendas, multiplicadas por 12. Compatibilidade com versões anteriores; não é a RBT12 efetiva.';
+    result.warnings.push({ code: 'estimated-rbt12', severity: 'info', title: 'RBT12 estimada em versão anterior', detail: 'Este cenário não recebeu RBT12 explícita e preserva a regra histórica de receita mensal × 12.' });
+  }
   return result;
 }
