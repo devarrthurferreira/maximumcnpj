@@ -1,4 +1,4 @@
-# Simulador integrado · v0.10.0
+# Simulador integrado · v0.11.0
 
 ## Origem e escopo
 
@@ -40,6 +40,14 @@ Fontes normativas originais em `TAX_SOURCES`: LC214/2025 consolidada (anexos XVI
 
 ## Persistência e resultado
 
-Rascunho no sessionStorage da aba com chave de usuário + geração + empresa + jobs. Não há persistência central da simulação nesta versão. Alterações limpam os resultados até gerar novamente. Exportação JSON conserva fonte, período, campos mensais editados, unidade BRL, entrada, resultados, memória e commit do motor. Os snapshots originais continuam no histórico.
+O rascunho de edição permanece no sessionStorage. Ao gerar, o navegador envia apenas o pedido validável a `POST /api/v4/simulations`: UUID, geração/empresa, período confirmado, cinco grupos mensais em BRL, draft com valores/ano/anexos e eventual parentSimulationId. O servidor reconcilia novamente as origens, confere somas/precisão, obtém parâmetros efetivos e calcula o resultado com o mesmo motor. Resultados ou fontes forjados no payload são rejeitados.
 
-DRE ao final, primeira coluna fixa, orientação de rolagem lateral no celular. Nenhum resultado é gerado para snapshots incompletos, totais divergentes, relatórios de empresas diferentes ou Q_V1 legado; reimportação é necessária neste último caso.
+A coleção `simulations` guarda snapshot imutável: origem dos dois arquivos, totais importados e médias mensais, ajustes explícitos, draft, engineInput (taxas e bases efetivas), taxSources, resultado completo/DRE/avisos/memória, versão do modelo/commit do motor, autoria/data e parentSimulationId. Nenhum arquivo ou linha original é duplicado. Repetição idêntica do UUID retorna o mesmo registro; conteúdo diferente gera conflito.
+
+GET do detalhe somente lê o snapshot do workspace. A listagem tem pesquisa por empresa/código/título/autor, filtros empresa/ano e paginação 20 por vez. Abrir um resultado não o altera, recalcula ou reconsulta. Para experimentar mudanças, a UI cria uma nova versão a partir da anterior; a gravação reconcilia a fonte atual e não substitui o histórico.
+
+Gráficos usam os valores efetivos da simulação, identificando a escala mensal/anual, valores negativos, base nula e regimes indisponíveis. Avisos e premissas são agrupados em uma faixa expansível; ao abrir, todos os detalhes ficam visíveis. DRE permanece ao final com Indicador fixo.
+
+Exportação JSON conserva todos os campos do snapshot, inclusive taxas/bases e proveniência. Cenários realizados antes do histórico persistente (v0.10.0) não existiam no MongoDB: precisam ser gerados novamente a partir da geração/rascunho disponível para serem registrados. Não há migração de resultados inexistentes.
+
+Testes de integração validam repetição/concorrência, payload forjado, precisão, filtros, permissões, workspace, origem e preservação histórica. O fluxo completo é exercitado em MongoDB descartável com relatórios sintéticos de CPF, sem consultar provedores externos, e reabertura em nova sessão de navegador.

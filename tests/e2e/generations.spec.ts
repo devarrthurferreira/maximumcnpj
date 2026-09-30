@@ -7,7 +7,7 @@ async function session(page:any,mustChangePassword=false){await page.route('**/a
 test('Generation selects multiple companies and preserves a draft with missing purchases',async({page},testInfo)=>{
  await session(page);let created:any;const pageErrors:string[]=[];page.on('pageerror',e=>pageErrors.push(e.message));
  await page.route(/\/api\/v4\/generations(?:[/?]|$)/,r=>{if(r.request().method()==='POST'){created=r.request().postDataJSON();return r.fulfill({json:{...base,_id:created.generationId}});}return r.fulfill({json:{...base,_id:created?.generationId||id,requiredReports:created?.requiredReports||['PURCHASES'],completedCount:0,missingCount:2,companies:base.companies.map(c=>({...c,status:'MISSING',salesJobId:null,sales:null}))}});});
- await page.goto('/generations.html');await expect(page.locator('.nav a')).toHaveText(['Início','Empresas','Iniciar','Histórico']);
+ await page.goto('/generations.html');await expect(page.locator('.nav a')).toHaveText(['Início','Empresas','Iniciar','Histórico','Simulações']);
  await expect(page.getByRole('button',{name:'Continuar com as empresas'})).toBeDisabled();
  await page.getByLabel('Buscar empresas').fill('936');await page.locator('.generation-company-option input').check();
  await page.getByLabel('Buscar empresas').fill('868');await page.locator('.generation-company-option input').check();

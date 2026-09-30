@@ -1,8 +1,17 @@
-# Maximum CNPJ · v0.10.0
+# Maximum CNPJ · v0.11.0
 
 Node.js + TypeScript + MongoDB para consultas e histórico. Python para PDFs. Identidade Maximum, empresas compartilhadas no mesmo workspace e acesso autenticado. Sem Google Cloud.
 
-## Entrega de 30/09/2026 — relatórios para simulador preenchido
+## Entrega de 30/09/2026 — gráficos e histórico completo do simulador
+
+- [x] Painel visual do simulador com comparação dos regimes e composição de receitas, compras e despesas, em visualização anual ou mensal.
+- [x] Histórico persistente de simulações no MongoDB, com busca por empresa/título e filtro por ano.
+- [x] Cada simulação registra os campos informados, período, relatórios de origem, ajustes, premissas, versão do motor, resultados, gráficos reproduzíveis, avisos e memória de cálculo.
+- [x] Reabertura por link próprio sem recalcular nem consultar novamente a fonte; nova versão preserva integralmente o cenário anterior.
+- [x] Avisos reunidos em uma única faixa expansível que exibe todos os detalhes ao abrir.
+- [x] Cálculo e validação no servidor; sessão, permissões, workspace, conciliação e repetição idempotente protegem o histórico.
+
+### Importação e simulador preenchido
 
 - [x] Fluxo guiado: empresas → compras → vendas → simulador, com retomada pelo histórico.
 - [x] Botão **Ir para o simulador** abaixo de cada empresa, liberado após as duas consultas concluídas. Uma empresa pronta pode ser simulada enquanto outras continuam pendentes.
@@ -15,7 +24,7 @@ Node.js + TypeScript + MongoDB para consultas e histórico. Python para PDFs. Id
 
 ### Leitura e histórico preservados
 
-- [x] Navegação unificada: **Navegação → Início, Empresas**; **Geração → Iniciar, Histórico**.
+- [x] Navegação unificada: **Navegação → Início, Empresas**; **Geração → Iniciar, Histórico, Simulações**.
 - [x] Seleção de várias empresas e geração salva antes do envio, com escolha de compras, vendas ou ambos e acompanhamento dos relatórios que faltam.
 - [x] Histórico para abrir gerações, adicionar compras e vendas pendentes e retomar consultas.
 - [x] Novo total financeiro: **Q − Y + AA − AB**, em centavos inteiros. Z é informação de conferência, fora da fórmula.
@@ -117,11 +126,21 @@ O arquivo original permanece local. Para produzir um CSV já alinhado, a origem 
 4. Confirme que os dois arquivos cobrem o mesmo período e informe de 1 a 12 meses. Os cinco campos ficam preenchidos com os totais/médias mensais. Arredondamento em centavos preserva a soma dos grupos.
 5. Informe receitas de serviços e despesas mensais; use zero explicitamente quando não houver. Não repita serviços já contidos nas vendas. Ajustes são permitidos sem alterar os relatórios de origem.
 6. Escolha ano/anexos e gere a simulação. Os três grupos de vendas somam a Receita de vendas; o enquadramento do comprador não altera as alíquotas deste modelo.
-7. Confira os quatro cenários, os avisos e a DRE ao final. Arraste a tabela para o lado ou deite o celular; Indicador fica fixo. Exporte a memória JSON se quiser guardar o cenário completo.
+7. Ao gerar, o sistema calcula e salva o cenário no servidor. Aguarde a confirmação de salvamento; se a rede falhar, use a opção de tentar novamente sem duplicar a simulação.
+8. Confira os gráficos, os quatro cenários e a faixa única de avisos. A DRE fica ao final; Indicador permanece fixo na rolagem horizontal.
+9. No menu **Simulações**, busque a empresa ou título, filtre o ano e use **Rever simulação**. Os detalhes refletem exatamente o cenário salvo. **Criar nova versão** abre uma cópia editável e conserva a original. A memória completa continua exportável em JSON.
 
-O simulador usa o motor e as premissas da calculadora Maximum, não constitui apuração fiscal. Bases de crédito presumidas pelo modelo não comprovam direito a crédito. Serviços/despesas não são inferidos dos arquivos. A receita de 12 meses é estimada, não consultada. Rascunhos ficam no sessionStorage da aba, separados por usuário/empresa/geração/relatórios; não são gravados no MongoDB. Resultados são removidos quando um campo muda, até gerar novamente.
+O simulador usa o motor e as premissas da calculadora Maximum, não constitui apuração fiscal. Bases de crédito presumidas pelo modelo não comprovam direito a crédito. Serviços/despesas não são inferidos dos arquivos. A receita de 12 meses é estimada, não consultada. Rascunhos de edição continuam na aba, separados por usuário/empresa/geração/relatórios; resultados concluídos passam a ser salvos no MongoDB. Uma alteração exige gerar e salvar uma nova versão, sem modificar o resultado anterior. Simulações da v0.10.0 que nunca foram salvas no servidor não podem ser reconstruídas automaticamente; abra a geração e gere novamente para registrar o cenário no novo histórico.
 
 O endpoint autenticado `GET /api/v4/generations/:id/simulator?clientId=...` deriva os cinco campos dos snapshots reconciliados no servidor. Ambos devem ser NET_V2 e pertencer à mesma empresa, workspace e geração. Relatórios antigos Q_V1 permanecem acessíveis, mas exigem nova importação para simular.
+
+## Histórico do simulador
+
+`POST /api/v4/simulations` aceita os campos de entrada, cinco grupos mensais e período confirmado. O servidor valida os vínculos, concilia os relatórios, calcula o resultado com o motor compartilhado e grava um snapshot imutável em `simulations`. Não aceita resultados ou fontes enviados pelo navegador como verdade.
+
+`GET /api/v4/simulations` oferece paginação de 20 itens, busca e filtros de empresa/ano. `GET /api/v4/simulations/:id` recupera o snapshot original, incluindo autor, data, grupos originais/mensais, ajustes, parâmetros efetivos, versão e memória. Não reidrata a fonte nem recalcula históricos. Operadores/administradores podem gerar; visualizadores podem consultar. Nenhum endpoint sobrescreve ou exclui cenários.
+
+A repetição do mesmo pedido com o mesmo UUID retorna o mesmo registro; mudanças nesse UUID geram conflito. Um cenário derivado recebe novo UUID e vínculo com a simulação anterior. As respostas e gravações permanecem isoladas por workspace.
 
 ## Dados, segurança e limites
 
@@ -172,6 +191,7 @@ npm run test:integration
 npm run test:lookup-integration
 npm run test:purchases-integration
 npm run test:generations-integration
+npm run test:simulations-integration
 REPORT_TEST_MONGO=1 npm run test:reports
 npm run test:e2e
 ```
@@ -183,7 +203,8 @@ Os testes financeiros usam dados sintéticos e fonte simulada. Testes com MongoD
 ## Próximas etapas
 
 - [x] Integrar simulador e pré-preenchimento a partir de compras e vendas.
-- [ ] Persistência central de cenários e comparação entre simulações; nesta versão o rascunho fica apenas na aba e a memória pode ser exportada.
+- [x] Persistência central de cenários, reabertura detalhada e novas versões sem sobrescrever as anteriores.
+- [ ] Comparação direta entre diferentes versões/anos de uma mesma empresa.
 - [ ] Fila independente da aba para lotes extensos.
 - [ ] Relatórios assíncronos completos/ZIP para grandes volumes.
 - [ ] Referência fiscal histórica verificada e homologação fiscal própria das premissas do simulador.

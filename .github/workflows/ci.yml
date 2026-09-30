@@ -51,6 +51,8 @@ jobs:
         run: npm run test:purchases-integration
       - name: Gerações por empresa, retomada e isolamento
         run: npm run test:generations-integration
+      - name: Simulações salvas, reprodução e isolamento
+        run: npm run test:simulations-integration
       - name: Conta efêmera para teste
         run: npm run seed
       - name: Chromium para testes

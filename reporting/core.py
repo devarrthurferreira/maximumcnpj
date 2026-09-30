@@ -10,7 +10,7 @@ from http.cookies import SimpleCookie, CookieError
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-VERSION = '0.10.0'
+VERSION = '0.11.0'
 STATUSES = {'ALL': 'Todos os CNPJs', 'OPTANTE': 'Optantes pelo Simples',
             'NAO_OPTANTE': 'Não optantes', 'NAO_CONFIRMADO': 'Não confirmados'}
 REPORTING_STATUSES = {'ALL': 'Todos os CNPJs', 'OPTANTE': 'Simples', 'NAO_OPTANTE': 'Não optante'}

@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.11.0] — 2026-09-30
+
+- Simulador com gráficos comparativos de resultado e composição financeira, mantendo os quatro regimes e fórmulas existentes.
+- Histórico no MongoDB com pesquisa/filtros/paginação e link próprio para cada simulação; snapshots preservam entradas, relatórios, período, autor, parâmetros, resultado, avisos e memória.
+- Cálculo autoritativo no servidor, validação dos cinco grupos, idempotência e isolamento por workspace; reabrir um histórico não consulta fontes nem recalcula valores.
+- Nova versão cria outro cenário vinculado sem sobrescrever o anterior; falhas de gravação têm estado explícito e repetição segura.
+- Avisos consolidados em uma única faixa expansível, exibindo todos os detalhes juntos.
+- Navegação com Simulações, histórico responsivo, regressões de API/MongoDB e teste completo navegador → API → banco → reabertura em outra sessão.
+
 ## [0.10.0] — 2026-09-30
 
 - Etapas explícitas de empresas, compras, vendas e simulador; avanço após cada relatório e botão por empresa liberado somente com os dois tipos concluídos.
