@@ -24,6 +24,8 @@ Para novas importações, o período é derivado da **menor e da maior Data Escr
 
 Compras e vendas de uma mesma simulação devem ter a mesma data inicial, data final e quantidade de meses. Isso evita dividir totais por um período escolhido manualmente que não corresponda aos arquivos.
 
+Na emissão e no simulador, o backend reconcilia novamente o período persistido com as datas das linhas; snapshot incompleto ou divergente é bloqueado em vez de seguir com um divisor incorreto.
+
 ### RBT12 pelo Extrato do Simples
 
 No simulador, selecione o **Extrato do Simples Nacional em PDF** e use **Ler RBT12 do PDF**. O endpoint autenticado POST /api/simples?clientId=... recebe somente PDF de até 8 MiB, valida sessão/origem/empresa, extrai os dados e devolve a RBT12 em centavos. PDFs pesquisáveis usam texto nativo; documentos escaneados usam OCR.

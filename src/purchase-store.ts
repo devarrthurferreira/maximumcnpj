@@ -112,8 +112,8 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
   const grouped = await financialGroups('purchaseLines', id, job);
   const components = version === 'NET_V2' ? componentTotals(grouped) : null;
   const period = job.reportPeriod ? await financialPeriod('purchaseLines', id, job) : null;
-  if (job.reportPeriod) need(sameReportPeriod(period, job.reportPeriod) && period.observedMonths === job.reportPeriod.observedMonths &&
-    JSON.stringify(period.missingMonths) === JSON.stringify(job.reportPeriod.missingMonths),
+  if (job.reportPeriod) need(!!period && sameReportPeriod(period, job.reportPeriod) && period?.observedMonths === job.reportPeriod.observedMonths &&
+    JSON.stringify(period?.missingMonths) === JSON.stringify(job.reportPeriod.missingMonths),
     'Período fiscal divergente do snapshot. Emissão bloqueada.', 409, 'REPORT_PERIOD');
   if (components) need(FINANCIAL_FIELDS.every(field => job.purchaseInput.components?.[field] === components[field]), 'Componentes divergentes do snapshot. Emissão bloqueada.', 409, 'PURCHASE_TOTAL');
   const items = await (await collection('lookupItems')).aggregate([
