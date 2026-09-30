@@ -19,18 +19,25 @@ async function main() {
   const page = await get('/', 200, 'text/html');
   assert.equal(page.headers.get('x-maximum-deployment'), 'static-api-v1', 'O domínio ainda não usa a configuração corrigida.');
   const html = await page.text();
-  assert.match(html, /<script type="module" src="\/app\.js"><\/script>/);
+  assert.match(html, /<script type="module" src="\/lookup-ui\.js"><\/script>/);
   assert.match(html, /Maximum CNPJ/);
   await get('/app.js', 200, 'javascript');
+  await get('/lookup-ui.js', 200, 'javascript');
   await get('/domain.js', 200, 'javascript');
   await get('/styles.css', 200, 'text/css');
   await get('/favicon.svg', 200, 'image/svg+xml');
   await get('/favicon.ico', 200, 'image/svg+xml');
+  await get('/simulations.html', 200, 'text/html');
+  await get('/simulations-ui.js', 200, 'javascript');
+  await get('/simulator.html', 200, 'text/html');
+  await get('/simulation-charts.js', 200, 'javascript');
+  await get('/simulation-charts.css', 200, 'text/css');
   const health = await (await get('/api/health', 200, 'application/json')).json();
   assert.equal(health.ok, true);
   assert.equal(health.version, pkg.version, 'O domínio ainda está em outra versão.');
   const anonymous = await (await get('/api/auth/me', 401, 'application/json')).json();
   assert.equal(anonymous.error, 'UNAUTHORIZED');
+  await get('/api/v4/simulations', 401, 'application/json');
   console.log(`Deploy ${pkg.version} respondeu corretamente. MongoDB, login real e importação não foram testados por este comando.`);
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

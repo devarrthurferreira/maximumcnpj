@@ -8,6 +8,7 @@
 - Nova versão cria outro cenário vinculado sem sobrescrever o anterior; falhas de gravação têm estado explícito e repetição segura.
 - Avisos consolidados em uma única faixa expansível, exibindo todos os detalhes juntos.
 - Navegação com Simulações, histórico responsivo, regressões de API/MongoDB e teste completo navegador → API → banco → reabertura em outra sessão.
+- Smoke público atualizado para o painel atual, os novos arquivos do simulador e a proteção da API do histórico.
 
 ## [0.10.0] — 2026-09-30
 

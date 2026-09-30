@@ -196,6 +196,8 @@ REPORT_TEST_MONGO=1 npm run test:reports
 npm run test:e2e
 ```
 
+Após publicar, `npm run smoke -- https://maximum-cnpj.vercel.app` confere a versão, o painel, os arquivos do simulador/histórico e a exigência de login na API. São apenas leituras públicas, sem usar dados reais de clientes.
+
 A validação desta entrega cobre os cinco campos do simulador, três grupos de vendas, documentos repetidos, conciliação entre Node/Python, rejeição de snapshots incompletos ou cruzados, conversão mensal, motor original, autenticação, retomada e fluxo de navegador em computador/celular. Consulte a CI do SHA final para o resultado completo da execução.
 
 Os testes financeiros usam dados sintéticos e fonte simulada. Testes com MongoDB devem usar banco descartável. A CI executa MongoDB 7, Node 22, Python 3.12 e Chromium, incluindo regras financeiras, autenticação, isolamento e navegação. Confira a execução vinculada ao commit entregue; existência de testes não significa aprovação em produção ou homologação fiscal. Arquivos reais de clientes não são versionados.
