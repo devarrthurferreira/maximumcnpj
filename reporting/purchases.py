@@ -239,7 +239,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
                           'suppliers': group['count'], 'supplierPercent': group['countPercent'],
                           'fileValuePercent': group['valuePercent']} for group in reporting_groups]
     quantity_text = format(quantity, 'f').rstrip('0').rstrip('.') if '.' in format(quantity, 'f') else format(quantity, 'f')
-    return {'job': {key: job.get(key) for key in ('_id', 'mode', 'clientId', 'clientCode', 'clientName', 'fileName', 'completedAt')},
+    return {'job': {key: job.get(key) for key in ('_id', 'mode', 'clientId', 'clientCode', 'clientName', 'fileName', 'completedAt', 'reportPeriod')},
             'reportType': 'SALES' if sales else 'PURCHASES',
             'totalCents': total_cents, 'cnpjCents': cnpj_cents, 'nonCnpjCents': non_cnpj_cents,
             'lineCount': line_count, 'uniqueSuppliers': unique, 'groups': list(groups.values()),
@@ -318,8 +318,11 @@ def purchase_story(meta, width, styles):
     p = lambda value, style='body': purchase_paragraph(value, styles, style)
     title = f'{job.get("clientCode") or "Sem código"} - {job.get("clientName") or "Empresa"}'
     calculation_label = 'atual' if meta['calculationVersion'] == 'NET_V2' else 'anterior'
+    period = job.get('reportPeriod') or {}
+    period_text = (f'Período pela coluna H: {period.get("startDate")} a {period.get("endDate")} · '
+                   f'{period.get("months")} {"mês" if period.get("months") == 1 else "meses"}') if period else 'Período fiscal: snapshot anterior sem coluna H persistida'
     story = [p(f'{report_label} - enquadramento e memória de cálculo', 'heading'), p(title, 'title'),
-             p(f'Arquivo: {job.get("fileName") or "Não informado"}'),
+             p(f'Arquivo: {job.get("fileName") or "Não informado"}'), p(period_text, 'small'),
              p(f'Consulta: {job["_id"]} | Conclusão: {display_date(job.get("completedAt"))} | '
                f'Emissão: {display_date(meta["generatedAt"])}', 'small'),
              p(f'Total: {money(meta["totalCents"])} | {number(meta["lineCount"])} linhas | '

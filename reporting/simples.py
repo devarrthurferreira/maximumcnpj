@@ -48,13 +48,12 @@ def _previous_months(pa: str, count=12):
 
 
 def _internal_revenues(text: str):
-    plain = _plain(text)
-    start = max(plain.find('2.2.1'), plain.find('MERCADO INTERNO'))
-    if start < 0:
+    start_match = re.search(r'2\.2\.1|Mercado\s+Interno', text, re.I)
+    if not start_match:
         return {}
-    end_candidates = [position for position in (plain.find('2.2.2', start + 1), plain.find('MERCADO EXTERNO', start + 1)) if position > start]
-    end = min(end_candidates) if end_candidates else len(text)
-    block = text[start:end]
+    end_match = re.search(r'2\.2\.2|Mercado\s+Externo', text[start_match.end():], re.I)
+    end = start_match.end() + end_match.start() if end_match else len(text)
+    block = text[start_match.start():end]
     revenues = {}
     # OCR/tabelas podem colocar quatro pares competência/valor na mesma linha.
     pair = re.compile(r'(0[1-9]|1[0-2])/(20\d{2})\s+((?:\d{1,3}(?:\.\d{3})*|\d+),\d{2})')

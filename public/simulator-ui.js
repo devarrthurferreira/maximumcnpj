@@ -103,7 +103,7 @@ function restoreDraft() {
     for(const key of [...IMPORTED,...MANUAL,'rbt12']) { const v=data.fields?.[key]; if(typeof v==='string' && (v==='' || /^\d+(\.\d{1,2})?$/.test(v))) $('#'+key).value=v; }
     if(typeof data.rbt12ExtractionId==='string'&&/^[a-f0-9-]{36}$/.test(data.rbt12ExtractionId))S.rbt12ExtractionId=data.rbt12ExtractionId;
     for(const [key,id,choices] of [['year','simulation-year',['2027','2028']],['salesAnnex','sales-annex',['1','2']],['serviceAnnex','service-annex',['3','4','5']]]) if(choices.includes(data[key])) $('#'+id).value=data[key];
-    S.edited=data.edited===true;$('#period-confirm').checked=data.confirmed===true;$('#draft-status').textContent='Rascunho desta empresa restaurado. Confira os campos antes de gerar.';
+    S.edited=data.edited===true;$('#period-confirm').checked=S.source.periodBasis==='COLUMN_H'||data.confirmed===true;$('#draft-status').textContent='Rascunho desta empresa restaurado. Confira os campos antes de gerar.';
   } catch { /* Invalid/unavailable local drafts never prevent using verified report totals. */ }
 }
 const DRE=[['services','Receita de serviços'],['sales','Receita de vendas'],['revenue','Receita bruta total'],['das','− DAS'],['cbsDebit','− Débito de CBS'],['ibsDebit','− Débito de IBS'],['icmsNet','− ICMS líquido fora do DAS'],['iss','− ISS fora do DAS'],['netRevenue','Receita líquida'],['cmvSimple','− Compras do Simples'],['cmvRegular','− Compras fora do Simples'],['cmv','CMV total'],['cbsUsed','+ Crédito CBS utilizado'],['ibsUsed','+ Crédito IBS utilizado'],['grossProfit','Lucro bruto'],['salaries','− Salários e pró-labore'],['benefits','− Benefícios'],['payroll','− Encargos adicionais'],['personnel','Pessoal e encargos'],['administrative','− Outras despesas'],['rent','− Aluguel'],['cards','− Taxas de cartão'],['preTax','Resultado antes de IRPJ/CSLL'],['irpj','− IRPJ e adicional'],['csll','− CSLL'],['netProfit','Resultado líquido']];
@@ -155,8 +155,8 @@ function fillSnapshot(snapshot) {
   $('#rbt12').value=Number(snapshot.draft.rbt12 ?? snapshot.engineInput?.rbt12 ?? 0).toFixed(2);
   S.rbt12ExtractionId=snapshot.rbt12Extraction?.id||null;
   $('#simulation-year').value=String(snapshot.draft.year);$('#sales-annex').value=String(snapshot.draft.salesAnnex);$('#service-annex').value=String(snapshot.draft.serviceAnnex);
-  $('#period-confirm').checked=false; S.edited=snapshot.manuallyAdjusted;
-  $('#draft-status').textContent='Valores copiados da versão salva. Confirme o período e gere uma nova versão; o registro anterior permanece disponível.';
+  $('#period-confirm').checked=S.source.periodBasis==='COLUMN_H'; S.edited=snapshot.manuallyAdjusted;
+  $('#draft-status').textContent=S.source.periodBasis==='COLUMN_H'?'Valores copiados da versão salva. O período continua vinculado à coluna H; gere uma nova versão quando terminar.':'Valores copiados da versão salva. Confirme o período e gere uma nova versão; o registro anterior permanece disponível.';
 }
 function setSaving(value) {
   S.saving=value;
