@@ -3,6 +3,3 @@ pymongo==4.18.2
 pymupdf==1.28.2
 rapidocr==3.9.2
 onnxruntime==1.30.0
-# Vercel/Linux serverless has no GUI/X11 libraries. Install the headless cv2 wheel
-# explicitly so RapidOCR can import and process image-only PDFs in production.
-opencv-python-headless==5.0.0.93
