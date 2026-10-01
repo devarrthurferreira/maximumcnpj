@@ -1,0 +1,30 @@
+name: Revisão isolada do extrato
+on:
+  push:
+    branches: ['fix/extrato-22-dre-mensal-20261001']
+    paths: ['.github/workflows/extrato-source-review.yml']
+permissions:
+  contents: read
+jobs:
+  source-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - name: Fontes e dependências públicas para teste isolado
+        run: |
+          mkdir -p /tmp/extrato-review/wheels
+          git archive --format=tar HEAD > /tmp/extrato-review/source.tar
+          npm ci
+          tar cf /tmp/extrato-review/node_modules.tar node_modules
+          python -m pip wheel --no-deps rapidocr==3.9.2 onnxruntime==1.30.0 omegaconf==2.3.0 pyclipper==1.4.0 colorlog==6.12.0 antlr4-python3-runtime==4.9.3 flatbuffers==25.12.19 --wheel-dir /tmp/extrato-review/wheels
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extrato-source-review
+          path: /tmp/extrato-review/
+          retention-days: 1
