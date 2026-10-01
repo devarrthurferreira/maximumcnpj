@@ -14,7 +14,7 @@ const JOB_PROJECTION = {
   _id: 1, clientId: 1, mode: 1, generationId: 1, status: 1, fileName: 1,
   expectedRows: 1, uploaded: 1, received: 1, summary: 1, purchaseInput: 1,
   resultSummary: 1, createdAt: 1, updatedAt: 1, completedAt: 1, nextPollMs: 1,
-  calculationVersion: 1
+  calculationVersion: 1, reportPeriod: 1
 };
 const REPORT_TYPES = ['PURCHASES', 'SALES'] as const;
 type ReportType = typeof REPORT_TYPES[number];

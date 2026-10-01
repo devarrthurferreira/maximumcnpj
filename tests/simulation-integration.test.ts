@@ -30,8 +30,8 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
     const cnpj = String(url).split('/').pop();
     return Response.json({cnpj, razao_social: 'Fornecedor sintético', opcao_pelo_simples: cnpj === ids[0], opcao_pelo_mei: false});
   }) as typeof fetch;
-  const reportRows = [[ids[0], 10001], [ids[1], 20001], ['12345678900', 30001]].map(([document, totalCents]) => ({
-    document, name: 'Parceiro sintético', quantity: '1', totalCents,
+  const reportRows = [[ids[0], 10001], [ids[1], 20001], ['12345678900', 30001]].map(([document, totalCents], index) => ({
+    document, name: 'Parceiro sintético', serviceDate: ['2026-06-15','2026-07-15','2026-08-15'][index], quantity: '1', totalCents,
     grossCents: totalCents, discountCents: 0, accessoryCents: 0, freightCents: 0, abatementCents: 0
   }));
   let server: http.Server | undefined;
@@ -42,7 +42,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
     const generationId = generation._id;
     const monthlyGroups = {salesOptantCents: 33.34, salesNonOptantCents: 66.67, salesCpfCents: 100,
       purchasesOptantCents: 33.34, purchasesNonOptantCents: 166.67};
-    const draft: any = {year: 2027, salesAnnex: 1, serviceAnnex: 3, values: {
+    const draft: any = {year: 2027, salesAnnex: 1, serviceAnnex: 3, rbt12: 500000, values: {
       serviceRevenue: 5000, salesRevenue: 200.01, simplePurchases: 33.34, regularPurchases: 166.67,
       salaries: 100, benefits: 5.25, adminExpenses: 0, rent: 10, cardExpenses: .29
     }};
@@ -82,7 +82,8 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       await assert.rejects(createSimulation(actor, {...input, draft: {...draft, values: {...draft.values, salesRevenue: 201}}}), code('SIMULATION_TOTAL'));
       await assert.rejects(createSimulation(actor, {...input, draft: {...draft, values: {...draft.values, simplePurchases: 34}}}), code('SIMULATION_TOTAL'));
       await assert.rejects(createSimulation(actor, {...input, draft: {...draft, values: {...draft.values, regularPurchases: 34}}}), code('SIMULATION_TOTAL'));
-      await assert.rejects(createSimulation(actor, {...input, draft: {...draft, values: {...draft.values, serviceRevenue: 1_000_000_000_000}}}), code('VALIDATION'));
+      // The monthly input limit is independent from the explicit historical RBT12.
+      await assert.rejects(createSimulation(actor, {...input, draft: {...draft, values: {...draft.values, serviceRevenue: 1_000_000_000_001}}}), code('VALIDATION'));
       await assert.rejects(createSimulation(actor, {...input, clientId: outside}), code('GENERATION_CLIENT'));
       assert.equal(await (await collection('simulations')).countDocuments(scope()), 0);
     });
@@ -107,6 +108,9 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.equal(saved.source.sales.totalCents, 60003);
       assert.equal(saved.source.purchases.totalCents, 60003);
       assert.equal(saved.source.sales.jobId, jobs[1]._id);
+      assert.equal(saved.periodBasis, 'COLUMN_H'); assert.equal(saved.reportMonths, 3);
+      assert.deepEqual(saved.reportPeriod, {startDate:'2026-06-15',endDate:'2026-08-15',startMonth:'2026-06',endMonth:'2026-08',months:3,observedMonths:3,missingMonths:[]});
+      assert.equal(saved.rbt12Source, 'MANUAL');
       assert.equal(saved.parentSimulationId, null);
       assert.equal(saved.workspaceId, undefined);
       assert.equal(saved.requestHash, undefined);

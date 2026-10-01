@@ -1,0 +1,41 @@
+name: Competências de compras e vendas
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'tests/report-competence*'
+      - 'package.json'
+      - '.github/workflows/period-competences.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/report-competence*'
+      - 'package.json'
+      - '.github/workflows/period-competences.yml'
+permissions:
+  contents: read
+jobs:
+  verify-competences:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      mongo:
+        image: mongo:7.0
+        ports: ['27017:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MONGODB_URI: mongodb://127.0.0.1:27017
+      MONGODB_DB: maximum_competence_ci
+      WORKSPACE_ID: competence_ci
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 2 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm ci
+      - name: Versão, tipos e build
+        run: npm run check:release && npm run check && npm run build
+      - name: Competências e fluxo real com MongoDB descartável
+        run: npm run test:competences

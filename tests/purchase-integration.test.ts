@@ -31,7 +31,7 @@ test('MongoDB compras e vendas: idempotência, isolamento, cálculos e PDF Pytho
       {document:ids[1],name:'Fornecedor sintético',quantity:'1',totalCents:20000},
       {document:ids[2],name:'Fornecedor sintético',quantity:'1',totalCents:9990},
       {document:'12345678900',name:'Pessoa sintética',quantity:'1',totalCents:3000}
-    ].map(row=>({...row,grossCents:row.totalCents+500,discountCents:600,accessoryCents:99,freightCents:150,abatementCents:50}));
+    ].map((row,index)=>({...row,serviceDate:index < 2 ? '2026-07-15' : '2026-08-15',grossCents:row.totalCents+500,discountCents:600,accessoryCents:99,freightCents:150,abatementCents:50}));
     const input = {importId:randomUUID(),clientId,fileName:'sintetico.csv',expectedRows:rows.length};
     const job = await createLookup(actor, input, PURCHASE_MODE);
     assert.equal(job.calculationVersion,'NET_V2');
@@ -64,6 +64,7 @@ test('MongoDB compras e vendas: idempotência, isolamento, cálculos e PDF Pytho
     ]);
     assert.deepEqual(summary.components, {grossCents:45500,discountCents:3000,accessoryCents:495,freightCents:750,abatementCents:250,totalCents:43000});
     assert.equal(summary.calculationVersion,'NET_V2'); assert.equal(summary.formula,'Q - Y + AA - AB');
+    assert.deepEqual(summary.period,{startDate:'2026-07-15',endDate:'2026-08-15',startMonth:'2026-07',endMonth:'2026-08',months:2,observedMonths:2,missingMonths:[]});
     assert.deepEqual(summary.reportingGroups.map(g=>[g.status,g.count,g.totalCents,g.countPercent,g.valuePercent,g.unconfirmedCount,g.unconfirmedCents]), [
       ['OPTANTE',1,10010,25,23.28,0,0], ['NAO_OPTANTE',3,32990,75,76.72,1,9990]
     ]);

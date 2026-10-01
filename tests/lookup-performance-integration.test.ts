@@ -66,14 +66,14 @@ test('MongoDB: concorrência limitada, progresso correto, retries, isolamento e 
     assert.equal(limitedProgress.metrics.nonOptants, 0); assert.equal(limitedProgress.metrics.pending, 1); assert.equal(limitedProgress.metrics.retrying, 1);
     const control = await (await collection('providerControl')).findOne({_id: 'minhareceita-global'}); assert(control!.nextAt.getTime() > Date.now() + 65000);
 
-    const financialRow = (document: string) => ({document, name: 'Parceiro sintético', quantity: '1', grossCents: 10000, discountCents: 1000, accessoryCents: 300, freightCents: 2000, abatementCents: 500, totalCents: 10500});
+    const financialRow = (document: string) => ({document, name: 'Parceiro sintético', serviceDate: '2026-08-15', quantity: '1', grossCents: 10000, discountCents: 1000, accessoryCents: 300, freightCents: 2000, abatementCents: 500, totalCents: 10500});
     for (const mode of [PURCHASE_MODE, SALES_MODE]) {
       const financial = await fresh([financialRow(doc(11)), financialRow(doc(11)), financialRow('12345678900')], mode);
       await processLookup(actor, financial, (async () => Response.json({cnpj: doc(11), opcao_pelo_simples: true})) as typeof fetch);
       const oldSummary = await purchaseSummary(financial, true, mode);
       assert.equal(oldSummary.totals.totalCents, 31500);
       const renewed = await recheckLookup(actor, financial); assert.equal(renewed.repeatedFrom, financial); assert.notEqual(renewed._id, financial);
-      assert.equal(renewed.mode, mode); assert.equal(renewed.status, 'PROCESSING'); assert.equal(renewed.generationId, undefined);
+      assert.deepEqual(renewed.reportPeriod, oldSummary.period); assert.equal(renewed.mode, mode); assert.equal(renewed.status, 'PROCESSING'); assert.equal(renewed.generationId, undefined);
       assert.equal((await lookupProgress(renewed._id)).metrics.pending, 1);
       await (await collection('providerControl')).deleteMany({}); let renewedCalls = 0;
       await processLookup(actor, renewed._id, (async () => { renewedCalls++; return Response.json({cnpj: doc(11), opcao_pelo_simples: false}); }) as typeof fetch);

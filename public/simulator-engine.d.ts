@@ -9,6 +9,8 @@ export type SimulationDraft = {
   year: 2027 | 2028;
   salesAnnex: 1 | 2;
   serviceAnnex: 3 | 4 | 5;
+  /** Opcional apenas para reabrir snapshots legados; novas simulações enviam RBT12 explícita. */
+  rbt12?: number;
   values: Record<SimulationValueField, number>;
 };
 export type SimulationRegime = {

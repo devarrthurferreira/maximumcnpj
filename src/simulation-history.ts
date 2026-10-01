@@ -4,6 +4,7 @@ import { need, text, digest, escapeRegex, integer } from './security.ts';
 import { write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { VERSION } from './domain.ts';
+import { annualizeReports, projectScenario } from '../public/simulator-projection.js';
 import { generationSimulator } from './simulator-store.ts';
 import { calculateSimulation, draftToInput, MODEL_VERSION, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
   SIMULATION_VALUE_FIELDS } from '../public/simulator-engine.js';
@@ -38,22 +39,15 @@ function money(value: unknown) {
 
 /** Convert report cents into BRL using the same balanced rounding as the form. */
 function baselineGroups(source: Source, months: number): MonthlyGroups {
-  const result = {} as MonthlyGroups;
-  for (const keys of [GROUPS.slice(0, 3), GROUPS.slice(3)]) {
-    const exact = keys.map(key => source.fields[key] / months), base = exact.map(Math.floor);
-    const remainder = Math.round(keys.reduce((sum, key) => sum + source.fields[key], 0) / months) - base.reduce((a, b) => a + b, 0);
-    const order = exact.map((value, index) => ({index, fraction: value - base[index]}))
-      .sort((a, b) => b.fraction - a.fraction || a.index - b.index);
-    for (let i = 0; i < remainder; i++) base[order[i].index]++;
-    keys.forEach((key, index) => { result[key] = base[index] / 100; });
-  }
-  return result;
+  const projection = annualizeReports(source.fields, months);
+  return Object.fromEntries(GROUPS.map(key => [key, projection.monthlyGroupsCents[key] / 100])) as MonthlyGroups;
 }
 
 function request(input: unknown) {
-  object(input, ['simulationId', 'generationId', 'clientId', 'reportMonths', 'periodConfirmed', 'monthlyGroups', 'draft'], ['title', 'parentSimulationId']);
+  object(input, ['simulationId', 'generationId', 'clientId', 'reportMonths', 'periodConfirmed', 'monthlyGroups', 'draft'], ['title', 'parentSimulationId', 'rbt12ExtractionId']);
   const simulationId = uuid(input.simulationId), generationId = uuid(input.generationId), clientId = uuid(input.clientId);
   const parentSimulationId = input.parentSimulationId == null ? null : uuid(input.parentSimulationId);
+  const rbt12ExtractionId = input.rbt12ExtractionId == null ? null : uuid(input.rbt12ExtractionId);
   need(parentSimulationId !== simulationId, 'A nova simulação precisa de um identificador próprio.');
   need(typeof input.reportMonths === 'number' && Number.isInteger(input.reportMonths) && input.reportMonths >= 1 && input.reportMonths <= 12,
     'Informe de 1 a 12 meses nos relatórios.');
@@ -61,17 +55,19 @@ function request(input: unknown) {
   const title = input.title === undefined ? null : text(input.title, 160);
   object(input.monthlyGroups, GROUPS);
   const monthlyGroups = Object.fromEntries(GROUPS.map(key => [key, money(input.monthlyGroups[key])])) as MonthlyGroups;
-  object(input.draft, ['year', 'salesAnnex', 'serviceAnnex', 'values']);
+  object(input.draft, ['year', 'salesAnnex', 'serviceAnnex', 'values'], ['rbt12']);
   need([2027, 2028].includes(input.draft.year) && [1, 2].includes(input.draft.salesAnnex) && [3, 4, 5].includes(input.draft.serviceAnnex),
     'Ano ou anexo inválido para o modelo da calculadora.');
   object(input.draft.values, SIMULATION_VALUE_FIELDS);
   const draft: SimulationDraft = {year: input.draft.year, salesAnnex: input.draft.salesAnnex, serviceAnnex: input.draft.serviceAnnex,
+    ...(Object.hasOwn(input.draft, 'rbt12') ? {rbt12: money(input.draft.rbt12)} : {}),
     values: Object.fromEntries(SIMULATION_VALUE_FIELDS.map(key => [key, money(input.draft.values[key])])) as SimulationDraft['values']};
+  need(!rbt12ExtractionId || draft.rbt12 !== undefined, 'A extração de RBT12 precisa acompanhar o valor usado na simulação.');
   need(Math.round(draft.values.salesRevenue * 100) === GROUPS.slice(0, 3).reduce((sum, key) => sum + Math.round(monthlyGroups[key] * 100), 0) &&
     draft.values.simplePurchases === monthlyGroups.purchasesOptantCents && draft.values.regularPurchases === monthlyGroups.purchasesNonOptantCents,
     'Os totais de vendas e compras devem corresponder aos cinco grupos preenchidos.', 400, 'SIMULATION_TOTAL');
   return {simulationId, generationId, clientId, title, reportMonths: input.reportMonths as number, periodConfirmed: true as const,
-    monthlyGroups, draft, parentSimulationId};
+    monthlyGroups, draft, parentSimulationId, rbt12ExtractionId};
 }
 
 async function simulations() {
@@ -99,7 +95,7 @@ export async function getSimulation(id: string) {
 /** Append only. Repeated network requests with the same ID never create a second result. */
 export async function createSimulation(actor: LookupActor, input: unknown) {
   write(actor);
-  const validated = request(input), {simulationId, generationId, clientId, draft, reportMonths, monthlyGroups, parentSimulationId} = validated;
+  const validated = request(input), {simulationId, generationId, clientId, draft, reportMonths, monthlyGroups, parentSimulationId, rbt12ExtractionId} = validated;
   const requestHash = digest(JSON.stringify(validated));
   const c = await simulations();
   const repeated = (record: Doc) => {
@@ -115,9 +111,29 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
       'A simulação original precisa pertencer à mesma empresa e geração.', 409, 'SIMULATION_PARENT');
   }
   const source = await generationSimulator(generationId, clientId);
+  if (source.periodBasis === 'COLUMN_H') {
+    need(source.reportMonths === reportMonths && source.period && reportMonths === source.period.months,
+      'O período da simulação deve corresponder ao intervalo identificado na coluna H dos relatórios.', 409, 'SIMULATION_PERIOD');
+  }
+  let rbt12Source = Object.hasOwn(draft, 'rbt12') ? 'MANUAL' : 'LEGACY_ESTIMATE', rbt12Extraction = null;
+  if (rbt12ExtractionId) {
+    const extraction = await (await collection('simplesExtractions')).findOne(scope({_id: rbt12ExtractionId, clientId}));
+    need(extraction && extraction.result && Number.isInteger(extraction.result.rbt12Cents),
+      'A leitura do Extrato do Simples não foi encontrada para esta empresa.', 409, 'RBT12_EXTRACTION');
+    need(draft.rbt12 !== undefined && Math.round(draft.rbt12 * 100) === extraction.result.rbt12Cents,
+      'A RBT12 foi alterada depois da leitura do PDF. Leia novamente ou salve como valor manual.', 409, 'RBT12_EXTRACTION');
+    rbt12Source = 'SIMPLES_PDF';
+    rbt12Extraction = {id: extraction._id, parserVersion: extraction.parserVersion, fileName: extraction.fileName,
+      pa: extraction.result.pa || null, rbt12Cents: extraction.result.rbt12Cents,
+      rbt12CalculatedCents: extraction.result.rbt12CalculatedCents ?? null,
+      rbt12Reconciled: extraction.result.rbt12Reconciled ?? null, ocrUsed: extraction.result.ocrUsed === true};
+  }
   const engineInput = draftToInput(draft);
   need(engineInput, 'Os valores ultrapassam os limites da calculadora. Confira as receitas mensais e a estimativa anual.');
   const result = calculateSimulation(draft);
+  const projection = {...annualizeReports(source.fields, reportMonths), scenario: projectScenario(monthlyGroups, draft.values)};
+  need(Math.abs(result.annualRevenue - projection.scenario.annual.revenueCents / 100) < 0.01,
+    'A receita anual deve corresponder à receita mensal multiplicada por 12.', 409, 'SIMULATION_PROJECTION');
   const baselineMonthlyGroups = baselineGroups(source, reportMonths);
   const adjustments = GROUPS.filter(key => monthlyGroups[key] !== baselineMonthlyGroups[key]).map(field => ({
     field, reportMonthlyValue: baselineMonthlyGroups[field], simulatedMonthlyValue: monthlyGroups[field]
@@ -127,8 +143,10 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
     title: validated.title || `${source.company.name} · ${draft.year}`, company: source.company,
     createdAt: new Date(), createdBy: {id: actor._id, name: actor.name}, appVersion: VERSION,
     modelVersion: MODEL_VERSION, calculatorSourceCommit: CALCULATOR_SOURCE_COMMIT, taxSources: TAX_SOURCES,
-    source, reportMonths, periodConfirmed: true, monthlyGroups, monthlyGroupsUnit: 'BRL', baselineMonthlyGroups,
+    source, projection, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
+    monthlyGroups, monthlyGroupsUnit: 'BRL', baselineMonthlyGroups,
     manuallyAdjusted: adjustments.length > 0, adjustments, draft, engineInput, result, parentSimulationId,
+    rbt12Source, rbt12Extraction,
     year: draft.year, annualRevenue: result.annualRevenue, bestRegimeId: result.bestRegimeId,
     bestRegimeName: best?.name || null, bestAnnualProfit: best?.annualProfit ?? null};
   try { await c.insertOne(snapshot); }

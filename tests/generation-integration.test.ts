@@ -19,7 +19,7 @@ test('MongoDB gerações: empresas, retomada, concorrência, conclusão conjunta
   const actor = {_id: 'tester', role: 'admin', name: 'Teste', email: 'test@example.test'};
   const viewer = {...actor, role: 'viewer'};
   const errorCode = (code: string) => (error: any) => error.code === code;
-  const row = {document: '12345678900', name: 'Pessoa sintética', quantity: '2', grossCents: 10000, discountCents: 2000,
+  const row = {document: '12345678900', name: 'Pessoa sintética', serviceDate: '2026-08-15', quantity: '2', grossCents: 10000, discountCents: 2000,
     accessoryCents: 999, freightCents: 500, abatementCents: 300, totalCents: 8200};
   try {
     const catalog = await importCatalog(actor, [{code: '936', name: 'Empresa A'}, {code: '937', name: 'Empresa B'}, {code: '938', name: 'Empresa C'}]);
@@ -146,7 +146,7 @@ test('MongoDB simulador: cinco campos vêm de snapshots conciliados, com CPF pr�
     return Response.json({cnpj,razao_social:'Empresa sintética',opcao_pelo_simples:cnpj===ids[0],opcao_pelo_mei:false});
   }) as typeof fetch;
   const rows = [[ids[0],10001],[ids[0],9],[ids[1],20000],[ids[2],9990],['12345678900',3000],['12345678900',1000],['123456789012',4000],['ABC',500],['',700]]
-    .map(([document,totalCents]) => ({document,name:'Parceiro sintético',quantity:'1',totalCents,grossCents:Number(totalCents)+500,discountCents:600,accessoryCents:99,freightCents:150,abatementCents:50}));
+    .map(([document,totalCents]) => ({document,name:'Parceiro sintético',serviceDate:'2026-08-15',quantity:'1',totalCents,grossCents:Number(totalCents)+500,discountCents:600,accessoryCents:99,freightCents:150,abatementCents:50}));
   try {
     const catalog = await importCatalog(actor, [{code:'936',name:'Empresa A'},{code:'937',name:'Empresa B'}]);
     const [clientId, outside] = catalog.items.map((item:any)=>item.id);
@@ -168,13 +168,13 @@ test('MongoDB simulador: cinco campos vêm de snapshots conciliados, com CPF pr�
     const snapshot:any = await routeV4({...actor,role:'viewer'},'GET',url,{salesCpfCents:999999});
     assert.equal(snapshot.generationId,id); assert.equal(snapshot.clientId,clientId);
     assert.deepEqual(snapshot.company,{name:'Empresa A',code:'936'});
-    assert.equal(snapshot.periodBasis,'REPORT_TOTALS');
+    assert.equal(snapshot.periodBasis,'COLUMN_H'); assert.equal(snapshot.reportMonths,1);
     assert.deepEqual(snapshot.fields,{salesOptantCents:10010,salesNonOptantCents:35190,salesCpfCents:4000,purchasesOptantCents:10010,purchasesNonOptantCents:39190});
     assert.equal(snapshot.purchases.totalCents,49200); assert.equal(snapshot.sales.totalCents,49200);
     assert.equal(snapshot.sales.jobId,sales.job._id); assert.equal(snapshot.sales.formula,'Q - Y + AA - AB');
     assert.equal(snapshot.sales.calculationVersion,'NET_V2'); assert(snapshot.sales.completedAt);
     assert.deepEqual(snapshot.classification,{purchases:{unconfirmedCount:1,unconfirmedCents:9990,nonCnpjCount:4,nonCnpjCents:9200},sales:{unconfirmedCount:1,unconfirmedCents:9990,otherDocumentsCount:3,otherDocumentsCents:5200}});
-    assert(snapshot.warnings.some((message:string)=>message.includes('mesmo período')));
+    assert(snapshot.warnings.some((message:string)=>message.includes('mesmas competências')));
     assert(snapshot.warnings.some((message:string)=>message.includes('CNPJs não confirmados')));
     await assert.rejects(routeV4(actor,'POST',url,{}),errorCode('NOT_FOUND'));
     const jobs = await collection('lookupJobs');
@@ -212,7 +212,7 @@ test('MongoDB gerações: vendas e compras independentes, requisitos e históric
   const actor = {_id: 'tester', role: 'admin', name: 'Teste', email: 'test@example.test'};
   const colleague = {...actor, _id: 'colleague', role: 'operator'};
   const errorCode = (code: string) => (error: any) => error.code === code;
-  const row = {document: '12345678900', name: 'Pessoa sintética', quantity: '2', grossCents: 10000, discountCents: 2000,
+  const row = {document: '12345678900', name: 'Pessoa sintética', serviceDate: '2026-08-15', quantity: '2', grossCents: 10000, discountCents: 2000,
     accessoryCents: 999, freightCents: 500, abatementCents: 300, totalCents: 8200};
   const finish = async (job: any) => {
     await uploadLookup(actor, job._id, {offset: 0, rows: [row]});

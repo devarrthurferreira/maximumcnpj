@@ -4,13 +4,13 @@ import * as XLSX from 'xlsx';
 const clientId = '00000000-0000-4000-8000-000000000020';
 const client = {_id:clientId, code:'000', name:'EMPRESA DEMONSTRAÇÃO', active:true};
 const lines = [
-  {document:'11.222.333/0001-81', name:'FORNECEDOR FICTÍCIO', quantity:'2', grossCents:10010,discountCents:1000,accessoryCents:250,freightCents:500,abatementCents:10,totalCents:9500},
-  {document:'11222333000181', name:'FORNECEDOR FICTÍCIO', quantity:'7',grossCents:2020,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:2020},
-  {document:'123.456.789-00', name:'PESSOA FICTÍCIA', quantity:'1',grossCents:5000,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:5000}
+  {document:'11.222.333/0001-81', name:'FORNECEDOR FICTÍCIO', serviceDate:'2026-08-15', quantity:'2', grossCents:10010,discountCents:1000,accessoryCents:250,freightCents:500,abatementCents:10,totalCents:9500},
+  {document:'11222333000181', name:'FORNECEDOR FICTÍCIO', serviceDate:'2026-08-16', quantity:'7',grossCents:2020,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:2020},
+  {document:'123.456.789-00', name:'PESSOA FICTÍCIA', serviceDate:'2026-08-17', quantity:'1',grossCents:5000,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:5000}
 ];
 const csv = () => {
-  const header = Array(28).fill(''); header[0] = 'CNPJ / CPF / CNO'; header[8] = 'Razão Social'; header[15] = 'Quantidade'; header[16] = 'Valor Total'; header[24]='Valor Desconto';header[25]='Valor Despesa Acessória';header[26]='Valor Frete';header[27]='Abatimento não Tributado';
-  return [header, ...lines.map(l => {const row = Array(28).fill(''); row[0] = l.document; row[8] = l.name; row[15] = l.quantity; row[16] = (l.grossCents / 100).toFixed(2).replace('.', ',');[l.discountCents,l.accessoryCents,l.freightCents,l.abatementCents].forEach((v,i)=>row[24+i]=(v/100).toFixed(2).replace('.',',')); return row;})].map(row => row.join(';')).join('\r\n');
+  const header = Array(28).fill(''); header[0] = 'CNPJ / CPF / CNO'; header[7] = 'Data Escrituração/Serviço'; header[8] = 'Razão Social'; header[15] = 'Quantidade'; header[16] = 'Valor Total'; header[24]='Valor Desconto';header[25]='Valor Despesa Acessória';header[26]='Valor Frete';header[27]='Abatimento não Tributado';
+  return [header, ...lines.map(l => {const row = Array(28).fill(''); row[0] = l.document; row[7] = l.serviceDate.split('-').reverse().join('/'); row[8] = l.name; row[15] = l.quantity; row[16] = (l.grossCents / 100).toFixed(2).replace('.', ',');[l.discountCents,l.accessoryCents,l.freightCents,l.abatementCents].forEach((v,i)=>row[24+i]=(v/100).toFixed(2).replace('.',',')); return row;})].map(row => row.join(';')).join('\r\n');
 };
 
 for (const type of ['PURCHASES','SALES']) test(`${type} imports cp1252 columns, keeps financial values and provides snapshot downloads`, async ({page}, testInfo) => {
@@ -99,9 +99,10 @@ test('Excel starting at row 5 keeps fixed source coordinates and CNPJ leading ze
   await page.route('**/api/auth/session', route => route.fulfill({json:{user:{_id:'test',role:'operator'}}}));
   await page.route('**/api/v4/clients', route => route.fulfill({json:{items:[client]}}));
   await page.route(/\/api\/v4\/purchases(?:[/?]|$)/, route => route.fulfill({json:{items:[],total:0}}));
-  const sheet:XLSX.WorkSheet = {'!ref':'A5:AB8',A5:{t:'s',v:'Documento'},I5:{t:'s',v:'Razão Social'},P5:{t:'s',v:'Quantidade'},Q5:{t:'s',v:'Valor Total'},Y5:{t:'s',v:'Valor Desconto'},Z5:{t:'s',v:'Despesa Acessória'},AA5:{t:'s',v:'Valor Frete'},AB5:{t:'s',v:'Abatimento não Tributado'}};
+  const sheet:XLSX.WorkSheet = {'!ref':'A5:AB8',A5:{t:'s',v:'Documento'},H5:{t:'s',v:'Data Escrituração/Serviço'},I5:{t:'s',v:'Razão Social'},P5:{t:'s',v:'Quantidade'},Q5:{t:'s',v:'Valor Total'},Y5:{t:'s',v:'Valor Desconto'},Z5:{t:'s',v:'Despesa Acessória'},AA5:{t:'s',v:'Valor Frete'},AB5:{t:'s',v:'Abatimento não Tributado'}};
   for(let r=6;r<=8;r++) {
     sheet['A'+r]={t:'n',v:r===6?4252011000110:11222333000181,z:'00000000000000'};
+    sheet['H'+r]={t:'n',v:46250+r,z:'dd/mm/yyyy'};
     sheet['I'+r]={t:'s',v:'FORNECEDOR LINHA '+r};sheet['P'+r]={t:'n',v:1};sheet['Q'+r]={t:'n',v:r*10};
   }
   const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,sheet,'Compras');

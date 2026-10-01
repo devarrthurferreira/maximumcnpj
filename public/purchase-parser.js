@@ -31,6 +31,45 @@ export function amountCents(value, field = 'Valor Total (Q)') {
   return cents;
 }
 
+function canonicalDate(year, month, day, field) {
+  const y=Number(year), m=Number(month), d=Number(day), date=new Date(Date.UTC(y,m-1,d));
+  if (y < 1900 || y > 2200 || date.getUTCFullYear()!==y || date.getUTCMonth()!==m-1 || date.getUTCDate()!==d)
+    throw new Error(`${field}: data inválida.`);
+  return `${String(y).padStart(4,'0')}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+}
+
+/** Normaliza a coluna H sem deslocar datas fiscais por fuso horário. */
+export function fiscalDate(value, field='Data Escrituração/Serviço (H)') {
+  if (value instanceof Date && !Number.isNaN(value.valueOf())) return canonicalDate(value.getUTCFullYear(), value.getUTCMonth()+1, value.getUTCDate(), field);
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0 || value >= 2958466) throw new Error(`${field}: data inválida.`);
+    const date = new Date(Date.UTC(1899,11,30) + Math.floor(value) * 86400000);
+    return canonicalDate(date.getUTCFullYear(), date.getUTCMonth()+1, date.getUTCDate(), field);
+  }
+  const text=String(value ?? '').trim();
+  if (!text) throw new Error(`${field}: preenchimento obrigatório.`);
+  let match=text.match(/^(\d{2})[\/.\-](\d{2})[\/.\-](\d{4})(?:\s+.*)?$/);
+  if (match) return canonicalDate(match[3],match[2],match[1],field);
+  match=text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/);
+  if (match) return canonicalDate(match[1],match[2],match[3],field);
+  throw new Error(`${field}: use uma data válida (ex.: 31/08/2026).`);
+}
+
+export function fiscalPeriod(rows) {
+  if (!rows.length) return null;
+  const dates=rows.map(row=>row.serviceDate).filter(Boolean).sort();
+  if (dates.length !== rows.length) throw new Error('Data Escrituração/Serviço (H): todas as linhas precisam ter uma data válida.');
+  const startDate=dates[0], endDate=dates[dates.length-1], [sy,sm]=startDate.split('-').map(Number), [ey,em]=endDate.split('-').map(Number);
+  const months=(ey-sy)*12 + em-sm + 1;
+  if (months < 1 || months > 12) throw new Error(`O relatório cobre ${months} meses pela coluna H. Use um período entre 1 e 12 meses.`);
+  const observed=new Set(dates.map(date=>date.slice(0,7))), missingMonths=[];
+  for (let i=0;i<months;i++) {
+    const absolute=sy*12+(sm-1)+i, year=Math.floor(absolute/12), month=absolute%12+1, key=`${year}-${String(month).padStart(2,'0')}`;
+    if (!observed.has(key)) missingMonths.push(key);
+  }
+  return {startDate,endDate,startMonth:startDate.slice(0,7),endMonth:endDate.slice(0,7),months,observedMonths:observed.size,missingMonths};
+}
+
 // Recovery is limited to the known semicolon CSV export. Workbook columns are never shifted.
 const EXPORT_SUFFIX = ['Descrição', 'Quantidade', 'Valor Total', 'CST ICMS', 'Base Cálculo ICMS',
   'Alíquota ICMS', 'Valor ICMS', 'Valor IPI', 'Valor ISS', 'Valor Substituição Tributária',
@@ -97,8 +136,8 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   if (type === 'SALES' && version !== 'NET_V2') throw new Error('Relatório de vendas requer a fórmula Q - Y + AA - AB.');
   const net = version === 'NET_V2';
   if (!Number.isInteger(headerIndex) || headerIndex < 0 || headerIndex > 20) throw new Error('Escolha a linha de cabeçalho entre 1 e 21.');
-  const header = matrix[headerIndex] || [], required = net ? [0,8,16,24,25,26,27] : [0,8,16];
-  if (header.length < (net ? 28 : 17) || required.some(index => !String(header[index] ?? '').trim())) throw new Error(`O relatório precisa conter cabeçalhos nas colunas ${net ? 'A, I, Q, Y, Z, AA e AB' : 'A, I e Q'}. Confira a aba e o cabeçalho.`);
+  const header = matrix[headerIndex] || [], required = net ? [0,7,8,16,24,25,26,27] : [0,8,16];
+  if (header.length < (net ? 28 : 17) || required.some(index => !String(header[index] ?? '').trim())) throw new Error(`O relatório precisa conter cabeçalhos nas colunas ${net ? 'A, H, I, Q, Y, Z, AA e AB' : 'A, I e Q'}. Confira a aba e o cabeçalho.`);
   const lastHeader = header.findLastIndex(value => String(value ?? '').trim());
   const quantityRequired = type === 'PURCHASES';
   const components = net ? {grossCents:0, discountCents:0, accessoryCents:0, freightCents:0, abatementCents:0, totalCents:0} : null;
@@ -121,7 +160,8 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       const document = String(raw[0] ?? '').trim(), name = String(raw[8] ?? '').trim();
       if (document.length > 40 || name.length > 200) throw new Error('Documento ou razão social acima do limite.');
       if (!name) throw new Error(`${type === 'SALES' ? 'Comprador' : 'Razão social'} (I): preenchimento obrigatório.`);
-      if ([0,8,15,16,...(net ? [24,25,26,27] : [])].map(index => raw[index]).some(v => String(v).includes('[FORMULA_NAO_SUPORTADA]'))) throw new Error('Cole as fórmulas como valores antes de importar.');
+      if ([0,8,15,16,...(net ? [7,24,25,26,27] : [])].map(index => raw[index]).some(v => String(v).includes('[FORMULA_NAO_SUPORTADA]'))) throw new Error('Cole as fórmulas como valores antes de importar.');
+      const serviceDate = net ? fiscalDate(raw[7]) : null;
       const quantity = quantityRequired || String(raw[15] ?? '').trim() ? decimal(raw[15], 6, 'Quantidade (P)') : '0';
       if (quantity.split('.')[0].length > 9) throw new Error('Quantidade (P): use até 9 dígitos inteiros.');
       const grossCents = amountCents(raw[16]);
@@ -136,12 +176,16 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       if (net) for (const field of Object.keys(components)) components[field] += financial[field];
       const kind = documentKind(document);
       if (kind === 'CNPJ') unique.add(normalizeCnpj(document).cnpj); else nonCnpjLines++;
-      rows.push({document, name, quantity, ...financial});
+      rows.push({document, name, serviceDate, quantity, ...financial});
       if (repaired) repairs.push({line:sourceLine, descriptionSeparators:repaired.descriptionSeparators,
         reason:'Separadores extras da descrição (O) recompostos; colunas P a AD realinhadas com os valores originais.'});
     } catch (error) { errors.push({line:sourceLine, message:error.message}); }
   }
-  return {rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, components, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
+  let period = null;
+  if (!errors.length && rows.length && net) {
+    try { period = fiscalPeriod(rows); } catch (error) { errors.push({line:headerIndex + 1, message:error.message}); }
+  }
+  return {rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, components, period, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
 }
 
 export function decodePurchaseCsv(buffer, encoding = 'auto') {

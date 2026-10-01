@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {amountCents, decimal, decodePurchaseCsv, parsePurchaseMatrix} from '../public/purchase-parser.js';
+import {amountCents, decimal, decodePurchaseCsv, parsePurchaseMatrix, fiscalDate} from '../public/purchase-parser.js';
 
 const header = Array(28).fill('');
-for (const [index,label] of [[0,'Documento'],[8,'Razão social'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']]) header[index] = label;
-const row = (document, name, quantity, total) => { const r = Array(28).fill(''); r[0] = document; r[8] = name; r[15] = quantity; r[16] = total; return r; };
+for (const [index,label] of [[0,'Documento'],[7,'Data Escrituração/Serviço'],[8,'Razão social'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']]) header[index] = label;
+const row = (document, name, quantity, total, serviceDate='15/08/2026') => { const r = Array(28).fill(''); r[0] = document; r[7] = serviceDate; r[8] = name; r[15] = quantity; r[16] = total; return r; };
 
 test('purchase parser keeps cents exact and accepts Brazilian formatting or numeric Excel cells', () => {
   assert.equal(amountCents('1.234,56'), 123456);
@@ -15,6 +15,17 @@ test('purchase parser keeps cents exact and accepts Brazilian formatting or nume
   assert.equal(decimal('001,250000', 6, 'Quantidade'), '1.25');
   assert.equal(decimal(12.345678, 6, 'Quantidade'), '12.345678');
   for (const value of ['', '-1', '1,999', 'abc', Number.POSITIVE_INFINITY, 1.005, '1000000000,01']) assert.throws(() => amountCents(value));
+});
+
+test('coluna H aceita data brasileira, ISO e serial Excel e identifica de 1 a 12 meses', () => {
+  assert.equal(fiscalDate('31/08/2026'), '2026-08-31');
+  assert.equal(fiscalDate('2026-08-31T10:30:00'), '2026-08-31');
+  assert.equal(fiscalDate(46265), '2026-08-31');
+  assert.throws(() => fiscalDate('31/02/2026'), /inválida/);
+  const twelve = parsePurchaseMatrix([header,row('11222333000181','A','1','1,00','01/09/2025'),row('11222333000181','A','1','1,00','31/08/2026')]);
+  assert.deepEqual(twelve.period, {startDate:'2025-09-01',endDate:'2026-08-31',startMonth:'2025-09',endMonth:'2026-08',months:12,observedMonths:2,missingMonths:['2025-10','2025-11','2025-12','2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07']});
+  const thirteen = parsePurchaseMatrix([header,row('11222333000181','A','1','1,00','01/08/2025'),row('11222333000181','A','1','1,00','31/08/2026')]);
+  assert.match(thirteen.errors.at(-1).message, /13 meses/);
 });
 
 test('purchase preview deduplicates valid CNPJs without discarding any purchase value or multiplying P', () => {

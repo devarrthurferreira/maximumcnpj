@@ -94,6 +94,7 @@ export async function recheckLookup(actor: LookupActor, id: string) {
   need(rows === old.expectedRows && items === old.summary.unique, 'Revalidação incompleta. Cancele o novo lote e tente novamente.', 409, 'RESULT_COUNT');
   await (await collection('lookupJobs')).updateOne(scope({_id: fresh._id}), {$set: {repeatedFrom: id, uploaded: rows,
     summary: old.summary, purchaseInput: old.purchaseInput, calculationVersion: calculationVersion(old),
+    ...(old.reportPeriod ? {reportPeriod: old.reportPeriod} : {}),
     status: 'PROCESSING', startedAt: new Date()}});
   await audit(actor._id, 'lookup.recheck', fresh._id);
   return getJob(fresh._id);

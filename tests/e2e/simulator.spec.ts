@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test';
-import {calculateSimulation,draftToInput,TAX_SOURCES,CALCULATOR_SOURCE_COMMIT} from '../../public/simulator-engine.js';
+import {calculateSimulation,draftToInput,TAX_SOURCES,CALCULATOR_SOURCE_COMMIT,MODEL_VERSION} from '../../public/simulator-engine.js';
 const generation='00000000-0000-4000-8000-000000000001',client='00000000-0000-4000-8000-000000000002';
 const source={generationId:generation,clientId:client,company:{code:'001',name:'EMPRESA SINTÉTICA'},
   purchases:{jobId:'00000000-0000-4000-8000-000000000003',fileName:'compras.csv',totalCents:450001,formula:'Q - Y + AA - AB',calculationVersion:'NET_V2',completedAt:'2026-09-30T15:00:00Z'},
@@ -11,8 +11,8 @@ async function setup(page:any){
   await page.route('**/api/v4/simulations',(r:any)=>r.fulfill({status:201,json:snapshot(r.request().postDataJSON())}));
 }
 const url=`/simulator.html?generation=${generation}&client=${client}`;
-function snapshot(body:any){return {_id:body.simulationId,generationId:generation,clientId:client,company:source.company,title:'Simulação de teste',source,draft:body.draft,result:calculateSimulation(body.draft),engineInput:draftToInput(body.draft),taxSources:TAX_SOURCES,monthlyGroups:body.monthlyGroups,monthlyGroupsUnit:'BRL',reportMonths:body.reportMonths,periodConfirmed:true,manuallyAdjusted:false,adjustments:[],createdAt:'2026-09-30T16:00:00Z',createdBy:{id:'operator',name:'Teste'},modelVersion:'1.0.0-2027-2028',calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,parentSimulationId:body.parentSimulationId||null};}
-async function complete(page:any, values:any={}){await page.locator('#period-confirm').check();for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill(String(values[id]??0));}
+function snapshot(body:any){return {_id:body.simulationId,generationId:generation,clientId:client,company:source.company,title:'Simulação de teste',source,draft:body.draft,result:calculateSimulation(body.draft),engineInput:draftToInput(body.draft),taxSources:TAX_SOURCES,monthlyGroups:body.monthlyGroups,monthlyGroupsUnit:'BRL',reportMonths:body.reportMonths,periodConfirmed:true,manuallyAdjusted:false,adjustments:[],createdAt:'2026-09-30T16:00:00Z',createdBy:{id:'operator',name:'Teste'},modelVersion:MODEL_VERSION,calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,parentSimulationId:body.parentSimulationId||null};}
+async function complete(page:any, values:any={}){await page.locator('#period-confirm').check();await page.locator('#rbt12').fill(String(values.rbt12??150000));for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill(String(values[id]??0));}
 
 test('Verified report values populate five categories and require monthly inputs before computing original engine',async({page},info)=>{
   await setup(page);const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(url);
@@ -25,6 +25,7 @@ test('Verified report values populate five categories and require monthly inputs
   await expect(page.locator('#serviceRevenue')).toHaveValue('');
   await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#results-top')).toHaveCount(0);
   await page.locator('#period-confirm').check();
+  await page.locator('#rbt12').fill('150000');
   for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill('0');
   await expect(page.locator('#annual-revenue')).toContainText('120.000,12');
   await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();
@@ -59,7 +60,7 @@ test('Dashboard shows five charts, scales every monetary view and expands every 
   await setup(page);await page.goto(url);await complete(page,{serviceRevenue:1000,salaries:15000,rent:700});await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
   await expect(page.locator('.sim-chart-card')).toHaveCount(5);await expect(page.locator('.sim-chart-profit .is-negative')).toHaveCount(4);
   await expect(page.locator('#simulation-notices details')).toHaveCount(1);await expect(page.locator('#simulation-notices details')).not.toHaveAttribute('open','');
-  await page.locator('#simulation-notices summary').click();await expect(page.locator('.sim-notices-content')).toContainText('Receita de 12 meses estimada');await expect(page.locator('.sim-notices-content')).toContainText('Não confirmados incluídos');
+  await page.locator('#simulation-notices summary').click();await expect(page.locator('.sim-notices-content')).toContainText('RBT12 informada');await expect(page.locator('.sim-notices-content')).toContainText('Não confirmados incluídos');
   await expect(page.locator('.sim-notices-content article')).toHaveCount(9);
   const annual=await page.locator('.sim-chart-profit .sim-chart-row-head strong').allTextContents();
   await page.getByRole('button',{name:'Mensal',exact:true}).click();await expect(page.locator('.sim-dre .eyebrow')).toContainText('MENSAL');
@@ -80,7 +81,7 @@ test('Saved detail only reads captured snapshot and opens an independent editabl
   await page.route('**/api/v4/simulations/'+saved._id,r=>r.fulfill({json:saved}));
   let sourceReads=0;await page.route('**/api/v4/generations/*/simulator?*',r=>{sourceReads++;return r.fulfill({status:500,json:{message:'Must not read current source'}});});
   await page.goto('/simulator.html?simulation='+saved._id);await expect(page.locator('#simulation-snapshot')).toContainText('2.700,00');await expect(page.locator('#simulator-form')).toHaveCount(0);expect(sourceReads).toBe(0);
-  await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');await expect(page.locator('#simulation-snapshot .sim-detail-grid strong')).toHaveCount(12);
+  await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');await expect(page.locator('#simulation-snapshot .sim-detail-grid strong')).toHaveCount(13);
   const downloadEvent=page.waitForEvent('download');await page.locator('#export-simulation').click();const download=await downloadEvent;const stream=await download.createReadStream();let text='';for await(const chunk of stream!)text+=chunk;const exported=JSON.parse(text);expect(exported._id).toBe(saved._id);expect(exported.draft).toEqual(saved.draft);expect(exported.result).toEqual(saved.result);expect(exported.source).toEqual(source);
   await page.locator('#create-version').click();await expect(page.locator('#serviceRevenue')).toHaveValue('2700.00');await expect(page.locator('#period-confirm')).not.toBeChecked();await page.locator('#period-confirm').check();await page.locator('#serviceRevenue').fill('3000');
   const copyRequest=page.waitForRequest(r=>r.url().endsWith('/api/v4/simulations')&&r.method()==='POST');await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();const copy=(await copyRequest).postDataJSON();expect(copy.simulationId).not.toBe(saved._id);expect(copy.parentSimulationId).toBe(saved._id);expect(copy.draft.values.serviceRevenue).toBe(3000);expect(sourceReads).toBe(0);

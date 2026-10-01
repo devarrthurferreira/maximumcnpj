@@ -1,16 +1,28 @@
 # Histórico de alterações
 
-## [0.11.1] — 2026-10-01
+## [0.12.0] — 2026-10-01
 
-- Motor de consultas com concorrência limitada e intervalo global no MongoDB; até 3 requisições simultâneas por padrão, fila de candidatos em blocos e drenagem antes de liberar a exclusão do lote.
-- Mantida a distinção estrita entre OPTANTE, NAO_OPTANTE e NAO_CONFIRMADO. CNPJ com máscara na resposta é aceito somente se corresponder à identidade completa validada.
-- Indicador ausente/conflitante recebe nova tentativa; erros transitórios têm repetição limitada. Pausas Retry-After compartilhadas e estados pendentes nunca viram negativas fiscais.
-- Progresso parcial autenticado e paginado em consultas, compras e vendas, com filtros por situação original e motivos legíveis. A confirmação negativa é exibida separadamente das falhas, sem mudar os grupos financeiros finais.
-- Revalidação em novo lote, inclusive para linhas financeiras já reconciliadas, preservando valores, fórmula e histórico. A nova consulta financeira é independente e não sobrescreve gerações/simulações anteriores.
-- Inserções compartilhadas toleram corridas de unicidade da mesma identidade, sem esconder divergências. Atualização do cadastro não regride a data da última verificação.
-- Inclusão de testes unitários, MongoDB descartável e navegador para concorrência, classificação, limites, isolamento, valores financeiros, dados parciais e responsividade.
-- README e histórico anteriores preservados integralmente no arquivo de documentação. Versões Node/Python/lockfile alinhadas; dependências e regras do simulador mantidas.
+- Projeção explícita e permanente: total importado ÷ competências (1–12) × 12, em todos os cinco grupos de compras/vendas.
+- Regra compartilhada em centavos inteiros entre navegador e servidor, arredondamento conciliado entre grupos e horizonte fixo de 12 meses, nunca N + 12.
+- Memória `AVERAGE_X12_V1` salva pelo servidor com totais, divisor, médias, projeções e cenário mensal editado separado da base original.
+- Redesign com três cartões de cálculo, alternância Compras/Vendas, 12 meses iguais, tabela de conferência por grupo, seções e responsividade.
+- Serviços e despesas permanecem mensais, multiplicados por 12 uma vez; RBT12 manual/PDF permanece independente da projeção.
+- Históricos não recalculados; rascunho com divisor diferente não sobrescreve médias automáticas atuais.
+- Conservadas a comparação mensal da coluna H e a consulta concorrente da v0.11.1; revalidação financeira mantém o período original.
+- Testes de precisão, contratos, integração MongoDB, histórico e navegador adicionados. Atualizados testes antigos de rotas Python, fixtures com coluna H e detalhes da RBT12, sem relaxar autenticação ou conciliação.
 
-## [0.11.0] e anteriores
 
-O histórico integral até 30/09/2026 foi preservado, sem alteração, em [CHANGELOG v0.11.0](CHANGELOG-v0.11.0.md). A documentação operacional anterior está em [README v0.11.0](README-v0.11.0.md).
+## [0.12.0] — correção de competências em 2026-10-01
+
+- Corrigido o bloqueio do simulador quando compras e vendas possuem primeiros/últimos lançamentos em dias diferentes dentro dos mesmos meses.
+- Comparação passa a utilizar mês/ano inicial e final e quantidade inclusiva de competências, com validação de intervalo entre 1 e 12 meses.
+- Abril a agosto de 2026 é aceito como cinco competências nos dois arquivos, inclusive quando um começa no dia 02/04 e outro no dia 01/04.
+- Meses sem movimento dentro do intervalo não reduzem o divisor. Meses/anos realmente diferentes continuam bloqueados, mesmo com a mesma duração.
+- Datas originais da coluna H preservadas, sem normalização destrutiva para o primeiro/último dia do mês. Conciliação individual do snapshot continua exata.
+- Mensagem de erro e aviso do simulador esclarecem a regra mensal. Fórmulas, valores, Simples/CPF, RBT12, permissões e históricos não foram alterados.
+- Seis testes unitários e integração com MongoDB descartável adicionados: caso informado, dias finais diferentes, um mês, virada de ano, divergências reais, integridade e isolamento.
+- Correção aplicada à branch de período/RBT12, sem substituir a linha de consultas da main. Versão de aplicação 0.12.0 e dependências mantidas.
+
+## Entrega inicial [0.12.0] e versões anteriores
+
+O histórico integral anterior foi preservado em [CHANGELOG v0.12.0 inicial](CHANGELOG-v0.12.0-inicial.md). A exigência antiga de dias idênticos na comparação entre compras e vendas foi substituída pela regra de competências desta correção.

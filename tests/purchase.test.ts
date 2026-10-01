@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compactPurchaseLine, calculationVersion, exactCents, percentage, reconciledPercentages, purchaseCsv, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus } from '../src/purchase-domain.ts';
+import { compactPurchaseLine, calculationVersion, exactCents, percentage, reconciledPercentages, purchaseCsv, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus, reportPeriod } from '../src/purchase-domain.ts';
 
-const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050};
+const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', serviceDate: '2026-08-15', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050};
 test('Compras: valida componentes no servidor, centavos exatos e não multiplica P por Q', () => {
   const value = compactPurchaseLine({...row, status: 'OPTANTE', rawWorkbook: 'discard'});
   assert.equal(value.document, '00000000000191'); assert.equal(value.cnpj, '00000000000191'); assert.equal(value.documentKind, 'CNPJ');
@@ -13,6 +13,12 @@ test('Compras: valida componentes no servidor, centavos exatos e não multiplica
   assert.throws(() => compactPurchaseLine({...row, name: ''}));
   assert.throws(() => compactPurchaseLine({...row, document: 123}));
 });
+test('Período fiscal usa a coluna H, inclui meses sem movimento no intervalo e bloqueia acima de 12 meses', () => {
+  assert.deepEqual(reportPeriod(['2026-06-30','2026-08-01']), {startDate:'2026-06-30',endDate:'2026-08-01',startMonth:'2026-06',endMonth:'2026-08',months:3,observedMonths:2,missingMonths:['2026-07']});
+  assert.throws(() => reportPeriod(['2025-08-01','2026-08-01']), /13 meses/);
+  assert.throws(() => compactPurchaseLine({...row,serviceDate:'31/08/2026'}), /Data Escrituração/);
+});
+
 test('Compras: CPF, inválido e ausência preservam valor sem virarem CNPJ ou negativa fiscal', () => {
   for (const [document, kind] of [['123.456.789-00', 'CPF'], ['', 'AUSENTE'], ['123', 'INVALIDO']]) {
     const value = compactPurchaseLine({...row, document});
