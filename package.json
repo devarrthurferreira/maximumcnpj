@@ -12,7 +12,7 @@
     "build": "tsc && node scripts/assets.mjs",
     "start": "node --env-file-if-exists=.env dist/server.js",
     "check": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/domain.test.ts tests/security.test.ts tests/imported.test.ts tests/http.test.ts tests/deployment.test.mjs tests/lookup.test.ts tests/lookup-http.test.ts tests/team.test.ts tests/purchase.test.ts tests/purchase-parser.test.mjs tests/simulator-engine.test.mjs",
+    "test": "node --experimental-strip-types --test tests/domain.test.ts tests/security.test.ts tests/imported.test.ts tests/http.test.ts tests/deployment.test.mjs tests/lookup.test.ts tests/lookup-http.test.ts tests/team.test.ts tests/purchase.test.ts tests/purchase-parser.test.mjs tests/simulator-engine.test.mjs tests/report-competence.test.ts",
     "test:integration": "node --experimental-strip-types --test tests/integration.test.ts tests/bootstrap.test.ts tests/team-integration.test.ts",
     "seed": "node --experimental-strip-types --env-file-if-exists=.env scripts/seed.ts",
     "test:e2e": "playwright test",
@@ -23,8 +23,9 @@
     "smoke": "node scripts/smoke-deployment.mjs",
     "provision:team": "node --experimental-strip-types --env-file-if-exists=.env scripts/provision-team.ts",
     "test:purchases-integration": "node --experimental-strip-types --test tests/purchase-integration.test.ts",
-    "test:generations-integration": "node --experimental-strip-types --test tests/generation-integration.test.ts",
-    "test:simulations-integration": "node --experimental-strip-types --test tests/simulation-integration.test.ts"
+    "test:generations-integration": "node --experimental-strip-types --test tests/generation-integration.test.ts tests/report-competence-integration.test.ts",
+    "test:simulations-integration": "node --experimental-strip-types --test tests/simulation-integration.test.ts",
+    "test:competences": "node --experimental-strip-types --test tests/report-competence.test.ts tests/report-competence-integration.test.ts"
   },
   "dependencies": {
     "mongodb": "6.21.0",

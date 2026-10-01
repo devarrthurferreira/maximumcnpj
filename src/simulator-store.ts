@@ -2,6 +2,7 @@ import { getGeneration } from './generation-store.ts';
 import { purchaseSummary } from './purchase-store.ts';
 import { PURCHASE_MODE, SALES_MODE, exactCents } from './purchase-domain.ts';
 import { need } from './security.ts';
+import { sameReportCompetences } from './report-competence.ts';
 
 type FinancialSummary = Awaited<ReturnType<typeof purchaseSummary>>;
 
@@ -52,12 +53,13 @@ export async function generationSimulator(id: string, clientId: string) {
   };
   let period = null, reportMonths = null, periodBasis = 'MANUAL';
   if (purchases.period && sales.period) {
-    need(purchases.period.startDate === sales.period.startDate && purchases.period.endDate === sales.period.endDate && purchases.period.months === sales.period.months,
-      `Compras e vendas cobrem períodos diferentes pela coluna H (${purchases.period.startDate} a ${purchases.period.endDate} vs. ${sales.period.startDate} a ${sales.period.endDate}). Use arquivos do mesmo período.`, 409, 'SIMULATOR_PERIOD');
+    // Compare independent reports by competence; exact snapshot/date reconciliation remains in purchaseSummary.
+    need(sameReportCompetences(purchases.period, sales.period),
+      `Compras e vendas cobrem competências diferentes pela coluna H (${purchases.period.startMonth} a ${purchases.period.endMonth} vs. ${sales.period.startMonth} a ${sales.period.endMonth}). Use arquivos com o mesmo mês/ano inicial e final. Diferenças de dias no mesmo mês são permitidas.`, 409, 'SIMULATOR_PERIOD');
     period = purchases.period; reportMonths = period.months; periodBasis = 'COLUMN_H';
   }
   const warnings = [
-    period ? `Período identificado automaticamente pela coluna H: ${period.startMonth} a ${period.endMonth} (${period.months} ${period.months === 1 ? 'mês' : 'meses'}).` :
+    period ? `Período identificado automaticamente pela coluna H: ${period.startMonth} a ${period.endMonth} (${period.months} ${period.months === 1 ? 'mês' : 'meses'}). Compras e vendas têm as mesmas competências; dias sem movimento não alteram o período mensal.` :
       'Histórico anterior sem período fiscal persistido: confirme manualmente quantos meses os dois arquivos representam.',
     'O enquadramento é o observado na consulta, sem comprovação retroativa para a data de cada nota. Não confirmados permanecem identificados na fonte.'
   ];
