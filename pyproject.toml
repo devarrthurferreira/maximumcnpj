@@ -1,6 +1,6 @@
 [project]
 name = "maximum-cnpj-python"
-version = "0.12.1"
+version = "0.12.2"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "reportlab==4.4.9",
@@ -13,7 +13,7 @@ dependencies = [
 
 # RapidOCR declares desktop OpenCV as a hard dependency. In Vercel's headless
 # Python runtime that wheel fails at import time because X11/libxcb is absent.
-# uv supports scoped exclusions, so replace only RapidOCR's desktop dependency
-# while keeping every other declared dependency intact.
+# Vercel resolves this project with uv. Exclude RapidOCR's desktop OpenCV transitive
+# dependency and install opencv-python-headless explicitly, avoiding X11/libxcb.
 [tool.uv]
 exclude-dependencies = ["opencv-python"]
