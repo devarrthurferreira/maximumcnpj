@@ -8,7 +8,8 @@ import { PURCHASE_MODE, SALES_MODE, isFinancialMode } from './purchase-domain.ts
 import { ensureLookupIndexes, getJob } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { listCatalog, importCatalog } from './lookup-catalog.ts';
-import { createLookup,uploadLookup,finalizeLookup,processLookup,cancelLookup,repeatLookup } from './lookup-jobs.ts';
+import { createLookup,uploadLookup,finalizeLookup,processLookup,cancelLookup,repeatLookup,recheckLookup } from './lookup-jobs.ts';
+import { lookupProgress } from './lookup-engine.ts';
 async function items(id:string,page:number,status:string,search:string){
   const job=await getJob(id);need(job.status==='COMPLETED','Aguarde a conclusão para ver o resultado consolidado.',409);
   const q:any=scope({jobId:id});if(status){need(['OPTANTE','NAO_OPTANTE','NAO_CONFIRMADO'].includes(status),'Situação inválida.');q.status=status === 'NAO_OPTANTE' ? {$ne:'OPTANTE'} : status;}
@@ -40,9 +41,13 @@ export async function routeV4(actor:LookupActor,method:string,url:URL,input:any)
   if(path==='/dashboard'&&method==='GET')return dashboard(client);
   if(path==='/history'&&method==='GET')return history(client,p,url.searchParams.get('cnpj')||'');
   if(path==='/lookups'&&method==='POST')return createLookup(actor,input);
-  const match=path.match(/^\/lookups\/([a-f0-9-]{36})(?:\/(rows|finalize|process|cancel|repeat|results))?$/);
+  const match=path.match(/^\/lookups\/([a-f0-9-]{36})(?:\/(rows|finalize|process|cancel|repeat|results|progress|recheck))?$/);
   if(match){const id=match[1],action=match[2];
-    const job=await getJob(id);need(!isFinancialMode(job.mode),'Consulta não encontrada.',404,'NOT_FOUND');
+    const job=await getJob(id);
+    // These two scoped actions serve cadastral, purchases and sales jobs alike.
+    if(action==='progress'&&method==='GET')return {...await lookupProgress(id,p,url.searchParams.get('status')||'ALL'),canRecheck:['admin','operator'].includes(actor.role)};
+    if(action==='recheck'&&method==='POST')return recheckLookup(actor,id);
+    need(!isFinancialMode(job.mode),'Consulta não encontrada.',404,'NOT_FOUND');
     if(!action&&method==='GET')return getJob(id);
     if(action==='results'&&method==='GET')return items(id,p,url.searchParams.get('status')||'',url.searchParams.get('search')||'');
     if(method==='POST'){
