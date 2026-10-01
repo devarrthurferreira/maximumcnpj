@@ -16,6 +16,4 @@ dependencies = [
 # uv supports scoped exclusions, so replace only RapidOCR's desktop dependency
 # while keeping every other declared dependency intact.
 [tool.uv]
-exclude-dependencies = [
-  { package = { name = "rapidocr", version = "3.9.2" }, dependencies = ["opencv-python"] },
-]
+exclude-dependencies = ["opencv-python"]
