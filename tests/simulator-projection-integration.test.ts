@@ -1,3 +1,4 @@
+import {section22} from './fixtures/section22.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -27,8 +28,9 @@ test('MongoDB: quatro competências -> média -> doze meses, histórico imutáve
   const source=await generationSimulator(gen._id,clientId);assert.equal(source.reportMonths,4);
   assert.equal(source.projection!.totals.sales.annualCents,120000000);
   const groups=Object.fromEntries(REPORT_GROUPS.map(k=>[k,source.projection!.monthlyGroupsCents[k]/100]));
-  const request={simulationId:randomUUID(),generationId:gen._id,clientId,reportMonths:4,periodConfirmed:true,monthlyGroups:groups,
+  const request={simulationId:randomUUID(),rbt12ExtractionId:randomUUID(),generationId:gen._id,clientId,reportMonths:4,periodConfirmed:true,monthlyGroups:groups,
    draft:{year:2027,salesAnnex:1,serviceAnnex:3,rbt12:888888.88,values:{serviceRevenue:2000,salesRevenue:100000,simplePurchases:0,regularPurchases:60000,salaries:15000,benefits:1000,adminExpenses:500,rent:3000,cardExpenses:400}}};
+  await (await collection('simplesExtractions')).insertOne({...scope(),_id:request.rbt12ExtractionId,clientId,parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result:section22(88888888)});
   const saved=await createSimulation(actor,request);
   assert.equal(saved.projection.version,'AVERAGE_X12_V1');assert.equal(saved.projection.reportMonths,4);assert.equal(saved.projection.timeline.length,12);
   assert.equal(saved.projection.totals.sales.totalCents,40000000);assert.equal(saved.projection.totals.sales.monthlyCents,10000000);

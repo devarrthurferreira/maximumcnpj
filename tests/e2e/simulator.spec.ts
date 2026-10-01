@@ -1,3 +1,5 @@
+import {readStatement,mockStatement} from './extrato-helper.ts';
+import {section22} from '../fixtures/section22.ts';
 import {test,expect} from '@playwright/test';
 import {calculateSimulation,draftToInput,TAX_SOURCES,CALCULATOR_SOURCE_COMMIT,MODEL_VERSION} from '../../public/simulator-engine.js';
 const generation='00000000-0000-4000-8000-000000000001',client='00000000-0000-4000-8000-000000000002';
@@ -6,13 +8,14 @@ const source={generationId:generation,clientId:client,company:{code:'001',name:'
   sales:{jobId:'00000000-0000-4000-8000-000000000004',fileName:'vendas.csv',totalCents:1000001,formula:'Q - Y + AA - AB',calculationVersion:'NET_V2',completedAt:'2026-09-30T15:00:00Z'},
   fields:{salesOptantCents:200001,salesNonOptantCents:500000,salesCpfCents:300000,purchasesOptantCents:100001,purchasesNonOptantCents:350000},warnings:['Não confirmados incluídos em Não optantes.'],periodBasis:'REPORT_TOTALS'};
 async function setup(page:any){
+  await mockStatement(page);
   await page.route('**/api/auth/session',(r:any)=>r.fulfill({json:{user:{_id:'operator',role:'operator',name:'Teste'}}}));
   await page.route('**/api/v4/generations/*/simulator?*',(r:any)=>r.fulfill({json:source}));
   await page.route('**/api/v4/simulations',(r:any)=>r.fulfill({status:201,json:snapshot(r.request().postDataJSON())}));
 }
 const url=`/simulator.html?generation=${generation}&client=${client}`;
-function snapshot(body:any){return {_id:body.simulationId,generationId:generation,clientId:client,company:source.company,title:'Simulação de teste',source,draft:body.draft,result:calculateSimulation(body.draft),engineInput:draftToInput(body.draft),taxSources:TAX_SOURCES,monthlyGroups:body.monthlyGroups,monthlyGroupsUnit:'BRL',reportMonths:body.reportMonths,periodConfirmed:true,manuallyAdjusted:false,adjustments:[],createdAt:'2026-09-30T16:00:00Z',createdBy:{id:'operator',name:'Teste'},modelVersion:MODEL_VERSION,calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,parentSimulationId:body.parentSimulationId||null};}
-async function complete(page:any, values:any={}){await page.locator('#period-confirm').check();await page.locator('#rbt12').fill(String(values.rbt12??150000));for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill(String(values[id]??0));}
+function snapshot(body:any){return {_id:body.simulationId,generationId:generation,clientId:client,company:source.company,title:'Simulação de teste',source,rbt12Source:'SIMPLES_SECTION_22',rbt12Extraction:{id:body.rbt12ExtractionId,...section22(Math.round(body.draft.rbt12*100))},draft:body.draft,result:calculateSimulation(body.draft),engineInput:draftToInput(body.draft),taxSources:TAX_SOURCES,monthlyGroups:body.monthlyGroups,monthlyGroupsUnit:'BRL',reportMonths:body.reportMonths,periodConfirmed:true,manuallyAdjusted:false,adjustments:[],createdAt:'2026-09-30T16:00:00Z',createdBy:{id:'operator',name:'Teste'},modelVersion:MODEL_VERSION,calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,parentSimulationId:body.parentSimulationId||null};}
+async function complete(page:any, values:any={}){await page.locator('#period-confirm').check();await readStatement(page,Math.round((values.rbt12??150000)*100));for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill(String(values[id]??0));}
 
 test('Verified report values populate five categories and require monthly inputs before computing original engine',async({page},info)=>{
   await setup(page);const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(url);
@@ -25,7 +28,7 @@ test('Verified report values populate five categories and require monthly inputs
   await expect(page.locator('#serviceRevenue')).toHaveValue('');
   await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#results-top')).toHaveCount(0);
   await page.locator('#period-confirm').check();
-  await page.locator('#rbt12').fill('150000');
+  await readStatement(page);
   for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill('0');
   await expect(page.locator('#annual-revenue')).toContainText('120.000,12');
   await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();
@@ -37,7 +40,7 @@ test('Verified report values populate five categories and require monthly inputs
   const download=page.waitForEvent('download');await page.getByRole('button',{name:'Exportar memória da simulação'}).click();expect((await download).suggestedFilename()).toBe('simulacao-001-2027.json');
   await page.locator('#salesCpfCents').fill('3500');await expect(page.locator('#salesRevenue')).toHaveValue('10500.01');await expect(page.locator('#results-top')).toHaveCount(0);
   await page.reload();await expect(page.locator('#salesCpfCents')).toHaveValue('3500.00');await expect(page.locator('#serviceRevenue')).toHaveValue('0.00');
-  await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();
+  await expect(page.locator('#rbt12')).toHaveValue('150000.00');await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   expect(await page.locator('.sim-dre tbody th').first().evaluate(el=>getComputedStyle(el).position)).toBe('sticky');
   await page.locator('.sim-table-wrap').evaluate(el=>el.scrollLeft=350);await expect(page.locator('.sim-dre th').first()).toBeVisible();
@@ -67,7 +70,7 @@ test('Dashboard shows five charts, scales every monetary view and expands every 
   await expect(page.locator('.sim-chart-revenue .sim-chart-composition-summary strong')).toContainText('11.000,01');
   await expect(page.locator('.sim-chart-purchases .sim-chart-composition-summary strong')).toContainText('4.500,01');
   await expect(page.locator('.sim-chart-expense-total strong')).toContainText('15.700,00');
-  const cells=await page.locator('.sim-dre tr').filter({hasText:'Receita bruta total'}).locator('td').allTextContents();expect(cells.every(t=>t.includes('11.000,01'))).toBe(true);
+  const cells=await page.locator('.sim-dre tr').filter({hasText:'Receita bruta total'}).locator('td').allTextContents();expect(cells).toHaveLength(13);expect(cells.slice(0,12).every(t=>t.includes('11.000,01'))).toBe(true);expect(cells[12]).toContain('132.000,12');await expect(page.locator('.sim-calendar thead th')).toHaveCount(14);
   const parse=(v:string)=>Number(v.replace(/[^0-9,-]/g,'').replace(',','.'));
   const monthly=await page.locator('.sim-chart-profit .sim-chart-row-head strong').allTextContents();monthly.forEach((v,i)=>expect(parse(v)).toBeCloseTo(parse(annual[i])/12,2));
   expect(await page.locator('#simulation-result').innerText()).not.toMatch(/NaN|Infinity/);
@@ -98,4 +101,38 @@ test('Unavailable regimes and zero revenue never become misleading zero-valued c
   await setup(page);await page.goto(url);await complete(page,{serviceRevenue:500000});await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');await expect(page.locator('.sim-chart-profit .sim-chart-unavailable')).toHaveCount(2);await expect(page.locator('.sim-regime').first()).toContainText('Indisponível');
   for(const id of ['salesOptantCents','salesNonOptantCents','salesCpfCents','serviceRevenue','purchasesOptantCents','purchasesNonOptantCents'])await page.locator('#'+id).fill('0');
   await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');await expect(page.locator('.sim-kpis')).toContainText('Sem ranking');await expect(page.locator('.sim-chart-burden')).toContainText('Não aplicável');await expect(page.locator('#simulation-result')).not.toContainText('NaN');
+});
+
+test('RBT12 vem somente da seção 2.2 e falha em PDF novo apaga a leitura anterior',async({page})=>{
+ await setup(page);await page.goto(url);await complete(page);
+ await expect(page.locator('#rbt12')).toHaveAttribute('readonly','');
+ await page.locator('#rbt12-details summary').click();await expect(page.locator('#rbt12-details tbody tr')).toHaveCount(12);
+ await expect(page.locator('#rbt12-details')).toContainText('08/2025');await expect(page.locator('#rbt12-details')).toContainText('07/2026');
+ await page.route('**/api/simples?*',r=>r.fulfill({status:422,json:{message:'Seção 2.2 incompleta: competência ilegível.'}}));
+ await page.locator('#rbt12-pdf').setInputFiles({name:'ilegivel.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-unreadable')});
+ await expect(page.locator('#rbt12')).toHaveValue('');await page.locator('#rbt12-read').click();
+ await expect(page.locator('#rbt12-status')).toContainText('ilegível');
+ await expect(page.locator('#rbt12')).toHaveValue('');await expect(page.locator('#rbt12-details')).toBeEmpty();
+ await page.locator('#generate-simulation').click();await expect(page.locator('#simulator-error')).toContainText('seção 2.2');
+ await expect(page.locator('#results-top')).toHaveCount(0);
+});
+test('DRE mensal mostra 12 meses, muda regime e conserva a RBT12 do extrato',async({page},info)=>{
+ await setup(page);await page.setViewportSize({width:1440,height:1100});await page.goto(url);await complete(page,{serviceRevenue:1000,salaries:3000,rent:700});
+ await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
+ await page.getByRole('button',{name:'Mensal',exact:true}).click();
+ await expect(page.locator('.sim-calendar thead th')).toHaveCount(14);
+ await expect(page.locator('.sim-calendar thead')).toContainText('Janeiro');await expect(page.locator('.sim-calendar thead')).toContainText('Dezembro');
+ await expect(page.locator('.sim-extrato-reference')).toContainText('150.000,00');await expect(page.locator('.sim-extrato-reference')).toContainText('08/2026');
+ const options=await page.locator('#dre-regime option').evaluateAll(options=>options.map(o=>(o as HTMLOptionElement).value));
+ const parse=(text:string)=>Number(text.replace(/[^0-9,-]/g,'').replace(',','.'));
+ for(const id of options){await page.locator('#dre-regime').selectOption(id);
+  const values=await page.locator('[data-dre-row="revenue"] td').allTextContents();expect(values).toHaveLength(13);
+  expect(parse(values[12])).toBeCloseTo(parse(values[0])*12,2);expect(new Set(values.slice(0,12)).size).toBe(1);
+ }
+ const desktop=info.outputPath('dre-janeiro-dezembro-desktop.png');await page.locator('.sim-calendar').screenshot({path:desktop});await info.attach('DRE mensal desktop',{path:desktop,contentType:'image/png'});
+ await page.setViewportSize({width:390,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+ await page.locator('.sim-calendar .sim-table-wrap').evaluate(el=>el.scrollLeft=el.scrollWidth);
+ const heading=page.locator('.sim-calendar thead th').first();expect(await heading.evaluate(el=>getComputedStyle(el).position)).toBe('sticky');
+ const mobile=info.outputPath('dre-janeiro-dezembro-mobile.png');await page.locator('.sim-calendar').screenshot({path:mobile});await info.attach('DRE mensal mobile',{path:mobile,contentType:'image/png'});
+ await page.getByRole('button',{name:'Anual',exact:true}).click();await expect(page.locator('.sim-dre thead th')).toHaveCount(5);
 });
