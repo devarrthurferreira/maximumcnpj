@@ -1,0 +1,27 @@
+name: Evidências do simulador anual
+on:
+  push:
+    branches: ['feat/simulador-anual-20261001']
+    paths: ['.github/workflows/simulator-release.yml']
+permissions:
+  contents: read
+jobs:
+  source-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fontes versionadas para revisão e testes isolados
+        run: |
+          mkdir -p /tmp/simulator-review
+          git archive --format=tar HEAD > /tmp/simulator-review/feature.tar
+          git archive --format=tar 051b7d8b516c383346dd21bf0e6e0d8f83009780 > /tmp/simulator-review/main.tar
+          git archive --format=tar $(git merge-base HEAD 051b7d8b516c383346dd21bf0e6e0d8f83009780) > /tmp/simulator-review/base.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simulator-source-review
+          path: /tmp/simulator-review/*.tar
+          retention-days: 1
