@@ -37,6 +37,7 @@ jobs:
         run: npm run test:reports
         env:
           REPORT_TEST_MONGO: '1'
+          SIMPLES_TEST_OCR: '1'
       - name: Versão e documentação
         run: npm run check:release
       - name: Tipos e build

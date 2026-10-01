@@ -5,6 +5,8 @@ import { write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { VERSION } from './domain.ts';
 import { annualizeReports, projectScenario } from '../public/simulator-projection.js';
+import {readRbt12Reference} from './simulation-extrato.ts';
+import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import { generationSimulator } from './simulator-store.ts';
 import { calculateSimulation, draftToInput, MODEL_VERSION, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
   SIMULATION_VALUE_FIELDS } from '../public/simulator-engine.js';
@@ -115,19 +117,8 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
     need(source.reportMonths === reportMonths && source.period && reportMonths === source.period.months,
       'O período da simulação deve corresponder ao intervalo identificado na coluna H dos relatórios.', 409, 'SIMULATION_PERIOD');
   }
-  let rbt12Source = Object.hasOwn(draft, 'rbt12') ? 'MANUAL' : 'LEGACY_ESTIMATE', rbt12Extraction = null;
-  if (rbt12ExtractionId) {
-    const extraction = await (await collection('simplesExtractions')).findOne(scope({_id: rbt12ExtractionId, clientId}));
-    need(extraction && extraction.result && Number.isInteger(extraction.result.rbt12Cents),
-      'A leitura do Extrato do Simples não foi encontrada para esta empresa.', 409, 'RBT12_EXTRACTION');
-    need(draft.rbt12 !== undefined && Math.round(draft.rbt12 * 100) === extraction.result.rbt12Cents,
-      'A RBT12 foi alterada depois da leitura do PDF. Leia novamente ou salve como valor manual.', 409, 'RBT12_EXTRACTION');
-    rbt12Source = 'SIMPLES_PDF';
-    rbt12Extraction = {id: extraction._id, parserVersion: extraction.parserVersion, fileName: extraction.fileName,
-      pa: extraction.result.pa || null, rbt12Cents: extraction.result.rbt12Cents,
-      rbt12CalculatedCents: extraction.result.rbt12CalculatedCents ?? null,
-      rbt12Reconciled: extraction.result.rbt12Reconciled ?? null, ocrUsed: extraction.result.ocrUsed === true};
-  }
+  const rbt12Source = 'SIMPLES_SECTION_22';
+  const rbt12Extraction = await readRbt12Reference(rbt12ExtractionId, clientId, draft.rbt12);
   const engineInput = draftToInput(draft);
   need(engineInput, 'Os valores ultrapassam os limites da calculadora. Confira as receitas mensais e a estimativa anual.');
   const result = calculateSimulation(draft);
@@ -146,7 +137,7 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
     source, projection, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
     monthlyGroups, monthlyGroupsUnit: 'BRL', baselineMonthlyGroups,
     manuallyAdjusted: adjustments.length > 0, adjustments, draft, engineInput, result, parentSimulationId,
-    rbt12Source, rbt12Extraction,
+    rbt12Source, rbt12Extraction, monthlyDre: buildMonthlyDre(result, draft.year, rbt12Extraction, source.period || null),
     year: draft.year, annualRevenue: result.annualRevenue, bestRegimeId: result.bestRegimeId,
     bestRegimeName: best?.name || null, bestAnnualProfit: best?.annualProfit ?? null};
   try { await c.insertOne(snapshot); }

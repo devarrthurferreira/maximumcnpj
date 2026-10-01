@@ -1,8 +1,12 @@
+import {MongoClient} from 'mongodb';
+import {readStatement} from './extrato-helper.ts';
+import {section22} from '../fixtures/section22.ts';
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
 // This flow uses the running application and disposable MongoDB throughout.
-// CPF-only reports finish locally, without mocking an API or consulting a provider.
+// CPF-only reports finish locally. The Python extraction transport is mocked with a
+// matching trusted synthetic record; all Node persistence and authentication remain real.
 async function post(request: APIRequestContext, baseURL: string, path: string, data: unknown) {
   const response = await request.post(path, { data, headers: { Origin: new URL(baseURL).origin } });
   expect(response.ok(), `${path}: ${await response.text()}`).toBe(true);
@@ -86,7 +90,12 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   await expect(page.locator('#period-confirm')).toBeChecked();
   await expect(page.locator('#salesRevenue')).toHaveValue('12000.00');
   await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('4500.00');
-  await page.locator('#rbt12').fill('150000');
+  const extractionId=randomUUID();
+  const mongo=new MongoClient(process.env.MONGODB_URI!);
+  try{await mongo.connect();await mongo.db(process.env.MONGODB_DB).collection('simplesExtractions').insertOne({
+    _id:extractionId as any,clientId,workspaceId:process.env.WORKSPACE_ID||'maximum',parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result:section22()
+  });}finally{await mongo.close();}
+  await readStatement(page,15000000,extractionId);
   const manual = { serviceRevenue: 1250.50, salaries: 900, benefits: 150, adminExpenses: 99.95, rent: 800, cardExpenses: 60 };
   for (const [id, value] of Object.entries(manual)) await page.locator(`#${id}`).fill(String(value));
   await page.locator('#simulation-year').selectOption('2028');
@@ -103,6 +112,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     result: { annualRevenue: 159_006 },
   });
   expect(first.result.regimes).toHaveLength(4);
+  expect(first.monthlyDre.months).toHaveLength(12);expect(first.monthlyDre.rbt12Reference.rbt12Cents).toBe(15000000);
   expect(first.result.memory.length).toBeGreaterThan(0);
   expect(first.createdAt).toBeTruthy();
   expect(first.createdBy.id).toBeTruthy();

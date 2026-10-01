@@ -1,0 +1,117 @@
+"""PDF pesquisável integral, sem serviço externo, uma passagem OCR por página de imagem."""
+from __future__ import annotations
+from functools import lru_cache
+from statistics import mean, median
+import math
+import threading
+import time
+
+# RapidOCR mutates its settings during calls. Serialize inference within each instance.
+_OCR_LOCK = threading.Lock()
+MAX_PAGES = 30
+MAX_BYTES = 8 * 1024 * 1024
+
+
+@lru_cache(maxsize=1)
+def _rapid_engine():
+    from rapidocr import RapidOCR
+    return RapidOCR(params={
+        'Global.log_level': 'error', 'Global.max_side_len': 3508,
+        'Global.text_score': .5, 'Global.use_cls': False, 'Det.limit_side_len': 2400, 'Det.limit_type': 'max',
+        'EngineConfig.onnxruntime.intra_op_num_threads': 2,
+        'EngineConfig.onnxruntime.inter_op_num_threads': 1,
+    })
+
+
+def group_rows(items):
+    if not items:
+        return []
+    ordered = sorted(items, key=lambda item: ((item['box'][1] + item['box'][3]) / 2, item['box'][0]))
+    height = median(item['box'][3] - item['box'][1] for item in ordered)
+    tolerance = max(1, height * .4)
+    rows = []
+    for item in ordered:
+        y = (item['box'][1] + item['box'][3]) / 2
+        if not rows or abs(rows[-1]['y'] - y) > tolerance:
+            rows.append({'y': y, 'items': [item]})
+        else:
+            rows[-1]['items'].append(item)
+    for row in rows:
+        row['items'].sort(key=lambda item: item['box'][0])
+        row['text'] = ' '.join(item['text'] for item in row['items'])
+    return rows
+
+
+def _ocr_page(pix, engine):
+    import numpy as np
+    image = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
+    result = engine(np.ascontiguousarray(image[:, :, ::-1]))
+    boxes, texts, scores = result.boxes, result.txts, result.scores
+    if (boxes is None or texts is None) and float(image.std()) < 1:
+        return []
+    if boxes is None or texts is None or scores is None or len(texts) != len(scores):
+        raise ValueError('OCR não reconheceu texto nesta página. Reenvie uma digitalização legível.')
+    records = []
+    for box, text, score in zip(boxes, texts, scores):
+        xs, ys = [float(p[0]) for p in box], [float(p[1]) for p in box]
+        if str(text).strip():
+            records.append({'text': str(text).strip(), 'confidence': float(score),
+                            'box': [min(xs), min(ys), max(xs), max(ys)]})
+    return records
+
+
+def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seconds=45):
+    import fitz
+    if not isinstance(content, (bytes, bytearray)) or not content.startswith(b'%PDF') or len(content) > MAX_BYTES:
+        raise ValueError('Envie um PDF válido de até 8 MiB.')
+    started = time.monotonic()
+    with fitz.open(stream=content, filetype='pdf') as document, fitz.open() as output:
+        if document.is_encrypted:
+            raise ValueError('O PDF está protegido por senha. Envie uma cópia desbloqueada.')
+        if not 1 <= len(document) <= MAX_PAGES:
+            raise ValueError(f'O extrato deve ter entre 1 e {MAX_PAGES} páginas. Nenhuma página será ignorada.')
+        pages, ocr_pages, scores = [], [], []
+        for index, original in enumerate(document):
+            if time.monotonic() - started > timeout_seconds:
+                raise ValueError('O OCR integral excedeu o tempo disponível. Use um PDF menor ou o conversor Python local; não foi aceito resultado parcial.')
+            words = original.get_text('words', sort=True)
+            readable = len(words) >= 8 and '\ufffd' not in original.get_text()
+            if readable and not force_ocr:
+                items = [{'text': w[4], 'box': list(w[:4]), 'confidence': None} for w in words]
+                output.insert_pdf(document, from_page=index, to_page=index)
+            else:
+                # Blank pages are preserved, never silently removed.
+                scale = min(300 / 72, math.sqrt(12_000_000 / max(1, original.rect.width * original.rect.height)))
+                pix = original.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csRGB, alpha=False)
+                remaining = max(.1, timeout_seconds - (time.monotonic() - started))
+                if not _OCR_LOCK.acquire(timeout=remaining):
+                    raise ValueError('O leitor OCR está ocupado. Aguarde e tente novamente.')
+                try:
+                    records = _ocr_page(pix, engine or _rapid_engine())
+                finally:
+                    _OCR_LOCK.release()
+                xscale, yscale = original.rect.width / pix.width, original.rect.height / pix.height
+                items = [{**r, 'box': [r['box'][0]*xscale, r['box'][1]*yscale, r['box'][2]*xscale, r['box'][3]*yscale]} for r in records]
+                target = output.new_page(width=original.rect.width, height=original.rect.height)
+                if not words and original.get_contents():
+                    target.show_pdf_page(target.rect, document, index)
+                else:
+                    # Forced OCR must not expose a second, stale native text layer.
+                    target.insert_image(target.rect, stream=pix.tobytes('jpg', jpg_quality=92))
+                for row in group_rows(items):
+                    for item in row['items']:
+                        x0, y0, x1, y1 = item['box']
+                        text = item['text'].encode('cp1252', errors='replace').decode('cp1252')
+                        width_at_one = fitz.get_text_length(text, fontname='helv', fontsize=1)
+                        size = min((y1-y0)*.8, (x1-x0)/max(.01, width_at_one))
+                        if size > 0:
+                            target.insert_text((x0, y1-(y1-y0)*.15), text, fontsize=size, fontname='helv', render_mode=3, overlay=True)
+                ocr_pages.append(index + 1)
+                scores.extend(r['confidence'] for r in items)
+            pages.append({'page': index + 1, 'rows': group_rows(items)})
+        if time.monotonic() - started > timeout_seconds:
+            raise ValueError('O OCR integral excedeu o tempo disponível. Nenhum resultado parcial foi utilizado.')
+        return {'pdf': output.tobytes(garbage=4, deflate=True),
+                'text': '\n\n'.join('\n'.join(row['text'] for row in page['rows']) for page in pages),
+                'pages': pages, 'pageCount': len(document), 'ocrPages': ocr_pages,
+                'ocrConfidence': mean(scores) if scores else None, 'ocrEngine': 'RapidOCR' if ocr_pages else 'NATIVE'}

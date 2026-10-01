@@ -1,3 +1,4 @@
+import {section22} from './fixtures/section22.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -46,7 +47,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       serviceRevenue: 5000, salesRevenue: 200.01, simplePurchases: 33.34, regularPurchases: 166.67,
       salaries: 100, benefits: 5.25, adminExpenses: 0, rent: 10, cardExpenses: .29
     }};
-    const input = {simulationId: randomUUID(), generationId, clientId, reportMonths: 3,
+    const input = {simulationId: randomUUID(), rbt12ExtractionId: randomUUID(), generationId, clientId, reportMonths: 3,
       periodConfirmed: true, monthlyGroups, draft};
     await assert.rejects(createSimulation(actor, input), code('SIMULATOR_INCOMPLETE'));
     const jobs: any[] = [];
@@ -59,6 +60,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       await processLookup(actor, job._id, transport);
     }
     assert.equal(providerCalls, 4);
+    await (await collection('simplesExtractions')).insertOne({...scope(),_id:input.rbt12ExtractionId,clientId,parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result:section22(50000000)});
     let saved: any;
 
     await t.test('campos obrigatórios, precisão monetária e somas dos grupos', async () => {
@@ -110,11 +112,24 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.equal(saved.source.sales.jobId, jobs[1]._id);
       assert.equal(saved.periodBasis, 'COLUMN_H'); assert.equal(saved.reportMonths, 3);
       assert.deepEqual(saved.reportPeriod, {startDate:'2026-06-15',endDate:'2026-08-15',startMonth:'2026-06',endMonth:'2026-08',months:3,observedMonths:3,missingMonths:[]});
-      assert.equal(saved.rbt12Source, 'MANUAL');
+      assert.equal(saved.rbt12Source, 'SIMPLES_SECTION_22');
+      assert.equal(saved.monthlyDre.months.length,12);assert.equal(saved.monthlyDre.rbt12Reference.rbt12Cents,50000000);
       assert.equal(saved.parentSimulationId, null);
       assert.equal(saved.workspaceId, undefined);
       assert.equal(saved.requestHash, undefined);
       assert.equal(providerCalls, 4, 'Simular não faz consulta externa adicional.');
+    });
+
+    await t.test('RBT12 obrigatória, imutável e isolada pela seção 2.2', async () => {
+      const fresh={...input,simulationId:randomUUID()};
+      await assert.rejects(createSimulation(actor,{...fresh,rbt12ExtractionId:undefined}),code('RBT12_REQUIRED'));
+      await assert.rejects(createSimulation(actor,{...fresh,draft:{...draft,rbt12:500001}}),code('RBT12_EXTRACTION'));
+      await assert.rejects(createSimulation(actor,{...fresh,rbt12ExtractionId:randomUUID()}),code('RBT12_EXTRACTION'));
+      const records=await collection('simplesExtractions');
+      await records.updateOne(scope({_id:input.rbt12ExtractionId}),{$set:{'result.rbt12Window.0.totalCents':0}});
+      await assert.rejects(createSimulation(actor,fresh),code('RBT12_EXTRACTION'));
+      assert.deepEqual(await getSimulation(saved._id),saved,'O histórico não é recalculado com a fonte alterada.');
+      await records.updateOne(scope({_id:input.rbt12ExtractionId}),{$set:{result:section22(50000000)}});
     });
 
     await t.test('reenvio idempotente, concorrência e conflito sem alteração da versão anterior', async () => {
