@@ -112,7 +112,10 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   // Compare cells consistently: innerText adds table separators and CSS uppercase,
   // while Playwright's default toHaveText reads the underlying textContent.
   const originalDre = await page.locator('.sim-dre tbody tr > *').allTextContents();
-  expect(originalDre.join(' ')).toContain('87.006,00');
+  // One detected month: (R$ 12,000 in sales + R$ 1,250.50 in monthly services) x 12.
+  await expect(page.locator('.sim-dre tr').filter({hasText: 'Receita bruta total'}).locator('td')).toHaveText([
+    'R$ 159.006,00', 'R$ 159.006,00', 'R$ 159.006,00', 'R$ 159.006,00',
+  ]);
 
   // A new context has no cookies or sessionStorage from the original tab.
   // Reopening through history must therefore fetch the immutable server snapshot.
