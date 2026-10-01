@@ -82,7 +82,8 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       await assert.rejects(createSimulation(actor, {...input, draft: {...draft, values: {...draft.values, salesRevenue: 201}}}), code('SIMULATION_TOTAL'));
       await assert.rejects(createSimulation(actor, {...input, draft: {...draft, values: {...draft.values, simplePurchases: 34}}}), code('SIMULATION_TOTAL'));
       await assert.rejects(createSimulation(actor, {...input, draft: {...draft, values: {...draft.values, regularPurchases: 34}}}), code('SIMULATION_TOTAL'));
-      await assert.rejects(createSimulation(actor, {...input, draft: {...draft, values: {...draft.values, serviceRevenue: 1_000_000_000_000}}}), code('VALIDATION'));
+      // The monthly input limit is independent from the explicit historical RBT12.
+      await assert.rejects(createSimulation(actor, {...input, draft: {...draft, values: {...draft.values, serviceRevenue: 1_000_000_000_001}}}), code('VALIDATION'));
       await assert.rejects(createSimulation(actor, {...input, clientId: outside}), code('GENERATION_CLIENT'));
       assert.equal(await (await collection('simulations')).countDocuments(scope()), 0);
     });
