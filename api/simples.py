@@ -47,7 +47,7 @@ class handler(BaseHTTPRequestHandler):
         elif isinstance(error, ValueError):
             status, code, message = 422, 'SIMPLES_PDF', str(error)
         else:
-            status, code, message = 503, 'SIMPLES_UNAVAILABLE', 'Não foi possível concluir a leitura da seção 2.2. Tente novamente com um PDF legível; a projeção não substitui a RBT12.'
+            status, code, message = 503, 'SIMPLES_UNAVAILABLE', 'O servidor não conseguiu iniciar o OCR do PDF. Tente novamente; se persistir, informe o código da requisição. A RBT12 não será estimada.'
         detail = str(error).replace('\n', ' ')[:500] if not isinstance(error, ReportError) else None
         print(json.dumps({'requestId': self.request_id, 'code': code, 'status': status,
                           'errorType': type(error).__name__, **({'detail': detail} if detail else {})}))
@@ -56,14 +56,6 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.request_id = str(uuid.uuid4())
         try:
-            query = parse_qs(urlsplit(self.path).query)
-            # Preview-only runtime probe used to verify that the serverless OCR stack can
-            # import and instantiate without exposing application data or MongoDB.
-            if os.getenv('VERCEL_ENV') == 'preview' and (query.get('runtimeSelfTest') or [''])[0] == 'ocr':
-                from reporting.pdf_ocr import _rapid_engine
-                engine = _rapid_engine()
-                self.send_json(200, {'ok': True, 'ocrRuntime': type(engine).__name__})
-                return
             db, workspace, actor, query, client_id = self.context()
             extraction_id = (query.get('extractionId') or [''])[0]
             require(UUID.fullmatch(extraction_id), 400, 'RBT12_EXTRACTION', 'Selecione uma leitura do extrato.')
