@@ -1,6 +1,14 @@
-# Maximum CNPJ · v0.12.1
+# Maximum CNPJ · v0.12.2
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Correção 01/10/2026 — PDF em imagem na Vercel
+
+- [x] Corrigido o runtime do OCR em produção: o RapidOCR trazia `opencv-python` (desktop) como dependência transitiva e a função serverless falhava ao importar `libxcb.so.1` antes de processar a primeira imagem.
+- [x] A Vercel passa a resolver as dependências Python por `pyproject.toml` + `uv`, excluindo a variante desktop e instalando somente `opencv-python-headless`. PDF sem camada de texto segue para OCR normalmente.
+- [x] A CI usa a mesma resolução headless, instancia RapidOCR e executa a regressão real com PDF somente imagem.
+- [x] Erros internos permanecem fora da resposta pública, mas o log registra o detalhe técnico junto do código da requisição.
+- [x] A regra fiscal não mudou: RBT12 continua exclusivamente na seção 2.2; leitura não confirmada nunca é substituída por projeção.
 
 ## Entrega de 01/10/2026 — OCR integral, RBT12 da seção 2.2 e DRE de janeiro a dezembro
 
@@ -22,8 +30,9 @@ Envio web limitado a 4 MiB, até 30 páginas e orçamento de 45 segundos para a 
 Conversor local Python (até 8 MiB, 30 páginas; arquivos maiores devem ser otimizados previamente):
 
 ```sh
-python -m pip install -r requirements.txt
-python scripts/extrato_ocr.py "extrato.pdf" --output "extrato-pesquisavel.pdf"
+python -m pip install uv
+uv sync --no-install-project
+uv run --no-sync python scripts/extrato_ocr.py "extrato.pdf" --output "extrato-pesquisavel.pdf"
 ```
 
 São criados PDF pesquisável, TXT integral e JSON da seção 2.2 ao lado do destino. Os originais não são sobrescritos. `--force-ocr` substitui a camada de texto em cópias com texto defeituoso, aplicando uma única passagem por página. O OCR usa modelos incluídos no pacote RapidOCR, sem enviar o PDF a um serviço externo.
@@ -85,7 +94,8 @@ Não há migração destrutiva, nova chave de API ou nova variável obrigatória
 
 ```sh
 npm ci
-python -m pip install -r requirements.txt
+python -m pip install uv
+uv sync --no-install-project
 npm run build
 npm run seed
 npm start
