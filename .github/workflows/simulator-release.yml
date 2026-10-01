@@ -1,27 +1,39 @@
-name: Evidências do simulador anual
+name: Projeção anual do simulador
 on:
   push:
     branches: ['feat/simulador-anual-20261001']
-    paths: ['.github/workflows/simulator-release.yml']
 permissions:
   contents: read
 jobs:
-  source-review:
+  annual-projection:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    services:
+      mongo:
+        image: mongo:7.0
+        ports: ['27017:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MONGODB_URI: mongodb://127.0.0.1:27017
+      MONGODB_DB: maximum_projection_ci
+      WORKSPACE_ID: projection_ci
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Fontes versionadas para revisão e testes isolados
-        run: |
-          mkdir -p /tmp/simulator-review
-          git archive --format=tar HEAD > /tmp/simulator-review/feature.tar
-          git archive --format=tar 051b7d8b516c383346dd21bf0e6e0d8f83009780 > /tmp/simulator-review/main.tar
-          git archive --format=tar $(git merge-base HEAD 051b7d8b516c383346dd21bf0e6e0d8f83009780) > /tmp/simulator-review/base.tar
+        with: {fetch-depth: 2, persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm ci
+      - run: npm run check:release && npm run check && npm run build
+      - run: npm run test:projection && npm run test:competences
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test tests/e2e/simulator-projection.spec.ts
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: simulator-source-review
-          path: /tmp/simulator-review/*.tar
-          retention-days: 1
+          name: simulator-annual-verification
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

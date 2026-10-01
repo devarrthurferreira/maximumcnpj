@@ -1,3 +1,5 @@
+import {annualizeReports, projectScenario} from './simulator-projection.js';
+import {renderProjectionCard} from './simulator-projection-view.js';
 import {mountNavigation} from './navigation.js';
 import {renderSimulationCharts} from './simulation-charts.js';
 import {createEmptyDraft, calculateSimulation, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES} from './simulator-engine.js';
@@ -8,7 +10,7 @@ const pct = value => value == null ? '—' : (value * 100).toLocaleString('pt-BR
 const date = value => value ? new Date(value).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}) : '—';
 const IMPORTED = ['salesOptantCents','salesNonOptantCents','salesCpfCents','purchasesOptantCents','purchasesNonOptantCents'];
 const MANUAL = ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'];
-const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',readonly:false,rbt12ExtractionId:null};
+const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',readonly:false,rbt12ExtractionId:null,projectionKind:'sales'};
 const canSave = () => ['admin','operator'].includes(S.user?.role);
 const sourceUrl = () => '/simulator.html?'+new URLSearchParams({generation:S.source.generationId,client:S.source.clientId,...(S.parentId?{parent:S.parentId}:{})});
 const fail = error => { $('#simulator-error').textContent = error.message || String(error); };
@@ -32,11 +34,11 @@ function display(prefill=null) {
   S.readonly=false; S.result=null; S.snapshot=null; S.pending=null; S.rbt12ExtractionId=null;
   const automaticPeriod=S.source.periodBasis==='COLUMN_H'&&Number.isInteger(S.source.reportMonths);
   if(automaticPeriod)S.months=S.source.reportMonths;
-  const periodText=automaticPeriod ? `<h2>Período identificado automaticamente</h2><p class="sim-help">A coluna H · Data Escrituração/Serviço foi lida em compras e vendas. O sistema só libera o simulador quando os dois arquivos têm o mesmo intervalo.</p><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months" disabled><option value="${S.months}">${S.months} ${S.months===1?'mês':'meses'} · ${esc(S.source.period.startMonth)} a ${esc(S.source.period.endMonth)}</option></select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" checked disabled>Período confirmado automaticamente pela coluna H.</label></div>` :
+  const periodText=automaticPeriod ? `<h2>Período identificado automaticamente</h2><p class="sim-help">A coluna H · Data Escrituração/Serviço foi lida em compras e vendas. A comparação considera as mesmas competências (mês e ano), permitindo dias diferentes. A média desse período será repetida nos 12 meses projetados.</p><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months" disabled><option value="${S.months}">${S.months} ${S.months===1?'mês':'meses'} · ${esc(S.source.period.startMonth)} a ${esc(S.source.period.endMonth)}</option></select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" checked disabled>Período confirmado automaticamente pela coluna H.</label></div>` :
     `<h2>Qual período os dois arquivos representam?</h2><p class="sim-help">Este histórico não possui a coluna H persistida. Informe de 1 a 12 meses e confirme o mesmo período para compras e vendas.</p><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1} ${i?'meses · média mensal':'mês · valores integrais'}</option>`).join('')}</select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" required>Confirmo que compras e vendas correspondem ao mesmo período e à quantidade de meses selecionada.</label></div>`;
   $('#simulator-app').innerHTML = `<div id="simulator-intro">${hero(false)}</div>${sourceCard()}<div id="simulation-notices"></div>
-    <form id="simulator-form"><fieldset id="simulation-fields"><section class="card sim-source">${periodText}<p id="period-explanation" class="sim-help"></p></section>
-    ${section('01','Quanto a empresa fatura?','Por mês',`<div class="sim-fields">${moneyField('serviceRevenue','Receita de serviços','Quanto sua empresa recebe por mês com serviços, antes de descontar despesas e impostos. Não repita os valores já incluídos nas vendas.')}${moneyField('salesRevenue','Receita de vendas','Soma automática dos três grupos de vendas abaixo.',false,true)}</div><div class="sim-fields sales">${moneyField('salesOptantCents','Faturamento vendas Optantes SN','Vendas a CNPJs com opção pelo Simples confirmada na pesquisa.',true)}${moneyField('salesNonOptantCents','Faturamento vendas Não Optantes SN','Não optantes, não confirmados e outros documentos, exceto CPFs.',true)}${moneyField('salesCpfCents','Faturamento Vendas de CPFs','Vendas identificadas com CPF, sem consulta fiscal de CNPJ.',true)}</div><div class="sim-totals"><article><span>Total por mês</span><strong id="monthly-revenue">Preencha as receitas</strong></article><article><span>Receita estimada em 12 meses</span><strong id="annual-revenue">Calculada automaticamente</strong></article></div><p class="sim-help">Estimativa automática: receita mensal × 12. Não é uma consulta ao faturamento real dos últimos 12 meses.</p>`)}
+    <form id="simulator-form"><fieldset id="simulation-fields"><div id="simulator-projection"></div><section class="card sim-source">${periodText}<p id="period-explanation" class="sim-help"></p></section>
+    ${section('01','Quanto a empresa fatura?','Por mês',`<div class="sim-fields">${moneyField('serviceRevenue','Receita de serviços','Quanto sua empresa recebe por mês com serviços, antes de descontar despesas e impostos. Não repita os valores já incluídos nas vendas.')}${moneyField('salesRevenue','Receita de vendas','Soma automática dos três grupos de vendas abaixo.',false,true)}</div><div class="sim-fields sales">${moneyField('salesOptantCents','Faturamento vendas Optantes SN','Vendas a CNPJs com opção pelo Simples confirmada na pesquisa.',true)}${moneyField('salesNonOptantCents','Faturamento vendas Não Optantes SN','Não optantes, não confirmados e outros documentos, exceto CPFs.',true)}${moneyField('salesCpfCents','Faturamento Vendas de CPFs','Vendas identificadas com CPF, sem consulta fiscal de CNPJ.',true)}</div><div class="sim-totals"><article><span>Total por mês</span><strong id="monthly-revenue">Preencha as receitas</strong></article><article><span>Receita estimada em 12 meses</span><strong id="annual-revenue">Calculada automaticamente</strong></article></div><p class="sim-help">Projeção do cenário: (média mensal de vendas + serviços mensais) × 12. Serviços não são divididos pelos meses importados. Esta projeção não substitui a RBT12 do extrato.</p>`)}
     ${section('02','Quanto a empresa compra?','Por mês',`<p class="sim-help">Separe as compras pela categoria do fornecedor. A nota fiscal pode ajudar a identificar se ele está no Simples Nacional.</p><div class="sim-fields">${moneyField('purchasesOptantCents','Compras de empresas do Simples Nacional','Valor mensal das mercadorias compradas de fornecedores que estão no Simples.',true)}${moneyField('purchasesNonOptantCents','Compras de empresas fora do Simples','Valor mensal das mercadorias dos demais fornecedores, incluindo não confirmados e documentos não consultáveis.',true)}</div>`)}
     ${section('03','Quais são as despesas?','Por mês',`<div class="sim-fields">${moneyField('salaries','Salários e pró-labore','Total mensal pago à equipe e aos sócios pelo trabalho na empresa.')}${moneyField('benefits','Benefícios da equipe','Vale-transporte, alimentação e outros benefícios pagos no mês.')}${moneyField('adminExpenses','Outras despesas da empresa','Água, energia, internet e outras despesas. Não repita os valores dos outros campos.')}${moneyField('rent','Aluguel','Valor mensal do aluguel. Se não houver, digite 0.')}${moneyField('cardExpenses','Taxas de cartão','Total pago em taxas no mês, em reais. Se não houver, digite 0.')}</div>`)}
     ${section('04','Sobre a simulação','Escolha o cenário',`<div class="sim-fields">${moneyField('rbt12','RBT12 do Simples Nacional','Receita bruta acumulada nos 12 meses anteriores ao PA. Você pode informar manualmente ou ler o Extrato do Simples Nacional em PDF.')}<div class="sim-field"><label for="rbt12-pdf">Extrato do Simples Nacional (PDF)</label><input id="rbt12-pdf" type="file" accept="application/pdf,.pdf"><button type="button" id="rbt12-read">Ler RBT12 do PDF</button><small id="rbt12-status">O PDF é processado em memória; o sistema salva somente o resultado e a referência da leitura.</small></div><div class="sim-field"><label for="simulation-year">Ano da simulação</label><select id="simulation-year"><option>2027</option><option>2028</option></select></div><div class="sim-field"><label for="sales-annex">Atividade das vendas</label><select id="sales-annex"><option value="1">Comércio · Anexo I</option><option value="2">Indústria · Anexo II</option></select></div><div class="sim-field"><label for="service-annex">Categoria dos serviços</label><select id="service-annex"><option value="3">Anexo III</option><option value="4">Anexo IV</option><option value="5">Anexo V</option></select><small>Se tiver dúvida sobre a categoria, confirme com sua contabilidade.</small></div></div>`)}
@@ -61,19 +63,27 @@ function display(prefill=null) {
   restoreDraft();
   updateRevenue(); renderNotices();
 }
-// Allocate monthly rounding cents across sales so the three categories add to the rounded total.
-function monthlyGroups(keys) {
-  const exact=keys.map(k=>S.source.fields[k]/S.months), base=exact.map(Math.floor);
-  let remainder=Math.round(keys.reduce((sum,k)=>sum+S.source.fields[k],0)/S.months)-base.reduce((a,b)=>a+b,0);
-  const order=exact.map((v,i)=>({i,fraction:v-base[i]})).sort((a,b)=>b.fraction-a.fraction||a.i-b.i);
-  for(let i=0;i<remainder;i++) base[order[i].i]++;
-  keys.forEach((key,i)=>$('#'+key).value=(base[i]/100).toFixed(2));
-}
+// One shared rule is used in browser, API, saved history and projection memory.
 function applyReports() {
-  monthlyGroups(IMPORTED.slice(0,3)); monthlyGroups(IMPORTED.slice(3)); S.edited=false;
-  $('#period-explanation').textContent=`Cada grupo importado = total do grupo no arquivo ÷ ${S.months} ${S.months===1?'mês':'meses'}, arredondado para centavos. ${S.source.periodBasis==='COLUMN_H'?'O período veio da coluna H e não precisa ser informado manualmente.':'Serviços e despesas devem ser valores mensais.'}`;
+  const projection=annualizeReports(S.source.fields,S.months);
+  for(const key of IMPORTED) $('#'+key).value=(projection.monthlyGroupsCents[key]/100).toFixed(2);
+  S.edited=false;
+  $('#period-explanation').textContent=`Média mensal = total importado ÷ ${S.months} ${S.months===1?'mês':'meses'}. Projeção anual = essa média × 12. O horizonte é sempre de 12 meses, e não de ${S.months} + 12. Serviços e despesas devem ser informados por mês.`;
   updateRevenue();
 }
+function updateProjection() {
+  const host=$('#simulator-projection');if(!host)return;
+  const projection=S.readonly&&S.snapshot?.projection?S.snapshot.projection:annualizeReports(S.source.fields,S.months);
+  const open=host.querySelector('details')?.open;
+  const focused=host.contains(document.activeElement)?document.activeElement?.dataset?.projectionKind:null;
+  host.innerHTML=renderProjectionCard({projection,kind:S.projectionKind,period:S.source.period,
+    confirmed:S.readonly||S.source.periodBasis==='COLUMN_H'||$('#period-confirm')?.checked===true,
+    edited:S.edited,legacy:S.readonly&&!S.snapshot?.projection});
+  if(open)host.querySelector('details').open=true;
+  host.querySelectorAll('[data-projection-kind]').forEach(button=>button.onclick=()=>{S.projectionKind=button.dataset.projectionKind;updateProjection();});
+  if(focused)host.querySelector(`[data-projection-kind="${focused}"]`)?.focus();
+}
+
 function value(id) { const input=$('#'+id); return input.value!=='' && input.validity.valid ? Number(input.value) : null; }
 function salesTotal() { const amounts=IMPORTED.slice(0,3).map(value); return amounts.some(v=>v===null)?null:amounts.reduce((a,b)=>a+Math.round(b*100),0)/100; }
 function updateRevenue() {
@@ -82,6 +92,7 @@ function updateRevenue() {
   const total=sales===null||service===null?null:Math.round((sales+service)*100)/100;
   $('#monthly-revenue').textContent=total===null?'Preencha as receitas':money(total);
   $('#annual-revenue').textContent=total===null?'Calculada automaticamente':money(total*12);
+  updateProjection();
 }
 function invalidate() { S.result=null; S.snapshot=null; S.pending=null; $('#simulation-result').innerHTML=''; $('#simulator-error').textContent=''; renderNotices(); }
 function draft() {
@@ -92,7 +103,7 @@ function draft() {
   return d;
 }
 function saveDraft() {
-  const data={months:S.months,edited:S.edited,confirmed:$('#period-confirm').checked,rbt12ExtractionId:S.rbt12ExtractionId,fields:Object.fromEntries([...IMPORTED,...MANUAL,'rbt12'].map(key=>{const field=$('#'+key);return [key,field.value!==''&&field.validity.valid?Number(field.value).toFixed(2):field.value];})),year:$('#simulation-year').value,salesAnnex:$('#sales-annex').value,serviceAnnex:$('#service-annex').value};
+  const data={projectionVersion:'AVERAGE_X12_V1',months:S.months,edited:S.edited,confirmed:$('#period-confirm').checked,rbt12ExtractionId:S.rbt12ExtractionId,fields:Object.fromEntries([...IMPORTED,...MANUAL,'rbt12'].map(key=>{const field=$('#'+key);return [key,field.value!==''&&field.validity.valid?Number(field.value).toFixed(2):field.value];})),year:$('#simulation-year').value,salesAnnex:$('#sales-annex').value,serviceAnnex:$('#service-annex').value};
   try { sessionStorage.setItem(S.key,JSON.stringify(data)); $('#draft-status').textContent='Rascunho salvo nesta aba, vinculado à empresa e aos dois relatórios. Alterar valores exige gerar a simulação novamente.'; }
   catch { $('#draft-status').textContent='Não foi possível guardar o rascunho nesta aba. Mantenha a página aberta até concluir.'; }
 }
@@ -100,17 +111,18 @@ function restoreDraft() {
   try {
     const data=JSON.parse(sessionStorage.getItem(S.key)||'null'); if(!data || !Number.isInteger(data.months) || data.months<1 || data.months>12) return;
     if(S.source.periodBasis!=='COLUMN_H')S.months=data.months; $('#period-months').value=String(S.months);applyReports();
-    for(const key of [...IMPORTED,...MANUAL,'rbt12']) { const v=data.fields?.[key]; if(typeof v==='string' && (v==='' || /^\d+(\.\d{1,2})?$/.test(v))) $('#'+key).value=v; }
+    const matchingMonths=data.months===S.months;
+    for(const key of [...IMPORTED,...MANUAL,'rbt12']) { if(IMPORTED.includes(key)&&!matchingMonths)continue; const v=data.fields?.[key]; if(typeof v==='string' && (v==='' || /^\d+(\.\d{1,2})?$/.test(v))) $('#'+key).value=v; }
     if(typeof data.rbt12ExtractionId==='string'&&/^[a-f0-9-]{36}$/.test(data.rbt12ExtractionId))S.rbt12ExtractionId=data.rbt12ExtractionId;
     for(const [key,id,choices] of [['year','simulation-year',['2027','2028']],['salesAnnex','sales-annex',['1','2']],['serviceAnnex','service-annex',['3','4','5']]]) if(choices.includes(data[key])) $('#'+id).value=data[key];
-    S.edited=data.edited===true;$('#period-confirm').checked=S.source.periodBasis==='COLUMN_H'||data.confirmed===true;$('#draft-status').textContent='Rascunho desta empresa restaurado. Confira os campos antes de gerar.';
+    S.edited=matchingMonths&&data.edited===true;$('#period-confirm').checked=S.source.periodBasis==='COLUMN_H'||data.confirmed===true;$('#draft-status').textContent='Rascunho desta empresa restaurado. Confira os campos antes de gerar.';
   } catch { /* Invalid/unavailable local drafts never prevent using verified report totals. */ }
 }
 const DRE=[['services','Receita de serviços'],['sales','Receita de vendas'],['revenue','Receita bruta total'],['das','− DAS'],['cbsDebit','− Débito de CBS'],['ibsDebit','− Débito de IBS'],['icmsNet','− ICMS líquido fora do DAS'],['iss','− ISS fora do DAS'],['netRevenue','Receita líquida'],['cmvSimple','− Compras do Simples'],['cmvRegular','− Compras fora do Simples'],['cmv','CMV total'],['cbsUsed','+ Crédito CBS utilizado'],['ibsUsed','+ Crédito IBS utilizado'],['grossProfit','Lucro bruto'],['salaries','− Salários e pró-labore'],['benefits','− Benefícios'],['payroll','− Encargos adicionais'],['personnel','Pessoal e encargos'],['administrative','− Outras despesas'],['rent','− Aluguel'],['cards','− Taxas de cartão'],['preTax','Resultado antes de IRPJ/CSLL'],['irpj','− IRPJ e adicional'],['csll','− CSLL'],['netProfit','Resultado líquido']];
 function hero(readonly) {
   const company=S.source.company;
   return `<div class="sim-top-links"><a class="sim-back" href="/generations.html?id=${encodeURIComponent(S.source.generationId)}">← Conferir relatórios</a><a class="sim-back" href="/simulations.html?clientId=${encodeURIComponent(S.source.clientId)}">Histórico de simulações →</a></div>
-    <div class="sim-hero"><div><div class="eyebrow">SIMULADOR · ${esc(company.code||'EMPRESA')}</div><h1>Uma visão clara.<br>Melhores decisões.</h1><p><strong>${esc(company.name)}</strong><br>${readonly?'Todos os dados e resultados da versão salva, disponíveis para conferência.':'Compras e vendas já separadas. Complete os valores e compare os cenários.'}</p></div><div class="sim-hero-side"><span class="sim-hero-icon" aria-hidden="true">↗</span><span>${readonly?'Versão preservada':S.parentId?'Nova versão da simulação':'Da informação à decisão'}</span></div></div>
+    <div class="sim-hero"><div><div class="eyebrow">SIMULADOR · ${esc(company.code||'EMPRESA')}</div><h1>Uma visão clara.<br>Melhores decisões.</h1><p><strong>${esc(company.name)}</strong><br>${readonly?'Totais, médias, projeção e resultados da versão salva, disponíveis para conferência.':'Do período importado à média mensal. Da média mensal à projeção de um ano.'}</p></div><div class="sim-hero-side"><span class="sim-hero-icon" aria-hidden="true">12<small>MESES PROJETADOS</small></span><span>${readonly?'Versão preservada':S.parentId?'Nova versão da simulação':'Da informação à decisão'}</span></div></div>
     ${readonly?'':`<nav class="sim-step-track" aria-label="Seções do simulador"><a href="#serviceRevenue">01 · Faturamento</a><a href="#purchasesOptantCents">02 · Compras</a><a href="#salaries">03 · Despesas</a><a href="#simulation-year">04 · Cenário</a></nav>`}`;
 }
 function sourceCard() {
@@ -168,7 +180,7 @@ async function simulate() {
   try {
     $('#simulator-error').textContent='';
     const input=draft(),result=calculateSimulation(input),groups=Object.fromEntries(IMPORTED.map(key=>[key,value(key)]));
-    S.result={input,result,monthlyGroups:groups};S.snapshot=null;S.saveError=null;S.viewPeriod='annual';saveDraft();
+    S.result={input,result,monthlyGroups:groups,projection:{...annualizeReports(S.source.fields,S.months),scenario:projectScenario(groups,input.values)}};S.snapshot=null;S.saveError=null;S.viewPeriod='annual';saveDraft();
     S.pending=canSave()?{simulationId:crypto.randomUUID(),generationId:S.source.generationId,clientId:S.source.clientId,reportMonths:S.months,periodConfirmed:true,monthlyGroups:groups,draft:input,...(S.rbt12ExtractionId?{rbt12ExtractionId:S.rbt12ExtractionId}:{}),...(S.parentId?{parentSimulationId:S.parentId}:{})}:null;
     renderResult();renderNotices();
     $('#results-top').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'});
@@ -181,7 +193,7 @@ async function persist() {
   try {
     const snapshot=await api('/api/v4/simulations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});
     if(S.pending!==request)return;
-    S.snapshot=snapshot;S.source=snapshot.source;S.edited=snapshot.manuallyAdjusted;S.result={input:snapshot.draft,result:snapshot.result,monthlyGroups:snapshot.monthlyGroups};S.pending=null;
+    S.snapshot=snapshot;S.source=snapshot.source;S.edited=snapshot.manuallyAdjusted;S.result={input:snapshot.draft,result:snapshot.result,monthlyGroups:snapshot.monthlyGroups,projection:snapshot.projection};S.pending=null;
     $('#simulator-intro').innerHTML=hero(false);
     const sourceDetails=$('.sim-report-details'),sourceOpen=sourceDetails.open;sourceDetails.outerHTML=sourceCard();$('.sim-report-details').open=sourceOpen;
     renderResult();renderNotices();
@@ -200,7 +212,7 @@ function renderResult() {
   if(!S.result)return;
   const {input,result,monthlyGroups}=S.result,monthly=S.viewPeriod==='monthly',divisor=monthly?12:1,periodLabel=monthly?'MENSAL':'ANUAL';
   const best=result.regimes.find(r=>r.id===result.bestRegimeId);
-  $('#simulation-result').innerHTML=`<section class="sim-result" id="results-top"><div class="sim-result-head"><div><div class="eyebrow">PAINEL DA SIMULAÇÃO · ${input.year}</div><h2>O mesmo negócio. Quatro cenários.</h2><p class="sim-help">${esc(S.source.company.name)} · valores ${monthly?'mensais':'anuais'} projetados a partir dos dados informados.</p></div><div class="sim-result-actions"><div class="sim-period-toggle" role="group" aria-label="Período dos resultados"><button type="button" data-period="monthly" aria-pressed="${monthly}">Mensal</button><button type="button" data-period="annual" aria-pressed="${!monthly}">Anual</button></div><button id="export-simulation" type="button">Exportar memória da simulação</button></div></div>
+  $('#simulation-result').innerHTML=`<section class="sim-result" id="results-top"><div class="sim-result-head"><div><div class="eyebrow">PAINEL DA SIMULAÇÃO · ${input.year}</div><h2>O mesmo negócio. Quatro cenários.</h2><p class="sim-help">${esc(S.source.company.name)} · base de ${S.months} ${S.months===1?'mês':'meses'} → média mensal → 12 meses. Valores ${monthly?'mensais':'anuais'} do cenário ${S.edited?'com ajustes manuais':'com a média dos relatórios'}.</p></div><div class="sim-result-actions"><div class="sim-period-toggle" role="group" aria-label="Período dos resultados"><button type="button" data-period="monthly" aria-pressed="${monthly}">Mensal</button><button type="button" data-period="annual" aria-pressed="${!monthly}">Anual</button></div><button id="export-simulation" type="button">Exportar memória da simulação</button></div></div>
     <div id="simulation-save-status" class="sim-save-status" role="status" aria-live="polite"></div>
     <div class="sim-kpis"><article><span>Faturamento ${monthly?'mensal':'anual'}</span><strong>${money(result.annualRevenue/divisor)}</strong><small>${monthly?'Média mensal usada na projeção':'Receita mensal × 12'}</small></article><article><span>Maior resultado estimado</span><strong class="${best?.annualProfit<0?'sim-negative':''}">${best?money(best.annualProfit/divisor):'Sem ranking'}</strong><small>${best?esc(best.name):'A receita é zero neste cenário'}</small></article><article><span>Diferença entre os cenários</span><strong>${best?money(result.difference/divisor):'—'}</strong><small>Maior menos menor resultado disponível</small></article></div>
     ${renderSimulationCharts({input,result,monthlyGroups,period:S.viewPeriod})}
@@ -227,13 +239,13 @@ function memoryDetails() {
 }
 function capturedFields(snapshot) {
   const d=snapshot.draft,fields=[['RBT12 do Simples Nacional',d.rbt12 ?? snapshot.engineInput?.rbt12],['Receita de serviços',d.values.serviceRevenue],['Receita de vendas · total',d.values.salesRevenue],['Faturamento vendas Optantes SN',snapshot.monthlyGroups.salesOptantCents],['Faturamento vendas Não Optantes SN',snapshot.monthlyGroups.salesNonOptantCents],['Faturamento Vendas de CPFs',snapshot.monthlyGroups.salesCpfCents],['Compras de empresas do Simples Nacional',d.values.simplePurchases],['Compras de empresas fora do Simples',d.values.regularPurchases],['Salários e pró-labore',d.values.salaries],['Benefícios da equipe',d.values.benefits],['Outras despesas da empresa',d.values.adminExpenses],['Aluguel',d.values.rent],['Taxas de cartão',d.values.cardExpenses]];
-  return `<section class="card sim-snapshot" id="simulation-snapshot"><div class="sim-result-head"><div><div class="eyebrow">VERSÃO SALVA · SOMENTE LEITURA</div><h2>${esc(snapshot.title||'Simulação de '+S.source.company.name)}</h2><p class="sim-help">${date(snapshot.createdAt)} · ${esc(snapshot.createdBy?.name||'Usuário')} · modelo ${esc(snapshot.modelVersion)}</p></div>${canSave()?'<button type="button" class="primary" id="create-version">Criar nova versão</button>':''}</div><div class="sim-snapshot-meta"><span>${d.year} · Vendas: Anexo ${d.salesAnnex===1?'I':'II'}</span><span>Serviços: Anexo ${{3:'III',4:'IV',5:'V'}[d.serviceAnnex]}</span><span>${snapshot.reportMonths} ${snapshot.reportMonths===1?'mês':'meses'} nos arquivos · ${snapshot.periodBasis==='COLUMN_H'?'coluna H':'período confirmado'}</span><span>RBT12: ${snapshot.rbt12Source==='SIMPLES_PDF'?'Extrato do Simples Nacional':snapshot.rbt12Source==='MANUAL'?'informada manualmente':'estimativa histórica'}</span><span>${snapshot.manuallyAdjusted?'Valores importados ajustados':'Valores dos relatórios preservados'}</span></div>${snapshot.parentSimulationId?`<a class="sim-back" href="/simulator.html?simulation=${encodeURIComponent(snapshot.parentSimulationId)}">Abrir versão de origem →</a>`:''}<h3>Dados usados no cálculo <small>Valores mensais</small></h3><div class="sim-detail-grid">${fields.map(([label,val])=>`<article><span>${label}</span><strong>${money(val)}</strong></article>`).join('')}</div>${snapshot.adjustments?.length?`<details class="sim-adjustments"><summary>${snapshot.adjustments.length} ajustes em relação aos relatórios</summary><div class="sim-memory-items">${snapshot.adjustments.map(a=>`<article><div><strong>${esc(fieldLabel(a.field))}</strong><p>Valor mensal dos relatórios: ${money(a.reportMonthlyValue)}</p></div><span>Simulado: ${money(a.simulatedMonthlyValue)}</span></article>`).join('')}</div></details>`:''}<p class="sim-help sim-record-id">Registro ${esc(snapshot._id)} · Base de cálculo ${esc(snapshot.calculatorSourceCommit)}</p></section>`;
+  return `<section class="card sim-snapshot" id="simulation-snapshot"><div class="sim-result-head"><div><div class="eyebrow">VERSÃO SALVA · SOMENTE LEITURA</div><h2>${esc(snapshot.title||'Simulação de '+S.source.company.name)}</h2><p class="sim-help">${date(snapshot.createdAt)} · ${esc(snapshot.createdBy?.name||'Usuário')} · modelo ${esc(snapshot.modelVersion)}</p></div>${canSave()?'<button type="button" class="primary" id="create-version">Criar nova versão</button>':''}</div><div class="sim-snapshot-meta"><span>${d.year} · Vendas: Anexo ${d.salesAnnex===1?'I':'II'}</span><span>Serviços: Anexo ${{3:'III',4:'IV',5:'V'}[d.serviceAnnex]}</span><span>${snapshot.reportMonths} ${snapshot.reportMonths===1?'mês':'meses'} nos arquivos · ${snapshot.periodBasis==='COLUMN_H'?'coluna H':'período confirmado'}</span><span>RBT12: ${snapshot.rbt12Source==='SIMPLES_PDF'?'Extrato do Simples Nacional':snapshot.rbt12Source==='MANUAL'?'informada manualmente':'estimativa histórica'}</span><span>${snapshot.manuallyAdjusted?'Valores importados ajustados':'Valores dos relatórios preservados'}</span></div>${snapshot.parentSimulationId?`<a class="sim-back" href="/simulator.html?simulation=${encodeURIComponent(snapshot.parentSimulationId)}">Abrir versão de origem →</a>`:''}<h3>Dados usados no cálculo <small>Valores mensais · exceto RBT12</small></h3><div class="sim-detail-grid">${fields.map(([label,val])=>`<article><span>${label}</span><strong>${money(val)}</strong></article>`).join('')}</div>${snapshot.adjustments?.length?`<details class="sim-adjustments"><summary>${snapshot.adjustments.length} ajustes em relação aos relatórios</summary><div class="sim-memory-items">${snapshot.adjustments.map(a=>`<article><div><strong>${esc(fieldLabel(a.field))}</strong><p>Valor mensal dos relatórios: ${money(a.reportMonthlyValue)}</p></div><span>Simulado: ${money(a.simulatedMonthlyValue)}</span></article>`).join('')}</div></details>`:''}<p class="sim-help sim-record-id">Registro ${esc(snapshot._id)} · Base de cálculo ${esc(snapshot.calculatorSourceCommit)}</p></section>`;
 }
 function fieldLabel(key) { return {salesOptantCents:'Vendas Optantes SN',salesNonOptantCents:'Vendas Não Optantes SN',salesCpfCents:'Vendas de CPFs',purchasesOptantCents:'Compras do Simples',purchasesNonOptantCents:'Compras fora do Simples'}[key]||key; }
 function showSnapshot(snapshot) {
-  S.snapshot=snapshot;S.source=snapshot.source;S.months=snapshot.reportMonths;S.edited=snapshot.manuallyAdjusted;S.readonly=true;S.pending=null;S.result={input:snapshot.draft,result:snapshot.result,monthlyGroups:snapshot.monthlyGroups};
-  $('#simulator-app').innerHTML=`<div id="simulator-intro">${hero(true)}</div>${capturedFields(snapshot)}${sourceCard()}<div id="simulation-notices"></div><div id="simulation-result"></div>`;
-  renderNotices();renderResult();
+  S.snapshot=snapshot;S.source=snapshot.source;S.months=snapshot.reportMonths;S.edited=snapshot.manuallyAdjusted;S.readonly=true;S.pending=null;S.result={input:snapshot.draft,result:snapshot.result,monthlyGroups:snapshot.monthlyGroups,projection:snapshot.projection};
+  $('#simulator-app').innerHTML=`<div id="simulator-intro">${hero(true)}</div><div id="simulator-projection"></div>${capturedFields(snapshot)}${sourceCard()}<div id="simulation-notices"></div><div id="simulation-result"></div>`;
+  updateProjection();renderNotices();renderResult();
   const button=$('#create-version');if(button)button.onclick=()=>{
     S.parentId=snapshot._id;S.key=`maximum-simulator:copy:${S.user._id}:${snapshot._id}`;
     history.replaceState(null,'',sourceUrl());display(snapshot);
@@ -242,7 +254,7 @@ function showSnapshot(snapshot) {
 }
 function exportSimulation() {
   if(!S.result)return;
-  const payload=S.snapshot||{saved:false,generatedAt:new Date().toISOString(),calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,source:S.source,reportMonths:S.months,manuallyAdjusted:S.edited,monthlyGroups:S.result.monthlyGroups,monthlyGroupsUnit:'BRL',draft:S.result.input,result:S.result.result};
+  const payload=S.snapshot||{saved:false,generatedAt:new Date().toISOString(),calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,source:S.source,reportMonths:S.months,manuallyAdjusted:S.edited,monthlyGroups:S.result.monthlyGroups,monthlyGroupsUnit:'BRL',projection:S.result.projection,draft:S.result.input,result:S.result.result};
   const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json;charset=utf-8'}));
   const anchor=document.createElement('a');anchor.href=url;anchor.download=`simulacao-${String(S.source.company.code||'empresa').replace(/[^\w-]/g,'_')}-${S.result.input.year}.json`;document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);
 }

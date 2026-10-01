@@ -2,6 +2,7 @@ import { getGeneration } from './generation-store.ts';
 import { purchaseSummary } from './purchase-store.ts';
 import { PURCHASE_MODE, SALES_MODE, exactCents } from './purchase-domain.ts';
 import { need } from './security.ts';
+import { annualizeReports } from '../public/simulator-projection.js';
 import { sameReportCompetences } from './report-competence.ts';
 
 type FinancialSummary = Awaited<ReturnType<typeof purchaseSummary>>;
@@ -69,6 +70,7 @@ export async function generationSimulator(id: string, clientId: string) {
   }
   if (classification.purchases.nonCnpjCount) warnings.push('As compras de CPF e outros documentos não consultáveis estão em Compras de empresas fora do Simples, com subtotal disponível para conferência.');
   if (classification.sales.otherDocumentsCount) warnings.push('As vendas com CNO, documentos inválidos ou ausentes estão em Vendas Não Optantes SN. Vendas identificadas como CPF têm campo próprio.');
-  return {generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
+  const projection = reportMonths ? annualizeReports(fields, reportMonths) : null;
+  return {projection, generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
     purchases: sourceMetadata(purchases), sales: sourceMetadata(sales), fields, classification, warnings};
 }

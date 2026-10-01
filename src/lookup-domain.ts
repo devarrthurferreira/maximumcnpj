@@ -30,11 +30,15 @@ export function compareNames(input: unknown, legal: unknown, trading?: unknown):
 export function flagStatus(value: unknown): Status { return value === true ? 'OPTANTE' : value === false ? 'NAO_OPTANTE' : 'NAO_CONFIRMADO'; }
 export function isoDate(value: unknown): string | null {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const t=Date.parse(value); return Number.isFinite(t) && new Date(t).toISOString().slice(0,10)===value ? value : null;
+  const t=Date.parse(value);return Number.isFinite(t) && new Date(t).toISOString().slice(0,10)===value ? value : null;
 }
-/** Use only the documented flags, never reason from legal name, CNAE, size or tax text. */
+/** Match the entire normalized identifier; a numeric response cannot recover missing leading zeroes. */
 export function parseProvider(cnpj: string, payload: any) {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || payload.cnpj !== cnpj) throw new Error('SOURCE_IDENTITY');
+  const expected = normalizeCnpj(cnpj);
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.cnpj !== 'string' || !expected.valid) throw new Error('SOURCE_IDENTITY');
+  const returned = normalizeCnpj(payload.cnpj);
+  if (!returned.valid || returned.cnpj !== expected.cnpj) throw new Error('SOURCE_IDENTITY');
+  cnpj = expected.cnpj;
   const status=flagStatus(payload.opcao_pelo_simples);
   const mei=typeof payload.opcao_pelo_mei === 'boolean' ? payload.opcao_pelo_mei : null;
   const conflict = status === 'NAO_OPTANTE' && mei === true;

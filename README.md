@@ -1,62 +1,91 @@
 # Maximum CNPJ · v0.12.0
 
-Node.js + TypeScript + MongoDB para consultas e histórico. Python para PDFs e leitura de Extrato do Simples Nacional. Identidade Maximum, acesso autenticado e isolamento por workspace. Sem Google Cloud.
+Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
 
-## Correção de 01/10/2026 — períodos comparados por competência
+## Entrega de 01/10/2026 — média mensal, projeção anual e novo visual
 
-**Compras e vendas são comparadas pelo mês/ano inicial e final da coluna H, e não pelo dia do primeiro ou do último lançamento.** A falta de compras ou vendas em um dia não representa uma competência diferente.
+**A regra do simulador é sempre: total dos relatórios ÷ competências importadas = média mensal; média mensal × 12 = projeção anual.** O horizonte é de **12 meses no total**, nunca a quantidade importada somada a mais 12 meses.
 
-Exemplo aceito:
+| Exemplo | Total de 4 meses | Média mensal (÷ 4) | Projeção anual (× 12) |
+| --- | ---: | ---: | ---: |
+| Vendas | R$ 400.000,00 | R$ 100.000,00 | R$ 1.200.000,00 |
+| Compras | R$ 240.000,00 | R$ 60.000,00 | R$ 720.000,00 |
 
-| Relatório | Datas efetivamente observadas na coluna H | Competências consideradas |
-| --- | --- | --- |
-| Compras | 02/04/2026 a 31/08/2026 | 04/2026 a 08/2026 |
-| Vendas | 01/04/2026 a 31/08/2026 | 04/2026 a 08/2026 |
+A regra aplica-se a todos os cinco grupos: vendas optantes, vendas não optantes/não confirmadas, vendas CPF, compras do Simples e compras fora do Simples. Vale para qualquer intervalo de **1 a 12 competências**. O simulador usa os totais conciliados pelo servidor; resultados financeiros enviados pelo navegador não substituem a origem.
 
-Os dois arquivos representam **5 competências**: abril, maio, junho, julho e agosto. Diferenças nos dias iniciais e finais são permitidas quando permanecem nos mesmos meses/anos. Meses internos sem lançamentos continuam incluídos no divisor; não é necessário ter movimento todos os dias nem em todos os meses intermediários.
+### Competências, não dias com movimento
 
-Um arquivo de abril a agosto e outro de maio a agosto continuam incompatíveis. Intervalos de igual duração, mas com meses ou anos diferentes, também não são confundidos. Continua permitido o intervalo inclusivo de 1 a 12 meses, inclusive quando atravessa a virada do ano.
+A coluna H (Data Escrituração/Serviço) determina o mês/ano inicial e final. Compras iniciadas em 02/04 e vendas iniciadas em 01/04 são compatíveis quando terminam no mesmo mês/ano. Meses internos sem lançamentos continuam no divisor. A ausência de uma competência nas extremidades não é inferida: arquivos de abril–agosto e maio–agosto continuam diferentes.
 
-### Dados originais e conciliação
+Cada relatório mantém suas datas originais. Sua conferência individual contra o snapshot é exata; somente a comparação entre relatórios distintos é mensal. Snapshots antigos sem coluna H permanecem utilizáveis mediante indicação/confirmação manual de 1 a 12 meses. A quantidade automática não pode ser alterada no navegador para salvar uma simulação com outro divisor.
 
-Esta alteração afeta somente a comparação entre dois relatórios distintos. **Cada relatório continua conciliado individualmente contra as suas datas e valores originais no MongoDB.** A função de conferência exata do snapshot não foi flexibilizada: editar a data persistida sem correspondência nas linhas continua bloqueando a emissão.
+### Precisão e memória da projeção
 
-As datas da coluna H não são substituídas por dia 1 ou pelo último dia do mês. O simulador conserva o período original de compras em `purchases.period` e o original de vendas em `sales.period`; o intervalo mensal comum determina `reportMonths`. O aviso do simulador explica que os dias sem movimento não alteram as competências.
+A regra compartilhada `public/simulator-projection.js` é usada pelo navegador e pelo Node. Calcula em centavos inteiros com BigInt e valida limites seguros. A média total de cada lado é arredondada em centavos; os centavos residuais são distribuídos entre seus grupos pelo maior resto, com desempate determinístico. Assim, os grupos fecham o total mensal. A projeção anual repete **essa média arredondada** 12 vezes, podendo diferir alguns centavos da divisão sem arredondamento intermediário.
 
-Não há alteração da fórmula **Q − Y + AA − AB**, da classificação do Simples, do grupo CPF nas vendas, da RBT12, dos totais importados, das permissões ou dos cenários já salvos. Não há migração destrutiva nem nova variável de ambiente.
+A API do pré-preenchimento retorna `projection` quando há período automático. Cada nova simulação salva a versão `AVERAGE_X12_V1`, os totais importados, o divisor, as cinco médias, os valores anualizados e 12 meses projetados iguais. O servidor gera essa memória; o cliente não pode fornecer uma projeção arbitrária.
 
-### Como utilizar
+**A base importada e o cenário editado são separados.** Os cinco campos continuam editáveis. A conferência superior mantém a média original, sinaliza a edição e os resultados usam os valores mensais efetivamente informados. O histórico guarda `projection.scenario`, os ajustes e a base original. Reabrir um cenário não consulta novamente os CNPJs nem recalcula os resultados fiscais. Nos históricos sem a nova memória, a interface apresenta uma conferência derivada dos totais salvos, identificada como tal.
 
-Após a atualização da versão com leitura da coluna H, reabra a geração pelo histórico e clique novamente em **Ir para o simulador**. Relatórios completos já armazenados podem ser usados sem reenviar os arquivos ou consultar novamente os CNPJs: o backend reconcilia os snapshots existentes e aplica a nova comparação mensal.
+Serviços, salários, benefícios, despesas administrativas, aluguel e taxas de cartão são informados **por mês**, portanto não são divididos pelo número de meses dos arquivos e entram no cenário anual multiplicados por 12 uma única vez. As fórmulas tributárias existentes não foram alteradas nesta entrega.
 
-A correção está na linha de desenvolvimento `feature/period-rbt12-extrato`, onde existia a validação diária. A branch `main` possui uma evolução separada das consultas; esta entrega não a substitui nem remove suas melhorias. Não confunda publicação do preview dessa branch com implantação do domínio principal.
+**RBT12 não é a projeção anual.** O valor informado ou extraído do PDF continua separado e conserva a proveniência. Não é dividido pelo período importado nem multiplicado por 12. A distribuição uniforme é uma premissa de projeção, não um histórico mensal real ou uma previsão de sazonalidade.
 
-## Funcionalidades da versão
+### Design do simulador
 
-Mantidos os recursos da v0.12.0: período fiscal pela coluna H, importação de compras/vendas, pré-preenchimento dos cinco grupos do simulador, leitura Python de RBT12, simulações históricas, relatórios e isolamento por empresa/workspace. Históricos sem período fiscal persistido continuam no fluxo de confirmação manual.
+- [x] Cabeçalho e navegação por seções com identidade Maximum, contraste e hierarquia de leitura.
+- [x] Painel “A média do período. O potencial de 12 meses.” com total importado, média e projeção anual.
+- [x] Alternância entre Vendas e Compras, linha de 12 meses iguais e memória dos cinco grupos expansível.
+- [x] Campos mensais identificados, RBT12 destacada como exceção, avisos reunidos e ajustes manuais visíveis.
+- [x] Gráficos e comparação anual/mensal preservados; DRE ao final com coluna Indicador fixa.
+- [x] Layout responsivo para computador e celular; tabelas largas rolam dentro do próprio quadro.
+- [x] Rascunhos antigos com divisor diferente não sobrescrevem os valores importados do período automático atual.
 
-A documentação operacional completa de instalação, equipe, consultas, relatórios, simulador, RBT12 e configurações está preservada em [README v0.12.0 inicial](README-v0.12.0-inicial.md). As orientações antigas que exigiam igualdade de dias foram substituídas pela regra de competências acima. Consulte também [AGENTS.md](AGENTS.md), [CHANGELOG.md](CHANGELOG.md) e [documentação da calculadora](docs/calculadora-tributaria.md).
+### Consulta e dados existentes
 
-## Verificação e progresso
+Esta linha também conserva as melhorias de leitura da v0.11.1: concorrência limitada, intervalo global no MongoDB, novas tentativas e acompanhamento de confirmações/pendências. A revalidação financeira em novo lote preserva o período, as linhas e os valores. Não modifica automaticamente gerações ou simulações anteriores.
 
-- [x] Comparação mensal isolada da conciliação exata dos snapshots.
-- [x] Mensagem de erro restrita a divergências reais de competência.
-- [x] Seis testes unitários adicionados e executados localmente com Node.js 22.
-- [x] Regressão do fluxo de importação → MongoDB → API do simulador, sem consultar fonte externa e sem dados reais de clientes.
-- [x] Teste de preservação das datas/valores e bloqueio de adulteração do snapshot.
-- [x] Workflow específico de competências, além da inclusão dos testes nas rotinas existentes.
+A fórmula dos relatórios continua **Q − Y + AA − AB**. Z é informativa. Todas as linhas financeiras compõem os totais; documentos repetidos não duplicam a contagem. Somente OPTANTE explícito entra em Simples; os demais entram no grupo gerencial Não optante com a situação da fonte preservada. Vendas CPF continuam em grupo próprio. Ausência ou erro da fonte não se torna negativa fiscal inventada.
+
+## Uso e instalação
+
+Reabra a geração no Histórico e use **Ir para o simulador**. Com a coluna H armazenada, a quantidade de meses é preenchida automaticamente. Confira a projeção, informe os campos mensais e a RBT12 e gere a simulação. Relatórios concluídos não precisam ser reconsultados para esse cálculo. Use uma nova versão para alterar um cenário salvo.
+
+Não há migração destrutiva, nova chave de API ou nova variável obrigatória. Preserve os ambientes privados, banco, workspace, domínio e usuários existentes. Para instalação nova:
 
 ```sh
-# Somente a regra mensal, sem MongoDB
-node --experimental-strip-types --test tests/report-competence.test.ts
+npm ci
+python -m pip install -r requirements.txt
+npm run build
+npm run seed
+npm start
+```
 
-# Tipos e build
+Use `.env.example` somente como modelo. `npm run seed` é apenas para uma instalação sem usuários; nunca redefine as contas existentes. Não versione senhas, URIs ou relatórios reais.
+
+## Testes e progresso
+
+```sh
 npm run check:release
 npm run check
 npm run build
-
-# Regra e integração; configure MONGODB_URI para uma instância de teste
+npm test
+npm run test:projection
 npm run test:competences
+npm run test:integration
+npm run test:lookup-integration
+npm run test:purchases-integration
+npm run test:generations-integration
+npm run test:simulations-integration
+npm run test:reports
+npm run test:e2e
 ```
 
-A integração cria um banco com nome aleatório e o remove ao final, após conferir sua identidade. Usa somente lançamentos sintéticos não consultáveis, sem chamadas à API CNPJ. O workflow **Competências de compras e vendas** verifica versão, tipos, build e a integração desta correção. Confira a execução do commit entregue; a aprovação desse workflow específico não afirma que todas as suítes preexistentes da branch estejam aprovadas.
+Os testes de integração exigem MongoDB descartável. As novas regressões usam dados sintéticos e não consultam provedores externos. Cobrem 4 meses, todos os divisores de 1–12, centavos, zero, rejeição de campos inválidos, ajustes manuais, RBT12 independente, isolamento, persistência e reabertura. Testes de navegador verificam o fluxo e a responsividade; a CI publica evidências. Consulte o status do commit para distinguir testes locais, CI e publicação em produção.
+
+- [x] Regra compartilhada e memória versionada no servidor.
+- [x] Integração do período mensal e preservação das melhorias de consulta.
+- [x] Redesign e testes de regressão automatizados.
+- [ ] Homologação operacional da projeção com uma carteira real autorizada; dados sintéticos não substituem essa conferência.
+
+Documentação anterior preservada em [README v0.12.0 inicial](README-v0.12.0-inicial.md) e [README v0.11.0](README-v0.11.0.md). Orientações antigas sobre igualdade dos dias foram substituídas pela comparação por competência. Consulte [AGENTS.md](AGENTS.md), [CHANGELOG.md](CHANGELOG.md) e [a memória técnica da calculadora](docs/calculadora-tributaria.md).

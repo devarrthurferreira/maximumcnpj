@@ -4,6 +4,7 @@ import { need, text, digest, escapeRegex, integer } from './security.ts';
 import { write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { VERSION } from './domain.ts';
+import { annualizeReports, projectScenario } from '../public/simulator-projection.js';
 import { generationSimulator } from './simulator-store.ts';
 import { calculateSimulation, draftToInput, MODEL_VERSION, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
   SIMULATION_VALUE_FIELDS } from '../public/simulator-engine.js';
@@ -38,16 +39,8 @@ function money(value: unknown) {
 
 /** Convert report cents into BRL using the same balanced rounding as the form. */
 function baselineGroups(source: Source, months: number): MonthlyGroups {
-  const result = {} as MonthlyGroups;
-  for (const keys of [GROUPS.slice(0, 3), GROUPS.slice(3)]) {
-    const exact = keys.map(key => source.fields[key] / months), base = exact.map(Math.floor);
-    const remainder = Math.round(keys.reduce((sum, key) => sum + source.fields[key], 0) / months) - base.reduce((a, b) => a + b, 0);
-    const order = exact.map((value, index) => ({index, fraction: value - base[index]}))
-      .sort((a, b) => b.fraction - a.fraction || a.index - b.index);
-    for (let i = 0; i < remainder; i++) base[order[i].index]++;
-    keys.forEach((key, index) => { result[key] = base[index] / 100; });
-  }
-  return result;
+  const projection = annualizeReports(source.fields, months);
+  return Object.fromEntries(GROUPS.map(key => [key, projection.monthlyGroupsCents[key] / 100])) as MonthlyGroups;
 }
 
 function request(input: unknown) {
@@ -138,6 +131,9 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
   const engineInput = draftToInput(draft);
   need(engineInput, 'Os valores ultrapassam os limites da calculadora. Confira as receitas mensais e a estimativa anual.');
   const result = calculateSimulation(draft);
+  const projection = {...annualizeReports(source.fields, reportMonths), scenario: projectScenario(monthlyGroups, draft.values)};
+  need(Math.abs(result.annualRevenue - projection.scenario.annual.revenueCents / 100) < 0.01,
+    'A receita anual deve corresponder à receita mensal multiplicada por 12.', 409, 'SIMULATION_PROJECTION');
   const baselineMonthlyGroups = baselineGroups(source, reportMonths);
   const adjustments = GROUPS.filter(key => monthlyGroups[key] !== baselineMonthlyGroups[key]).map(field => ({
     field, reportMonthlyValue: baselineMonthlyGroups[field], simulatedMonthlyValue: monthlyGroups[field]
@@ -147,7 +143,7 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
     title: validated.title || `${source.company.name} · ${draft.year}`, company: source.company,
     createdAt: new Date(), createdBy: {id: actor._id, name: actor.name}, appVersion: VERSION,
     modelVersion: MODEL_VERSION, calculatorSourceCommit: CALCULATOR_SOURCE_COMMIT, taxSources: TAX_SOURCES,
-    source, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
+    source, projection, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
     monthlyGroups, monthlyGroupsUnit: 'BRL', baselineMonthlyGroups,
     manuallyAdjusted: adjustments.length > 0, adjustments, draft, engineInput, result, parentSimulationId,
     rbt12Source, rbt12Extraction,
