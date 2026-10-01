@@ -31,8 +31,14 @@ jobs:
         run: npm install
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
-      - name: Dependências dos relatórios
-        run: python -m pip install -r requirements.txt
+      - uses: astral-sh/setup-uv@v6
+      - name: Dependências Python headless
+        run: |
+          uv sync --no-install-project
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      - name: Conferir runtime OCR headless
+        run: |
+          uv run --no-sync python -c "import cv2; from rapidocr import RapidOCR; print(cv2.__version__); RapidOCR()"
       - name: Python, PDF e MongoDB descartável
         run: npm run test:reports
         env:
