@@ -1,21 +1,46 @@
 """Leitura autenticada do extrato: OCR integral, 2.2 exclusiva, PDF pesquisável efêmero."""
 from http.server import BaseHTTPRequestHandler
-from urllib.parse import urlsplit, parse_qs
+from urllib.parse import urlsplit, parse_qs, unquote
 import base64
 import hashlib
 import json
 import os
 import re
 import uuid
+import requests
 
 from reporting.core import ReportError, allowed_origin, require, session_hash, utcnow
 from reporting.service import database, authenticate, rate_limit
 from reporting.simples import convert_statement_pdf, PARSER_VERSION
 
 # Below the serverless request/response payload ceiling. The local CLI accepts 8 MiB.
-MAX_PDF_BYTES = 4 * 1024 * 1024
+MAX_DIRECT_PDF_BYTES = 4 * 1024 * 1024
+MAX_BLOB_PDF_BYTES = 8 * 1024 * 1024
 MAX_RETURN_PDF_BYTES = 2_500_000
 UUID = re.compile(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
+
+def _blob_signed_url(value, expected_path):
+    require(isinstance(value, str) and len(value) < 6000, 400, 'BLOB_URL', 'URL temporária do documento inválida.')
+    parsed = urlsplit(value)
+    require(parsed.scheme == 'https' and parsed.hostname and parsed.hostname.endswith('.private.blob.vercel-storage.com'),
+            400, 'BLOB_URL', 'Origem do documento armazenado inválida.')
+    require(unquote(parsed.path.lstrip('/')) == expected_path and 'vercel-blob-signature=' in parsed.query,
+            400, 'BLOB_URL', 'A URL temporária não corresponde ao documento selecionado.')
+    return value
+
+
+def _download_blob(url):
+    response = requests.get(url, timeout=(5, 25), allow_redirects=False)
+    require(response.status_code == 200, 422, 'BLOB_READ', 'Não foi possível recuperar o PDF original armazenado. Reenvie ou tente reprocessar.')
+    require(response.headers.get('content-type', '').split(';')[0].lower() == 'application/pdf',
+            422, 'BLOB_PDF', 'O arquivo armazenado não foi identificado como PDF.')
+    require(0 < len(response.content) <= MAX_BLOB_PDF_BYTES, 413, 'PDF_LIMIT', 'O PDF armazenado excede 8 MiB.')
+    return response.content
+
+
+def _upload_searchable(url, content):
+    response = requests.put(url, data=content, headers={'Content-Type': 'application/pdf'}, timeout=(5, 30), allow_redirects=False)
+    require(200 <= response.status_code < 300, 503, 'BLOB_WRITE', 'O OCR foi concluído, mas não foi possível armazenar o PDF pesquisável.')
 
 
 class handler(BaseHTTPRequestHandler):
@@ -61,28 +86,58 @@ class handler(BaseHTTPRequestHandler):
             require(UUID.fullmatch(extraction_id), 400, 'RBT12_EXTRACTION', 'Selecione uma leitura do extrato.')
             record = db.simplesExtractions.find_one({'_id': extraction_id, 'workspaceId': workspace, 'clientId': client_id})
             require(record and record.get('parserVersion') == PARSER_VERSION, 409, 'RBT12_EXTRACTION', 'Leia novamente o PDF: é necessária a conferência exclusiva da seção 2.2.')
-            self.send_json(200, {'extractionId': extraction_id, 'clientId': client_id, 'fileName': record['fileName'], **record['result']})
+            self.send_json(200, {'extractionId': extraction_id, 'clientId': client_id, 'fileName': record['fileName'], **({'documentId': record.get('documentId')} if record.get('documentId') else {}), **record['result']})
         except Exception as error:
             self.error(error)
 
     def do_POST(self):
         self.request_id = str(uuid.uuid4())
+        document_record = None
+        db = None
         try:
             require(allowed_origin(self.headers), 403, 'ORIGIN', 'Origem da requisição não autorizada.')
             session_hash(self.headers)
-            require(self.headers.get('Content-Type', '').split(';')[0].lower() == 'application/pdf', 415, 'CONTENT_TYPE', 'Envie o Extrato do Simples em PDF.')
-            try:
-                size = int(self.headers.get('Content-Length', '0'))
-            except ValueError:
-                size = 0
-            require(0 < size <= MAX_PDF_BYTES, 413, 'PDF_LIMIT', 'O envio web aceita PDFs de até 4 MiB. Para arquivos maiores, utilize o conversor Python local.')
+            content_type = self.headers.get('Content-Type', '').split(';')[0].lower()
             db, workspace, actor, query, client_id = self.context()
             rate_limit(db, actor['_id'], workspace, False)
-            file_name = (query.get('fileName') or ['extrato-simples.pdf'])[0][:200]
             client = db.clients.find_one({'_id': client_id, 'workspaceId': workspace, 'active': True}, {'_id': 1, 'name': 1, 'code': 1, 'cnpj': 1})
             require(client, 404, 'CLIENT', 'Empresa não encontrada neste ambiente.')
-            content = self.rfile.read(size)
-            require(len(content) == size, 400, 'PDF_INCOMPLETE', 'O envio do PDF ficou incompleto. Reenvie o arquivo.')
+
+            if content_type == 'application/json':
+                try:
+                    size = int(self.headers.get('Content-Length', '0'))
+                except ValueError:
+                    size = 0
+                require(0 < size <= 20_000, 413, 'JSON_LIMIT', 'Dados de processamento acima do limite.')
+                try:
+                    payload = json.loads(self.rfile.read(size).decode('utf-8'))
+                except Exception:
+                    raise ReportError(400, 'INVALID_JSON', 'Dados de processamento inválidos.')
+                document_id = str(payload.get('documentId') or '')
+                require(UUID.fullmatch(document_id), 400, 'DOCUMENT_ID', 'Documento armazenado inválido.')
+                document_record = db.simplesDocuments.find_one({'_id': document_id, 'workspaceId': workspace, 'clientId': client_id})
+                require(document_record, 404, 'DOCUMENT_ID', 'Documento armazenado não encontrado nesta empresa.')
+                original_url = _blob_signed_url(payload.get('originalGetUrl'), document_record['originalPath'])
+                searchable_url = _blob_signed_url(payload.get('searchablePutUrl'), document_record['searchablePath'])
+                content = _download_blob(original_url)
+                file_name = document_record['fileName']
+                db.simplesDocuments.update_one({'_id': document_id, 'workspaceId': workspace},
+                                               {'$set': {'status': 'PROCESSING', 'updatedAt': utcnow()},
+                                                '$inc': {'attempts': 1}, '$unset': {'lastError': ''}})
+            elif content_type == 'application/pdf':
+                # Compatibilidade com uploads antigos. O fluxo atual grava primeiro no Blob privado.
+                try:
+                    size = int(self.headers.get('Content-Length', '0'))
+                except ValueError:
+                    size = 0
+                require(0 < size <= MAX_DIRECT_PDF_BYTES, 413, 'PDF_LIMIT', 'O envio direto aceita até 4 MiB. Use o fluxo com Blob para arquivos maiores.')
+                file_name = (query.get('fileName') or ['extrato-simples.pdf'])[0][:200]
+                content = self.rfile.read(size)
+                require(len(content) == size, 400, 'PDF_INCOMPLETE', 'O envio do PDF ficou incompleto. Reenvie o arquivo.')
+                searchable_url = None
+            else:
+                raise ReportError(415, 'CONTENT_TYPE', 'Envie o Extrato pelo armazenamento seguro ou em PDF.')
+
             result, searchable, _ = convert_statement_pdf(content)
             registered = re.sub(r'[^A-Z0-9]', '', str(client.get('cnpj') or '').upper())
             if registered:
@@ -90,17 +145,35 @@ class handler(BaseHTTPRequestHandler):
             else:
                 result['warnings'].append('A empresa não tem CNPJ cadastrado para comparação automática. Confira o nome e o CNPJ básico do extrato antes de simular.')
             extraction_id = str(uuid.uuid4())
+            document_id = document_record['_id'] if document_record else None
+            if document_record:
+                _upload_searchable(searchable_url, searchable)
             record = {'_id': extraction_id, 'workspaceId': workspace, 'clientId': client_id,
                       'createdBy': actor['_id'], 'createdAt': utcnow(), 'parserVersion': PARSER_VERSION,
-                      'fileName': file_name, 'fileSha256': hashlib.sha256(content).hexdigest(), 'result': result}
+                      'fileName': file_name, 'fileSha256': hashlib.sha256(content).hexdigest(), 'result': result,
+                      **({'documentId': document_id, 'originalPath': document_record['originalPath'],
+                          'searchablePath': document_record['searchablePath']} if document_record else {})}
             db.simplesExtractions.insert_one(record)
-            # No PDF, OCR full text or base64 is persisted in MongoDB.
+            if document_record:
+                db.simplesDocuments.update_one({'_id': document_id, 'workspaceId': workspace},
+                    {'$set': {'status': 'READY', 'updatedAt': utcnow(), 'extractionId': extraction_id,
+                              'fileSha256': record['fileSha256'], 'searchableStored': True,
+                              'resultSummary': {'pa': result['pa'], 'rbt12Cents': result['rbt12Cents'],
+                                                'processedPages': result.get('processedPages')}}})
             response = {'extractionId': extraction_id, 'clientId': client_id, 'fileName': file_name,
-                        'company': {'code': client.get('code'), 'name': client.get('name')}, **result}
-            if len(searchable) <= MAX_RETURN_PDF_BYTES:
-                response['searchablePdfBase64'] = base64.b64encode(searchable).decode('ascii')
-            else:
-                response['downloadNotice'] = 'A conversão foi concluída, mas o PDF pesquisável ultrapassa o limite de retorno web. O conversor Python local permite salvá-lo.'
+                        'company': {'code': client.get('code'), 'name': client.get('name')},
+                        **({'documentId': document_id, 'originalStored': True, 'searchableStored': True} if document_record else {}),
+                        **result}
+            if not document_record:
+                if len(searchable) <= MAX_RETURN_PDF_BYTES:
+                    response['searchablePdfBase64'] = base64.b64encode(searchable).decode('ascii')
+                else:
+                    response['downloadNotice'] = 'A conversão foi concluída, mas o PDF pesquisável ultrapassa o limite de retorno web.'
             self.send_json(200, response)
         except Exception as error:
+            if document_record and db is not None:
+                db.simplesDocuments.update_one({'_id': document_record['_id'], 'workspaceId': document_record['workspaceId']},
+                    {'$set': {'status': 'OCR_FAILED', 'updatedAt': utcnow(),
+                              'lastError': {'code': getattr(error, 'code', type(error).__name__),
+                                            'message': str(error)[:300]}}})
             self.error(error)

@@ -1,6 +1,28 @@
-# Maximum CNPJ · v0.12.2
+# Maximum CNPJ · v0.13.0
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Entrega 02/10/2026 — cofre de documentos fiscais no Blob
+
+O Extrato do Simples deixa de depender de uma única requisição de OCR. O fluxo atual é **Blob privado → OCR Python → PDF pesquisável no Blob → seção 2.2 → RBT12 → simulador**.
+
+- [x] O navegador recebe uma URL assinada de uso único e envia o PDF diretamente ao Vercel Private Blob. O token administrativo nunca é enviado ao navegador.
+- [x] O original é preservado em caminho imutável por workspace, empresa e documento. O MongoDB guarda apenas metadados, status, hashes, vínculo da extração e RBT12.
+- [x] O Python recebe URLs temporárias restritas ao próprio documento, recupera o original, aplica OCR integral e grava o PDF pesquisável em outro objeto privado.
+- [x] Falha de OCR não exige novo upload: o documento fica em `OCR_FAILED` e pode ser reprocessado a partir do original armazenado.
+- [x] O simulador oferece **Ver PDF original**, **Ver PDF pesquisável** e **Reprocessar OCR**. A leitura dos PDFs passa por rota autenticada do sistema.
+- [x] A regra fiscal permanece: somente a seção 2.2, com as 12 competências anteriores ao PA, alimenta a RBT12. Blob é armazenamento, não fonte fiscal.
+- [x] Limite do fluxo armazenado: 8 MiB por PDF; URLs temporárias expiram em minutos e são restritas ao pathname/operação.
+
+### Configuração do Blob
+
+Crie/conecte um **Vercel Blob privado** ao projeto `maximum-cnpj`. Em projetos novos, OIDC é o modo recomendado e não exige segredo manual no `.env`. Para desenvolvimento local ou stores legados, use:
+
+```dotenv
+BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
+```
+
+Nunca exponha esse token ao browser. O código usa URLs assinadas para upload e o leitor autenticado para visualização.
 
 ## Correção 01/10/2026 — PDF em imagem na Vercel
 

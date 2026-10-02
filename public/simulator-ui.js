@@ -12,7 +12,7 @@ const pct = value => value == null ? '—' : (value * 100).toLocaleString('pt-BR
 const date = value => value ? new Date(value).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}) : '—';
 const IMPORTED = ['salesOptantCents','salesNonOptantCents','salesCpfCents','purchasesOptantCents','purchasesNonOptantCents'];
 const MANUAL = ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'];
-const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',readonly:false,rbt12ExtractionId:null,rbt12Data:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales'};
+const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales'};
 const canSave = () => ['admin','operator'].includes(S.user?.role);
 const sourceUrl = () => '/simulator.html?'+new URLSearchParams({generation:S.source.generationId,client:S.source.clientId,...(S.parentId?{parent:S.parentId}:{})});
 const fail = error => { $('#simulator-error').textContent = error.message || String(error); };
@@ -43,7 +43,7 @@ function display(prefill=null) {
     ${section('01','Quanto a empresa fatura?','Por mês',`<div class="sim-fields">${moneyField('serviceRevenue','Receita de serviços','Quanto sua empresa recebe por mês com serviços, antes de descontar despesas e impostos. Não repita os valores já incluídos nas vendas.')}${moneyField('salesRevenue','Receita de vendas','Soma automática dos três grupos de vendas abaixo.',false,true)}</div><div class="sim-fields sales">${moneyField('salesOptantCents','Faturamento vendas Optantes SN','Vendas a CNPJs com opção pelo Simples confirmada na pesquisa.',true)}${moneyField('salesNonOptantCents','Faturamento vendas Não Optantes SN','Não optantes, não confirmados e outros documentos, exceto CPFs.',true)}${moneyField('salesCpfCents','Faturamento Vendas de CPFs','Vendas identificadas com CPF, sem consulta fiscal de CNPJ.',true)}</div><div class="sim-totals"><article><span>Total por mês</span><strong id="monthly-revenue">Preencha as receitas</strong></article><article><span>Receita estimada em 12 meses</span><strong id="annual-revenue">Calculada automaticamente</strong></article></div><p class="sim-help">Projeção do cenário: (média mensal de vendas + serviços mensais) × 12. Serviços não são divididos pelos meses importados. Esta projeção não substitui a RBT12 do extrato.</p>`)}
     ${section('02','Quanto a empresa compra?','Por mês',`<p class="sim-help">Separe as compras pela categoria do fornecedor. A nota fiscal pode ajudar a identificar se ele está no Simples Nacional.</p><div class="sim-fields">${moneyField('purchasesOptantCents','Compras de empresas do Simples Nacional','Valor mensal das mercadorias compradas de fornecedores que estão no Simples.',true)}${moneyField('purchasesNonOptantCents','Compras de empresas fora do Simples','Valor mensal das mercadorias dos demais fornecedores, incluindo não confirmados e documentos não consultáveis.',true)}</div>`)}
     ${section('03','Quais são as despesas?','Por mês',`<div class="sim-fields">${moneyField('salaries','Salários e pró-labore','Total mensal pago à equipe e aos sócios pelo trabalho na empresa.')}${moneyField('benefits','Benefícios da equipe','Vale-transporte, alimentação e outros benefícios pagos no mês.')}${moneyField('adminExpenses','Outras despesas da empresa','Água, energia, internet e outras despesas. Não repita os valores dos outros campos.')}${moneyField('rent','Aluguel','Valor mensal do aluguel. Se não houver, digite 0.')}${moneyField('cardExpenses','Taxas de cartão','Total pago em taxas no mês, em reais. Se não houver, digite 0.')}</div>`)}
-    ${section('04','Sobre a simulação','Escolha o cenário',`<div class="sim-fields">${moneyField('rbt12','RBT12 do extrato · seção 2.2','Preenchida somente pela soma das 12 competências anteriores ao PA, nos mercados interno e externo da seção 2.2. Não é a projeção anual.',false,true)}<div class="sim-field"><label for="rbt12-pdf">Extrato do Simples Nacional (PDF)</label><input id="rbt12-pdf" type="file" accept="application/pdf,.pdf"><button type="button" id="rbt12-read">Ler RBT12 do PDF</button><small id="rbt12-status" role="status" aria-live="polite">O Python reconhece todas as páginas digitalizadas, cria texto pesquisável e lê somente a seção 2.2. Envie um PDF de até 4 MiB.</small><a id="rbt12-download" hidden>Baixar PDF pesquisável</a></div><div class="sim-field"><label for="simulation-year">Ano da simulação</label><select id="simulation-year"><option>2027</option><option>2028</option></select></div><div class="sim-field"><label for="sales-annex">Atividade das vendas</label><select id="sales-annex"><option value="1">Comércio · Anexo I</option><option value="2">Indústria · Anexo II</option></select></div><div class="sim-field"><label for="service-annex">Categoria dos serviços</label><select id="service-annex"><option value="3">Anexo III</option><option value="4">Anexo IV</option><option value="5">Anexo V</option></select><small>Se tiver dúvida sobre a categoria, confirme com sua contabilidade.</small></div></div><div id="rbt12-details"></div>`)}
+    ${section('04','Sobre a simulação','Escolha o cenário',`<div class="sim-fields">${moneyField('rbt12','RBT12 do extrato · seção 2.2','Preenchida somente pela soma das 12 competências anteriores ao PA, nos mercados interno e externo da seção 2.2. Não é a projeção anual.',false,true)}<div class="sim-field"><label for="rbt12-pdf">Extrato do Simples Nacional (PDF)</label><input id="rbt12-pdf" type="file" accept="application/pdf,.pdf"><button type="button" id="rbt12-read">Armazenar e ler RBT12</button><small id="rbt12-status" role="status" aria-live="polite">O PDF original é guardado no Blob privado antes do OCR. O Python cria uma versão pesquisável e lê somente a seção 2.2. Até 8 MiB.</small><div class="sim-pdf-actions"><button type="button" id="rbt12-view-original" hidden>Ver PDF original</button><button type="button" id="rbt12-view-searchable" hidden>Ver PDF pesquisável</button><button type="button" id="rbt12-reprocess" hidden>Reprocessar OCR</button><a id="rbt12-download" hidden>Baixar PDF pesquisável</a></div></div><div class="sim-field"><label for="simulation-year">Ano da simulação</label><select id="simulation-year"><option>2027</option><option>2028</option></select></div><div class="sim-field"><label for="sales-annex">Atividade das vendas</label><select id="sales-annex"><option value="1">Comércio · Anexo I</option><option value="2">Indústria · Anexo II</option></select></div><div class="sim-field"><label for="service-annex">Categoria dos serviços</label><select id="service-annex"><option value="3">Anexo III</option><option value="4">Anexo IV</option><option value="5">Anexo V</option></select><small>Se tiver dúvida sobre a categoria, confirme com sua contabilidade.</small></div></div><div id="rbt12-details"></div>`)}
     <div class="sim-actions"><button class="primary" type="submit" id="generate-simulation">Gerar simulação</button><button id="restore-reports" type="button">Restaurar valores dos relatórios</button><small id="draft-status" role="status">Serviços e despesas precisam ser informados. Use 0 quando não houver valor.</small></div></fieldset></form><div id="simulation-result"></div>`;
   applyReports();
   $('#simulator-form').oninput = event => {
@@ -60,6 +60,9 @@ function display(prefill=null) {
   };
   $('#restore-reports').onclick = () => { if(!S.edited || confirm('Restaurar os cinco campos importados? Serviços e despesas serão mantidos.')) { applyReports(); invalidate(); saveDraft(); } };
   $('#rbt12-read').onclick = () => void readRbt12Pdf();
+  $('#rbt12-view-original').onclick = () => void viewStoredPdf('original');
+  $('#rbt12-view-searchable').onclick = () => void viewStoredPdf('searchable');
+  $('#rbt12-reprocess').onclick = () => void reprocessRbt12();
   $('#rbt12-pdf').onchange = () => {clearRbt12();invalidate();saveDraft();};
   $('#simulator-form').onsubmit = event => { event.preventDefault(); void simulate(); };
   if(prefill) fillSnapshot(prefill);
@@ -136,17 +139,18 @@ function sourceCard() {
   const d=S.source;
   return `<details class="card sim-source sim-report-details"><summary><span>Relatórios de origem</span><span class="sim-source-caption">Compras ${money(d.purchases.totalCents/100)} · Vendas ${money(d.sales.totalCents/100)} <span aria-hidden="true">⌄</span></span></summary><div class="sim-source-grid">${[['purchases','Compras'],['sales','Vendas']].map(([key,label])=>`<article><div class="eyebrow">${label.toUpperCase()} · TOTAL DO ARQUIVO</div><strong>${money(d[key].totalCents/100)}</strong><p>${esc(d[key].fileName)}</p><small>Concluído em ${date(d[key].completedAt)}<br>Fórmula: ${esc(d[key].formula)} · versão ${esc(d[key].calculationVersion)}</small><a href="/purchases.html?${new URLSearchParams({job:d[key].jobId,...(key==='sales'?{type:'SALES'}:{}),generation:d.generationId,client:d.clientId})}">Conferir linhas de ${label.toLowerCase()} →</a></article>`).join('')}</div>${classificationDetails()}</details>`;
 }
-function clearRbt12() {
-  S.rbt12ExtractionId=null;S.rbt12Data=null;
+function clearRbt12(keepDocument=false) {
+  S.rbt12ExtractionId=null;S.rbt12Data=null;if(!keepDocument)S.rbt12DocumentId=null;
   if(S.pdfUrl)URL.revokeObjectURL(S.pdfUrl);S.pdfUrl=null;
   if($('#rbt12'))$('#rbt12').value='';
   if($('#rbt12-download'))$('#rbt12-download').hidden=true;
+  for(const id of ['rbt12-view-original','rbt12-view-searchable','rbt12-reprocess'])if($('#'+id))$('#'+id).hidden=true;
   if($('#rbt12-details'))$('#rbt12-details').innerHTML='';
   if($('#rbt12-status'))$('#rbt12-status').textContent='Leia o PDF para confirmar as 12 competências da seção 2.2. Uma leitura incompleta não será substituída pela projeção.';
 }
 function applyRbt12(data) {
   if(!isSection22(data)||!(data.extractionId||data.id))throw new Error('Leitura incompleta da seção 2.2. Leia novamente o extrato.');
-  S.rbt12ExtractionId=data.extractionId||data.id;S.rbt12Data=data;
+  S.rbt12ExtractionId=data.extractionId||data.id;S.rbt12Data=data;S.rbt12DocumentId=data.documentId||S.rbt12DocumentId;
   $('#rbt12').value=(data.rbt12Cents/100).toFixed(2);
   $('#rbt12-details').innerHTML=renderSection22(data);
   $('#rbt12-status').textContent=`Seção 2.2 conferida · PA ${data.pa} · RBT12 ${money(data.rbt12Cents/100)} · ${data.processedPages||data.pageCount||'—'} página(s) processada(s). Confira a empresa e as competências abaixo.`;
@@ -156,6 +160,11 @@ function applyRbt12(data) {
     S.pdfUrl=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
     const link=$('#rbt12-download');link.href=S.pdfUrl;link.download='extrato-simples-pesquisavel.pdf';link.hidden=false;
     delete S.rbt12Data.searchablePdfBase64;
+  }
+  if(S.rbt12DocumentId){
+    $('#rbt12-view-original').hidden=false;
+    $('#rbt12-view-searchable').hidden=data.searchableStored===false;
+    $('#rbt12-reprocess').hidden=false;
   }
   if(data.downloadNotice)$('#rbt12-status').textContent+=' '+data.downloadNotice;
 }
@@ -167,20 +176,53 @@ async function restoreRbt12() {
     if(S.rbt12ExtractionId===id&&S.source.clientId===client)applyRbt12(data);
   }catch(error){if(S.rbt12ExtractionId===id){clearRbt12();$('#rbt12-status').textContent=error.message;}}
 }
+async function processStoredRbt12(urls) {
+  const data=await api('/api/simples?'+new URLSearchParams({clientId:S.source.clientId}),{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({documentId:urls.documentId,originalGetUrl:urls.originalGetUrl,searchablePutUrl:urls.searchablePutUrl})
+  });
+  applyRbt12(data);invalidate();saveDraft();return data;
+}
+async function viewStoredPdf(kind) {
+  if(!S.rbt12DocumentId)return;
+  const url='/api/v4/simples-documents/'+encodeURIComponent(S.rbt12DocumentId)+'/file?'+new URLSearchParams({kind});
+  window.open(url,'_blank','noopener,noreferrer');
+}
+async function reprocessRbt12() {
+  if(!S.rbt12DocumentId||S.readingPdf||S.saving)return;
+  const status=$('#rbt12-status'),button=$('#rbt12-reprocess');
+  try{
+    S.readingPdf=true;button.disabled=true;$('#generate-simulation').disabled=true;
+    status.textContent='Recuperando o PDF original do Blob e reprocessando o OCR…';
+    const urls=await api('/api/v4/simples-documents/'+encodeURIComponent(S.rbt12DocumentId)+'/process-urls',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    await processStoredRbt12(urls);
+  }catch(error){clearRbt12(true);$('#rbt12-reprocess').hidden=false;status.textContent=error.message||'Não foi possível reprocessar o OCR.';fail(error);}
+  finally{S.readingPdf=false;button.disabled=false;$('#generate-simulation').disabled=false;}
+}
 async function readRbt12Pdf() {
   if(S.readingPdf||S.saving)return;
   const file=$('#rbt12-pdf')?.files?.[0],status=$('#rbt12-status'),button=$('#rbt12-read');
   clearRbt12();invalidate();saveDraft();
   if(!file){status.textContent='Selecione o Extrato do Simples Nacional em PDF.';return;}
-  if(file.size>4*1024*1024){status.textContent='O envio web aceita até 4 MiB. Use o conversor Python local para arquivos maiores.';return;}
+  if(file.size>8*1024*1024){status.textContent='O extrato pode ter até 8 MiB neste fluxo.';return;}
   try{
     S.readingPdf=true;button.disabled=true;$('#generate-simulation').disabled=true;
-    status.textContent='Processando todas as páginas, criando texto pesquisável e conferindo a seção 2.2…';
-    const data=await api('/api/simples?'+new URLSearchParams({clientId:S.source.clientId,fileName:file.name}),{method:'POST',headers:{'Content-Type':'application/pdf'},body:file});
+    status.textContent='Preparando armazenamento privado do extrato…';
+    const started=await api('/api/v4/simples-documents',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({clientId:S.source.clientId,fileName:file.name,sizeBytes:file.size})});
+    S.rbt12DocumentId=started.documentId;
+    status.textContent='Armazenando o PDF original com segurança…';
+    const uploaded=await fetch(started.originalPutUrl,{method:'PUT',headers:{'Content-Type':'application/pdf'},body:file});
+    if(!uploaded.ok)throw new Error('Não foi possível armazenar o PDF original. Tente novamente.');
     if($('#rbt12-pdf')?.files?.[0]!==file)return;
-    applyRbt12(data);invalidate();saveDraft();
-  }catch(error){clearRbt12();status.textContent=error.message||'Não foi possível confirmar a seção 2.2.';fail(error);}
-  finally{S.readingPdf=false;button.disabled=false;$('#generate-simulation').disabled=false;}
+    status.textContent='PDF original armazenado. Aplicando OCR e conferindo a seção 2.2…';
+    await processStoredRbt12(started);
+  }catch(error){
+    clearRbt12(Boolean(S.rbt12DocumentId));
+    if(S.rbt12DocumentId)$('#rbt12-reprocess').hidden=false;
+    status.textContent=(error.message||'Não foi possível confirmar a seção 2.2.')+(S.rbt12DocumentId?' O arquivo original ficou armazenado; você pode reprocessar sem reenviar.':'');
+    fail(error);
+  }finally{S.readingPdf=false;button.disabled=false;$('#generate-simulation').disabled=false;}
 }
 window.addEventListener('pagehide',()=>{if(S.pdfUrl)URL.revokeObjectURL(S.pdfUrl);});
 

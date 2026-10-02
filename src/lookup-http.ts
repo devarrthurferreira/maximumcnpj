@@ -10,6 +10,7 @@ import type { LookupActor } from './lookup-db.ts';
 import { listCatalog, importCatalog } from './lookup-catalog.ts';
 import { createLookup,uploadLookup,finalizeLookup,processLookup,cancelLookup,repeatLookup,recheckLookup } from './lookup-jobs.ts';
 import { lookupProgress } from './lookup-engine.ts';
+import { routeSimplesDocuments } from './blob-documents.ts';
 async function items(id:string,page:number,status:string,search:string){
   const job=await getJob(id);need(job.status==='COMPLETED','Aguarde a conclusão para ver o resultado consolidado.',409);
   const q:any=scope({jobId:id});if(status){need(['OPTANTE','NAO_OPTANTE','NAO_CONFIRMADO'].includes(status),'Situação inválida.');q.status=status === 'NAO_OPTANTE' ? {$ne:'OPTANTE'} : status;}
@@ -32,6 +33,7 @@ async function dashboard(clientId:string){
 }
 export async function routeV4(actor:LookupActor,method:string,url:URL,input:any){
   await ensureLookupIndexes();
+  if(url.pathname==='/api/v4/simples-documents' || url.pathname.startsWith('/api/v4/simples-documents/')) return routeSimplesDocuments(actor,method,url,input);
   if(url.pathname==='/api/v4/simulations' || url.pathname.startsWith('/api/v4/simulations/'))return routeSimulations(actor,method,url,input);
   if(url.pathname==='/api/v4/generations' || url.pathname.startsWith('/api/v4/generations/'))return routeGenerations(actor,method,url,input);
   if(/^\/api\/v4\/(?:purchases|sales)(?:\/|$)/.test(url.pathname))return routePurchases(actor,method,url,input);
