@@ -34,7 +34,7 @@ jobs:
         with: { fetch-depth: 2 }
       - uses: actions/setup-node@v4
         with: { node-version: '22' }
-      - run: npm ci
+      - run: npm install
       - name: Versão, tipos e build
         run: npm run check:release && npm run check && npm run build
       - name: Competências e fluxo real com MongoDB descartável
