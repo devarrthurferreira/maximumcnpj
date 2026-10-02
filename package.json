@@ -1,6 +1,6 @@
 {
   "name": "maximum-cnpj",
-  "version": "0.12.2",
+  "version": "0.13.0",
   "private": true,
   "type": "module",
   "description": "Consultas CNPJ, histórico por empresa e relatórios Python com Node.js e MongoDB",
@@ -30,7 +30,8 @@
   },
   "dependencies": {
     "mongodb": "6.21.0",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "@vercel/blob": "2.8.0"
   },
   "devDependencies": {
     "@types/node": "22.15.30",

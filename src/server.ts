@@ -12,6 +12,7 @@ import { VERSION } from './domain.ts';
 import { appOrigin, permittedOrigin } from './origins.ts';
 import { routeV4 } from './lookup-http.ts';
 import { provisionMaximumForLogin, provisionMaximumTeam } from './team.ts';
+import { serveSimplesDocument } from './blob-documents.ts';
 const PUBLIC = resolve(process.cwd(), 'public');
 const cookieName = () => process.env.NODE_ENV === 'production' ? '__Host-maximum_session' : 'maximum_session';
 const cookie = (value: string, age=43200) => `${cookieName()}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}${process.env.NODE_ENV==='production'?'; Secure':''}`;
@@ -75,6 +76,8 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL) {
   }
   need(!actor.mustChangePassword,'Redefina sua senha antes de continuar.',403,'PASSWORD_CHANGE_REQUIRED');
   if (!['GET','HEAD'].includes(method)) await rateLimit('write:'+actor._id,1200,15);
+  const simplesFile=path.match(/^\/api\/v4\/simples-documents\/([a-f0-9-]{36})\/file$/);
+  if(simplesFile && method==='GET') return serveSimplesDocument(actor,res,simplesFile[1],url.searchParams.get('kind')||'searchable');
   if(path.startsWith('/api/v4/'))return json(res,200,await routeV4(actor,method,url,method==='GET'?{}:await body(req)));
   const clientId=url.searchParams.get('clientId')||undefined, page=integer(url.searchParams.get('page')||1,1,100000);
   if (path==='/api/dashboard' && method==='GET') return json(res,200,await service.dashboard(clientId));
@@ -120,7 +123,7 @@ export async function handler(req: IncomingMessage,res: ServerResponse) {
   const requestId=randomUUID();
   res.setHeader('X-Request-Id',requestId); res.setHeader('X-Content-Type-Options','nosniff'); res.setHeader('Referrer-Policy','same-origin'); res.setHeader('X-Frame-Options','DENY');
   res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
+  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://*.private.blob.vercel-storage.com; worker-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
   if(process.env.NODE_ENV==='production') res.setHeader('Strict-Transport-Security','max-age=31536000');
   try {
     const url=new URL(req.url||'/',origin());

@@ -1,5 +1,17 @@
 # Histórico de alterações
 
+## [0.13.0] — 2026-10-02
+
+- Extratos do Simples passam a ser armazenados em Vercel Private Blob antes do OCR, com original e versão pesquisável separados.
+- Upload direto do navegador por URL assinada; credencial do store não é exposta ao cliente.
+- Python recupera somente o objeto autorizado, processa OCR/seção 2.2 e grava o PDF pesquisável por URL temporária específica.
+- MongoDB mantém metadados/status/hashes/vínculos, sem armazenar PDF ou texto OCR integral.
+- Reprocessamento usa o original persistido, sem exigir novo upload após falha do OCR.
+- Visualização autenticada de original/pesquisável e estados AWAITING_UPLOAD, PROCESSING, READY e OCR_FAILED.
+- Limite do fluxo Blob elevado a 8 MiB; fluxo direto antigo de 4 MiB preservado apenas para compatibilidade.
+- Versão 0.13.0; RBT12, DRE e regras fiscais da seção 2.2 permanecem inalteradas.
+
+
 ## [0.12.2] — 2026-10-01
 
 - Corrigida a falha 503 em PDFs somente imagem na Vercel: o runtime importava OpenCV desktop e falhava por ausência de `libxcb.so.1` antes do OCR.
