@@ -115,7 +115,7 @@ Reabra a geração no Histórico e use **Ir para o simulador**. Com a coluna H a
 Não há migração destrutiva, nova chave de API ou nova variável obrigatória. Preserve os ambientes privados, banco, workspace, domínio e usuários existentes. Para instalação nova:
 
 ```sh
-npm ci
+npm install
 python -m pip install uv
 uv sync --no-install-project
 npm run build
