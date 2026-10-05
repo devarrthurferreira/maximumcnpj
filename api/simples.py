@@ -19,12 +19,29 @@ MAX_BLOB_PDF_BYTES = 8 * 1024 * 1024
 MAX_RETURN_PDF_BYTES = 2_500_000
 UUID = re.compile(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
 
-def _blob_signed_url(value, expected_path):
+def _blob_signed_url(value, expected_path, operation='get'):
     require(isinstance(value, str) and len(value) < 6000, 400, 'BLOB_URL', 'URL temporária do documento inválida.')
-    parsed = urlsplit(value)
-    require(parsed.scheme == 'https' and parsed.hostname and parsed.hostname.endswith('.private.blob.vercel-storage.com'),
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+        query = parse_qs(parsed.query, keep_blank_values=True)
+    except ValueError:
+        raise ReportError(400, 'BLOB_URL', 'URL temporária do documento inválida.')
+    require(parsed.scheme == 'https' and port in (None, 443) and not parsed.username and not parsed.password and not parsed.fragment,
             400, 'BLOB_URL', 'Origem do documento armazenado inválida.')
-    require(unquote(parsed.path.lstrip('/')) == expected_path and 'vercel-blob-signature=' in parsed.query,
+    # SDK 2.8 signs reads on the private storage host and writes on the Blob API.
+    # The write pathname is a query parameter, not the URL path.
+    if operation == 'get':
+        valid_host = bool(re.fullmatch(r'[a-z0-9-]+\.private\.blob\.vercel-storage\.com', parsed.hostname or ''))
+        matches_path = unquote(parsed.path.removeprefix('/')) == expected_path
+    elif operation == 'put':
+        valid_host = parsed.hostname == 'vercel.com'
+        matches_path = parsed.path == '/api/blob/' and query.get('pathname') == [expected_path]
+    else:
+        raise ReportError(400, 'BLOB_URL', 'Operação do documento inválida.')
+    require(valid_host, 400, 'BLOB_URL', 'Origem do documento armazenado inválida.')
+    require(matches_path and all(len(query.get(key, [])) == 1 and query[key][0]
+                                for key in ('vercel-blob-signature', 'vercel-blob-delegation')),
             400, 'BLOB_URL', 'A URL temporária não corresponde ao documento selecionado.')
     return value
 
@@ -113,12 +130,13 @@ class handler(BaseHTTPRequestHandler):
                     payload = json.loads(self.rfile.read(size).decode('utf-8'))
                 except Exception:
                     raise ReportError(400, 'INVALID_JSON', 'Dados de processamento inválidos.')
+                require(isinstance(payload, dict), 400, 'INVALID_JSON', 'Dados de processamento inválidos.')
                 document_id = str(payload.get('documentId') or '')
                 require(UUID.fullmatch(document_id), 400, 'DOCUMENT_ID', 'Documento armazenado inválido.')
                 document_record = db.simplesDocuments.find_one({'_id': document_id, 'workspaceId': workspace, 'clientId': client_id})
                 require(document_record, 404, 'DOCUMENT_ID', 'Documento armazenado não encontrado nesta empresa.')
-                original_url = _blob_signed_url(payload.get('originalGetUrl'), document_record['originalPath'])
-                searchable_url = _blob_signed_url(payload.get('searchablePutUrl'), document_record['searchablePath'])
+                original_url = _blob_signed_url(payload.get('originalGetUrl'), document_record['originalPath'], 'get')
+                searchable_url = _blob_signed_url(payload.get('searchablePutUrl'), document_record['searchablePath'], 'put')
                 content = _download_blob(original_url)
                 file_name = document_record['fileName']
                 db.simplesDocuments.update_one({'_id': document_id, 'workspaceId': workspace},

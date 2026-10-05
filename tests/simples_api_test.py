@@ -12,8 +12,46 @@ import uuid
 from datetime import timedelta
 from http.server import HTTPServer
 from unittest.mock import patch
+from urllib.parse import urlencode
+from reporting.core import ReportError
 from reporting.core import utcnow
 from simples_extract_test import digital_pdf
+
+def signed_urls(original_path, searchable_path):
+    signature = {'vercel-blob-delegation': 'synthetic-delegation', 'vercel-blob-signature': 'synthetic-signature'}
+    return (f'https://store-fixture.private.blob.vercel-storage.com/{original_path}?' + urlencode(signature),
+            'https://vercel.com/api/blob/?' + urlencode({'pathname': searchable_path, **signature}))
+
+
+class SignedBlobUrlTests(unittest.TestCase):
+    def test_sdk_read_and_write_urls_use_different_hosts_and_path_locations(self):
+        from api.simples import _blob_signed_url
+        original, searchable = signed_urls('simples/test/original.pdf', 'simples/test/pesquisavel.pdf')
+        self.assertEqual(_blob_signed_url(original, 'simples/test/original.pdf', 'get'), original)
+        self.assertEqual(_blob_signed_url(searchable, 'simples/test/pesquisavel.pdf', 'put'), searchable)
+
+    def test_url_cannot_target_another_document_host_or_operation(self):
+        from api.simples import _blob_signed_url
+        path = 'simples/test/original.pdf'
+        original, searchable = signed_urls(path, path)
+        cases = [
+            (original, 'other.pdf', 'get'), (searchable, 'other.pdf', 'put'),
+            (original, path, 'put'), (searchable, path, 'get'),
+            (original.replace('https://', 'http://'), path, 'get'),
+            (original.replace('.private.', '.undefined.'), path, 'get'),
+            (original.replace('.com/', '.com.evil.test/'), path, 'get'),
+            (original.replace('https://', 'https://user:password@'), path, 'get'),
+            (original.replace('.com/', '.com:444/'), path, 'get'),
+            (original + '#fragment', path, 'get'),
+            (searchable.replace('vercel.com/', 'evil.test/'), path, 'put'),
+            (searchable.replace('/api/blob/', '/api/other/'), path, 'put'),
+            (searchable + '&pathname=other.pdf', path, 'put'),
+            (searchable.replace('synthetic-signature', ''), path, 'put'),
+            (searchable.replace('vercel-blob-delegation=', 'unrelated='), path, 'put'),
+        ]
+        for url, expected, operation in cases:
+            with self.subTest(url=url), self.assertRaises(ReportError):
+                _blob_signed_url(url, expected, operation)
 
 @unittest.skipUnless(os.getenv('REPORT_TEST_MONGO')=='1','MongoDB descartável não solicitado')
 class SimplesApiTests(unittest.TestCase):
@@ -71,3 +109,58 @@ class SimplesApiTests(unittest.TestCase):
             status,data,_=self.call('POST',f'/api/simples?clientId={self.client}',b'%PDF-fixture')
         self.assertEqual(status,422);self.assertEqual(data['error'],'SIMPLES_PDF')
         self.assertEqual(self.db.simplesExtractions.count_documents({}),before)
+
+    def stored_document(self):
+        document_id = str(uuid.uuid4())
+        prefix = f'simples/{self.ws}/{self.client}/{document_id}'
+        record = {'_id': document_id, 'workspaceId': self.ws, 'clientId': self.client,
+                  'fileName': 'synthetic.pdf', 'originalPath': prefix + '/original.pdf',
+                  'searchablePath': prefix + '/pesquisavel.pdf', 'status': 'AWAITING_UPLOAD'}
+        self.db.simplesDocuments.insert_one(record)
+        original, searchable = signed_urls(record['originalPath'], record['searchablePath'])
+        return record, {'documentId': document_id, 'originalGetUrl': original, 'searchablePutUrl': searchable}
+
+    def test_blob_urls_process_original_save_searchable_and_allow_reprocessing(self):
+        record, payload = self.stored_document()
+        path = f'/api/simples?clientId={self.client}'
+        with patch.object(self.module, '_download_blob', return_value=digital_pdf()) as download, \
+             patch.object(self.module, '_upload_searchable') as upload:
+            for attempt in (1, 2):
+                status, data, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})
+                self.assertEqual(status, 200, data)
+                self.assertEqual(data['rbt12Cents'], 16200000)
+                self.assertEqual(data['documentId'], record['_id'])
+                self.assertTrue(data['searchableStored'])
+                self.assertNotIn('searchablePdfBase64', data)
+                download.assert_called_with(payload['originalGetUrl'])
+                self.assertEqual(upload.call_args.args[0], payload['searchablePutUrl'])
+                self.assertTrue(upload.call_args.args[1].startswith(b'%PDF'))
+                saved = self.db.simplesDocuments.find_one({'_id': record['_id']})
+                self.assertEqual(saved['status'], 'READY')
+                self.assertEqual(saved['attempts'], attempt)
+
+    def test_failed_blob_ocr_can_retry_without_new_original(self):
+        record, payload = self.stored_document()
+        path = f'/api/simples?clientId={self.client}'
+        with patch.object(self.module, '_download_blob', return_value=digital_pdf()), \
+             patch.object(self.module, '_upload_searchable') as upload:
+            with patch.object(self.module, 'convert_statement_pdf', side_effect=ValueError('Seção 2.2 ilegível')):
+                status, _, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})
+            self.assertEqual(status, 422)
+            self.assertEqual(self.db.simplesDocuments.find_one({'_id': record['_id']})['status'], 'OCR_FAILED')
+            upload.assert_not_called()
+            status, data, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})
+            self.assertEqual(status, 200, data)
+            saved = self.db.simplesDocuments.find_one({'_id': record['_id']})
+            self.assertEqual(saved['status'], 'READY')
+            self.assertNotIn('lastError', saved)
+
+    def test_foreign_document_and_invalid_signed_path_do_not_reach_blob(self):
+        record, payload = self.stored_document()
+        with patch.object(self.module, '_download_blob') as download:
+            status, _, _ = self.call('POST', f'/api/simples?clientId={self.other}', json.dumps(payload), {'Content-Type': 'application/json'})
+            self.assertEqual(status, 404)
+            payload['searchablePutUrl'] += '&pathname=other.pdf'
+            status, data, _ = self.call('POST', f'/api/simples?clientId={self.client}', json.dumps(payload), {'Content-Type': 'application/json'})
+            self.assertEqual(status, 400, data)
+            download.assert_not_called()

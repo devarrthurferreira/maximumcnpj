@@ -20,8 +20,9 @@ async function api(path, options={}) {
   const controller = new AbortController(), timer = setTimeout(()=>controller.abort(),55000);
   try {
     const response = await fetch(path,{credentials:'same-origin',...options,signal:controller.signal});
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.message || 'Não foi possível concluir a operação.');
+    const data = await response.json().catch(()=>null);
+    if (!response.ok) throw new Error((data?.message || 'O servidor não conseguiu concluir a operação. Tente novamente.')+(data?.requestId?' Código: '+data.requestId+'.':''));
+    if(!data)throw new Error('O servidor retornou uma resposta incompleta. Tente novamente.');
     return data;
   } catch(error) { if(error.name === 'AbortError') throw new Error(path.startsWith('/api/simples')?'O OCR demorou a responder. Nenhuma RBT12 foi confirmada nesta tela; tente novamente.':'O servidor demorou a responder. Tente salvar novamente para confirmar o mesmo registro.'); throw error; }
   finally { clearTimeout(timer); }
@@ -148,6 +149,10 @@ function clearRbt12(keepDocument=false) {
   if($('#rbt12-details'))$('#rbt12-details').innerHTML='';
   if($('#rbt12-status'))$('#rbt12-status').textContent='Leia o PDF para confirmar as 12 competências da seção 2.2. Uma leitura incompleta não será substituída pela projeção.';
 }
+function setReadingPdf(reading) {
+  S.readingPdf=reading;
+  for(const id of ['rbt12-pdf','rbt12-read','rbt12-reprocess','generate-simulation'])if($('#'+id))$('#'+id).disabled=reading;
+}
 function applyRbt12(data) {
   if(!isSection22(data)||!(data.extractionId||data.id))throw new Error('Leitura incompleta da seção 2.2. Leia novamente o extrato.');
   S.rbt12ExtractionId=data.extractionId||data.id;S.rbt12Data=data;S.rbt12DocumentId=data.documentId||S.rbt12DocumentId;
@@ -190,39 +195,39 @@ async function viewStoredPdf(kind) {
 }
 async function reprocessRbt12() {
   if(!S.rbt12DocumentId||S.readingPdf||S.saving)return;
-  const status=$('#rbt12-status'),button=$('#rbt12-reprocess');
+  const status=$('#rbt12-status');
   try{
-    S.readingPdf=true;button.disabled=true;$('#generate-simulation').disabled=true;
+    setReadingPdf(true);
     status.textContent='Recuperando o PDF original do Blob e reprocessando o OCR…';
     const urls=await api('/api/v4/simples-documents/'+encodeURIComponent(S.rbt12DocumentId)+'/process-urls',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     await processStoredRbt12(urls);
-  }catch(error){clearRbt12(true);$('#rbt12-reprocess').hidden=false;status.textContent=error.message||'Não foi possível reprocessar o OCR.';fail(error);}
-  finally{S.readingPdf=false;button.disabled=false;$('#generate-simulation').disabled=false;}
+  }catch(error){clearRbt12(true);$('#rbt12-reprocess').hidden=false;$('#rbt12-view-original').hidden=false;status.textContent=error.message||'Não foi possível reprocessar o OCR.';fail(error);}
+  finally{setReadingPdf(false);}
 }
 async function readRbt12Pdf() {
   if(S.readingPdf||S.saving)return;
-  const file=$('#rbt12-pdf')?.files?.[0],status=$('#rbt12-status'),button=$('#rbt12-read');
+  const file=$('#rbt12-pdf')?.files?.[0],status=$('#rbt12-status');
   clearRbt12();invalidate();saveDraft();
   if(!file){status.textContent='Selecione o Extrato do Simples Nacional em PDF.';return;}
   if(file.size>8*1024*1024){status.textContent='O extrato pode ter até 8 MiB neste fluxo.';return;}
   try{
-    S.readingPdf=true;button.disabled=true;$('#generate-simulation').disabled=true;
+    setReadingPdf(true);
     status.textContent='Preparando armazenamento privado do extrato…';
     const started=await api('/api/v4/simples-documents',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({clientId:S.source.clientId,fileName:file.name,sizeBytes:file.size})});
-    S.rbt12DocumentId=started.documentId;
     status.textContent='Armazenando o PDF original com segurança…';
-    const uploaded=await fetch(started.originalPutUrl,{method:'PUT',headers:{'Content-Type':'application/pdf'},body:file});
+    const uploaded=await fetch(started.originalPutUrl,{method:'PUT',headers:{'Content-Type':'application/pdf'},body:file,signal:AbortSignal.timeout(55000)});
     if(!uploaded.ok)throw new Error('Não foi possível armazenar o PDF original. Tente novamente.');
     if($('#rbt12-pdf')?.files?.[0]!==file)return;
+    S.rbt12DocumentId=started.documentId;
     status.textContent='PDF original armazenado. Aplicando OCR e conferindo a seção 2.2…';
     await processStoredRbt12(started);
   }catch(error){
     clearRbt12(Boolean(S.rbt12DocumentId));
-    if(S.rbt12DocumentId)$('#rbt12-reprocess').hidden=false;
-    status.textContent=(error.message||'Não foi possível confirmar a seção 2.2.')+(S.rbt12DocumentId?' O arquivo original ficou armazenado; você pode reprocessar sem reenviar.':'');
+    if(S.rbt12DocumentId){$('#rbt12-reprocess').hidden=false;$('#rbt12-view-original').hidden=false;}
+    status.textContent=(error.name==='TimeoutError'?'O envio do PDF demorou a responder. Tente enviar novamente.':error.message||'Não foi possível confirmar a seção 2.2.')+(S.rbt12DocumentId?' O arquivo original ficou armazenado; você pode reprocessar sem reenviar.':'');
     fail(error);
-  }finally{S.readingPdf=false;button.disabled=false;$('#generate-simulation').disabled=false;}
+  }finally{setReadingPdf(false);}
 }
 window.addEventListener('pagehide',()=>{if(S.pdfUrl)URL.revokeObjectURL(S.pdfUrl);});
 

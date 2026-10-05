@@ -8,14 +8,14 @@ export async function mockStatement(page:Page,totalCents=15000000,id=extractionI
    if(r.request().method()!=='POST')return r.continue();
    const clientId=JSON.parse(r.request().postData()||'{}').clientId;
    await r.fulfill({json:{documentId,status:'AWAITING_UPLOAD',fileName:'sintetico.pdf',sizeBytes:32,
-     originalPutUrl:'https://store-fixture.private.blob.vercel-storage.com/synthetic/upload-original.pdf',
+     originalPutUrl:'https://vercel.com/api/blob/?pathname=synthetic%2Foriginal.pdf&vercel-blob-delegation=test&vercel-blob-signature=test',
      originalGetUrl:'https://store-fixture.private.blob.vercel-storage.com/synthetic/original.pdf?vercel-blob-signature=test',
-     searchablePutUrl:'https://store-fixture.private.blob.vercel-storage.com/synthetic/searchable.pdf?vercel-blob-signature=test',clientId}});
+     searchablePutUrl:'https://vercel.com/api/blob/?pathname=synthetic%2Fsearchable.pdf&vercel-blob-delegation=test&vercel-blob-signature=test',clientId}});
  });
- await page.route('https://store-fixture.private.blob.vercel-storage.com/**',r=>r.fulfill({status:200,body:''}));
+ await page.route('https://vercel.com/api/blob/**',r=>r.fulfill({status:200,body:''}));
  await page.route('**/api/v4/simples-documents/*/process-urls',r=>r.fulfill({json:{
    documentId,originalGetUrl:'https://store-fixture.private.blob.vercel-storage.com/synthetic/original.pdf?vercel-blob-signature=test',
-   searchablePutUrl:'https://store-fixture.private.blob.vercel-storage.com/synthetic/searchable.pdf?vercel-blob-signature=test'}}));
+   searchablePutUrl:'https://vercel.com/api/blob/?pathname=synthetic%2Fsearchable.pdf&vercel-blob-delegation=test&vercel-blob-signature=test'}}));
  await page.route('**/api/simples?*',r=>r.fulfill({json:{extractionId:id,documentId,originalStored:true,searchableStored:true,
    clientId:new URL(r.request().url()).searchParams.get('clientId'),fileName:'sintetico.pdf',...section22(totalCents)}}));
 }
