@@ -4,6 +4,12 @@ import { readFileSync, existsSync } from 'node:fs';
 const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 const config = JSON.parse(read('vercel.json'));
 const pkg = JSON.parse(read('package.json'));
+test('OCR recebe orçamento próprio sem ampliar as demais funções',()=>{
+ assert.equal(config.functions['api/simples.py'].maxDuration,300);
+ assert.equal(config.functions['api/index.ts'].maxDuration,60);
+ assert.equal(config.functions['api/reports.py'].maxDuration,60);
+ assert.match(read('api/simples.py'),/convert_statement_pdf\(content, section_only=True, timeout_seconds=180\)/);
+});
 test('Vercel usa Other e saída estática',()=>{assert.equal(config.framework,null);assert.equal(config.outputDirectory,'public');assert.equal(config.buildCommand,'npm run build');assert.equal(pkg.engines.node,'>=22.16.0 <23');assert.equal(config.builds,undefined);});
 test('API Node preservada e rota Python explícita antes do catch-all',()=>{assert.deepEqual(Object.keys(config.functions),['api/index.ts','api/reports.py','api/simples.py']);assert.deepEqual(config.rewrites,[{source:'/api/reports',destination:'/api/reports'},{source:'/api/simples',destination:'/api/simples'},{source:'/api/:path*',destination:'/api'}]);assert.match(read('api/index.ts'),/from ['"]\.\.\/src\/server\.ts['"]/);assert.doesNotMatch(read('api/index.ts'),/public\/|document\.|window\./);assert.match(read('api/reports.py'),/authenticate/);assert.match(read('api/simples.py'),/authenticate/);const pyproject=read('pyproject.toml');assert.match(pyproject,/opencv-python-headless==5\.0\.0\.93/);assert.match(pyproject,/exclude-dependencies\s*=\s*\["opencv-python"\]/);assert.equal(existsSync(new URL('../requirements.txt',import.meta.url)),false);assert.match(read('public/reports.html'),/reports-ui\.js/);});
 test('HTML novo e legado são scripts de navegador; favicon estático',()=>{assert.match(read('public/index.html'),/<script type="module" src="\/lookup-ui\.js"><\/script>/);assert.match(read('public/legacy.html'),/<script type="module" src="\/app\.js"><\/script>/);assert.match(read('public/index.html'),/href="\/favicon\.svg"/);assert.deepEqual(config.redirects,[{source:'/favicon.ico',destination:'/favicon.svg',permanent:false}]);});

@@ -15,7 +15,7 @@ from unittest.mock import patch
 from urllib.parse import urlencode
 from reporting.core import ReportError
 from reporting.core import utcnow
-from simples_extract_test import digital_pdf
+from simples_extract_test import digital_pdf, paged_pdf, sample
 
 def signed_urls(original_path, searchable_path):
     signature = {'vercel-blob-delegation': 'synthetic-delegation', 'vercel-blob-signature': 'synthetic-signature'}
@@ -89,8 +89,11 @@ class SimplesApiTests(unittest.TestCase):
         self.assertEqual(status,422);self.assertEqual(data['error'],'RBT12_COMPANY')
         self.assertEqual(self.db.simplesExtractions.count_documents({'clientId':self.other}),0)
     def test_only_structured_result_is_stored_and_get_is_scoped(self):
-        status,data,headers=self.call('POST',f'/api/simples?clientId={self.client}&fileName=synthetic.pdf',digital_pdf())
+        status,data,headers=self.call('POST',f'/api/simples?clientId={self.client}&fileName=synthetic.pdf',paged_pdf(sample()))
         self.assertEqual(status,200,data);self.assertEqual(data['rbt12Cents'],16200000)
+        self.assertEqual(data['extractionScope'],'SECTION_22')
+        self.assertEqual(data['pageCount'],2);self.assertEqual(data['processedPages'],1)
+        self.assertEqual(data['preservedPages'],[2]);self.assertEqual(data['searchablePdfScope'],'SELECTED_PAGES')
         self.assertTrue(base64.b64decode(data['searchablePdfBase64']).startswith(b'%PDF'))
         self.assertEqual(headers['Cache-Control'],'no-store')
         stored=self.db.simplesExtractions.find_one({'_id':data['extractionId']})

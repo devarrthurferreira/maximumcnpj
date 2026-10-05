@@ -1,6 +1,17 @@
-# Maximum CNPJ · v0.13.1
+# Maximum CNPJ · v0.13.2
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Correção 05/10/2026 — leitura direcionada à seção 2.2
+
+- [x] A leitura web reconhece identificação/PA e toda a seção **2.2) Receitas Brutas Anteriores**, com os mercados interno e externo. Interrompe o OCR ao encontrar a próxima seção e validar as tabelas; continua nas páginas seguintes quando a tabela está dividida. EOF só é aceito com a leitura completa.
+- [x] Ter 12 linhas não encerra antecipadamente a leitura: competências adicionais, repetições e valores conflitantes antes do fim da seção continuam validados. Texto nativo nas páginas restantes é conferido para detectar outra identificação ou uma segunda seção 2.2.
+- [x] As páginas restantes são preservadas no PDF sem reconhecimento adicional. A interface informa quais páginas foram processadas e distingue **PDF com seção 2.2 pesquisável** de conversão integral. Esse modo confere a seção selecionada, não faz OCR/auditoria de todas as páginas posteriores digitalizadas; envie um único extrato por arquivo.
+- [x] Orçamentos coerentes: OCR web de até 180 s, POST no navegador de até 285 s e função Python com máximo de 300 s. Download/upload e banco têm margem própria; demais chamadas do sistema continuam com seu limite anterior.
+- [x] Teste com um PDF autorizado de três páginas: seção 2.2 completa na página 1, resultado igual ao processamento integral, demais páginas preservadas. Leitura direcionada local em aproximadamente 7 s. Tempos de produção variam com carga/inicialização; não são uma garantia.
+- [x] Regressões sintéticas cobrem seção dividida, conflito em continuação, valores ausentes, baixa confiança, EOF, preservação do PDF e navegador aguardando mais de 55 s. O documento real e seus valores não são versionados.
+
+A RBT12 continua sendo a soma das 12 competências anteriores ao PA exclusivamente da seção 2.2. O conversor local abaixo mantém OCR integral por padrão. O original já armazenado pode ser usado novamente pelo botão **Reprocessar OCR**.
 
 ## Correção 05/10/2026 — upload e OCR de PDFs mistos
 
@@ -62,7 +73,7 @@ Nunca exponha esse token ao browser. O código usa URLs assinadas para upload e 
 
 No simulador, selecione **Extrato do Simples Nacional (PDF)** e clique **Ler RBT12 do PDF**. Confira o quadro “Conferir seção 2.2”. Quando disponível, o botão **Baixar PDF pesquisável** entrega a cópia com texto selecionável. O PDF/base64/texto integral não são guardados no MongoDB; apenas o resultado estruturado, identificação, SHA-256 e vínculo são persistidos. Reabrir um rascunho consulta essa referência autenticada, sem confiar no valor monetário do armazenamento do navegador.
 
-O fluxo atual pelo Blob aceita até 8 MiB; o envio direto legado aceita até 4 MiB. Ambos aceitam até 30 páginas e usam orçamento de 45 segundos para a conversão integral. O arquivo não é parcialmente aceito ao exceder os limites. No fluxo Blob, o PDF pesquisável fica armazenado e pode ser aberto pela rota autenticada. Somente no envio direto legado o retorno inclui o PDF até 2,5 milhões de bytes; acima disso, use o fluxo Blob ou o conversor local. Esses limites mantêm a resposta abaixo do teto de payload da Vercel. PDFs devem estar desbloqueados, orientados corretamente e legíveis. OCR não garante exatidão fiscal: confira as competências na imagem original.
+O fluxo atual pelo Blob aceita até 8 MiB; o envio direto legado aceita até 4 MiB. Ambos aceitam até 30 páginas. O leitor web usa até 180 segundos para localizar e validar a seção 2.2; o conversor local mantém conversão integral com orçamento próprio de 600 segundos. A seção 2.2 não é parcialmente aceita ao exceder os limites. No fluxo Blob, o PDF pesquisável fica armazenado e pode ser aberto pela rota autenticada. Somente no envio direto legado o retorno inclui o PDF até 2,5 milhões de bytes; acima disso, use o fluxo Blob ou o conversor local. Esses limites mantêm a resposta abaixo do teto de payload da Vercel. PDFs devem estar desbloqueados, orientados corretamente e legíveis. OCR não garante exatidão fiscal: confira as competências na imagem original.
 
 Conversor local Python (até 8 MiB, 30 páginas; arquivos maiores devem ser otimizados previamente):
 

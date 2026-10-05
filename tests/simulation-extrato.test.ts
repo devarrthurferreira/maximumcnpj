@@ -23,3 +23,12 @@ test('Doze receitas explicitamente zeradas são válidas e não recebem projeç�
  const source=section22(0),copy=structuredClone(source),result=validateSection22(source);
  assert.equal(result.rbt12Cents,0);assert.deepEqual(source,copy);assert.equal(result.rbt12Window.length,12);
 });
+test('Histórico conserva o escopo da leitura e distingue páginas analisadas das preservadas',()=>{
+ const processing={extractionScope:'SECTION_22',searchablePdfScope:'SELECTED_PAGES',pageCount:8,processedPages:2,
+   processedPageNumbers:[1,2],preservedPages:[3,4,5,6,7,8],ocrPages:[1,2]};
+ const source={...section22(),...processing},result=validateSection22(source);
+ for(const [key,value] of Object.entries(processing))assert.deepEqual((result as any)[key],value);
+ assert.notEqual((result as any).processedPageNumbers,source.processedPageNumbers);
+ assert.equal(validateSection22(section22()).rbt12Cents,source.rbt12Cents);
+ assert.equal('extractionScope' in validateSection22(section22()),false);
+});

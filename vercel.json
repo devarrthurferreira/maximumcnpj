@@ -8,7 +8,7 @@
   "functions": {
     "api/index.ts": { "maxDuration": 60 },
     "api/reports.py": { "maxDuration": 60, "excludeFiles": "{node_modules/**,public/**,docs/**,tests/**,dist/**,.git/**}" },
-    "api/simples.py": { "maxDuration": 60, "excludeFiles": "{node_modules/**,public/**,docs/**,tests/**,dist/**,.git/**,**/opencv_python.libs/**}" }
+    "api/simples.py": { "maxDuration": 300, "excludeFiles": "{node_modules/**,public/**,docs/**,tests/**,dist/**,.git/**,**/opencv_python.libs/**}" }
   },
   "rewrites": [
     { "source": "/api/reports", "destination": "/api/reports" },

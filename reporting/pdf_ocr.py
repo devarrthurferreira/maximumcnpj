@@ -81,7 +81,12 @@ def _native_text_is_complete(page, words):
     return True
 
 
-def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seconds=45):
+def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seconds=45, stop_when=None):
+    """Process pages until complete or an optional caller-defined goal is met.
+
+    The callback receives the processed page rows. Unprocessed pages are copied
+    from the original PDF, preserving the complete document without extra OCR.
+    """
     import fitz
     if not isinstance(content, (bytes, bytearray)) or not content.startswith(b'%PDF') or len(content) > MAX_BYTES:
         raise ValueError('Envie um PDF válido de até 8 MiB.')
@@ -91,9 +96,11 @@ def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seco
             raise ValueError('O PDF está protegido por senha. Envie uma cópia desbloqueada.')
         if not 1 <= len(document) <= MAX_PAGES:
             raise ValueError(f'O extrato deve ter entre 1 e {MAX_PAGES} páginas. Nenhuma página será ignorada.')
-        pages, ocr_pages, scores = [], [], []
+        pages, ocr_pages, scores, preserved_pages = [], [], [], []
         for index, original in enumerate(document):
             if time.monotonic() - started > timeout_seconds:
+                if stop_when is not None:
+                    raise ValueError('A leitura da seção 2.2 excedeu o tempo disponível. Nenhum resultado parcial foi utilizado.')
                 raise ValueError('O OCR integral excedeu o tempo disponível. Use um PDF menor ou o conversor Python local; não foi aceito resultado parcial.')
             words = original.get_text('words', sort=True)
             readable = _native_text_is_complete(original, words)
@@ -130,9 +137,17 @@ def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seco
                 ocr_pages.append(index + 1)
                 scores.extend(r['confidence'] for r in items)
             pages.append({'page': index + 1, 'rows': group_rows(items)})
+            if stop_when is not None and stop_when(pages):
+                if index + 1 < len(document):
+                    output.insert_pdf(document, from_page=index + 1, to_page=len(document) - 1)
+                    preserved_pages = list(range(index + 2, len(document) + 1))
+                break
         if time.monotonic() - started > timeout_seconds:
+            if stop_when is not None:
+                raise ValueError('A leitura da seção 2.2 excedeu o tempo disponível. Nenhum resultado parcial foi utilizado.')
             raise ValueError('O OCR integral excedeu o tempo disponível. Nenhum resultado parcial foi utilizado.')
         return {'pdf': output.tobytes(garbage=4, deflate=True),
                 'text': '\n\n'.join('\n'.join(row['text'] for row in page['rows']) for page in pages),
-                'pages': pages, 'pageCount': len(document), 'ocrPages': ocr_pages,
+                'pages': pages, 'pageCount': len(document), 'processedPages': len(pages),
+                'preservedPages': preserved_pages, 'ocrPages': ocr_pages,
                 'ocrConfidence': mean(scores) if scores else None, 'ocrEngine': 'RapidOCR' if ocr_pages else 'NATIVE'}
