@@ -45,11 +45,12 @@ def group_rows(items):
 def _ocr_page(pix, engine):
     import numpy as np
     image = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
-    result = engine(np.ascontiguousarray(image[:, :, ::-1]))
-    boxes, texts, scores = result.boxes, result.txts, result.scores
-    if (boxes is None or texts is None) and float(image.std()) < 1:
+    # Empty pages do not need an OCR model (or a cold-start initialization).
+    if int(image.max()) - int(image.min()) < 2:
         return []
-    if boxes is None or texts is None or scores is None or len(texts) != len(scores):
+    result = (engine or _rapid_engine())(np.ascontiguousarray(image[:, :, ::-1]))
+    boxes, texts, scores = result.boxes, result.txts, result.scores
+    if boxes is None or texts is None or scores is None or not len(texts) or not (len(boxes) == len(texts) == len(scores)):
         raise ValueError('OCR não reconheceu texto nesta página. Reenvie uma digitalização legível.')
     records = []
     for box, text, score in zip(boxes, texts, scores):
@@ -58,6 +59,26 @@ def _ocr_page(pix, engine):
             records.append({'text': str(text).strip(), 'confidence': float(score),
                             'box': [min(xs), min(ys), max(xs), max(ys)]})
     return records
+
+
+def _native_text_is_complete(page, words):
+    """A digital header/footer does not make an image of a table readable."""
+    import fitz
+    if len(words) < 8 or '\ufffd' in page.get_text():
+        return False
+    page_area = max(1, page.rect.get_area())
+    for image in page.get_image_info():
+        region = fitz.Rect(image['bbox']) & page.rect
+        # Logos and small decorative images never trigger a full-page OCR.
+        if region.is_empty or region.get_area() < page_area * .2:
+            continue
+        native_words = sum(1 for word in words if region.contains(fitz.Point(
+            (word[0] + word[2]) / 2, (word[1] + word[3]) / 2)))
+        # A large scanned region with only a few native words is incomplete.
+        # Complete text layers stay native; sparse layers are replaced by OCR.
+        if native_words < 40:
+            return False
+    return True
 
 
 def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seconds=45):
@@ -75,7 +96,7 @@ def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seco
             if time.monotonic() - started > timeout_seconds:
                 raise ValueError('O OCR integral excedeu o tempo disponível. Use um PDF menor ou o conversor Python local; não foi aceito resultado parcial.')
             words = original.get_text('words', sort=True)
-            readable = len(words) >= 8 and '\ufffd' not in original.get_text()
+            readable = _native_text_is_complete(original, words)
             if readable and not force_ocr:
                 items = [{'text': w[4], 'box': list(w[:4]), 'confidence': None} for w in words]
                 output.insert_pdf(document, from_page=index, to_page=index)
@@ -87,7 +108,7 @@ def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seco
                 if not _OCR_LOCK.acquire(timeout=remaining):
                     raise ValueError('O leitor OCR está ocupado. Aguarde e tente novamente.')
                 try:
-                    records = _ocr_page(pix, engine or _rapid_engine())
+                    records = _ocr_page(pix, engine)
                 finally:
                     _OCR_LOCK.release()
                 xscale, yscale = original.rect.width / pix.width, original.rect.height / pix.height

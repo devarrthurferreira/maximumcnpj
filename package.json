@@ -1,6 +1,6 @@
 {
   "name": "maximum-cnpj",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "private": true,
   "type": "module",
   "description": "Consultas CNPJ, histórico por empresa e relatórios Python com Node.js e MongoDB",
@@ -12,7 +12,7 @@
     "build": "tsc && node scripts/assets.mjs",
     "start": "node --env-file-if-exists=.env dist/server.js",
     "check": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/domain.test.ts tests/security.test.ts tests/imported.test.ts tests/http.test.ts tests/deployment.test.mjs tests/lookup.test.ts tests/lookup-performance.test.ts tests/lookup-http.test.ts tests/team.test.ts tests/purchase.test.ts tests/purchase-parser.test.mjs tests/simulator-engine.test.mjs tests/report-competence.test.ts tests/simulator-projection.test.mjs tests/simulation-extrato.test.ts tests/simulator-calendar.test.mjs",
+    "test": "node --experimental-strip-types --test tests/domain.test.ts tests/security.test.ts tests/imported.test.ts tests/http.test.ts tests/deployment.test.mjs tests/lookup.test.ts tests/lookup-performance.test.ts tests/lookup-http.test.ts tests/team.test.ts tests/purchase.test.ts tests/purchase-parser.test.mjs tests/simulator-engine.test.mjs tests/report-competence.test.ts tests/simulator-projection.test.mjs tests/simulation-extrato.test.ts tests/simulator-calendar.test.mjs tests/blob-documents.test.ts",
     "test:integration": "node --experimental-strip-types --test tests/integration.test.ts tests/bootstrap.test.ts tests/team-integration.test.ts",
     "seed": "node --experimental-strip-types --env-file-if-exists=.env scripts/seed.ts",
     "test:e2e": "playwright test",

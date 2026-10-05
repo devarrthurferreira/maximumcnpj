@@ -116,6 +116,44 @@ test('RBT12 vem somente da seção 2.2 e falha em PDF novo apaga a leitura anter
  await page.locator('#generate-simulation').click();await expect(page.locator('#simulator-error')).toContainText('seção 2.2');
  await expect(page.locator('#results-top')).toHaveCount(0);
 });
+test('Falha no upload não informa original armazenado nem oferece reprocessamento',async({page})=>{
+ await setup(page);let uploads=0,reads=0;
+ await page.route('https://vercel.com/api/blob/**',r=>{uploads++;return r.fulfill({status:403,body:'Upload recusado'});});
+ await page.route('**/api/simples?*',r=>{reads++;return r.fulfill({status:500,json:{message:'Não deveria executar OCR'}});});
+ await page.goto(url);
+ await page.locator('#rbt12-pdf').setInputFiles({name:'sintetico.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic')});
+ await page.locator('#rbt12-read').click();
+ await expect(page.locator('#rbt12-status')).toContainText('Não foi possível armazenar');
+ await expect(page.locator('#rbt12-status')).not.toContainText('ficou armazenado');
+ await expect(page.locator('#rbt12-reprocess')).toBeHidden();
+ await expect(page.locator('#rbt12-view-original')).toBeHidden();
+ await expect(page.locator('#rbt12')).toHaveValue('');
+ await expect(page.locator('#rbt12-pdf')).toBeEnabled();
+ expect(uploads).toBe(1);expect(reads).toBe(0);
+});
+test('OCR indisponível preserva original e reprocessa sem novo upload no endpoint real do Blob',async({page})=>{
+ await setup(page);let uploads=0,reads=0;
+ await page.route('https://vercel.com/api/blob/**',r=>{uploads++;return r.fulfill({status:200,body:''});});
+ await page.route('**/api/simples?*',r=>{reads++;return r.fulfill({status:504,contentType:'text/html',body:'<html>Gateway timeout</html>'});});
+ await page.goto(url);
+ await page.locator('#rbt12-pdf').setInputFiles({name:'sintetico.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic')});
+ await page.locator('#rbt12-read').click();
+ await expect(page.locator('#rbt12-status')).toContainText('O servidor não conseguiu concluir');
+ await expect(page.locator('#rbt12-status')).toContainText('ficou armazenado');
+ await expect(page.locator('#rbt12-view-original')).toBeVisible();
+ await expect(page.locator('#rbt12-reprocess')).toBeVisible();
+ let release!:()=>void;const gate=new Promise<void>(resolve=>release=resolve);
+ await page.route('**/api/simples?*',async r=>{reads++;await gate;return r.fulfill({json:{extractionId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',documentId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',searchableStored:true,...section22(15000000)}});});
+ await page.locator('#rbt12-reprocess').click();
+ await expect(page.locator('#rbt12-pdf')).toBeDisabled();
+ await expect(page.locator('#rbt12-read')).toBeDisabled();
+ await expect(page.locator('#generate-simulation')).toBeDisabled();
+ release();
+ await expect(page.locator('#rbt12')).toHaveValue('150000.00');
+ await expect(page.locator('#rbt12-view-searchable')).toBeVisible();
+ await expect(page.locator('#rbt12-pdf')).toBeEnabled();
+ expect(uploads).toBe(1);expect(reads).toBe(2);
+});
 test('DRE mensal mostra 12 meses, muda regime e conserva a RBT12 do extrato',async({page},info)=>{
  await setup(page);await page.setViewportSize({width:1440,height:1100});await page.goto(url);await complete(page,{serviceRevenue:1000,salaries:3000,rent:700});
  await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');

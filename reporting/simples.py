@@ -32,8 +32,15 @@ def _previous_months(pa: str, count=12):
             for offset in range(count, 0, -1)]
 
 
+def _competence_matches(block: str):
+    # Page footers can occur between table rows. A complete issue date such as
+    # 02/10/2026 is not the revenue competence 10/2026.
+    return [match for match in MONTH_RE.finditer(block)
+            if not re.search(r'\b\d{1,2}\s*/\s*$', block[:match.start()])]
+
+
 def _read_market(block: str, revenues: dict, label: str):
-    matches = list(MONTH_RE.finditer(block))
+    matches = _competence_matches(block)
     for index, match in enumerate(matches):
         period = f'{match[1]}/{match[2]}'
         # One explicit monetary value per competence. A blank cell is never zero.
@@ -131,7 +138,7 @@ def convert_statement_pdf(content: bytes, *, force_ocr=False, ocr_engine=None, t
                 inside = True
             elif END_RE.search(line):
                 inside = False
-            critical = (inside and (MONTH_RE.search(line) or MONEY_RE.search(line))) or 'CNPJ BASICO' in line or '(PA)' in line
+            critical = (inside and (_competence_matches(line) or MONEY_RE.search(line))) or 'CNPJ BASICO' in line or '(PA)' in line
             if critical and any(item['confidence'] is not None and item['confidence'] < .93 for item in row['items'] if re.search(r'\d', item['text'])):
                 raise ValueError(f'OCR com baixa confiança em dados da seção 2.2/identificação (página {page["page"]}). Confira o PDF; a RBT12 não foi liberada.')
     result.update(pageCount=converted['pageCount'], processedPages=converted['pageCount'], ocrPages=converted['ocrPages'],

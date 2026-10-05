@@ -1,12 +1,25 @@
-# Maximum CNPJ · v0.13.0
+# Maximum CNPJ · v0.13.1
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Correção 05/10/2026 — upload e OCR de PDFs mistos
+
+- [x] URLs assinadas usam explicitamente `access: 'private'`. A leitura é feita no domínio privado do store; o upload usa `https://vercel.com/api/blob/`, conforme o SDK `@vercel/blob` 2.8.0.
+- [x] A CSP e a validação Python reconhecem o endpoint de upload correto. O Python confere o caminho exato do documento na query da URL de escrita, mantendo leitura e escrita limitadas aos endpoints oficiais e ao documento selecionado.
+- [x] Reprocessar pode substituir somente a cópia pesquisável no mesmo caminho. O PDF original continua sem permissão de sobrescrita.
+- [x] PDF digitalizado com cabeçalho/rodapé em texto recebe OCR quando o corpo em imagem não possui texto correspondente. Texto parcial deixa de impedir a leitura da seção 2.2.
+- [x] O navegador distingue falha no upload de falha no OCR e oferece a retomada adequada. O arquivo só é apresentado como armazenado após confirmação do upload.
+- [x] Datas completas de emissão em rodapés deixam de ser confundidas com competências da seção 2.2; validações de valores e confiança fiscal são preservadas.
+- [x] Lockfile Node corrigido para incluir o SDK Blob e suas dependências; instalação limpa com `npm ci`.
+- [x] Regressões para contrato real do SDK, URLs GET/PUT, upload rejeitado, reprocessamento, PDF misto e preservação do isolamento por empresa. PDFs e credenciais de clientes não são versionados.
+
+A regra da RBT12 permanece exclusivamente na seção 2.2: valores ilegíveis, meses ausentes e conflitos continuam bloqueando a extração. O upload e a leitura não exigem uma nova chave além da configuração do Blob privado já prevista abaixo.
 
 ## Entrega 02/10/2026 — cofre de documentos fiscais no Blob
 
 O Extrato do Simples deixa de depender de uma única requisição de OCR. O fluxo atual é **Blob privado → OCR Python → PDF pesquisável no Blob → seção 2.2 → RBT12 → simulador**.
 
-- [x] O navegador recebe uma URL assinada de uso único e envia o PDF diretamente ao Vercel Private Blob. O token administrativo nunca é enviado ao navegador; a CSP libera somente o domínio privado oficial do Blob.
+- [x] O navegador recebe uma URL assinada de uso único e envia o PDF diretamente ao Vercel Private Blob. O token administrativo nunca é enviado ao navegador; a CSP libera o domínio privado oficial para leitura e o caminho oficial da API Blob para upload.
 - [x] O original é preservado em caminho imutável por workspace, empresa e documento. O MongoDB guarda apenas metadados, status, hashes, vínculo da extração e RBT12.
 - [x] O Python recebe URLs temporárias restritas ao próprio documento, recupera o original, aplica OCR integral e grava o PDF pesquisável em outro objeto privado.
 - [x] Falha de OCR não exige novo upload: o documento fica em `OCR_FAILED` e pode ser reprocessado a partir do original armazenado.
@@ -47,7 +60,7 @@ Nunca exponha esse token ao browser. O código usa URLs assinadas para upload e 
 
 No simulador, selecione **Extrato do Simples Nacional (PDF)** e clique **Ler RBT12 do PDF**. Confira o quadro “Conferir seção 2.2”. Quando disponível, o botão **Baixar PDF pesquisável** entrega a cópia com texto selecionável. O PDF/base64/texto integral não são guardados no MongoDB; apenas o resultado estruturado, identificação, SHA-256 e vínculo são persistidos. Reabrir um rascunho consulta essa referência autenticada, sem confiar no valor monetário do armazenamento do navegador.
 
-Envio web limitado a 4 MiB, até 30 páginas e orçamento de 45 segundos para a conversão integral. O arquivo não é parcialmente aceito ao exceder os limites. O retorno web inclui o PDF até 2,5 milhões de bytes; acima disso, a leitura pode ser salva, mas o download requer o conversor local. Esses limites mantêm a resposta abaixo do teto de payload da Vercel. PDFs devem estar desbloqueados, orientados corretamente e legíveis. OCR não garante exatidão fiscal: confira as competências na imagem original.
+O fluxo atual pelo Blob aceita até 8 MiB; o envio direto legado aceita até 4 MiB. Ambos aceitam até 30 páginas e usam orçamento de 45 segundos para a conversão integral. O arquivo não é parcialmente aceito ao exceder os limites. No fluxo Blob, o PDF pesquisável fica armazenado e pode ser aberto pela rota autenticada. Somente no envio direto legado o retorno inclui o PDF até 2,5 milhões de bytes; acima disso, use o fluxo Blob ou o conversor local. Esses limites mantêm a resposta abaixo do teto de payload da Vercel. PDFs devem estar desbloqueados, orientados corretamente e legíveis. OCR não garante exatidão fiscal: confira as competências na imagem original.
 
 Conversor local Python (até 8 MiB, 30 páginas; arquivos maiores devem ser otimizados previamente):
 

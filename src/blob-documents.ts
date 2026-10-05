@@ -7,11 +7,10 @@ import { AppError, integer, need, text } from './security.ts';
 import type { LookupActor } from './lookup-db.ts';
 
 export const MAX_SIMPLES_PDF_BYTES = 8 * 1024 * 1024;
-const SIGNED_URL_MS = 15 * 60 * 1000;
 
 const safeSegment = (value: string) => value.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'maximum';
 
-async function signedUrl(pathname: string, operation: 'get' | 'put', minutes = 15) {
+export async function signedUrl(pathname: string, operation: 'get' | 'put', allowOverwrite = false, minutes = 15) {
   const validUntil = Date.now() + Math.max(1, Math.min(minutes, 60)) * 60 * 1000;
   try {
     const delegation = await issueSignedToken({
@@ -19,8 +18,11 @@ async function signedUrl(pathname: string, operation: 'get' | 'put', minutes = 1
       operations: [operation],
       validUntil,
       ...(operation === 'put' ? { allowedContentTypes: ['application/pdf'], maximumSizeInBytes: MAX_SIMPLES_PDF_BYTES } : {})
-    } as any);
-    const { presignedUrl } = await presignUrl(delegation, { pathname, operation, validUntil, ...(operation === 'get' ? { useCache: false } : {}) } as any);
+    });
+    const { presignedUrl } = await presignUrl(delegation, operation === 'get'
+      ? { pathname, operation, access: 'private', validUntil, useCache: false }
+      : { pathname, operation, access: 'private', validUntil, addRandomSuffix: false, allowOverwrite,
+          allowedContentTypes: ['application/pdf'], maximumSizeInBytes: MAX_SIMPLES_PDF_BYTES });
     return presignedUrl;
   } catch (error) {
     console.error(JSON.stringify({ code: 'BLOB_SIGN', errorType: (error as any)?.name || 'Error' }));
@@ -50,7 +52,7 @@ export async function routeSimplesDocuments(actor: LookupActor, method: string, 
     const id = randomUUID(), prefix = `simples/${safeSegment(workspace())}/${clientId}/${id}`;
     const originalPath = `${prefix}/original.pdf`, searchablePath = `${prefix}/pesquisavel.pdf`;
     const [originalPutUrl, originalGetUrl, searchablePutUrl] = await Promise.all([
-      signedUrl(originalPath, 'put'), signedUrl(originalPath, 'get'), signedUrl(searchablePath, 'put')
+      signedUrl(originalPath, 'put'), signedUrl(originalPath, 'get'), signedUrl(searchablePath, 'put', true)
     ]);
     await (await collection('simplesDocuments')).insertOne({
       _id: id, ...scope(), clientId, fileName, sizeBytes, originalPath, searchablePath,
@@ -68,7 +70,7 @@ export async function routeSimplesDocuments(actor: LookupActor, method: string, 
     if (action[2] === 'process-urls' && method === 'POST') {
       need(['admin','operator'].includes(actor.role), 'Seu perfil não pode reprocessar documentos.', 403, 'FORBIDDEN');
       const [originalGetUrl, searchablePutUrl] = await Promise.all([
-        signedUrl(value.originalPath, 'get'), signedUrl(value.searchablePath, 'put')
+        signedUrl(value.originalPath, 'get'), signedUrl(value.searchablePath, 'put', true)
       ]);
       await (await collection('simplesDocuments')).updateOne(scope({ _id: value._id }), {$set: { status: 'STORED', updatedAt: new Date() }});
       return { documentId: value._id, originalGetUrl, searchablePutUrl };

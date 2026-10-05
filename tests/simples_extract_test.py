@@ -33,6 +33,16 @@ def digital_pdf():
         return doc.tobytes()
 
 
+def scanned_pdf(*, native_footer=False):
+    import fitz
+    with fitz.open(stream=digital_pdf(),filetype='pdf') as native,fitz.open() as scan:
+        page=scan.new_page()
+        page.insert_image(page.rect,stream=native[0].get_pixmap(matrix=fitz.Matrix(2,2)).tobytes('png'))
+        if native_footer:
+            page.insert_text((30,790),'Arquivo digitalizado pelo sistema da empresa para consulta de documento fiscal',fontsize=9)
+        return scan.tobytes()
+
+
 class SimplesExtractTests(unittest.TestCase):
     def test_only_section_22_even_when_21_disagrees(self):
         result=parse_statement_text(sample())
@@ -74,6 +84,14 @@ class SimplesExtractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'PA'):
             parse_statement_text(sample().replace('2.2.2) Mercado Externo','08/2026 20.000,00\n2.2.2) Mercado Externo'))
 
+    def test_full_issue_date_in_page_footer_is_not_a_revenue_month(self):
+        for date in ['02/10/2026', '02 / 10 / 2026']:
+            with self.subTest(date=date):
+                text=sample().replace('2.2.2) Mercado Externo',f'Emitido em {date} às 08:20\n2.2.2) Mercado Externo')
+                result=parse_statement_text(text)
+                self.assertEqual(result['rbt12Cents'],16200000)
+                self.assertEqual(len(result['priorRevenues']),19)
+
     def test_native_pdf_is_searchable_and_no_ocr_called(self):
         def reject(*_):raise AssertionError('Native text must not be OCRed again')
         result,pdf,text=convert_statement_pdf(digital_pdf(),ocr_engine=reject)
@@ -83,17 +101,34 @@ class SimplesExtractTests(unittest.TestCase):
 
     def test_blank_page_is_preserved(self):
         import fitz
-        from types import SimpleNamespace
         with fitz.open(stream=digital_pdf(),filetype='pdf') as doc:
             doc.new_page()
             content=doc.tobytes()
-        empty=lambda _:SimpleNamespace(boxes=None,txts=None,scores=None)
-        result,pdf,_=convert_statement_pdf(content,ocr_engine=empty)
+        with patch('reporting.pdf_ocr._rapid_engine',side_effect=AssertionError('Blank pages do not need a model')):
+            result,pdf,_=convert_statement_pdf(content)
         self.assertEqual(result['processedPages'],2)
         self.assertEqual(result['rbt12Cents'],16200000)
         with fitz.open(stream=pdf,filetype='pdf') as doc:
             self.assertEqual(len(doc),2)
             self.assertEqual(doc[1].get_text(),'')
+
+    def test_image_with_native_footer_is_ocr_processed(self):
+        from types import SimpleNamespace
+        lines=sample().splitlines()
+        boxes=[[[100,100+i*50],[2200,100+i*50],[2200,135+i*50],[100,135+i*50]] for i in range(len(lines))]
+        with patch('reporting.pdf_ocr._rapid_engine') as factory:
+            factory.return_value.return_value=SimpleNamespace(boxes=boxes,txts=lines,scores=[.99]*len(lines))
+            result,_,text=convert_statement_pdf(scanned_pdf(native_footer=True))
+            factory.return_value.assert_called_once()
+            self.assertTrue(result['ocrUsed'])
+            self.assertEqual(result['rbt12Cents'],16200000)
+            self.assertIn('2.2) Receitas Brutas Anteriores',text)
+
+    def test_mismatched_ocr_records_are_not_silently_truncated(self):
+        from types import SimpleNamespace
+        engine=lambda _:SimpleNamespace(boxes=[],txts=['123,45'],scores=[.99])
+        with self.assertRaisesRegex(ValueError,'OCR não reconheceu'):
+            convert_statement_pdf(scanned_pdf(),ocr_engine=engine)
 
     def test_all_pages_processed_not_just_first_rbt12_label(self):
         from reporting.pdf_ocr import group_rows
@@ -105,18 +140,27 @@ class SimplesExtractTests(unittest.TestCase):
             converted['pages'][0]['rows'][8]['items'][0]['confidence']=.5
             with self.assertRaisesRegex(ValueError,'baixa confiança'):convert_statement_pdf(b'%PDF-fixture')
 
+    def test_footer_issue_date_confidence_is_not_a_fiscal_value(self):
+        from reporting.pdf_ocr import group_rows
+        text=sample().replace('2.2.2) Mercado Externo','Emitido em 02/10/2026 às 08:20\n2.2.2) Mercado Externo')
+        rows=group_rows([{'text':line,'box':[0,i*20,500,i*20+10],
+                         'confidence':.6 if line.startswith('Emitido em') else .99}
+                        for i,line in enumerate(text.splitlines())])
+        converted={'pdf':b'%PDF-fixture','text':text,'ocrPages':[1],'pageCount':1,'ocrConfidence':.98,'ocrEngine':'MOCK',
+                   'pages':[{'page':1,'rows':rows}]}
+        with patch('reporting.pdf_ocr.searchable_pdf',return_value=converted):
+            self.assertEqual(convert_statement_pdf(b'%PDF-fixture')[0]['rbt12Cents'],16200000)
+
     @unittest.skipUnless(os.getenv('SIMPLES_TEST_OCR')=='1','Set SIMPLES_TEST_OCR=1 for a single real OCR regression')
     def test_image_pdf_real_ocr_and_searchable_layer(self):
         import fitz
-        with fitz.open(stream=digital_pdf(),filetype='pdf') as native,fitz.open() as scan:
-            page=scan.new_page()
-            page.insert_image(page.rect,stream=native[0].get_pixmap(matrix=fitz.Matrix(2,2)).tobytes('png'))
-            image_pdf=scan.tobytes()
-        result,pdf,text=convert_statement_pdf(image_pdf,timeout_seconds=90)
-        self.assertTrue(result['ocrUsed']);self.assertEqual(result['processedPages'],1)
-        self.assertEqual(result['rbt12Cents'],16200000)
-        with fitz.open(stream=pdf,filetype='pdf') as output:
-            self.assertGreater(len(output[0].get_text()),100)
-            self.assertIn('2.2',output[0].get_text())
+        for native_footer in [False,True]:
+            with self.subTest(native_footer=native_footer):
+                result,pdf,text=convert_statement_pdf(scanned_pdf(native_footer=native_footer),timeout_seconds=90)
+                self.assertTrue(result['ocrUsed']);self.assertEqual(result['processedPages'],1)
+                self.assertEqual(result['rbt12Cents'],16200000)
+                with fitz.open(stream=pdf,filetype='pdf') as output:
+                    self.assertGreater(len(output[0].get_text()),100)
+                    self.assertIn('2.2',output[0].get_text())
 
 if __name__=='__main__':unittest.main()
