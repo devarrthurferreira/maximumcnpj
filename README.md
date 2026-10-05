@@ -29,7 +29,9 @@ O Extrato do Simples deixa de depender de uma única requisição de OCR. O flux
 
 ### Configuração do Blob
 
-Crie/conecte um **Vercel Blob privado** ao projeto `maximum-cnpj`. Em projetos novos, OIDC é o modo recomendado e não exige segredo manual no `.env`. Para desenvolvimento local ou stores legados, use:
+O projeto `maximum-cnpj` foi conectado em 05/10/2026 ao armazenamento privado `maximum-cnpj-extratos`, na mesma região das funções (`iad1`). A conexão adiciona `BLOB_READ_WRITE_TOKEN` aos ambientes de produção, prévia e desenvolvimento. O deploy precisa ser refeito após conectar o store para carregar essa configuração.
+
+Em uma instalação nova, crie/conecte um **Vercel Blob privado** ao projeto. Com autenticação OIDC, configure também `BLOB_STORE_ID`; apenas o token OIDC, sem identificar o store, não é suficiente. Se usar token estático, a variável é:
 
 ```dotenv
 BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
