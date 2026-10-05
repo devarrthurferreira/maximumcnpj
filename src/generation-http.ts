@@ -1,4 +1,4 @@
-import { createGeneration, generationHistory, getGeneration, attachGenerationPurchase, attachGenerationSale } from './generation-store.ts';
+import { createGeneration, generationHistory, getGeneration, attachGenerationPurchase, attachGenerationSale, deleteGeneration } from './generation-store.ts';
 import { need, integer } from './security.ts';
 import { rateLimit, workspace } from './store.ts';
 import type { LookupActor } from './lookup-db.ts';
@@ -12,6 +12,7 @@ export async function routeGenerations(actor: LookupActor, method: string, url: 
   const match = path.match(/^\/([a-f0-9-]{36})(?:\/(purchases|sales|simulator))?$/);
   if (match) {
     if (!match[2] && method === 'GET') return getGeneration(match[1]);
+    if (!match[2] && method === 'DELETE') return deleteGeneration(actor, match[1]);
     if (match[2] === 'simulator' && method === 'GET') return generationSimulator(match[1], url.searchParams.get('clientId') || '');
     if (match[2] === 'purchases' && method === 'POST') return attachGenerationPurchase(actor, match[1], input);
     if (match[2] === 'sales' && method === 'POST') return attachGenerationSale(actor, match[1], input);

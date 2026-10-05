@@ -7,6 +7,7 @@ import { write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { createLookup } from './lookup-jobs.ts';
 import { PURCHASE_MODE, SALES_MODE } from './purchase-domain.ts';
+import { assertGenerationNotDeleted, generationDeletion, reserveGenerationDeletion, reserveDeletedLookups } from './generation-deletion.ts';
 
 const PAGE_SIZE = 20;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -74,6 +75,7 @@ async function generations() {
 }
 
 async function record(id: string) {
+  need(!await generationDeletion(uuid(id)), 'Geração não encontrada.', 404, 'NOT_FOUND');
   const generation = await (await generations()).findOne(scope({_id: uuid(id)}));
   need(generation, 'Geração não encontrada.', 404, 'NOT_FOUND');
   return validateRecord(generation);
@@ -110,7 +112,7 @@ export async function getGeneration(id: string) {
 }
 
 export async function generationHistory(page: number) {
-  const c = await generations(), query = scope();
+  const c = await generations(), query = scope({deletionStartedAt: {$exists: false}});
   const records = await c.find(query).sort({createdAt: -1, _id: -1}).skip((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).toArray();
   return {items: await hydrate(records), total: await c.countDocuments(query), page, pageSize: PAGE_SIZE};
 }
@@ -118,6 +120,7 @@ export async function generationHistory(page: number) {
 export async function createGeneration(actor: LookupActor, input: any) {
   write(actor);
   const id = uuid(input.generationId), reports = requiredReports(input.requiredReports);
+  await assertGenerationNotDeleted(id);
   need(Array.isArray(input.clientIds) && input.clientIds.length >= 1 && input.clientIds.length <= 50, 'Selecione de 1 a 50 empresas.');
   const clientIds = input.clientIds.map(uuid) as string[];
   need(new Set(clientIds).size === clientIds.length, 'A mesma empresa não pode ser selecionada duas vezes.');
@@ -146,19 +149,112 @@ export async function createGeneration(actor: LookupActor, input: any) {
     sameInput(concurrent);
     return getGeneration(id);
   }
+  try { await assertGenerationNotDeleted(id); }
+  catch (error) { await c.deleteOne(scope({_id: id})); throw error; }
   await audit(actor._id, 'generation.create', id);
   return getGeneration(id);
 }
 
 /** Serializes attachments without requiring MongoDB replica-set transactions. */
 export async function withGeneration<T>(id: string, action: (generation: Doc, owner: string) => Promise<T>): Promise<T> {
+  return withGenerationLease(id, action);
+}
+
+async function withGenerationLease<T>(id: string, action: (generation: Doc, owner: string) => Promise<T>, deleting = false): Promise<T> {
   const c = await generations(), owner = randomUUID(), now = new Date();
-  await record(id);
+  if (!deleting) await record(id);
   const generation = await c.findOneAndUpdate(scope({_id: id, $or: [{leaseUntil: {$exists: false}}, {leaseUntil: {$lt: now}}]}),
     {$set: {leaseOwner: owner, leaseUntil: new Date(Date.now() + 120000)}}, {returnDocument: 'after'});
   need(generation, 'Geração ocupada. Tente novamente em instantes.', 409, 'GENERATION_BUSY');
-  try { return await action(validateRecord(generation), owner); }
+  try {
+    if (!deleting) await assertGenerationNotDeleted(id);
+    return await action(validateRecord(generation), owner);
+  }
   finally { await c.updateOne(scope({_id: id, leaseOwner: owner}), {$unset: {leaseOwner: '', leaseUntil: ''}}); }
+}
+
+/** Claim every writer lease before changing data; uploads/finalization may upsert rows. */
+async function withDeletionJobs<T>(generationId: string, ids: string[], action: () => Promise<T>): Promise<T> {
+  const jobs = await collection('lookupJobs'), owner = randomUUID(), held: string[] = [];
+  try {
+    for (const id of ids) {
+      const present = await jobs.findOne(scope({_id: id}));
+      if (!present) continue; // A retry can follow a partially completed purge.
+      need(present.generationId === generationId && [PURCHASE_MODE, SALES_MODE].includes(present.mode),
+        'Relatório vinculado a outra origem. A exclusão foi bloqueada.', 409, 'GENERATION_INCONSISTENT');
+      const locked = await jobs.findOneAndUpdate(scope({_id: id, generationId,
+        $or: [{leaseUntil: {$exists: false}}, {leaseUntil: {$lt: new Date()}}]}),
+      {$set: {leaseOwner: owner, leaseUntil: new Date(Date.now() + 120000)}}, {returnDocument: 'after'});
+      need(locked, 'Há um relatório sendo enviado ou consultado. Aguarde a operação terminar e tente excluir novamente.',
+        409, 'GENERATION_BUSY');
+      held.push(id);
+    }
+    return await action();
+  } finally {
+    if (held.length) await jobs.updateMany(scope({_id: {$in: held}, leaseOwner: owner}), {$unset: {leaseOwner: '', leaseUntil: ''}});
+  }
+}
+
+async function purgeGenerationReceipt(receipt: Doc, owner?: string) {
+  const id = receipt.target, jobIds: string[] = receipt.jobIds;
+  need(Array.isArray(jobIds) && jobIds.every(value => typeof value === 'string' && UUID.test(value)),
+    'Registro da exclusão inconsistente.', 409, 'GENERATION_INCONSISTENT');
+  // Repair reservations before any purge. Failed requests cannot restart writers.
+  await reserveDeletedLookups(id, jobIds, receipt.actor, receipt.createdAt);
+  const c = await generations();
+  if (owner) {
+    const removed = await c.deleteOne(scope({_id: id, leaseOwner: owner}));
+    need(removed.deletedCount === 1, 'Geração ocupada. Tente excluir novamente.', 409, 'GENERATION_BUSY');
+  } else {
+    need(!await c.findOne(scope({_id: id})), 'Geração ocupada. Tente excluir novamente.', 409, 'GENERATION_BUSY');
+  }
+  // The receipt retains only owned IDs, so interrupted purges can safely resume.
+  if (jobIds.length) {
+    for (const name of ['lookupStage', 'purchaseLines', 'lookupItems']) {
+      await (await collection(name)).deleteMany(scope({jobId: {$in: jobIds}}));
+    }
+    await (await collection('chunks')).deleteMany(scope({_id: {$regex: '^lookup:(?:' + jobIds.join('|') + '):'}}));
+    await (await collection('lookupJobs')).deleteMany(scope({_id: {$in: jobIds}, generationId: id}));
+  }
+  return {deleted: true, id};
+}
+
+/** Delete one generation and its exclusively owned reports, never saved simulations. */
+export async function deleteGeneration(actor: LookupActor, value: string) {
+  write(actor);
+  const id = uuid(value), prior = await generationDeletion(id);
+  if (prior) {
+    const resume = (owner?: string) => withDeletionJobs(id, prior.jobIds, () => purgeGenerationReceipt(prior, owner));
+    if (await (await generations()).findOne(scope({_id: id}))) {
+      return withGenerationLease(id, async (_generation, owner) => resume(owner), true);
+    }
+    return resume();
+  }
+  return withGeneration(id, async (generation, owner) => {
+    const jobs = await collection('lookupJobs');
+    const owned = await jobs.find(scope({generationId: id})).project({_id: 1, mode: 1, clientId: 1}).toArray();
+    const clients = new Set(generation.companies.map((company: GenerationCompany) => company.clientId));
+    need(owned.every(job => clients.has(job.clientId) && [PURCHASE_MODE, SALES_MODE].includes(job.mode)),
+      'Geração com relatórios inconsistentes. A exclusão foi bloqueada.', 409, 'GENERATION_INCONSISTENT');
+    const linked = generation.companies.flatMap((company: GenerationCompany) => [...company.purchaseJobIds, ...company.salesJobIds]);
+    need(!await jobs.findOne(scope({_id: {$in: linked}, generationId: {$ne: id}})),
+      'Geração com relatório de outra origem. A exclusão foi bloqueada.', 409, 'GENERATION_INCONSISTENT');
+    const jobIds = owned.map(job => job._id).sort();
+    return withDeletionJobs(id, jobIds, async () => {
+      // Hide only after all leases are held, avoiding a broken partially hydrated history.
+      await (await generations()).updateOne(scope({_id: id, leaseOwner: owner}), {$set: {deletionStartedAt: new Date()}});
+      try {
+        const receipt = await reserveGenerationDeletion(id, jobIds, actor._id);
+        return await purgeGenerationReceipt(receipt, owner);
+      } catch (error) {
+        // Without a durable receipt nothing was purged: restore the visible retry button.
+        if (!await generationDeletion(id)) {
+          await (await generations()).updateOne(scope({_id: id, leaseOwner: owner}), {$unset: {deletionStartedAt: ''}});
+        }
+        throw error;
+      }
+    });
+  });
 }
 
 export async function attachGenerationPurchase(actor: LookupActor, id: string, input: any) {

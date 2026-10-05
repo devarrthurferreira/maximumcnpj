@@ -1,18 +1,17 @@
-# Maximum CNPJ · v0.15.0
+# Maximum CNPJ · v0.16.0
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
 
-## Entrega 05/10/2026 — excluir simulações do histórico
+## Entrega 05/10/2026 — botão de exclusão definitiva no Histórico
 
-- [x] Cada item do histórico de simulações oferece **Excluir** para administradores e operadores. O diálogo identifica empresa, título e ano, com **Cancelar** selecionado inicialmente.
-- [x] A exclusão só é enviada após confirmar. Durante o envio, a interface impede solicitações duplicadas e mantém falhas disponíveis para nova tentativa.
-- [x] A lista e a contagem são atualizadas, mantendo filtros e voltando à página anterior quando a última simulação da página é excluída.
-- [x] `DELETE /api/v4/simulations/:id` exige sessão ativa, origem válida, permissão de escrita e workspace correspondente. A interface envia corpo JSON `{}` conforme o contrato das rotas de escrita.
-- [x] Exclusão lógica com data, responsável e auditoria: o registro sai da lista e deixa de ser acessível pela rota de detalhe. O snapshot é retido internamente; reenvios com o mesmo ID não recriam uma simulação excluída.
-- [x] Relatórios, extratos e outras versões permanecem disponíveis. Uma versão filha continua legível e indica quando sua origem foi excluída, sem oferecer um link indisponível.
-- [x] Regressões com registros sintéticos cobrem cancelamento, confirmação, falha/nova tentativa, concorrência, paginação, perfis de consulta, isolamento e persistência real em MongoDB.
-
-A alteração disponibiliza a ação na interface; a publicação não exclui registros existentes. Nenhuma exclusão em massa é feita.
+- [x] A aba **Histórico** do menu abre as gerações. Cada geração agora tem um botão vermelho **Excluir**, separado do link que abre os relatórios. A ação também aparece no detalhe da geração e em **Simulações**.
+- [x] A confirmação identifica empresas/data ou simulação/cenário, descreve os dados afetados e oferece **Cancelar** e **Excluir definitivamente**. Nada é removido apenas por abrir o diálogo.
+- [x] `DELETE /api/v4/generations/:id` apaga a geração, seus jobs financeiros exclusivos e as linhas, itens, etapas e partes vinculadas. Clientes, estados CNPJ compartilhados, extratos/PDFs da empresa e simulações salvas permanecem disponíveis.
+- [x] `DELETE /api/v4/simulations/:id` remove fisicamente o snapshot com seus dados e resultados. Outras versões continuam legíveis, inclusive quando a origem foi excluída. Esta versão substitui a exclusão lógica da v0.15.0; não executa migração ou limpeza em massa dos registros antigos.
+- [x] As rotas exigem sessão, origem válida, administrador/operador e workspace correspondente. Recibos mínimos de auditoria guardam IDs, responsável e data, sem reter o conteúdo fiscal removido; reenvios não recriam registros excluídos.
+- [x] A geração e seus jobs são bloqueados antes da cascata. Processamento ativo retorna conflito recuperável; uma limpeza interrompida pode ser repetida para o mesmo ID.
+- [x] A interface impede envio duplicado, apresenta falhas para nova tentativa e ajusta a paginação após excluir o último item. A publicação disponibiliza a ação; não exclui registros existentes automaticamente.
+- [x] Regressões com dados sintéticos conferem botão fora do link, confirmação/cancelamento, celular, falhas, concorrência, isolamento e remoção real no MongoDB, preservando uma simulação salva após apagar sua geração.
 
 ## Entrega 05/10/2026 — simulador mais simples
 

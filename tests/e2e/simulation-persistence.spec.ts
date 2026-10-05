@@ -197,7 +197,39 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     expect(await get(fresh.request,`/api/v4/simulations/${first._id}`)).toEqual(original);
     const afterDelete=await get(fresh.request,`/api/v4/simulations?clientId=${clientId}`);
     expect(afterDelete.total).toBe(1);expect(afterDelete.items[0]._id).toBe(first._id);
+    const deletionDb=new MongoClient(process.env.MONGODB_URI!);
+    try{
+      await deletionDb.connect();const db=deletionDb.db(process.env.MONGODB_DB),workspaceId=process.env.WORKSPACE_ID||'maximum';
+      expect(await db.collection('simulations').findOne({_id:second._id,workspaceId})).toBeNull();
+      expect(await db.collection('simulations').countDocuments({_id:first._id,workspaceId})).toBe(1);
+      expect(await db.collection('simplesExtractions').countDocuments({_id:extractionId as any,workspaceId})).toBe(1);
+    }finally{await deletionDb.close();}
     await reopened.locator(`a[href="${permalink}"]`).click();await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
+
+    const generationDb=new MongoClient(process.env.MONGODB_URI!);
+    try{
+      await generationDb.connect();const db=generationDb.db(process.env.MONGODB_DB),workspaceId=process.env.WORKSPACE_ID||'maximum';
+      const ids=Object.values(jobIds),chunks=ids.map(id=>`lookup:${id}:0`);
+      expect(await db.collection<any>('lookupJobs').countDocuments({_id:{$in:ids},workspaceId})).toBe(2);
+      expect(await db.collection('purchaseLines').countDocuments({jobId:{$in:ids},workspaceId})).toBe(2);
+      expect(await db.collection<any>('chunks').countDocuments({_id:{$in:chunks},workspaceId})).toBe(2);
+      await reopened.goto('/generations.html?view=history');await reopened.locator(`button[data-delete-generation="${generationId}"]`).click();
+      await expect(reopened.locator('#delete-generation-target')).toContainText(companyName);
+      const deletingGeneration=reopened.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/generations/${generationId}`&&response.request().method()==='DELETE');
+      await reopened.locator('#delete-generation-confirm').click();
+      const generationDeleted=await deletingGeneration;expect(generationDeleted.ok(),await generationDeleted.text()).toBe(true);
+      expect(await generationDeleted.json()).toEqual({deleted:true,id:generationId});
+      await expect(reopened.locator(`[data-generation-id="${generationId}"]`)).toHaveCount(0);
+      expect((await fresh.request.get(`/api/v4/generations/${generationId}`)).status()).toBe(404);
+      expect(await db.collection<any>('generations').countDocuments({_id:generationId,workspaceId})).toBe(0);
+      expect(await db.collection<any>('lookupJobs').countDocuments({_id:{$in:ids},workspaceId})).toBe(0);
+      for(const collection of ['purchaseLines','lookupStage','lookupItems'])expect(await db.collection(collection).countDocuments({jobId:{$in:ids},workspaceId})).toBe(0);
+      expect(await db.collection<any>('chunks').countDocuments({_id:{$in:chunks},workspaceId})).toBe(0);
+      expect(await db.collection<any>('clients').countDocuments({_id:clientId,workspaceId})).toBe(1);
+      expect(await db.collection<any>('simplesExtractions').countDocuments({_id:extractionId,workspaceId})).toBe(1);
+      expect(await get(fresh.request,`/api/v4/simulations/${first._id}`)).toEqual(original);
+      await reopened.goto(permalink);await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
+    }finally{await generationDb.close();}
     expect(browserErrors).toEqual([]);
   } finally {
     await fresh.close();

@@ -3,10 +3,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { Collection } from 'mongodb';
 import { database, collection, scope, closeDatabase } from '../src/store.ts';
 import { resetLookupIndexes } from '../src/lookup-db.ts';
 import { importCatalog } from '../src/lookup-catalog.ts';
-import { createGeneration, attachGenerationPurchase, attachGenerationSale } from '../src/generation-store.ts';
+import { createGeneration, deleteGeneration, attachGenerationPurchase, attachGenerationSale } from '../src/generation-store.ts';
 import { uploadLookup, finalizeLookup, processLookup } from '../src/lookup-jobs.ts';
 import { routeV4 } from '../src/lookup-http.ts';
 import { createSimulation, deleteSimulation, getSimulation, simulationHistory } from '../src/simulation-history.ts';
@@ -227,13 +228,12 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.deepEqual(await getSimulation(saved._id), saved);
     });
 
-    await t.test('exclusão lógica concorrente reserva o ID, audita uma vez e preserva outras versões e fontes', async () => {
+    await t.test('exclusão permanente concorrente reserva apenas recibo mínimo e preserva outras versões e fontes', async () => {
       const parentInput = {...input, simulationId: randomUUID(), title: 'Origem para excluir'};
       const parent = await createSimulation(actor, parentInput);
       const child = await createSimulation(operator, {...input, simulationId: randomUUID(), parentSimulationId: parent._id,
         title: 'Filha preservada'});
       const c = await collection('simulations'), logs = await collection('audit');
-      const original = await c.findOne(scope({_id: parent._id}));
       const childRecord = await c.findOne(scope({_id: child._id}));
       const preservedCollections = ['generations', 'clients', 'lookupJobs', 'lookupItems', 'purchaseLines', 'simplesExtractions'];
       const sources = await Promise.all(preservedCollections.map(async name => (await collection(name)).find(scope()).sort({_id: 1}).toArray()));
@@ -251,15 +251,13 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
         deleteSimulation(operator, parent._id), deleteSimulation(actor, parent._id)
       ]);
       assert.deepEqual(copies, [deleted, deleted, deleted]);
-      const tombstone = await c.findOne(scope({_id: parent._id}));
-      assert.ok(tombstone!.deletedAt instanceof Date);
-      assert.ok([actor._id, operator._id].includes(tombstone!.deletedBy.id));
-      const {deletedAt, deletedBy, ...frozen} = tombstone!;
-      assert.deepEqual(frozen, original, 'A exclusão mantém o snapshot e a reserva do identificador.');
+      assert.equal(await c.findOne(scope({_id: parent._id})), null, 'O snapshot fiscal é removido fisicamente.');
       const deletionAudits = await logs.find(scope({action: 'simulation.delete', target: parent._id})).toArray();
       assert.equal(deletionAudits.length, 1, 'As exclusões concorrentes registram um único evento.');
-      assert.equal(deletionAudits[0].actor, deletedBy.id);
-      assert.deepEqual(deletionAudits[0].createdAt, deletedAt);
+      assert.ok([actor._id, operator._id].includes(deletionAudits[0].actor));
+      assert.ok(deletionAudits[0].createdAt instanceof Date);
+      assert.deepEqual(Object.keys(deletionAudits[0]).sort(), ['_id', 'action', 'actor', 'createdAt', 'target', 'workspaceId'],
+        'O recibo não armazena valores, empresas, anexos, premissas ou resultados fiscais.');
       await assert.rejects(getSimulation(parent._id), code('NOT_FOUND'));
       await assert.rejects(createSimulation(actor, parentInput), code('SIMULATION_DELETED'));
       await assert.rejects(createSimulation(operator, parentInput), code('SIMULATION_DELETED'));
@@ -278,22 +276,82 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       }
       assert.equal(providerCalls, 4, 'Excluir não faz consulta ao provedor.');
       assert.deepEqual(await deleteSimulation(operator, parent._id), deleted);
-      assert.deepEqual(await c.findOne(scope({_id: parent._id})), tombstone, 'Repetir a exclusão mantém a primeira data e autoria.');
-      assert.equal(await logs.countDocuments(scope({action: 'simulation.delete', target: parent._id})), 1);
-      // Simulate an unavailable audit write after the tombstone was saved; a retry repairs exactly the original event.
-      await logs.deleteOne(scope({_id: deletionAudits[0]._id}));
-      await deleteSimulation(deletedBy.id === actor._id ? operator : actor, parent._id);
+      assert.equal(await c.findOne(scope({_id: parent._id})), null);
       assert.deepEqual(await logs.find(scope({action: 'simulation.delete', target: parent._id})).toArray(), deletionAudits);
       process.env.WORKSPACE_ID = 'another_workspace';
       try { await assert.rejects(deleteSimulation(actor, parent._id), code('NOT_FOUND')); }
       finally { process.env.WORKSPACE_ID = 'simulation_history_test'; }
-      // Even a malformed cross-workspace parent link cannot reveal a foreign tombstone.
+      // A missing local origin is indicated without returning any foreign record or receipt.
       const isolatedChildId = randomUUID();
       await c.insertOne({...childRecord!, _id: isolatedChildId, workspaceId: 'another_workspace'});
       process.env.WORKSPACE_ID = 'another_workspace';
-      try { assert.equal(Object.hasOwn(await getSimulation(isolatedChildId), 'parentSimulationDeleted'), false); }
+      try { assert.equal((await getSimulation(isolatedChildId)).parentSimulationDeleted, true); }
       finally { process.env.WORKSPACE_ID = 'simulation_history_test'; }
-      assert.equal(await c.countDocuments(scope({_id: parent._id})), 1);
+      assert.equal(await c.countDocuments(scope({_id: parent._id})), 0);
+    });
+
+    await t.test('remove legado lógico somente por ID e retoma falha sem perder autoria', async t => {
+      const c = await collection('simulations'), logs = await collection('audit');
+      const existing = await c.findOne(scope({_id: saved._id}));
+      const legacyId = randomUUID(), untouchedId = randomUUID(), legacyAt = new Date('2026-01-02T03:04:05Z');
+      const legacy = {...existing!, _id: legacyId, deletedAt: legacyAt, deletedBy: {id: actor._id, name: actor.name}};
+      const untouched = {...legacy, _id: untouchedId};
+      await c.insertMany([legacy, untouched]);
+      await assert.rejects(getSimulation(legacyId), code('NOT_FOUND'));
+      assert.deepEqual(await deleteSimulation(operator, legacyId), {deleted: true, id: legacyId});
+      assert.equal(await c.findOne(scope({_id: legacyId})), null);
+      const legacyReceipt = await logs.findOne(scope({action: 'simulation.delete', target: legacyId}));
+      assert.equal(legacyReceipt!.actor, actor._id); assert.deepEqual(legacyReceipt!.createdAt, legacyAt);
+      assert.deepEqual(await c.findOne(scope({_id: untouchedId})), untouched, 'Não há limpeza em massa de registros antigos.');
+
+      const interruptedInput = {...input, simulationId: randomUUID(), title: 'Exclusão interrompida'};
+      await createSimulation(actor, interruptedInput);
+      const updateOne = Collection.prototype.updateOne;
+      const failure = t.mock.method(Collection.prototype, 'updateOne', async function(this: Collection, filter: any, update: any, options: any) {
+        if (this.collectionName === 'audit' && update.$setOnInsert?.target === interruptedInput.simulationId &&
+          update.$setOnInsert?.action === 'simulation.delete') throw new Error('audit temporarily unavailable');
+        return updateOne.call(this, filter, update, options);
+      });
+      try { await assert.rejects(deleteSimulation(actor, interruptedInput.simulationId), /audit temporarily unavailable/); }
+      finally { failure.mock.restore(); }
+      const interrupted = await c.findOne(scope({_id: interruptedInput.simulationId}));
+      assert.ok(interrupted!.deletedAt instanceof Date);
+      await assert.rejects(getSimulation(interruptedInput.simulationId), code('NOT_FOUND'));
+      await assert.rejects(createSimulation(actor, interruptedInput), code('SIMULATION_DELETED'));
+      await deleteSimulation(operator, interruptedInput.simulationId);
+      assert.equal(await c.findOne(scope({_id: interruptedInput.simulationId})), null);
+      const repaired = await logs.findOne(scope({action: 'simulation.delete', target: interruptedInput.simulationId}));
+      assert.equal(repaired!.actor, actor._id); assert.deepEqual(repaired!.createdAt, interrupted!.deletedAt);
+      assert.deepEqual(await c.findOne(scope({_id: untouchedId})), untouched);
+    });
+
+    await t.test('uma criação atrasada concorrente à exclusão não ressuscita o snapshot', async t => {
+      const raceInput = {...input, simulationId: randomUUID(), title: 'Corrida criar e excluir'};
+      const insertOne = Collection.prototype.insertOne;
+      let release!: () => void, reached!: () => void, held = false;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const blocked = new Promise<void>(resolve => { reached = resolve; });
+      const delayed = t.mock.method(Collection.prototype, 'insertOne', async function(this: Collection, record: any, options: any) {
+        if (this.collectionName === 'simulations' && record._id === raceInput.simulationId && !held) {
+          held = true; reached(); await gate;
+        }
+        return insertOne.call(this, record, options);
+      });
+      const slow = createSimulation(actor, raceInput);
+      const rejected = assert.rejects(slow, code('SIMULATION_DELETED'));
+      try {
+        await blocked;
+        await createSimulation(actor, raceInput);
+        await deleteSimulation(operator, raceInput.simulationId);
+        release();
+        await rejected;
+      } finally { release(); await slow.catch(() => {}); delayed.mock.restore(); }
+      assert.equal(await (await collection('simulations')).countDocuments(scope({_id: raceInput.simulationId})), 0);
+      await assert.rejects(getSimulation(raceInput.simulationId), code('NOT_FOUND'));
+      await assert.rejects(createSimulation(actor, raceInput), code('SIMULATION_DELETED'));
+      assert.equal((await simulationHistory(1, {search: raceInput.title})).total, 0);
+      assert.equal(await (await collection('audit')).countDocuments(scope({action: 'simulation.delete', target: raceInput.simulationId})), 1);
+      assert.equal(await (await collection('audit')).countDocuments(scope({action: 'simulation.create', target: raceInput.simulationId})), 1);
     });
 
     await t.test('HTTP exige sessão, origem válida e permissão de escrita; viewer pode reabrir', async () => {
@@ -332,6 +390,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
         assert.equal(deleted.status, 200); assert.deepEqual(await deleted.json(), {deleted: true, id: candidate._id});
       }
       assert.equal((await fetch(deleteUrl, {headers})).status, 404);
+      assert.equal(await (await collection('simulations')).countDocuments(scope({_id: candidate._id})), 0);
       const retry = await fetch(base + '/api/v4/simulations', {method: 'POST', headers: operatorHeaders, body: JSON.stringify(candidateInput)});
       assert.equal(retry.status, 409); assert.equal((await retry.json()).error, 'SIMULATION_DELETED');
       assert.equal(await (await collection('audit')).countDocuments(scope({action: 'simulation.delete', target: candidate._id})), 1);
@@ -342,6 +401,32 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       await (await collection('users')).updateOne(scope({_id: viewer._id}), {$set: {mustChangePassword: false, active: false}});
       assert.equal((await fetch(base + `/api/v4/simulations/${saved._id}`, {headers})).status, 401);
       assert.equal((await fetch(savedUrl, {method: 'DELETE', headers, body: '{}'})).status, 401);
+    });
+
+    await t.test('excluir a geração durante uma criação impede snapshot novo e mantém simulações já salvas', async t => {
+      const raceInput = {...input, simulationId: randomUUID(), title: 'Geração excluída durante criação'};
+      const insertOne = Collection.prototype.insertOne;
+      let release!: () => void, reached!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const blocked = new Promise<void>(resolve => { reached = resolve; });
+      const delayed = t.mock.method(Collection.prototype, 'insertOne', async function(this: Collection, record: any, options: any) {
+        if (this.collectionName === 'simulations' && record._id === raceInput.simulationId) {
+          reached(); await gate;
+        }
+        return insertOne.call(this, record, options);
+      });
+      const slow = createSimulation(actor, raceInput);
+      const rejected = assert.rejects(slow, code('GENERATION_DELETED'));
+      try {
+        await blocked;
+        await deleteGeneration(actor, generationId);
+        release(); await rejected;
+      } finally { release(); await slow.catch(() => {}); delayed.mock.restore(); }
+      assert.equal(await (await collection('simulations')).countDocuments(scope({_id: raceInput.simulationId})), 0);
+      assert.deepEqual(await getSimulation(saved._id), saved);
+      assert.deepEqual(await createSimulation(actor, input), saved, 'Reenviar uma simulação já salva não depende da geração removida.');
+      await assert.rejects(createSimulation(actor, {...input, simulationId: randomUUID()}), code('GENERATION_DELETED'));
+      await assert.rejects(createSimulation(actor, {...input, simulationId: randomUUID(), parentSimulationId: saved._id}), code('GENERATION_DELETED'));
     });
   } finally {
     if (server) await new Promise<void>(resolve => server!.close(() => resolve()));

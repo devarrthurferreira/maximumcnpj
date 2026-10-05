@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.16.0] — 2026-10-05
+
+- Botão vermelho **Excluir** na aba Histórico (gerações), separado do link do registro, e no detalhe da geração; botão de simulações também mais visível.
+- Confirmação explícita **Excluir definitivamente**, com identificação do alvo e impacto, cancelamento, bloqueio de duplicatas e nova tentativa após falhas.
+- Remoção física da geração e dos relatórios financeiros exclusivamente vinculados; clientes, dados CNPJ compartilhados, extratos e simulações independentes preservados.
+- Exclusão de simulações passa de lógica para física. Recibos mínimos de auditoria impedem reutilização de IDs e permitem repetir a operação sem guardar os valores excluídos.
+- Leases e guardas contra criação concorrente/reenvios evitam que a cascata repovoe dados removidos; autenticação, origem, papéis e workspace mantidos.
+- Cobertura de MongoDB e navegador para remoção definitiva, corridas, isolamento, cancelamento, falha/retry, paginação e acesso às simulações preservadas.
+
 ## [0.15.0] — 2026-10-05
 
 - Exclusão individual no histórico de simulações, com confirmação identificando empresa/cenário e opção de cancelar.

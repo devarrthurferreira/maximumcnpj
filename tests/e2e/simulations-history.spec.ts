@@ -24,10 +24,11 @@ test('Cancelar exclusão não envia DELETE e devolve foco no desktop e celular',
  await page.route('**/api/v4/simulations?*',r=>r.fulfill({json:{items:[item],total:1,page:1,pageSize:20}}));
  await page.route('**/api/v4/simulations/*',r=>{if(r.request().method()==='DELETE')deletes++;return r.fulfill({json:{deleted:true,id:item._id}});});
  await page.goto('/simulations.html');
- const remove=page.locator(`[data-delete-simulation="${item._id}"]`),dialog=page.getByRole('dialog',{name:'Excluir simulação?'});
+ const remove=page.locator(`button[data-delete-simulation="${item._id}"]`),dialog=page.getByRole('dialog',{name:/Excluir simulação/});
  for(const width of [1440,390]){
-  await page.setViewportSize({width,height:900});await remove.click();
+  await page.setViewportSize({width,height:900});const previousUrl=page.url();await remove.click();expect(page.url()).toBe(previousUrl);
   await expect(dialog).toBeVisible();await expect(page.locator('#delete-simulation-cancel')).toBeFocused();
+  await expect(page.locator('#delete-simulation-confirm')).toHaveText('Excluir definitivamente');
   await expect(page.locator('#delete-simulation-company')).toContainText(item.company.name);
   await expect(page.locator('#delete-simulation-title')).toHaveText(item.title);
   await expect(page.locator('#delete-simulation-year')).toContainText(String(item.year));
@@ -49,7 +50,7 @@ test('Exclusão confirma somente o item escolhido, impede duplicação e permite
   items=[other];return r.fulfill({json:{deleted:true,id:item._id}});
  });
  await page.goto('/simulations.html');await page.locator(`[data-delete-simulation="${item._id}"]`).click();
- const dialog=page.getByRole('dialog',{name:'Excluir simulação?'}),confirm=page.locator('#delete-simulation-confirm');
+ const dialog=page.getByRole('dialog',{name:/Excluir simulação/}),confirm=page.locator('#delete-simulation-confirm');
  const started=page.waitForRequest(r=>r.method()==='DELETE');await confirm.click();await started;
  try{
   await expect(confirm).toBeDisabled();await expect(page.locator('#delete-simulation-cancel')).toBeDisabled();
