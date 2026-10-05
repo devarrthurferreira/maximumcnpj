@@ -1,4 +1,4 @@
-import { createSimulation, getSimulation, simulationHistory } from './simulation-history.ts';
+import { createSimulation, deleteSimulation, getSimulation, simulationHistory } from './simulation-history.ts';
 import { need, integer } from './security.ts';
 import { rateLimit, workspace } from './store.ts';
 import type { LookupActor } from './lookup-db.ts';
@@ -14,5 +14,6 @@ export async function routeSimulations(actor: LookupActor, method: string, url: 
   if (!path && method === 'POST') return createSimulation(actor, input);
   const match = path.match(/^\/([a-f0-9-]{36})$/);
   if (match && method === 'GET') return getSimulation(match[1]);
+  if (match && method === 'DELETE') return deleteSimulation(actor, match[1]);
   need(false, 'Rota de simulação não encontrada.', 404, 'NOT_FOUND');
 }
