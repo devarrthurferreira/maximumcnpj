@@ -23,9 +23,14 @@ test('4 meses viram média e 12 meses iguais, com conferência responsiva e RBT1
  await expect(page.locator('#period-confirm')).toBeChecked();await expect(page.locator('#salesRevenue')).toHaveValue('100000.00');
  await expect(page.locator('[data-projection-total]')).toContainText('400.000,00');await expect(page.locator('[data-projection-monthly]')).toContainText('100.000,00');
  await expect(page.locator('[data-projection-annual]')).toContainText('1.200.000,00');await expect(page.locator('.projection-month')).toHaveCount(12);
+ await expect(page.locator('.projection-timeline')).toBeHidden();await expect(page.locator('#period-months')).toBeHidden();
+ await expect(page.locator('#rbt12-pdf')).toBeInViewport();
  const desktop=info.outputPath('projecao-desktop.png');await page.screenshot({path:desktop});await info.attach('Projeção desktop',{path:desktop,contentType:'image/png'});
+ await page.locator('.projection-memory summary').focus();await page.keyboard.press('Enter');
+ await expect(page.locator('.projection-timeline')).toBeVisible();
  await page.locator('[data-projection-kind="purchases"]').click();await expect(page.locator('[data-projection-annual]')).toContainText('720.000,00');
- await page.locator('.projection-memory summary').click();await expect(page.locator('.projection-memory tbody tr')).toHaveCount(5);
+ await expect(page.locator('.projection-timeline')).toBeVisible();await expect(page.locator('.projection-memory tbody tr')).toHaveCount(5);
+ await page.locator('.projection-memory summary').focus();await page.keyboard.press('Enter');await expect(page.locator('.projection-timeline')).toBeHidden();
  await readStatement(page,88888888);
  for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill(id==='serviceRevenue'?'2000':'0');
  await page.locator('#salesCpfCents').fill('10100');
