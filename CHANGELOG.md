@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.15.0] — 2026-10-05
+
+- Exclusão individual no histórico de simulações, com confirmação identificando empresa/cenário e opção de cancelar.
+- Permissão limitada a administradores/operadores, com validação de sessão, origem, UUID e workspace no servidor.
+- Exclusão lógica auditada, sem apagar relatórios, extratos ou outras versões; registros excluídos saem da listagem, contagem e leitura direta.
+- Reenvios idempotentes não duplicam a exclusão nem ressuscitam o snapshot. Versões filhas indicam a origem excluída.
+- Estado de envio, falha e nova tentativa no diálogo; filtros e paginação preservados após a exclusão.
+- Testes de navegador e integração para cancelamento, erros, concorrência, permissões e isolamento.
+
 ## [0.14.0] — 2026-10-05
 
 - Simulador com cabeçalho e resumo de projeção compactos; extrato/RBT12 no primeiro bloco e explicações de cálculo sob demanda.

@@ -89,9 +89,34 @@ function visible(record: Doc) {
 
 /** Read the frozen result: no source hydration, provider request or recalculation. */
 export async function getSimulation(id: string) {
-  const record = await (await simulations()).findOne(scope({_id: uuid(id)}));
+  const c = await simulations();
+  const record = await c.findOne(scope({_id: uuid(id), deletedAt: {$exists: false}}));
   need(record, 'Simulação não encontrada.', 404, 'NOT_FOUND');
-  return visible(record);
+  const parentDeleted = record.parentSimulationId && await c.findOne(scope({
+    _id: record.parentSimulationId, deletedAt: {$exists: true}
+  }), {projection: {_id: 1}});
+  const snapshot = visible(record);
+  if (parentDeleted) snapshot.parentSimulationDeleted = true;
+  return snapshot;
+}
+
+/** Keep the frozen record and its ID reserved; retries retain the original deletion event. */
+export async function deleteSimulation(actor: LookupActor, id: string) {
+  write(actor);
+  const simulationId = uuid(id), c = await simulations();
+  const claimed = await c.findOneAndUpdate(scope({_id: simulationId, deletedAt: {$exists: false}}), {
+    $set: {deletedAt: new Date(), deletedBy: {id: actor._id, name: actor.name}}
+  }, {returnDocument: 'after', projection: {_id: 1, workspaceId: 1, deletedAt: 1, deletedBy: 1}});
+  const deleted = claimed || await c.findOne(scope({_id: simulationId, deletedAt: {$exists: true}}), {
+    projection: {_id: 1, workspaceId: 1, deletedAt: 1, deletedBy: 1}
+  });
+  need(deleted, 'Simulação não encontrada.', 404, 'NOT_FOUND');
+  // A deterministic event also repairs a prior audit write failure, without changing its original author/date.
+  const auditId = 'simulation-delete:' + digest(JSON.stringify([deleted.workspaceId, simulationId]));
+  await (await collection('audit')).updateOne(scope({_id: auditId}), {$setOnInsert: {
+    ...scope(), actor: deleted.deletedBy.id, action: 'simulation.delete', target: simulationId, createdAt: deleted.deletedAt
+  }}, {upsert: true});
+  return {deleted: true, id: simulationId};
 }
 
 /** Append only. Repeated network requests with the same ID never create a second result. */
@@ -101,6 +126,8 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
   const requestHash = digest(JSON.stringify(validated));
   const c = await simulations();
   const repeated = (record: Doc) => {
+    need(!Object.hasOwn(record, 'deletedAt'), 'Esta simulação foi excluída. Use um novo identificador para salvar outra simulação.',
+      409, 'SIMULATION_DELETED');
     need(record.createdBy.id === actor._id && record.requestHash === requestHash,
       'Este identificador já pertence a outra simulação. Gere uma nova versão para guardar alterações.', 409, 'SIMULATION_EXISTS');
     return visible(record);
@@ -153,7 +180,7 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
 
 export async function simulationHistory(page: number, filters: {clientId?: string; search?: string; year?: string} = {}) {
   page = integer(page, 1, 100000);
-  const query: Record<string, any> = scope();
+  const query: Record<string, any> = scope({deletedAt: {$exists: false}});
   if (filters.clientId) query.clientId = uuid(filters.clientId);
   if (filters.year) {
     need(['2027', '2028'].includes(filters.year), 'Ano inválido para filtrar as simulações.');

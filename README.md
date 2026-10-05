@@ -1,6 +1,18 @@
-# Maximum CNPJ · v0.14.0
+# Maximum CNPJ · v0.15.0
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Entrega 05/10/2026 — excluir simulações do histórico
+
+- [x] Cada item do histórico de simulações oferece **Excluir** para administradores e operadores. O diálogo identifica empresa, título e ano, com **Cancelar** selecionado inicialmente.
+- [x] A exclusão só é enviada após confirmar. Durante o envio, a interface impede solicitações duplicadas e mantém falhas disponíveis para nova tentativa.
+- [x] A lista e a contagem são atualizadas, mantendo filtros e voltando à página anterior quando a última simulação da página é excluída.
+- [x] `DELETE /api/v4/simulations/:id` exige sessão ativa, origem válida, permissão de escrita e workspace correspondente. A interface envia corpo JSON `{}` conforme o contrato das rotas de escrita.
+- [x] Exclusão lógica com data, responsável e auditoria: o registro sai da lista e deixa de ser acessível pela rota de detalhe. O snapshot é retido internamente; reenvios com o mesmo ID não recriam uma simulação excluída.
+- [x] Relatórios, extratos e outras versões permanecem disponíveis. Uma versão filha continua legível e indica quando sua origem foi excluída, sem oferecer um link indisponível.
+- [x] Regressões com registros sintéticos cobrem cancelamento, confirmação, falha/nova tentativa, concorrência, paginação, perfis de consulta, isolamento e persistência real em MongoDB.
+
+A alteração disponibiliza a ação na interface; a publicação não exclui registros existentes. Nenhuma exclusão em massa é feita.
 
 ## Entrega 05/10/2026 — simulador mais simples
 

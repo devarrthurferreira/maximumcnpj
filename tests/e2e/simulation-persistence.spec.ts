@@ -181,6 +181,23 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     await reopened.goto(permalink);
     await expect(reopened.locator('#simulation-snapshot')).toBeVisible();
     await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
+
+    // Delete only the newly created version through the authenticated history UI.
+    // The original version and its immutable source snapshot must remain available.
+    await reopened.goto(`/simulations.html?clientId=${clientId}`);
+    await reopened.locator(`[data-delete-simulation="${second._id}"]`).click();
+    await expect(reopened.locator('#delete-simulation-company')).toContainText(companyName);
+    const deletion=reopened.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/simulations/${second._id}`&&response.request().method()==='DELETE');
+    await reopened.locator('#delete-simulation-confirm').click();
+    const deleted=await deletion;expect(deleted.ok(),await deleted.text()).toBe(true);
+    expect(await deleted.json()).toEqual({deleted:true,id:second._id});
+    await expect(reopened.locator(`[data-delete-simulation="${second._id}"]`)).toHaveCount(0);
+    await expect(reopened.locator(`a[href="${permalink}"]`)).toBeVisible();
+    expect((await fresh.request.get(`/api/v4/simulations/${second._id}`)).status()).toBe(404);
+    expect(await get(fresh.request,`/api/v4/simulations/${first._id}`)).toEqual(original);
+    const afterDelete=await get(fresh.request,`/api/v4/simulations?clientId=${clientId}`);
+    expect(afterDelete.total).toBe(1);expect(afterDelete.items[0]._id).toBe(first._id);
+    await reopened.locator(`a[href="${permalink}"]`).click();await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
     expect(browserErrors).toEqual([]);
   } finally {
     await fresh.close();
