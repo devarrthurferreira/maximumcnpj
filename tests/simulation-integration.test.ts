@@ -114,6 +114,11 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.equal(saved.periodBasis, 'COLUMN_H'); assert.equal(saved.reportMonths, 3);
       assert.deepEqual(saved.reportPeriod, {startDate:'2026-06-15',endDate:'2026-08-15',startMonth:'2026-06',endMonth:'2026-08',months:3,observedMonths:3,missingMonths:[]});
       assert.equal(saved.rbt12Source, 'SIMPLES_SECTION_22');
+      const originalNormalized = {simulationId:input.simulationId,generationId,clientId,title:null,reportMonths:3,periodConfirmed:true,
+        monthlyGroups,draft,parentSimulationId:null,rbt12ExtractionId:input.rbt12ExtractionId};
+      assert.equal((await (await collection('simulations')).findOne(scope({_id:saved._id})))!.requestHash,digest(JSON.stringify(originalNormalized)),
+        'O formato de hash OCR anterior permanece idêntico após adicionar a opção manual.');
+      assert.equal(saved.rbt12Manual, undefined);
       assert.equal(saved.monthlyDre.months.length,12);assert.equal(saved.monthlyDre.rbt12Reference.rbt12Cents,50000000);
       assert.equal(saved.parentSimulationId, null);
       assert.equal(saved.workspaceId, undefined);
@@ -131,6 +136,8 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       await assert.rejects(createSimulation(actor,fresh),code('RBT12_EXTRACTION'));
       assert.deepEqual(await getSimulation(saved._id),saved,'O histórico não é recalculado com a fonte alterada.');
       await records.updateOne(scope({_id:input.rbt12ExtractionId}),{$set:{result:section22(50000000)}});
+      assert.deepEqual(await createSimulation(actor,{...input,rbt12Source:'SIMPLES_SECTION_22'}),saved,
+        'A fonte OCR explícita normaliza para o mesmo pedido legado.');
     });
 
     await t.test('reenvio idempotente, concorrência e conflito sem alteração da versão anterior', async () => {
@@ -352,6 +359,44 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.equal((await simulationHistory(1, {search: raceInput.title})).total, 0);
       assert.equal(await (await collection('audit')).countDocuments(scope({action: 'simulation.delete', target: raceInput.simulationId})), 1);
       assert.equal(await (await collection('audit')).countDocuments(scope({action: 'simulation.create', target: raceInput.simulationId})), 1);
+    });
+
+    await t.test('RBT12 manual exige opção, confirmação e valor explícitos, e mantém a proveniência no histórico', async () => {
+      const manualInput = {...input,simulationId:randomUUID(),rbt12ExtractionId:undefined,rbt12Source:'MANUAL',rbt12ManualConfirmed:true,
+        draft:{...draft,rbt12:123456.29}};
+      await assert.rejects(createSimulation(viewer,manualInput),code('FORBIDDEN'));
+      await assert.rejects(createSimulation(actor,{...manualInput,clientId:outside}),code('GENERATION_CLIENT'));
+      await assert.rejects(createSimulation(actor,{...manualInput,rbt12Source:undefined}),code('RBT12_SOURCE'));
+      await assert.rejects(createSimulation(actor,{...manualInput,rbt12Source:'ESTIMATED'}),code('RBT12_SOURCE'));
+      await assert.rejects(createSimulation(actor,{...manualInput,rbt12ExtractionId:input.rbt12ExtractionId}),code('RBT12_SOURCE'));
+      for(const confirmed of [undefined,false,'true'])await assert.rejects(createSimulation(actor,{...manualInput,rbt12ManualConfirmed:confirmed}),code('RBT12_CONFIRMATION'));
+      const {rbt12:_omitted,...withoutRbt12}=draft;
+      await assert.rejects(createSimulation(actor,{...manualInput,draft:withoutRbt12}),code('RBT12_REQUIRED'));
+      for(const rbt12 of [null,'',-1,'0',NaN,Infinity,.001,1_000_000_000_001])await assert.rejects(createSimulation(actor,{...manualInput,draft:{...draft,rbt12}}),code('VALIDATION'));
+      // Supplying a forged PDF declaration never falls back to the manual branch.
+      await assert.rejects(createSimulation(actor,{...input,simulationId:randomUUID(),rbt12Source:'SIMPLES_SECTION_22',draft:manualInput.draft}),code('RBT12_EXTRACTION'));
+      const manual=await createSimulation(operator,manualInput);
+      assert.equal(manual.rbt12Source,'MANUAL'); assert.equal(manual.rbt12Extraction,null);
+      assert.deepEqual(manual.rbt12Manual,{source:'MANUAL',confirmed:true,rbt12Cents:12345629,
+        confirmedAt:manual.createdAt,confirmedBy:{id:operator._id,name:operator.name}});
+      assert.deepEqual(manual.result,calculateSimulation(manualInput.draft));
+      assert.equal(manual.engineInput.rbt12,123456.29);
+      assert.notEqual(manual.engineInput.rbt12,manual.result.annualRevenue,'A RBT12 não é substituída pela projeção.');
+      assert.deepEqual(manual.monthlyDre.rbt12Reference,{source:'MANUAL',rbt12Cents:12345629});
+      assert.equal(manual.monthlyDre.method,'AVERAGE_X12_FIXED_MANUAL_RBT12');
+      assert.deepEqual(await getSimulation(manual._id),manual);
+      assert.deepEqual(await createSimulation(operator,manualInput),manual);
+      await assert.rejects(createSimulation(operator,{...manualInput,draft:{...manualInput.draft,rbt12:123457}}),code('SIMULATION_EXISTS'));
+      process.env.WORKSPACE_ID='another_workspace';
+      try {
+        await assert.rejects(getSimulation(manual._id),code('NOT_FOUND'));
+        await assert.rejects(createSimulation(operator,{...manualInput,simulationId:randomUUID()}),code('NOT_FOUND'));
+      } finally {process.env.WORKSPACE_ID='simulation_history_test';}
+      const zero=await createSimulation(actor,{...manualInput,simulationId:randomUUID(),draft:{...draft,rbt12:0}});
+      assert.equal(zero.engineInput.rbt12,0);assert.equal(zero.rbt12Manual.rbt12Cents,0);
+      assert.deepEqual(zero.result,calculateSimulation({...draft,rbt12:0}),'Zero explícito conserva avisos e restrições do motor.');
+      assert.equal(providerCalls,4,'A entrada manual não dispara consultas externas.');
+      assert.deepEqual(await getSimulation(saved._id),saved,'O histórico OCR anterior permanece imutável.');
     });
 
     await t.test('HTTP exige sessão, origem válida e permissão de escrita; viewer pode reabrir', async () => {

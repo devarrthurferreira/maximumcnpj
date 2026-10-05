@@ -5,7 +5,7 @@ import { write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { VERSION } from './domain.ts';
 import { annualizeReports, projectScenario } from '../public/simulator-projection.js';
-import {readRbt12Reference} from './simulation-extrato.ts';
+import {readRbt12Reference, rbt12InputSource} from './simulation-extrato.ts';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import { generationSimulator } from './simulator-store.ts';
 import { assertGenerationNotDeleted } from './generation-deletion.ts';
@@ -47,7 +47,7 @@ function baselineGroups(source: Source, months: number): MonthlyGroups {
 }
 
 function request(input: unknown) {
-  object(input, ['simulationId', 'generationId', 'clientId', 'reportMonths', 'periodConfirmed', 'monthlyGroups', 'draft'], ['title', 'parentSimulationId', 'rbt12ExtractionId']);
+  object(input, ['simulationId', 'generationId', 'clientId', 'reportMonths', 'periodConfirmed', 'monthlyGroups', 'draft'], ['title', 'parentSimulationId', 'rbt12ExtractionId', 'rbt12Source', 'rbt12ManualConfirmed']);
   const simulationId = uuid(input.simulationId), generationId = uuid(input.generationId), clientId = uuid(input.clientId);
   const parentSimulationId = input.parentSimulationId == null ? null : uuid(input.parentSimulationId);
   const rbt12ExtractionId = input.rbt12ExtractionId == null ? null : uuid(input.rbt12ExtractionId);
@@ -66,11 +66,14 @@ function request(input: unknown) {
     ...(Object.hasOwn(input.draft, 'rbt12') ? {rbt12: money(input.draft.rbt12)} : {}),
     values: Object.fromEntries(SIMULATION_VALUE_FIELDS.map(key => [key, money(input.draft.values[key])])) as SimulationDraft['values']};
   need(!rbt12ExtractionId || draft.rbt12 !== undefined, 'A extração de RBT12 precisa acompanhar o valor usado na simulação.');
+  const rbt12Source = rbt12InputSource(input.rbt12Source, input.rbt12ManualConfirmed, rbt12ExtractionId, draft.rbt12);
   need(Math.round(draft.values.salesRevenue * 100) === GROUPS.slice(0, 3).reduce((sum, key) => sum + Math.round(monthlyGroups[key] * 100), 0) &&
     draft.values.simplePurchases === monthlyGroups.purchasesOptantCents && draft.values.regularPurchases === monthlyGroups.purchasesNonOptantCents,
     'Os totais de vendas e compras devem corresponder aos cinco grupos preenchidos.', 400, 'SIMULATION_TOTAL');
   return {simulationId, generationId, clientId, title, reportMonths: input.reportMonths as number, periodConfirmed: true as const,
-    monthlyGroups, draft, parentSimulationId, rbt12ExtractionId};
+    monthlyGroups, draft, parentSimulationId, rbt12ExtractionId,
+    // Preserve the previous normalized OCR request and hash for retries after an upgrade.
+    ...(rbt12Source === 'MANUAL' ? {rbt12Source, rbt12ManualConfirmed: true as const} : {})};
 }
 
 async function simulations() {
@@ -162,8 +165,12 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
     need(source.reportMonths === reportMonths && source.period && reportMonths === source.period.months,
       'O período da simulação deve corresponder ao intervalo identificado na coluna H dos relatórios.', 409, 'SIMULATION_PERIOD');
   }
-  const rbt12Source = 'SIMPLES_SECTION_22';
-  const rbt12Extraction = await readRbt12Reference(rbt12ExtractionId, clientId, draft.rbt12);
+  const rbt12Source = validated.rbt12Source || 'SIMPLES_SECTION_22';
+  const rbt12Extraction = rbt12Source === 'MANUAL' ? null : await readRbt12Reference(rbt12ExtractionId, clientId, draft.rbt12);
+  const createdAt = new Date();
+  const rbt12Manual = rbt12Source === 'MANUAL' ? {source: 'MANUAL' as const, confirmed: true,
+    rbt12Cents: Math.round(draft.rbt12! * 100), confirmedAt: createdAt,
+    confirmedBy: {id: actor._id, name: actor.name}} : null;
   const engineInput = draftToInput(draft);
   need(engineInput, 'Os valores ultrapassam os limites da calculadora. Confira as receitas mensais e a estimativa anual.');
   const result = calculateSimulation(draft);
@@ -177,12 +184,13 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
   const best = result.regimes.find(regime => regime.id === result.bestRegimeId);
   const snapshot = {_id: simulationId, ...scope(), requestHash, generationId, clientId,
     title: validated.title || `${source.company.name} · ${draft.year}`, company: source.company,
-    createdAt: new Date(), createdBy: {id: actor._id, name: actor.name}, appVersion: VERSION,
+    createdAt, createdBy: {id: actor._id, name: actor.name}, appVersion: VERSION,
     modelVersion: MODEL_VERSION, calculatorSourceCommit: CALCULATOR_SOURCE_COMMIT, taxSources: TAX_SOURCES,
     source, projection, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
     monthlyGroups, monthlyGroupsUnit: 'BRL', baselineMonthlyGroups,
     manuallyAdjusted: adjustments.length > 0, adjustments, draft, engineInput, result, parentSimulationId,
-    rbt12Source, rbt12Extraction, monthlyDre: buildMonthlyDre(result, draft.year, rbt12Extraction, source.period || null),
+    rbt12Source, rbt12Extraction, ...(rbt12Manual ? {rbt12Manual} : {}),
+    monthlyDre: buildMonthlyDre(result, draft.year, rbt12Extraction || rbt12Manual, source.period || null),
     year: draft.year, annualRevenue: result.annualRevenue, bestRegimeId: result.bestRegimeId,
     bestRegimeName: best?.name || null, bestAnnualProfit: best?.annualProfit ?? null};
   const requireSources = async () => {

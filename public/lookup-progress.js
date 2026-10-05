@@ -6,6 +6,7 @@ const reasons = {INDICADOR_AUSENTE:'A fonte não informou o indicador do Simples
   NAO_ENCONTRADO:'CNPJ não encontrado na fonte.', IDENTIDADE_DIVERGENTE:'A fonte retornou outro CNPJ; resposta rejeitada.',
   RESPOSTA_INVALIDA:'A fonte não retornou uma resposta válida.', FONTE_HTTP_403:'A fonte bloqueou temporariamente o acesso.', FONTE_HTTP_401:'A fonte recusou o acesso.'};
 let current = '', page = 1, filter = 'ALL', panel = null, data = null, controller = null, nextRead = 0;
+const compact = location.pathname === '/purchases.html' && new URLSearchParams(location.search).get('guided') === '1';
 function target() {
   const url = new URL(location.href);
   const id = url.pathname === '/purchases.html' ? url.searchParams.get('job') : url.hash.match(/^#job\/([a-f0-9-]{36})$/)?.[1];
@@ -16,14 +17,16 @@ function mount() {
   if (!root || !root.children.length) return false;
   if (panel?.isConnected) return true;
   panel = document.createElement('section'); panel.className = 'card lookup-live'; panel.id = 'lookup-live';
-  panel.setAttribute('aria-labelledby', 'lookup-live-title');
-  panel.innerHTML = `<div class="lookup-live-heading"><div><h2 id="lookup-live-title">Classificação dos CNPJs</h2><p data-caption class="hint">Lendo os resultados já salvos…</p></div><button type="button" data-refresh>Atualizar agora</button></div>
+  if (compact) panel.setAttribute('aria-label', 'Indicadores da consulta dos CNPJs');
+  else panel.setAttribute('aria-labelledby', 'lookup-live-title');
+  panel.innerHTML = compact ? '<div class="lookup-live-counts" data-counts aria-live="polite"></div><p role="alert" data-error></p>' : `<div class="lookup-live-heading"><div><h2 id="lookup-live-title">Classificação dos CNPJs</h2><p data-caption class="hint">Lendo os resultados já salvos…</p></div><button type="button" data-refresh>Atualizar agora</button></div>
     <div class="lookup-live-counts" data-counts></div>
     <p class="hint">Aguardando consulta não significa Não optante. No resumo gerencial final, os não confirmados continuam em Não optante; CPF permanece separado nas vendas.</p>
     <div class="lookup-live-controls"><label>Conferir situação original<select data-filter><option value="ALL">Todos os CNPJs</option><option value="OPTANTE">Simples confirmado</option><option value="NAO_OPTANTE">Não optante confirmado</option><option value="NAO_CONFIRMADO">Não confirmado / falha</option><option value="PENDING">Aguardando / nova tentativa</option></select></label><button type="button" data-recheck hidden>Revalidar em novo lote</button></div>
     <p role="alert" data-error></p><div class="table-wrap" data-rows></div>
     <div class="pagination"><button type="button" data-prev>Anterior</button><span data-page></span><button type="button" data-next>Próxima</button></div>`;
   if (location.pathname === '/purchases.html') root.after(panel); else root.append(panel);
+  if (compact) { if (data) draw(data); return true; }
   panel.querySelector('[data-filter]').value = filter;
   panel.querySelector('[data-filter]').onchange = e => { filter = e.target.value; page = 1; nextRead = 0; refresh(); };
   panel.querySelector('[data-refresh]').onclick = () => { nextRead = 0; refresh(); };
@@ -36,9 +39,10 @@ function mount() {
 function draw(result) {
   if (!panel?.isConnected) return;
   const m = result.metrics;
-  panel.querySelector('[data-caption]').textContent = `${result.partial ? 'Acompanhamento parcial' : 'Consulta concluída'} · ${number(m.completed)} de ${number(m.total)} CNPJs concluídos. A fonte é a Minha Receita.`;
+  if (!compact) panel.querySelector('[data-caption]').textContent = `${result.partial ? 'Acompanhamento parcial' : 'Consulta concluída'} · ${number(m.completed)} de ${number(m.total)} CNPJs concluídos. A fonte é a Minha Receita.`;
   panel.querySelector('[data-counts]').innerHTML = [[m.optants,'Simples confirmado','yes'],[m.nonOptants,'Não optante confirmado','no'],[m.unconfirmed,'Não confirmado / falha','unknown'],[m.pending + m.retrying,'Aguardando / nova tentativa','pending']]
     .map(([count, label, tone]) => `<div class="lookup-live-count ${tone}"><strong>${number(count)}</strong><span>${label}</span></div>`).join('');
+  if (compact) return;
   panel.querySelector('[data-rows]').innerHTML = `<table><caption class="hint">Situação original da fonte por CNPJ — até 25 registros por página.</caption><thead><tr><th>CNPJ</th><th>Empresa</th><th>Situação da consulta</th><th>Detalhes</th></tr></thead><tbody>${result.items.map(row => {
     const done = row.state === 'DONE';
     const label = !done ? row.state === 'RETRY' ? 'Nova tentativa programada' : 'Aguardando consulta' : row.status === 'OPTANTE' ? 'Simples — confirmado' : row.status === 'NAO_OPTANTE' ? 'Não optante — confirmado' : 'Não confirmado';

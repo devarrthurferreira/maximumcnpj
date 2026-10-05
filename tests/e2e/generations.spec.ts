@@ -7,7 +7,7 @@ async function session(page:any,mustChangePassword=false){await page.route('**/a
 test('Generation selects multiple companies and preserves a draft with missing purchases',async({page},testInfo)=>{
  await session(page);let created:any;const pageErrors:string[]=[];page.on('pageerror',e=>pageErrors.push(e.message));
  await page.route(/\/api\/v4\/generations(?:[/?]|$)/,r=>{if(r.request().method()==='POST'){created=r.request().postDataJSON();return r.fulfill({json:{...base,_id:created.generationId}});}return r.fulfill({json:{...base,_id:created?.generationId||id,requiredReports:created?.requiredReports||['PURCHASES'],completedCount:0,missingCount:2,companies:base.companies.map(c=>({...c,status:'MISSING',salesJobId:null,sales:null}))}});});
- await page.goto('/generations.html');await expect(page.locator('.nav a')).toHaveText(['Início','Empresas','Iniciar','Histórico','Simulações']);
+ await page.goto('/generations.html?multiple=1');await expect(page.locator('.nav a')).toHaveText(['Início','Empresas','Iniciar','Histórico','Simulações']);
  await expect(page.getByRole('button',{name:'Continuar com as empresas'})).toBeDisabled();
  await page.getByLabel('Buscar empresas').fill('936');await page.locator('.generation-company-option input').check();
  await page.getByLabel('Buscar empresas').fill('868');await page.locator('.generation-company-option input').check();
@@ -37,7 +37,7 @@ test('Generation gates company access until compulsory password reset',async({pa
 test('Generation can require only sales and cannot start without any report type',async({page})=>{
  await session(page);let created:any;
  await page.route(/\/api\/v4\/generations(?:[/?]|$)/,r=>{if(r.request().method()==='POST')created=r.request().postDataJSON();return r.fulfill({json:{...base,_id:created?.generationId||id,requiredReports:['SALES'],companyCount:1,completedCount:0,missingCount:1,companies:[{clientId:clients[0]._id,name:clients[0].name,code:clients[0].code,status:'MISSING',purchase:null,sales:null}]}});});
- await page.goto('/generations.html');await page.getByLabel('Buscar empresas').fill('936');await page.locator('.generation-company-option input').check();
+ await page.goto('/generations.html?multiple=1');await page.getByLabel('Buscar empresas').fill('936');await page.locator('.generation-company-option input').check();
  await page.locator('[data-report-choice][value="PURCHASES"]').uncheck();await page.locator('[data-report-choice][value="SALES"]').uncheck();await expect(page.getByRole('button',{name:'Continuar com as empresas'})).toBeDisabled();
  await page.locator('[data-report-choice][value="SALES"]').check();await page.getByRole('button',{name:'Continuar com as empresas'}).click();await expect(page.getByRole('heading',{name:'0 de 1 empresas concluídas'})).toBeVisible();expect(created.requiredReports).toEqual(['SALES']);
  await expect(page.locator('[data-report-slot="SALES"]')).toContainText('Adicionar relatório');await expect(page.locator('[data-report-slot="PURCHASES"]')).toContainText('Opcional');await expect(page.locator('[data-report-slot="SALES"] a')).toHaveAttribute('href',/type=SALES/);await expect(page.getByRole('button',{name:'Baixar relatório completo PDF'})).toBeDisabled();
@@ -55,7 +55,7 @@ test('Simulator unlocks only the two completed reports of the same company',asyn
  const first=page.locator(`[data-simulator-client="${clients[0]._id}"]`),second=page.locator(`[data-simulator-client="${clients[1]._id}"]`);
  await expect(first).toContainText('1 de 2 relatórios concluídos');await expect(second).toContainText('1 de 2 relatórios concluídos');
  salesStatus='COMPLETED';await page.getByRole('button',{name:'Atualizar situação'}).click();
- await expect(first.getByRole('link',{name:'Ir para o simulador'})).toHaveAttribute('href',`/simulator.html?generation=${id}&client=${clients[0]._id}`);
+ await expect(first.getByRole('link',{name:'Ir para o simulador'})).toHaveAttribute('href',`/simulator.html?generation=${id}&client=${clients[0]._id}&guided=1&step=extrato`);
  await expect(second.getByRole('button',{name:'Ir para o simulador'})).toBeDisabled();
 });
 test('Histórico tem botão Excluir independente do link e cancelar não altera a geração',async({page},info)=>{

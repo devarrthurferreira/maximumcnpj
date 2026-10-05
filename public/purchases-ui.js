@@ -1,5 +1,6 @@
 import {mountNavigation} from './navigation.js';
 import {formatCnpj,REPORTING_LABELS} from './domain.js';
+import {assertMatchingPurchaseCompetences} from './purchase-model.js';
 
 const $ = q => document.querySelector(q);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
@@ -10,6 +11,7 @@ const date = v => v ? new Date(v).toLocaleString('pt-BR', {timeZone:'America/Sao
 const jobLabels = {UPLOADING:'Importação incompleta', PROCESSING:'Consulta em andamento', COMPLETED:'Concluído', CANCELLED:'Cancelado'};
 const kinds = {CPF:'CPF', INVALIDO:'Documento inválido', AUSENTE:'Documento ausente', CNO_OU_OUTRO:'CNO ou outro documento'};
 const reportType = new URLSearchParams(location.search).get('type') || 'PURCHASES';
+const guided = new URLSearchParams(location.search).get('guided') === '1';
 const sales = reportType === 'SALES';
 const labels = {ALL:'Todos os enquadramentos', ...REPORTING_LABELS, ...(sales ? {CPF:'CPF'} : {})};
 const groupLabels = sales ? {OPTANTE:'Faturamento vendas Optantes SN',NAO_OPTANTE:'Faturamento vendas Não Optantes SN',CPF:'Faturamento Vendas de CPFs'} : {OPTANTE:'Compras de empresas do Simples',NAO_OPTANTE:'Compras de empresas fora do Simples'};
@@ -41,10 +43,28 @@ async function api(url, method = 'GET', data) {
   } finally { clearTimeout(timeout); }
 }
 
-function urlParams(extra = {}) { return new URLSearchParams({...(sales ? {type:'SALES'} : {}), ...(S.generation ? {generation:S.generation} : {}), client:S.company, ...extra}); }
+function urlParams(extra = {}) { return new URLSearchParams({...(sales ? {type:'SALES'} : {}), ...(S.generation ? {generation:S.generation} : {}), client:S.company, ...(guided ? {guided:'1'} : {}), ...extra}); }
+function guidedShell() {
+  document.body.classList.add('purchases-guided');
+  $('#purchase-app').innerHTML = `<div class="generation-back"><a href="/generations.html?id=${encodeURIComponent(S.generation)}">← Voltar à geração</a><span>Progresso salvo automaticamente</span></div><div id="purchase-flow"></div>
+    <div hidden><select id="purchase-company"><option value=""></option>${S.clients.map(c => `<option value="${esc(c._id)}">${esc(c.name)}</option>`).join('')}</select><div id="purchase-history-list"></div><button id="purchase-history-prev"></button><span id="purchase-history-page"></span><button id="purchase-history-next"></button></div>
+    ${writable() ? `<section id="purchase-import" class="card purchase-guided-import" aria-labelledby="purchase-import-title"><span class="purchase-guided-icon" aria-hidden="true">${sales ? '↗' : '↙'}</span><div class="eyebrow">RELATÓRIO DE ${reportName.toUpperCase()}</div><h2 id="purchase-import-title">Adicione o arquivo de ${reportLower}</h2><p id="purchase-guided-company"></p><label class="purchase-dropzone" id="purchase-dropzone"><input type="file" id="purchase-file" accept=".csv,.xlsx,.xls" disabled><span class="purchase-upload-icon" aria-hidden="true">↑</span><strong id="purchase-file-label">Clique para selecionar ou arraste o arquivo aqui</strong><span>CSV, XLSX ou XLS · até 10 MiB</span></label><p class="hint">A leitura e a consulta começam automaticamente.</p><select id="purchase-encoding" hidden><option value="auto">Automática</option></select><div id="purchase-file-preview"></div><div id="purchase-review"></div><p id="purchase-progress-text" class="purchase-status" role="status" aria-live="polite"></p></section>` : '<p class="warning info">Seu acesso permite consultar os relatórios existentes.</p>'}
+    <div id="purchase-report-view"></div><div id="purchase-next-step" aria-live="polite"></div>`;
+  if (!writable()) return;
+  $('#purchase-file').onchange = () => openFile().catch(error);
+  const dropzone = $('#purchase-dropzone');
+  for (const name of ['dragenter','dragover']) dropzone.addEventListener(name, e => { e.preventDefault(); if (!S.busy && !S.pending) dropzone.classList.add('dragging'); });
+  for (const name of ['dragleave','drop']) dropzone.addEventListener(name, e => { e.preventDefault(); dropzone.classList.remove('dragging'); });
+  dropzone.addEventListener('drop', e => {
+    if (S.busy || S.pending || !S.company) return;
+    if (e.dataTransfer.files.length !== 1) { error(new Error('Adicione um relatório por vez.')); return; }
+    $('#purchase-file').files = e.dataTransfer.files; openFile().catch(error);
+  });
+}
 function shell() {
+  if (guided) { guidedShell(); return; }
   $('#purchase-app').innerHTML = `
-    ${S.generation ? `<div class="generation-back"><a href="/generations.html?id=${encodeURIComponent(S.generation)}">← Voltar à geração e às outras empresas</a><span class="badge">Progresso salvo no Histórico</span></div>` : '<div class="generation-back"><a href="/generations.html?view=history">← Histórico de gerações</a><a href="/generations.html">Iniciar geração com várias empresas →</a></div>'}
+    ${S.generation ? `<div class="generation-back"><a href="/generations.html?id=${encodeURIComponent(S.generation)}">← Voltar à geração e às outras empresas</a><span class="badge">Progresso salvo no Histórico</span></div>` : '<div class="generation-back"><a href="/generations.html?view=history">← Histórico de gerações</a><a href="/generations.html?multiple=1">Iniciar geração com várias empresas →</a></div>'}
     <div id="purchase-flow"></div><div class="purchase-types" role="group" aria-label="Tipo de relatório"><button type="button" data-report-type="PURCHASES" aria-pressed="${!sales}">Compras <span aria-hidden="true">↙</span></button><button type="button" data-report-type="SALES" aria-pressed="${sales}">Vendas <span aria-hidden="true">↗</span></button></div>
     <section id="purchase-company-card" class="card stack"><h2 class="purchase-step"><span>1</span> Selecione a empresa</h2><label>Empresa responsável (Código / ID)<select id="purchase-company"><option value="">Escolha uma empresa cadastrada</option>${S.clients.map(c => `<option value="${esc(c._id)}">${esc(c.code || 'Sem código')} · ${esc(c.name)}${c.active ? '' : ' (inativa)'}</option>`).join('')}</select></label><p class="hint">O relatório ficará vinculado somente à empresa escolhida. Seus cadastros atuais continuam disponíveis.</p>${S.clients.length ? '' : '<p>Nenhuma empresa cadastrada. <a href="/#clients">Cadastre ou importe suas empresas no painel</a> para continuar.</p>'}</section>
     ${writable() ? `<section id="purchase-import" class="card stack purchase-section"><h2 class="purchase-step"><span>2</span> Importe o relatório de ${reportLower}</h2><div class="purchase-grid"><label>Arquivo de ${reportLower} (.csv, .xlsx ou .xls)<input type="file" id="purchase-file" accept=".csv,.xlsx,.xls" disabled></label><label>Codificação do CSV<select id="purchase-encoding" disabled><option value="auto">Detectar automaticamente</option><option value="windows-1252">Windows-1252 (Excel em português)</option><option value="utf-8">UTF-8</option></select></label></div><p class="hint">Até 10 MiB e 50.000 linhas. O arquivo original fica no navegador; somente os campos abaixo são importados.</p><div class="purchase-map"><div><strong>A</strong>CNPJ do ${party}<small>CPF e demais documentos incluídos</small></div><div><strong>I</strong>${partyHeading}<small>Nome informado no relatório</small></div><div><strong>P</strong>Quantidade<small>${sales ? 'Opcional no relatório de vendas' : 'Preservada por linha'}</small></div><div><strong>Q</strong>Valor Total<small>Valor bruto em reais</small></div><div><strong>Y</strong>Desconto<small>Subtrair do valor</small></div><div><strong>Z</strong>Despesa acessória<small>Somente informativa</small></div><div><strong>AA</strong>Frete<small>Somar ao valor</small></div><div><strong>AB</strong>Abatimento não tributado<small>Subtrair do valor</small></div></div><p class="hint">Novo total = Q − Y + AA − AB. A despesa acessória (Z) fica registrada para conferência e não entra nesta conta. A quantidade (P) não multiplica o valor. Documentos repetidos somam os valores e contam uma vez entre ${parties}.</p><div id="purchase-file-preview"></div><div id="purchase-review"></div><p id="purchase-progress-text" class="purchase-status" role="status" aria-live="polite"></p></section>` : '<div class="warning info purchase-readonly">Seu acesso permite consultar e baixar os relatórios existentes.</div>'}
@@ -65,7 +85,8 @@ function renderFlow() {
   const company = S.generationDetails?.companies.find(c => c.clientId === S.company);
   const purchaseDone = company?.purchase?.status === 'COMPLETED' || (!sales && S.job?.status === 'COMPLETED');
   const salesDone = company?.sales?.status === 'COMPLETED' || (sales && S.job?.status === 'COMPLETED');
-  const steps = [{label:'Empresa selecionada',done:!!S.company},{label:'Ler compras',done:purchaseDone,current:!sales},{label:'Ler vendas',done:salesDone,current:sales},{label:'Conferir e simular',done:false,current:purchaseDone && salesDone}];
+  const required = S.generationDetails?.requiredReports || ['PURCHASES','SALES'];
+  const steps = guided ? [{label:'Empresa',done:!!S.company},...(required.includes('PURCHASES') ? [{label:'Compras',done:purchaseDone,current:!sales}] : []),...(required.includes('SALES') ? [{label:'Vendas',done:salesDone,current:sales}] : []),...(required.length === 2 ? [{label:'Extrato e simulador',done:false,current:purchaseDone && salesDone}] : [])] : [{label:'Empresa selecionada',done:!!S.company},{label:'Ler compras',done:purchaseDone,current:!sales},{label:'Ler vendas',done:salesDone,current:sales},{label:'Conferir e simular',done:false,current:purchaseDone && salesDone}];
   container.innerHTML = `<div class="generation-steps" aria-label="Etapas da simulação">${steps.map((step,i) => `<div class="${step.done ? 'complete' : step.current ? 'current' : ''}"${step.current && !step.done ? ' aria-current="step"' : ''}><span>${step.done ? '✓' : i + 1}</span>${step.label}</div>`).join('')}</div>`;
 }
 async function renderNextStep(seq) {
@@ -78,6 +99,7 @@ async function renderNextStep(seq) {
     const company = generation.companies.find(c => c.clientId === companyId);
     if (!company) throw new Error('A empresa não pertence mais a esta geração. Abra o Histórico para conferir.');
     S.generationDetails = generation; renderFlow();
+    if (guided) { renderGuidedNext(generation, company); return; }
     const ready = company.purchase?.status === 'COMPLETED' && company.sales?.status === 'COMPLETED';
     const nextType = company.purchase?.status === 'COMPLETED' ? 'SALES' : 'PURCHASES';
     const nextJob = nextType === 'SALES' ? company.sales : company.purchase;
@@ -89,6 +111,34 @@ async function renderNextStep(seq) {
     if (seq !== S.seq || companyId !== S.company) return;
     $('#purchase-next-step').innerHTML = `<section class="card purchase-section"><p>${esc(e.message)}</p><a class="report-links" href="/generations.html?id=${encodeURIComponent(S.generation)}">Conferir situação na geração</a></section>`;
   }
+}
+
+function renderGuidedNext(generation, company) {
+  const required = generation.requiredReports || ['PURCHASES','SALES'];
+  const slot = (item, type) => type === 'SALES' ? {job:item.sales, id:item.salesJobId} : {job:item.purchase, id:item.purchaseJobId};
+  const unfinished = required.find(type => slot(company, type).job?.status !== 'COMPLETED');
+  let href, label, title, description;
+  if (unfinished) {
+    const next = slot(company, unfinished), name = unfinished === 'SALES' ? 'vendas' : 'compras';
+    href = '/purchases.html?' + new URLSearchParams({generation:S.generation,client:S.company,type:unfinished,guided:'1',...(next.id ? {job:next.id} : {})});
+    label = `Continuar: ${name}`; title = `${reportName} concluídas.`;
+    description = `Agora, adicione o relatório de ${name} desta empresa.`;
+  } else if (company.purchase?.status === 'COMPLETED' && company.sales?.status === 'COMPLETED') {
+    href = '/simulator.html?' + new URLSearchParams({generation:S.generation,client:S.company,guided:'1',step:'extrato'});
+    label = 'Continuar para o extrato'; title = 'Compras e vendas prontas.';
+    description = 'No próximo passo, adicione o extrato do Simples Nacional para preencher a RBT12.';
+  } else {
+    const nextCompany = generation.companies.find(item => item.clientId !== S.company && required.some(type => slot(item,type).job?.status !== 'COMPLETED'));
+    if (nextCompany) {
+      const type = required.find(type => slot(nextCompany,type).job?.status !== 'COMPLETED'), next = slot(nextCompany,type);
+      href = '/purchases.html?' + new URLSearchParams({generation:S.generation,client:nextCompany.clientId,type,guided:'1',...(next.id ? {job:next.id} : {})});
+      label = 'Continuar para a próxima empresa'; title = 'Relatórios desta empresa prontos.'; description = `${nextCompany.code || 'Sem código'} · ${nextCompany.name}`;
+    } else {
+      href = '/generations.html?id=' + encodeURIComponent(S.generation); label = 'Concluir e ver geração'; title = 'Relatórios concluídos.';
+      description = 'Os relatórios selecionados estão salvos. O simulador fica disponível quando a empresa tiver compras e vendas.';
+    }
+  }
+  $('#purchase-next-step').innerHTML = `<section class="card purchase-guided-next"><div><h2>${esc(title)}</h2><p>${esc(description)}</p></div><a data-guided-continue class="primary report-links" href="${esc(href)}">${esc(label)} <span aria-hidden="true">→</span></a></section>`;
 }
 
 async function switchReportType(type) {
@@ -123,6 +173,10 @@ async function companyChanged() {
   if (S.busy || S.pending) { $('#purchase-company').value = S.company; return; }
   stopProcessing(); S.seq++; S.rowsSeq++; S.company = $('#purchase-company').value; S.job = null; S.summary = null; S.resume = null;
   clearError(); resetPreview(); $('#purchase-report-view').innerHTML = ''; $('#purchase-next-step').innerHTML = ''; renderFlow(); setBusy(false);
+  if (guided && $('#purchase-guided-company')) {
+    const company = S.clients.find(item => item._id === S.company);
+    $('#purchase-guided-company').textContent = company ? `${company.code || 'Sem código'} · ${company.name}` : '';
+  }
   if (!S.company) {
     S.jobsSeq++; $('#purchase-history-list').innerHTML = '<div class="purchase-empty"><p>Selecione uma empresa para ver o histórico.</p></div>';
     $('#purchase-history-prev').disabled = true; $('#purchase-history-next').disabled = true; $('#purchase-history-page').textContent = ''; return;
@@ -145,18 +199,20 @@ async function loadHistory(page = 1) {
 }
 
 async function openFile() {
-  if (!S.company || S.pending || S.busy) return;
+  if (!S.company || S.pending || S.busy || !writable()) return;
   const file = $('#purchase-file').files[0];
   if (!file) return;
+  if (guided) $('#purchase-file').value = ''; // Allow selecting the same file again after a recoverable read error.
   clearError(); S.worker?.terminate(); S.review = null; S.file = file;
   $('#purchase-file-preview').innerHTML = '<p>Lendo o relatório no navegador…</p>'; $('#purchase-review').innerHTML = ''; status('');
   if (file.size > 10 * 1024 * 1024) throw new Error('Arquivo acima de 10 MiB. Divida o relatório.');
+  if (guided) { setBusy(true); $('#purchase-file-label').textContent = file.name; }
   S.worker = new Worker('/purchase-import-worker.js');
   const worker = S.worker;
-  worker.onerror = () => { if (S.worker === worker) error(new Error('O leitor da planilha não iniciou. Recarregue a página e tente novamente.')); };
+  worker.onerror = () => { if (S.worker === worker) { if (guided) setBusy(false); error(new Error('O leitor da planilha não iniciou. Recarregue a página e tente novamente.')); } };
   worker.onmessage = ({data:d}) => {
     if (S.worker !== worker) return;
-    if (d.type === 'error') { error(new Error(d.message)); status('Não foi possível validar o relatório. Corrija o arquivo e tente novamente.'); return; }
+    if (d.type === 'error') { if (guided) { setBusy(false); $('#purchase-file-preview').innerHTML = ''; } error(new Error(d.message)); status('Não foi possível validar o relatório. Corrija o arquivo e tente novamente.'); return; }
     if (d.type === 'sheets') {
       $('#purchase-file-preview').innerHTML = `<div class="purchase-grid"><label>Aba do arquivo<select id="purchase-sheet">${d.sheets.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('')}</select></label><label>Linha do cabeçalho<select id="purchase-header"></select></label></div><p id="purchase-file-info" class="hint mt"></p><div id="purchase-source-preview" class="purchase-preview"></div><button id="purchase-validate" class="mt">Conferir colunas e valores</button>`;
       $('#purchase-sheet').onchange = () => { S.review = null; $('#purchase-review').innerHTML = ''; worker.postMessage({action:'sheet', name:$('#purchase-sheet').value}); };
@@ -173,11 +229,13 @@ async function openFile() {
     }
     if (d.type === 'validated') showReview(d);
   };
-  const buffer = await file.arrayBuffer();
+  let buffer;
+  try { buffer = await file.arrayBuffer(); } catch { if (guided) setBusy(false); throw new Error('Não foi possível abrir o arquivo. Selecione-o novamente.'); }
   if (S.worker !== worker) return;
-  worker.postMessage({action:'open', name:file.name, encoding:$('#purchase-encoding').value, buffer}, [buffer]);
+  worker.postMessage({action:'open', name:file.name, encoding:$('#purchase-encoding').value, buffer,...(guided ? {automatic:true,reportType,companyCode:S.clients.find(c => c._id === S.company)?.code,calculationVersion:S.resume?.calculationVersion || (S.resume ? 'Q_V1' : 'NET_V2')} : {})}, [buffer]);
 }
 function showReview(review) {
+  if (guided) { showGuidedReview(review).catch(e => { setBusy(false); error(e); }); return; }
   S.review = review; status('');
   const company = S.clients.find(c => c._id === S.company);
   const repairs = Array.isArray(review.repairs) ? review.repairs : [];
@@ -191,8 +249,29 @@ function showReview(review) {
   $('#purchase-confirm').onclick = () => upload().catch(error);
 }
 
+async function showGuidedReview(review) {
+  S.review = review; $('#purchase-file-preview').innerHTML = ''; status('');
+  if (review.errors.length || !review.rows.length) {
+    setBusy(false);
+    $('#purchase-review').innerHTML = `<div class="warning purchase-validation"><h3>Não foi possível importar este arquivo</h3><p>Nenhuma linha foi enviada. Corrija as pendências e selecione o arquivo novamente.</p>${review.errors.length ? `<ul>${review.errors.slice(0,20).map(item => `<li>Linha ${number(item.line)}: ${esc(item.message)}</li>`).join('')}</ul>${review.errors.length > 20 ? `<p>${number(review.errors.length)} pendências no total; exibindo as primeiras 20.</p>` : ''}` : '<p>O relatório não contém linhas de dados.</p>'}</div>`;
+    return;
+  }
+  const generation = await api('/api/v4/generations/' + encodeURIComponent(S.generation));
+  const company = generation.companies.find(item => item.clientId === S.company);
+  if (!company) throw new Error('A empresa não pertence mais a esta geração. Abra o Histórico para conferir.');
+  const other = sales ? company.purchase : company.sales;
+  if (other?.status === 'COMPLETED') assertMatchingPurchaseCompetences(review.period, other.reportPeriod);
+  S.generationDetails = generation;
+  setBusy(false);
+  const repairs = review.repairedCount || 0;
+  $('#purchase-review').innerHTML = `${repairs ? `<p class="hint purchase-repairs">${number(repairs)} linha(s) alinhada(s) automaticamente, preservando os valores originais.</p>` : ''}<button id="purchase-confirm" class="primary" hidden>Retomar envio deste relatório</button>`;
+  $('#purchase-confirm').onclick = () => upload().catch(error);
+  status('Arquivo reconhecido. Importando e iniciando a consulta…');
+  upload().catch(error);
+}
+
 async function upload() {
-  if (!S.review || S.review.errors.length || S.busy) return;
+  if (!S.review || S.review.errors.length || S.busy || !writable()) return;
   clearError(); stopProcessing(); S.seq++; S.rowsSeq++;
   if (S.resume && (S.file.name !== S.resume.fileName || S.review.rows.length !== S.resume.expectedRows)) throw new Error('Para retomar, selecione o mesmo arquivo, com o mesmo nome e número de linhas. Para substituir os dados, cancele este relatório primeiro.');
   S.pending ??= {importId:S.resume?._id || crypto.randomUUID(), clientId:S.company, fileName:S.file.name, rows:S.review.rows, offset:0};
@@ -212,7 +291,7 @@ async function upload() {
     status('Relatório salvo. Consultando os CNPJs únicos…');
     await loadHistory(1); await openJob(pending.importId, true);
   } catch (e) {
-    button.textContent = 'Retomar envio deste relatório'; button.disabled = false;
+    button.textContent = 'Retomar envio deste relatório'; button.disabled = false; button.hidden = false;
     status('O progresso salvo será retomado. Mantenha esta página aberta para reenviar somente o que falta.');
     throw e;
   } finally { setBusy(false); }
@@ -241,8 +320,9 @@ async function renderJob(seq = S.seq) {
   if (job.status === 'COMPLETED') {
     const summary = await api(path(`/${job._id}/summary`));
     if (seq !== S.seq) return;
-    S.summary = summary; renderSummary(); await loadRows(1); await renderNextStep(seq); return;
+    S.summary = summary; renderSummary(); if (!guided) await loadRows(1); await renderNextStep(seq); return;
   }
+  if (guided) { renderGuidedJob(seq); return; }
   $('#purchase-report-view').innerHTML = `${jobTitle(job)}<section class="card stack"><div class="purchase-split"><h2>${esc(jobLabels[job.status] || job.status)}</h2><span class="badge">${number(job.uploaded)} linhas importadas</span></div>${job.status === 'PROCESSING' ? `<p>${number(job.received)} / ${number(job.summary?.unique)} CNPJs com consulta concluída.</p><progress class="purchase-progress" value="${Number(job.received || 0)}" max="${Math.max(1, Number(job.summary?.unique || 0))}"></progress><p class="hint">Mantenha esta tela aberta para consultar. Você pode pausar e voltar ao histórico para retomar. Cada CNPJ válido é consultado uma vez neste relatório.</p>${writable() ? '<div class="row wrap"><button id="purchase-process" class="primary">Consultar / retomar</button><button id="purchase-pause">Pausar nesta tela</button></div>' : ''}<p id="purchase-process-status" class="hint" role="status"></p>` : job.status === 'UPLOADING' ? `<p>Selecione novamente o arquivo <strong>${esc(job.fileName)}</strong> na área de importação e confira as colunas. As partes já salvas serão verificadas; somente as pendências serão adicionadas.</p><p class="hint">${job.calculationVersion === 'NET_V2' ? 'Esta importação usa Q − Y + AA − AB.' : 'Este histórico usa a regra original Q. Para aplicar a regra nova, cancele este relatório e importe novamente.'}</p>` : '<p>Este relatório foi cancelado. Os registros concluídos foram preservados no histórico; ele não gera indicadores finais.</p>'}${!['COMPLETED','CANCELLED'].includes(job.status) && writable() ? '<button id="purchase-cancel" class="danger">Cancelar relatório</button>' : ''}</section>`;
   if ($('#purchase-process')) $('#purchase-process').onclick = () => { S.paused = false; clearError(); process(seq); };
   if ($('#purchase-pause')) $('#purchase-pause').onclick = () => { stopProcessing(); $('#purchase-process-status').textContent = 'Pausado nesta tela. Uma chamada já iniciada pode terminar; o progresso fica salvo.'; };
@@ -250,6 +330,34 @@ async function renderJob(seq = S.seq) {
     if (!confirm('Cancelar este relatório? Os registros já salvos ficam no histórico, sem emitir indicadores finais.')) return;
     stopProcessing();
     try { await api(path(`/${job._id}/cancel`), 'POST', {}); await openJob(job._id); await loadHistory(S.historyPage); } catch (e) { error(e); }
+  };
+}
+function renderGuidedJob(seq) {
+  const job = S.job;
+  if (job.status === 'UPLOADING') {
+    $('#purchase-report-view').innerHTML = `<section class="card purchase-guided-message"><h2>Retome este relatório</h2><p>Selecione o mesmo arquivo <strong>${esc(job.fileName)}</strong>. O envio continuará do progresso salvo.</p>${writable() ? '<button id="purchase-cancel" class="mt">Trocar arquivo</button>' : ''}</section>`;
+    wireGuidedCancel();
+    return;
+  }
+  if (job.status !== 'PROCESSING') {
+    $('#purchase-report-view').innerHTML = `<section class="card purchase-guided-message"><h2>${esc(jobLabels[job.status] || job.status)}</h2><p>Adicione outro arquivo para substituir este relatório.</p></section>`;
+    return;
+  }
+  $('#purchase-report-view').innerHTML = `<section class="card purchase-guided-processing"><div class="eyebrow">RELATÓRIO DE ${reportName.toUpperCase()}</div><h2>Consultando os CNPJs</h2><p>${esc(job.fileName)}</p><progress class="purchase-progress" value="${Number(job.received || 0)}" max="${Math.max(1,Number(job.summary?.unique || 0))}"></progress><strong>${number(job.received)} de ${number(job.summary?.unique)} concluídos</strong><p class="hint">Mantenha esta tela aberta. O progresso fica salvo no Histórico.</p>${writable() ? '<div class="purchase-guided-controls"><button id="purchase-process">Retomar consulta</button><button id="purchase-pause">Pausar</button><button id="purchase-cancel">Trocar arquivo</button></div>' : ''}<p id="purchase-process-status" class="purchase-status" role="status"></p></section>`;
+  if ($('#purchase-process')) {
+    $('#purchase-process').disabled = !S.paused || S.running;
+    $('#purchase-process').onclick = () => { S.paused = false; clearError(); process(seq); };
+    $('#purchase-pause').onclick = () => { stopProcessing(); $('#purchase-process').disabled = S.running; $('#purchase-process-status').textContent = 'Consulta pausada. Você pode retomá-la quando quiser.'; };
+  }
+  wireGuidedCancel();
+}
+function wireGuidedCancel() {
+  const button = $('#purchase-cancel');
+  if (!button) return;
+  button.onclick = async () => {
+    if (S.busy || S.pending || !confirm('Cancelar este relatório para escolher outro arquivo? O progresso atual ficará cancelado no histórico.')) return;
+    stopProcessing(); button.disabled = true;
+    try { await api(path(`/${S.job._id}/cancel`), 'POST', {}); resetPreview(); await openJob(S.job._id); } catch (e) { button.disabled = false; error(e); }
   };
 }
 function scheduleProcess(seq) {
@@ -282,6 +390,7 @@ function composition(m) {
 }
 function renderSummary() {
   const m = S.summary, t = m.totals, groups = reportingGroups(m), net = m.calculationVersion === 'NET_V2';
+  if (guided) { renderGuidedSummary(m); return; }
   $('#purchase-report-view').innerHTML = `${jobTitle(S.job)}
     <section class="card purchase-hero"><div><h2>Total de ${reportLower} do relatório</h2><strong class="purchase-money">${money(t.totalCents)}</strong><p>${number(t.lines)} linhas · ${net ? 'Q − Y + AA − AB' : 'soma de Q · regra original'}</p></div><div class="purchase-stat"><h2>Documentos no relatório</h2><strong class="purchase-money">${number(t.uniqueDocuments)}</strong><p>${number(t.uniqueCnpjs)} CNPJs válidos · ${number(t.nonCnpjDocumentCount)} demais documentos</p></div></section>
     <div class="purchase-cards ${sales ? 'purchase-cards-sales' : ''}" role="group" aria-label="Resultados por enquadramento">${groups.map(g => `<button class="purchase-group" data-status="${esc(g.status)}" aria-pressed="false"><span>${esc(groupLabels[g.status] || labels[g.status])}</span><strong>${money(g.totalCents)}</strong><span class="purchase-bar" aria-hidden="true"><span style="width:${Math.min(100, Math.max(0, Number(g.valuePercent || 0)))}%"></span></span><small><b>${percent(g.valuePercent)}</b> do valor total do arquivo<br><b>${number(g.count)} documentos · ${percent(g.countPercent)}</b> dos documentos únicos<br>${number(g.lines)} linhas de ${reportLower}${g.status === 'NAO_OPTANTE' ? `<br>Inclui ${number(g.unconfirmedCount)} não confirmado(s) · ${money(g.unconfirmedCents)}<br>${sales ? 'Demais documentos (sem CPF)' : 'CPF e demais documentos'}: ${money((m.excluded || []).filter(e => !sales || e.documentKind !== 'CPF').reduce((sum,e) => sum + Number(e.totalCents || 0), 0))}` : ''}</small></button>`).join('')}</div>
@@ -299,6 +408,10 @@ function renderSummary() {
   $('#purchase-csv').onclick = () => downloadCsv().catch(error);
   $('#purchase-print').onclick = () => window.print();
   updateCsvParts();
+}
+function renderGuidedSummary(m) {
+  const t = m.totals;
+  $('#purchase-report-view').innerHTML = `<section class="purchase-guided-summary" aria-labelledby="purchase-summary-title"><div class="purchase-guided-summary-title"><span class="purchase-guided-success" aria-hidden="true">✓</span><div><div class="eyebrow">CONSULTA CONCLUÍDA</div><h2 id="purchase-summary-title">Resumo de ${reportLower}</h2><p>${esc(S.job.clientCode || 'Sem código')} · ${esc(S.job.clientName)}</p></div></div><section class="card purchase-hero"><div><h2>Total de ${reportLower} do relatório</h2><strong class="purchase-money">${money(t.totalCents)}</strong><p>${number(t.lines)} linhas importadas</p></div><div class="purchase-stat"><h2>Documentos no relatório</h2><strong class="purchase-money">${number(t.uniqueDocuments)}</strong><p>${number(t.uniqueCnpjs)} CNPJs válidos</p></div></section><div class="purchase-cards ${sales ? 'purchase-cards-sales' : ''}" role="group" aria-label="Resultados por enquadramento">${reportingGroups(m).map(group => `<article class="purchase-group" data-status="${esc(group.status)}"><span>${esc(groupLabels[group.status] || labels[group.status])}</span><strong>${money(group.totalCents)}</strong><span class="purchase-bar" aria-hidden="true"><span style="width:${Math.min(100,Math.max(0,Number(group.valuePercent || 0)))}%"></span></span><small>${percent(group.valuePercent)} do valor total do arquivo<br>${number(group.count)} documentos · ${percent(group.countPercent)} dos documentos únicos${group.status === 'NAO_OPTANTE' ? `<br>Inclui ${number(group.unconfirmedCount)} não confirmado(s)` : ''}</small></article>`).join('')}</div><p class="hint purchase-guided-note">${sales ? 'CPF aparece separado nas vendas. ' : ''}Não confirmados integram o grupo gerencial Não optante. Documentos repetidos contam uma vez; seus valores são somados.</p><a class="purchase-guided-detail" href="/purchases.html?${new URLSearchParams({generation:S.generation,client:S.company,type:reportType,job:S.job._id})}">Ver relatório completo e baixar arquivos</a></section>`;
 }
 function filterStatus(value) {
   S.status = value; $('#purchase-status-filter').value = value;
@@ -358,8 +471,8 @@ async function boot() {
     document.title = `${reportName} · Maximum CNPJ`;
     $('.crumb').textContent = `Maximum CNPJ / ${reportName}`;
     $('.page-heading .eyebrow').textContent = `${reportName.toUpperCase()} · SIMPLES NACIONAL`;
-    $('.page-heading h1').textContent = sales ? 'Para quem sua empresa vende?' : 'De quem sua empresa compra?';
-    $('.page-heading p').textContent = `Selecione uma empresa e descubra a participação de cada enquadramento nas suas ${reportLower}.`;
+    $('.page-heading h1').textContent = guided ? `Vamos ler suas ${reportLower}.` : sales ? 'Para quem sua empresa vende?' : 'De quem sua empresa compra?';
+    $('.page-heading p').textContent = guided ? 'Um arquivo por etapa, com os resultados organizados para você.' : `Selecione uma empresa e descubra a participação de cada enquadramento nas suas ${reportLower}.`;
     S.user = (await api('/api/auth/session')).user;
     if (!S.user || S.user.mustChangePassword) {
       $('#purchase-app').innerHTML = `<section class="card stack"><h2>${S.user?.mustChangePassword ? 'Redefina sua senha para continuar' : 'Entre para continuar'}</h2><p>${S.user?.mustChangePassword ? 'A senha inicial precisa ser alterada antes de consultar empresas e relatórios.' : `O módulo de ${reportLower} usa a mesma conta e sessão do painel.`}</p><a href="/" class="report-links">Acessar painel</a></section>`; return;
@@ -367,23 +480,29 @@ async function boot() {
     const query = new URLSearchParams(location.search), jobId = query.get('job'), client = query.get('client');
     S.generation = query.get('generation');
     if (S.generation && !/^[a-f0-9-]{36}$/i.test(S.generation)) throw new Error('Identificação da geração inválida.');
+    if (guided && (!S.generation || !client)) throw new Error('Selecione a empresa em Iniciar para abrir esta etapa.');
     mountNavigation(S.user,S.generation ? 'start' : 'history');
     S.clients = (await api('/api/v4/clients')).items; shell();
     let selected = client;
     if (jobId && /^[a-f0-9-]{36}$/i.test(jobId)) {
-      const job = await api(path('/' + encodeURIComponent(jobId))); selected = job.clientId; if (S.generation && job.generationId !== S.generation) throw new Error('Este relatório não pertence à geração selecionada.');
+      const job = await api(path('/' + encodeURIComponent(jobId)));
+      if (guided && job.clientId !== client) throw new Error('Este relatório não pertence à empresa selecionada.');
+      selected = job.clientId; if (S.generation && job.generationId !== S.generation) throw new Error('Este relatório não pertence à geração selecionada.');
     }
     if (S.generation) {
       const generation = await api('/api/v4/generations/' + encodeURIComponent(S.generation));
       S.generationDetails = generation;
       if (!generation.companies.some(c => c.clientId === selected)) throw new Error('A empresa não pertence a esta geração. Abra a geração pelo Histórico.');
+      if (guided && !(generation.requiredReports || ['PURCHASES']).includes(reportType)) throw new Error('Este tipo de relatório não foi selecionado nesta geração. Abra a geração para incluí-lo.');
       if (writable() && !(generation.requiredReports || ['PURCHASES']).includes(reportType)) {
         $('#purchase-import').insertAdjacentHTML('afterbegin', `<div class="warning info">Ao confirmar esta importação, ${reportLower} será incluído para todas as empresas desta geração. O PDF completo ficará disponível quando todos os relatórios estiverem concluídos.</div>`);
       }
     }
     if (selected && S.clients.some(c => c._id === selected)) {
       $('#purchase-company').value = selected; await companyChanged();
-      if (jobId && /^[a-f0-9-]{36}$/i.test(jobId)) await openJob(jobId);
+      const linkedCompany = S.generationDetails?.companies.find(item => item.clientId === selected);
+      const currentJob = jobId || (guided ? sales ? linkedCompany?.salesJobId : linkedCompany?.purchaseJobId : null);
+      if (currentJob && /^[a-f0-9-]{36}$/i.test(currentJob)) await openJob(currentJob, guided && writable());
     }
   } catch (e) { error(e); }
 }
