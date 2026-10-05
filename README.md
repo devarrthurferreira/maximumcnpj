@@ -1,6 +1,20 @@
-# Maximum CNPJ · v0.13.2
+# Maximum CNPJ · v0.14.0
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Entrega 05/10/2026 — simulador mais simples
+
+- [x] Cabeçalho compacto com a empresa e atalhos para extrato, faturamento, compras e despesas. PDF/RBT12 aparecem no primeiro bloco de preenchimento.
+- [x] Resumo dos relatórios com total importado, média mensal e projeção anual; tabela, distribuição dos 12 meses e explicações ficam em **Como calculamos**.
+- [x] Período identificado automaticamente fica em uma linha expansível. Quando precisa de confirmação manual, os controles continuam visíveis e obrigatórios.
+- [x] Textos menores e sem repetição; campos obrigatórios continuam visíveis. O resultado da seção 2.2 mantém PA e total, com as competências nos detalhes. Avisos da extração permanecem visíveis mesmo com a tabela fechada.
+- [x] Resultados priorizam os indicadores e a comparação por regime. **Ver gráficos** reúne as visualizações sob demanda; a DRE continua ao final e a memória de cálculo segue acessível.
+- [x] Histórico com dados usados no cálculo recolhidos, sem recalcular versões antigas. Detalhes abertos no resultado são preservados ao trocar Mensal/Anual e ao concluir o salvamento.
+- [x] Conferência em desktop e celular com dados sintéticos, teclado e rolagem interna das tabelas. Nenhuma mudança nas fórmulas, validação do extrato, autenticação ou persistência.
+
+### Verificação desta entrega
+
+Executar `check:release`, tipos/build, regras Node, Python/PDF, integrações com MongoDB descartável e navegador. As regressões do navegador conferem preenchimento, OCR, histórico, detalhes por teclado, avisos visíveis e larguras de 320/390 px. Consulte a CI do commit desta versão para o resultado final.
 
 ## Correção 05/10/2026 — leitura direcionada à seção 2.2
 

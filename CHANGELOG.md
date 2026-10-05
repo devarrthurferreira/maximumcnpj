@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.14.0] — 2026-10-05
+
+- Simulador com cabeçalho e resumo de projeção compactos; extrato/RBT12 no primeiro bloco e explicações de cálculo sob demanda.
+- Campos e orientações encurtados, período automático recolhido e confirmação manual mantida visível.
+- Seção 2.2 com PA/total resumidos, tabela recolhida e avisos de extração sempre visíveis.
+- Comparação de regimes priorizada; gráficos, metodologia da DRE e dados capturados do histórico em detalhes expansíveis.
+- Estado dos detalhes preservado ao salvar e alternar a apresentação dos resultados; navegação por teclado e responsividade conferidas com dados sintéticos.
+- Fórmulas, OCR, validações fiscais, isolamento e versões históricas preservados.
+
 ## [0.13.2] — 2026-10-05
 
 - Leitor web direcionado à identificação e à seção 2.2: encerra OCR após a próxima seção explícita e a validação dos dois mercados; processa continuações quando necessário.
