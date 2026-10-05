@@ -2,6 +2,20 @@ import {collection,scope} from './store.ts';
 import {need} from './security.ts';
 export const EXTRATO_VERSION = 'SIMPLES_SECTION_22_V2';
 const cents = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= 100_000_000_000_000;
+/** A missing/failed PDF never silently becomes a manual or projected RBT12. */
+export function rbt12InputSource(source: unknown, manualConfirmed: unknown, extractionId: string|null, declared: number|undefined) {
+  need(source === undefined || source === 'SIMPLES_SECTION_22' || source === 'MANUAL',
+    'Selecione a origem da RBT12: extrato ou valor informado manualmente.', 400, 'RBT12_SOURCE');
+  if (source !== 'MANUAL') {
+    need(manualConfirmed === undefined, 'A confirmação manual exige selecionar a opção sem extrato.', 400, 'RBT12_SOURCE');
+    return 'SIMPLES_SECTION_22' as const;
+  }
+  need(!extractionId, 'Use o extrato ou a informação manual, sem misturar as duas origens da RBT12.', 400, 'RBT12_SOURCE');
+  need(manualConfirmed === true, 'Confirme a RBT12 informada manualmente antes de gerar a simulação.', 400, 'RBT12_CONFIRMATION');
+  need(declared !== undefined && cents(Math.round(declared * 100)) && declared === Math.round(declared * 100) / 100,
+    'Informe a receita bruta dos 12 meses anteriores ao período de apuração. Use 0 somente quando esse for o valor real.', 400, 'RBT12_REQUIRED');
+  return 'MANUAL' as const;
+}
 /** Reconcile the twelve stored rows; never accept a browser-provided financial source. */
 export function validateSection22(result: any) {
   const valid = (ok: unknown) => need(ok, 'A seção 2.2 está incompleta ou inconsistente. Leia novamente o extrato.', 409, 'RBT12_EXTRACTION');
@@ -38,7 +52,7 @@ export function validateSection22(result: any) {
     rbt12Window:window,ocrUsed:result.ocrUsed===true,processedPages:result.processedPages||null,...processing};
 }
 export async function readRbt12Reference(id: string|null, clientId: string, declared: number|undefined) {
-  need(id, 'Leia o Extrato do Simples Nacional. Novas simulações exigem a RBT12 calculada pela seção 2.2.', 409, 'RBT12_REQUIRED');
+  need(id, 'Leia o Extrato do Simples Nacional ou escolha informar e confirmar a RBT12 manualmente.', 409, 'RBT12_REQUIRED');
   const record = await (await collection('simplesExtractions')).findOne(scope({_id:id,clientId}));
   need(record && record.parserVersion===EXTRATO_VERSION, 'Leitura da seção 2.2 não encontrada para esta empresa. Leia novamente o PDF.',409,'RBT12_EXTRACTION');
   const result=validateSection22(record.result);

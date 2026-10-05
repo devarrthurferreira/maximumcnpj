@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.17.0] — 2026-10-05
+
+- Iniciar simplificado: busca por código/nome/CNPJ e seleção dos relatórios em diálogo; seleção múltipla preservada separadamente.
+- Compras e vendas em cards centrais com reconhecimento do modelo e leitura/envio/consulta automáticos, sem etapa de conferência de colunas e valores.
+- Resumos guiados só com KPIs; classificação detalhada, tabelas e downloads acessíveis no relatório completo. Continuação respeita os tipos e a empresa selecionados.
+- Extrato opcional antes dos demais campos: PDF inicia OCR da seção 2.2 ao selecionar; alternativa manual exige RBT12 explícita e confirmação, com origem registrada e sem estimativas automáticas.
+- Simulador preenchido com grupos e RBT12, mantendo dados complementares obrigatórios e criação explícita da simulação. Restauração de rascunho não cria novos snapshots.
+- Validações, isolamento, reenvios, histórico, exclusão definitiva e fórmulas preservados; regressões de arquivos, fontes RBT12 e fluxo completo.
+
 ## [0.16.0] — 2026-10-05
 
 - Botão vermelho **Excluir** na aba Histórico (gerações), separado do link do registro, e no detalhe da geração; botão de simulações também mais visível.

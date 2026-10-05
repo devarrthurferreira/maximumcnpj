@@ -1,0 +1,43 @@
+.purchases-guided [hidden]{display:none!important}
+.purchases-guided .page-heading{margin-bottom:18px}
+.purchases-guided .page-heading h1{font-size:clamp(26px,3vw,38px)}
+.purchases-guided #purchase-app,.purchases-guided #purchase-error{max-width:1000px;margin-left:auto;margin-right:auto}
+.purchases-guided .generation-back{font-size:12px;margin-bottom:16px}
+.purchases-guided .generation-back>span{color:var(--muted)}
+.purchases-guided .generation-steps{justify-content:center;margin:24px 0 32px;gap:28px}
+.purchase-guided-import,.purchase-guided-processing,.purchase-guided-message{max-width:620px;margin:30px auto;padding:36px;text-align:center;border-radius:20px;box-shadow:0 12px 40px #351b1b08}
+.purchase-guided-import h2,.purchase-guided-processing h2{font-size:26px;line-height:1.3;margin:10px 0}
+.purchase-guided-import>p,.purchase-guided-processing>p{line-height:1.7;color:var(--muted);overflow-wrap:anywhere}
+.purchase-guided-icon,.purchase-guided-success{width:48px;height:48px;display:grid;place-items:center;border-radius:14px;background:#f6eaeb;color:#750207;font-size:26px;margin:0 auto 18px}
+.purchase-dropzone{position:relative;display:flex;align-items:center;flex-direction:column;gap:14px;padding:30px 20px;border:2px dashed #dac4c5;border-radius:15px;background:#fdf9f9;cursor:pointer;margin:26px 0 16px;min-height:180px;justify-content:center;overflow-wrap:anywhere}
+.purchase-dropzone>input{position:absolute;width:1px;height:1px;opacity:0;padding:0}
+.purchase-dropzone>strong{font-size:14px;line-height:1.6;max-width:100%}
+.purchase-dropzone>span:last-child{font-size:12px;font-weight:400;color:var(--muted)}
+.purchase-dropzone.dragging,.purchase-dropzone:hover{border-color:#750207;background:#fbf1f2}
+.purchase-dropzone:focus-within{outline:2px solid #750207;outline-offset:4px}
+.purchase-dropzone:has(input:disabled){cursor:wait;opacity:.65}
+.purchase-upload-icon{font-size:28px;line-height:1}
+.purchases-guided #purchase-review{text-align:left}
+.purchases-guided #purchase-review button{margin:16px auto 0}
+.purchases-guided #purchase-review .warning{margin-top:20px;overflow-wrap:anywhere}
+.purchases-guided #purchase-review ul{padding-left:22px;max-height:220px;overflow:auto}
+.purchases-guided #purchase-review li+li{margin-top:8px}
+.purchases-guided #purchase-file-preview p{font-size:13px;color:var(--muted)}
+.purchase-guided-controls{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:18px}
+.purchase-guided-controls button{min-height:44px}
+.purchase-guided-summary-title{display:flex;align-items:center;gap:16px;margin:24px 0}
+.purchase-guided-summary-title h2{font-size:25px;margin:5px 0}
+.purchase-guided-summary-title p{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.purchase-guided-success{flex:0 0 48px;margin:0;background:#eef6f0;color:#3c7050}
+.purchase-guided-summary .purchase-group{cursor:default}
+.purchase-guided-summary .purchase-group>span:first-child{font-size:13px;min-height:38px}
+.purchase-guided-note{font-size:11px;line-height:1.7}
+.purchase-guided-detail{display:inline-block;font-size:12px;margin-top:16px}
+.purchase-guided-next{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-top:28px;padding:25px}
+.purchase-guided-next h2{font-size:18px}
+.purchase-guided-next p{font-size:12px;color:var(--muted);line-height:1.7;margin-top:7px}
+.purchase-guided-next .report-links{min-height:44px;flex-shrink:0;white-space:normal;text-align:center}
+.purchases-guided .lookup-live{margin:24px auto;max-width:1000px}
+.purchases-guided .lookup-live-counts{margin:0}
+.purchases-guided .lookup-live [data-error]:empty{display:none}
+@media(max-width:650px){.purchase-guided-import,.purchase-guided-processing,.purchase-guided-message{padding:24px 18px;margin:22px auto}.purchase-guided-import h2,.purchase-guided-processing h2{font-size:23px}.purchases-guided .generation-steps{display:flex;gap:14px;justify-content:flex-start}.purchases-guided .generation-steps>div{font-size:10px}.purchase-dropzone{padding:26px 15px}.purchase-guided-next{align-items:stretch;flex-direction:column;padding:22px;gap:18px}.purchase-guided-next .report-links{width:100%}.purchase-guided-summary-title h2{font-size:23px}}

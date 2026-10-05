@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validateSection22} from '../src/simulation-extrato.ts';
+import {validateSection22,rbt12InputSource} from '../src/simulation-extrato.ts';
 import {section22} from './fixtures/section22.ts';
 
 test('RBT12 provém de doze competências explícitas da seção 2.2, com ambos os mercados',()=>{
@@ -31,4 +31,17 @@ test('Histórico conserva o escopo da leitura e distingue páginas analisadas da
  assert.notEqual((result as any).processedPageNumbers,source.processedPageNumbers);
  assert.equal(validateSection22(section22()).rbt12Cents,source.rbt12Cents);
  assert.equal('extractionScope' in validateSection22(section22()),false);
+});
+test('RBT12 manual é explícita, confirmada e independente do OCR, inclusive zero e centavos',()=>{
+ for(const value of [0,0.29,123.45,500000,1_000_000_000_000])assert.equal(rbt12InputSource('MANUAL',true,null,value),'MANUAL');
+ for(const value of [undefined,-1,0.001,NaN,Infinity,1_000_000_000_001]){
+  assert.throws(()=>rbt12InputSource('MANUAL',true,null,value),(e:any)=>e.code==='RBT12_REQUIRED');
+ }
+ for(const confirmed of [undefined,false,'true',1])assert.throws(()=>rbt12InputSource('MANUAL',confirmed,null,100),(e:any)=>e.code==='RBT12_CONFIRMATION');
+ assert.throws(()=>rbt12InputSource('MANUAL',true,'extraction-id',100),(e:any)=>e.code==='RBT12_SOURCE');
+ assert.throws(()=>rbt12InputSource(undefined,true,null,100),(e:any)=>e.code==='RBT12_SOURCE');
+ assert.throws(()=>rbt12InputSource('ESTIMATED',undefined,null,100),(e:any)=>e.code==='RBT12_SOURCE');
+ assert.throws(()=>rbt12InputSource('SIMPLES_SECTION_22',true,'extraction-id',100),(e:any)=>e.code==='RBT12_SOURCE');
+ assert.equal(rbt12InputSource(undefined,undefined,'extraction-id',100),'SIMPLES_SECTION_22');
+ assert.equal(rbt12InputSource('SIMPLES_SECTION_22',undefined,'extraction-id',100),'SIMPLES_SECTION_22');
 });

@@ -17,3 +17,15 @@ test('Cenário indisponível mantém traços, nunca zeros ou NaN; legado não ga
  assert.throws(()=>buildMonthlyDre(result(),NaN));
  const broken=result();broken.regimes[0].dre.services=Infinity;assert.throws(()=>buildMonthlyDre(broken,2027));
 });
+test('RBT12 manual confirmada fica identificada sem inventar PA ou competências do extrato',()=>{
+ for(const rbt12Cents of [0,29,98765432]){
+  const calendar=buildMonthlyDre(result(),2027,{source:'MANUAL',confirmed:true,rbt12Cents});
+  assert.deepEqual(calendar.rbt12Reference,{source:'MANUAL',rbt12Cents});
+  assert.equal(calendar.method,'AVERAGE_X12_FIXED_MANUAL_RBT12');
+  assert.equal(calendar.months.length,12);
+ }
+ for(const source of [{source:'MANUAL',rbt12Cents:29},{source:'MANUAL',confirmed:true,rbt12Cents:-1},
+  {source:'MANUAL',confirmed:true,rbt12Cents:1.1},{source:'MANUAL',confirmed:true,rbt12Cents:Infinity}]){
+  assert.equal(buildMonthlyDre(result(),2027,source).rbt12Reference,null);
+ }
+});

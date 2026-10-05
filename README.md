@@ -1,6 +1,20 @@
-# Maximum CNPJ · v0.16.0
+# Maximum CNPJ · v0.17.0
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Entrega 05/10/2026 — início guiado, arquivos automáticos e RBT12 opcional por PDF
+
+- [x] **Iniciar** abre uma busca por número/código, nome ou CNPJ. Ao selecionar uma empresa, um diálogo pergunta quais relatórios incluir. Compras e vendas vêm selecionados; é possível escolher somente um. A seleção de várias empresas continua disponível em um acesso separado.
+- [x] Ao confirmar, o primeiro relatório escolhido abre em um card central com área para selecionar ou arrastar CSV/XLSX/XLS. A leitura identifica a aba e o cabeçalho do modelo padrão, valida os dados e inicia o envio e a consulta automaticamente.
+- [x] O fluxo guiado não exige mapear colunas nem confirmar valores. Arquivos desconhecidos, ambíguos ou inconsistentes são bloqueados com uma mensagem antes do envio. As validações de valores, identidade, competências e limites continuam ativas.
+- [x] Durante a consulta, a tela acompanha o progresso. Ao concluir, apresenta somente os KPIs de documentos, valores e enquadramento; tabelas de fornecedores/compradores, memória detalhada e downloads ficam no relatório completo, acessível por um link.
+- [x] **Continuar** leva ao próximo relatório escolhido da mesma empresa. Compras e vendas concluídas abrem a etapa do extrato antes dos outros campos do simulador. Um relatório isolado pode ser concluído sem exigir o tipo não escolhido; o simulador requer os dois.
+- [x] Selecionar o PDF inicia a leitura da seção 2.2 automaticamente. A RBT12 fica preenchida após validar a extração. Originais armazenados, reprocessamento, conferência dos 12 meses e mensagens de erro permanecem disponíveis.
+- [x] **Não tenho o extrato agora** permite informar a RBT12 efetiva manualmente, com valor obrigatório e confirmação explícita. A origem manual fica indicada na tela, no histórico, no JSON e na DRE. Não há substituição automática por vendas × 12 nem fallback silencioso de um OCR que falhou.
+- [x] Após essa etapa, o simulador traz os cinco grupos de compras/vendas e a RBT12. Serviços e despesas continuam exigindo informação, inclusive zero explícito quando não existem. **Gerar simulação** calcula e salva após a validação; avançar ou restaurar um rascunho não cria outra simulação.
+- [x] Históricos, exclusão definitiva, permissões, relatórios completos e reenvios idempotentes permanecem disponíveis. Nenhuma fórmula fiscal foi alterada.
+
+A verificação desta entrega cobre o percurso sintético da seleção à persistência no MongoDB, modelos de arquivo, erros e retomada, PDF automático e alternativa manual, além de navegação no computador/celular. Execute os gates indicados abaixo; os resultados finais ficam na CI da versão.
 
 ## Entrega 05/10/2026 — botão de exclusão definitiva no Histórico
 

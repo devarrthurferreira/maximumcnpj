@@ -12,7 +12,7 @@ const pct = value => value == null ? '—' : (value * 100).toLocaleString('pt-BR
 const date = value => value ? new Date(value).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}) : '—';
 const IMPORTED = ['salesOptantCents','salesNonOptantCents','salesCpfCents','purchasesOptantCents','purchasesNonOptantCents'];
 const MANUAL = ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'];
-const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales'};
+const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales',guided:false,guidedStage:false,guidedResume:false,rbt12Mode:'PDF'};
 const canSave = () => ['admin','operator'].includes(S.user?.role);
 const sourceUrl = () => '/simulator.html?'+new URLSearchParams({generation:S.source.generationId,client:S.source.clientId,...(S.parentId?{parent:S.parentId}:{})});
 const fail = error => { $('#simulator-error').textContent = error.message || String(error); };
@@ -35,14 +35,14 @@ function section(number,title,subtitle,content,id) {
   return `<section class="card sim-section" id="${id}"><div class="sim-section-header"><span class="sim-number">${number}</span><div><h2>${title}</h2><p>${subtitle}</p></div></div>${content}</section>`;
 }
 function display(prefill=null) {
-  S.readonly=false; S.result=null; S.snapshot=null; S.pending=null; clearRbt12();
+  S.readonly=false; S.result=null; S.snapshot=null; S.pending=null; S.rbt12Mode='PDF'; clearRbt12();
   const automaticPeriod=S.source.periodBasis==='COLUMN_H'&&Number.isInteger(S.source.reportMonths);
   if(automaticPeriod)S.months=S.source.reportMonths;
   const periodText=automaticPeriod ? `<details class="card sim-source sim-period-details"><summary>Período confirmado · ${S.months} ${S.months===1?'mês':'meses'}<span>${esc(S.source.period.startMonth)} a ${esc(S.source.period.endMonth)}</span></summary><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months" disabled><option value="${S.months}">${S.months} ${S.months===1?'mês':'meses'}</option></select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" checked disabled>Confirmado pela coluna H. Compras e vendas podem ter dias diferentes na mesma competência.</label></div><p id="period-explanation" class="sim-help"></p></details>` :
     `<section class="card sim-source sim-period-manual"><h2>Confirme o período dos relatórios</h2><p class="sim-help">Informe quantos meses estão incluídos nos dois arquivos.</p><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1} ${i?'meses':'mês'}</option>`).join('')}</select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" required>Compras e vendas correspondem ao mesmo período.</label></div><p id="period-explanation" class="sim-help"></p></section>`;
   $('#simulator-app').innerHTML = `<div id="simulator-intro">${hero(false)}</div><div class="sim-context">${sourceCard()}<div id="simulation-notices"></div></div>
     <form id="simulator-form"><fieldset id="simulation-fields"><div id="simulator-projection"></div>${periodText}
-    ${section('01','Extrato e cenário','Leia o PDF para preencher a RBT12.',`<div class="sim-pdf-grid"><div class="sim-field sim-pdf-upload"><label for="rbt12-pdf">Extrato do Simples Nacional (PDF)</label><div class="sim-upload-controls"><input id="rbt12-pdf" type="file" accept="application/pdf,.pdf"><button type="button" id="rbt12-read">Ler RBT12</button></div><small id="rbt12-status" role="status" aria-live="polite">Selecione o PDF para ler a seção 2.2. Até 8 MiB.</small><div class="sim-pdf-actions"><button type="button" id="rbt12-view-original" hidden>Ver PDF original</button><button type="button" id="rbt12-view-searchable" hidden>Ver PDF pesquisável</button><button type="button" id="rbt12-reprocess" hidden>Reprocessar OCR</button><a id="rbt12-download" hidden>Baixar PDF pesquisável</a></div></div>${moneyField('rbt12','RBT12 · seção 2.2','Soma das 12 competências anteriores ao PA.',false,true)}</div><div id="rbt12-details"></div><div class="sim-fields sim-scenario-fields"><div class="sim-field"><label for="simulation-year">Ano da simulação</label><select id="simulation-year"><option>2027</option><option>2028</option></select></div><div class="sim-field"><label for="sales-annex">Atividade das vendas</label><select id="sales-annex"><option value="1">Comércio · Anexo I</option><option value="2">Indústria · Anexo II</option></select></div><div class="sim-field"><label for="service-annex">Categoria dos serviços</label><select id="service-annex"><option value="3">Anexo III</option><option value="4">Anexo IV</option><option value="5">Anexo V</option></select></div></div>`,'sim-section-extrato')}
+    ${section('01','Extrato e cenário','Leia o PDF para preencher a RBT12.',`<div class="sim-pdf-grid"><div class="sim-field sim-pdf-upload"><label for="rbt12-pdf">Extrato do Simples Nacional (PDF)</label><div class="sim-upload-controls"><input id="rbt12-pdf" type="file" accept="application/pdf,.pdf"><button type="button" id="rbt12-read">Ler RBT12</button></div><small id="rbt12-status" role="status" aria-live="polite">Selecione o PDF para ler a seção 2.2. Até 8 MiB.</small><div class="sim-pdf-actions"><button type="button" id="rbt12-view-original" hidden>Ver PDF original</button><button type="button" id="rbt12-view-searchable" hidden>Ver PDF pesquisável</button><button type="button" id="rbt12-reprocess" hidden>Reprocessar OCR</button><a id="rbt12-download" hidden>Baixar PDF pesquisável</a></div></div>${moneyField('rbt12','RBT12 · seção 2.2','Soma das 12 competências anteriores ao PA.',false,true)}</div><div id="rbt12-details"></div><div class="sim-rbt12-mode"><button type="button" id="rbt12-manual">Informar RBT12 sem o extrato</button><button type="button" id="rbt12-use-pdf" hidden>Usar extrato em PDF</button><div id="rbt12-manual-notice" hidden><p class="sim-help">Informe a receita bruta efetiva dos 12 meses anteriores ao período de apuração. O valor ficará identificado como manual; não é a projeção das vendas.</p><label class="sim-confirm" for="rbt12-manual-confirm"><input id="rbt12-manual-confirm" type="checkbox">Confirmo que informei a receita bruta dos 12 meses anteriores ao período de apuração.</label></div></div><div class="sim-fields sim-scenario-fields"><div class="sim-field"><label for="simulation-year">Ano da simulação</label><select id="simulation-year"><option>2027</option><option>2028</option></select></div><div class="sim-field"><label for="sales-annex">Atividade das vendas</label><select id="sales-annex"><option value="1">Comércio · Anexo I</option><option value="2">Indústria · Anexo II</option></select></div><div class="sim-field"><label for="service-annex">Categoria dos serviços</label><select id="service-annex"><option value="3">Anexo III</option><option value="4">Anexo IV</option><option value="5">Anexo V</option></select></div></div>`,'sim-section-extrato')}
     ${section('02','Quanto a empresa fatura?','Valores mensais · vendas preenchidas pelos relatórios.',`<div class="sim-fields">${moneyField('serviceRevenue','Receita de serviços','Informe o valor mensal. Use 0 se não houver.')}${moneyField('salesRevenue','Receita de vendas','Soma dos três grupos abaixo.',false,true)}</div><div class="sim-fields sales">${moneyField('salesOptantCents','Vendas a optantes SN','Opção pelo Simples confirmada.',true)}${moneyField('salesNonOptantCents','Vendas a não optantes SN','Inclui não confirmados; exclui CPFs.',true)}${moneyField('salesCpfCents','Vendas a CPFs','Clientes identificados por CPF.',true)}</div><div class="sim-totals"><article><span>Faturamento mensal</span><strong id="monthly-revenue">Preencha as receitas</strong></article><article><span>Projeção anual</span><strong id="annual-revenue">Calculada automaticamente</strong></article></div><details class="sim-inline-help"><summary>Sobre os valores de faturamento</summary><p>As vendas usam a média mensal dos relatórios e podem ser ajustadas. Serviços são informados por mês, sem repetir valores das vendas. A projeção é (vendas + serviços) × 12 e não substitui a RBT12 do extrato.</p></details>`,'sim-section-revenue')}
     ${section('03','Quanto a empresa compra?','Valores mensais · preenchidos pelos relatórios e editáveis.',`<div class="sim-fields">${moneyField('purchasesOptantCents','Compras de empresas do Simples','Fornecedores optantes pelo Simples.',true)}${moneyField('purchasesNonOptantCents','Compras de empresas fora do Simples','Inclui não confirmados e outros documentos.',true)}</div>`,'sim-section-purchases')}
     ${section('04','Quais são as despesas?','Informe os valores por mês. Use 0 quando não houver.',`<div class="sim-fields sim-expense-fields">${moneyField('salaries','Salários e pró-labore','Pagamentos à equipe e aos sócios.')}${moneyField('benefits','Benefícios da equipe','Transporte, alimentação e outros.')}${moneyField('adminExpenses','Outras despesas da empresa','Água, energia, internet e similares.')}${moneyField('rent','Aluguel','Valor mensal do imóvel.')}${moneyField('cardExpenses','Taxas de cartão','Total das taxas em reais.')}</div><p class="sim-help">Não repita uma mesma despesa em mais de um campo.</p>`,'sim-section-expenses')}
@@ -51,7 +51,7 @@ function display(prefill=null) {
   $('#simulator-form').oninput = event => {
     if(S.saving)return;
     if (IMPORTED.includes(event.target.id)) S.edited=true;
-    if(event.target.id==='rbt12'){clearRbt12();}
+    if(event.target.id==='rbt12'){if(S.rbt12Mode==='MANUAL')$('#rbt12-manual-confirm').checked=false;else clearRbt12();}
     updateRevenue(); invalidate(); saveDraft();
   };
   $('#period-months').onchange = () => {
@@ -65,15 +65,18 @@ function display(prefill=null) {
   $('#rbt12-view-original').onclick = () => void viewStoredPdf('original');
   $('#rbt12-view-searchable').onclick = () => void viewStoredPdf('searchable');
   $('#rbt12-reprocess').onclick = () => void reprocessRbt12();
-  $('#rbt12-pdf').onchange = () => {clearRbt12();invalidate();saveDraft();};
+  $('#rbt12-pdf').onchange = () => {clearRbt12();invalidate();saveDraft();if(S.guidedStage)void readRbt12Pdf();};
+  $('#rbt12-manual').onclick=()=>{setRbt12Mode('MANUAL');invalidate();saveDraft();$('#rbt12').focus();};
+  $('#rbt12-use-pdf').onclick=()=>{setRbt12Mode('PDF');invalidate();saveDraft();$('#rbt12-pdf').focus();};
   $('#simulator-form').onsubmit = event => { event.preventDefault(); void simulate(); };
   if(prefill) fillSnapshot(prefill);
   restoreDraft();
   updateRevenue(); renderNotices();
   if(S.rbt12ExtractionId&&!S.rbt12Data)void restoreRbt12();
-  else if(!S.rbt12Data)clearRbt12();
-  else if(S.rbt12ExtractionId===(S.rbt12Data.extractionId||S.rbt12Data.id))applyRbt12(S.rbt12Data);
-  else void restoreRbt12();
+  else if(!S.rbt12Data&&S.rbt12Mode!=='MANUAL')clearRbt12();
+  else if(S.rbt12Data&&S.rbt12ExtractionId===(S.rbt12Data.extractionId||S.rbt12Data.id))applyRbt12(S.rbt12Data);
+  else if(S.rbt12Mode!=='MANUAL')void restoreRbt12();
+  if(S.guided)setupGuidedRbt12();
 }
 // One shared rule is used in browser, API, saved history and projection memory.
 function applyReports() {
@@ -115,7 +118,7 @@ function draft() {
   return d;
 }
 function saveDraft() {
-  const data={projectionVersion:'AVERAGE_X12_V1',months:S.months,edited:S.edited,confirmed:$('#period-confirm').checked,rbt12ExtractionId:S.rbt12ExtractionId,fields:Object.fromEntries([...IMPORTED,...MANUAL,'rbt12'].map(key=>{const field=$('#'+key);return [key,field.value!==''&&field.validity.valid?Number(field.value).toFixed(2):field.value];})),year:$('#simulation-year').value,salesAnnex:$('#sales-annex').value,serviceAnnex:$('#service-annex').value};
+  const data={projectionVersion:'AVERAGE_X12_V1',months:S.months,edited:S.edited,confirmed:$('#period-confirm').checked,rbt12ExtractionId:S.rbt12ExtractionId,rbt12Mode:S.rbt12Mode,rbt12ManualConfirmed:S.rbt12Mode==='MANUAL'&&$('#rbt12-manual-confirm').checked,fields:Object.fromEntries([...IMPORTED,...MANUAL,'rbt12'].map(key=>{const field=$('#'+key);return [key,field.value!==''&&field.validity.valid?Number(field.value).toFixed(2):field.value];})),year:$('#simulation-year').value,salesAnnex:$('#sales-annex').value,serviceAnnex:$('#service-annex').value};
   try { sessionStorage.setItem(S.key,JSON.stringify(data)); $('#draft-status').textContent='Rascunho salvo nesta aba. Após alterar valores, gere a simulação novamente.'; }
   catch { $('#draft-status').textContent='Não foi possível guardar o rascunho nesta aba. Mantenha a página aberta até concluir.'; }
 }
@@ -125,7 +128,11 @@ function restoreDraft() {
     if(S.source.periodBasis!=='COLUMN_H')S.months=data.months; $('#period-months').value=String(S.months);applyReports();
     const matchingMonths=data.months===S.months;
     for(const key of [...IMPORTED,...MANUAL,'rbt12']) { if(IMPORTED.includes(key)&&!matchingMonths)continue; const v=data.fields?.[key]; if(typeof v==='string' && (v==='' || /^\d+(\.\d{1,2})?$/.test(v))) $('#'+key).value=v; }
-    if(typeof data.rbt12ExtractionId==='string'&&/^[a-f0-9-]{36}$/.test(data.rbt12ExtractionId))S.rbt12ExtractionId=data.rbt12ExtractionId;
+    if(data.rbt12Mode==='MANUAL'&&!data.rbt12ExtractionId){setRbt12Mode('MANUAL',{preserveValue:true});$('#rbt12-manual-confirm').checked=data.rbt12ManualConfirmed===true;}
+    else {
+      setRbt12Mode('PDF',{preserveValue:true});
+      if(typeof data.rbt12ExtractionId==='string'&&/^[a-f0-9-]{36}$/.test(data.rbt12ExtractionId))S.rbt12ExtractionId=data.rbt12ExtractionId;
+    }
     for(const [key,id,choices] of [['year','simulation-year',['2027','2028']],['salesAnnex','sales-annex',['1','2']],['serviceAnnex','service-annex',['3','4','5']]]) if(choices.includes(data[key])) $('#'+id).value=data[key];
     S.edited=matchingMonths&&data.edited===true;$('#period-confirm').checked=S.source.periodBasis==='COLUMN_H'||data.confirmed===true;$('#draft-status').textContent='Rascunho desta empresa restaurado. Confira os campos antes de gerar.';
   } catch { /* Invalid/unavailable local drafts never prevent using verified report totals. */ }
@@ -141,6 +148,68 @@ function sourceCard() {
   const d=S.source;
   return `<details class="card sim-source sim-report-details"><summary><span>Relatórios de origem</span><span class="sim-source-caption">Compras e vendas <span aria-hidden="true">⌄</span></span></summary><div class="sim-source-grid">${[['purchases','Compras'],['sales','Vendas']].map(([key,label])=>`<article><div class="eyebrow">${label.toUpperCase()} · TOTAL DO ARQUIVO</div><strong>${money(d[key].totalCents/100)}</strong><p>${esc(d[key].fileName)}</p><small>Concluído em ${date(d[key].completedAt)}<br>Fórmula: ${esc(d[key].formula)} · versão ${esc(d[key].calculationVersion)}</small><a href="/purchases.html?${new URLSearchParams({job:d[key].jobId,...(key==='sales'?{type:'SALES'}:{}),generation:d.generationId,client:d.clientId})}">Conferir linhas de ${label.toLowerCase()} →</a></article>`).join('')}</div>${classificationDetails()}</details>`;
 }
+function setRbt12Mode(mode,{preserveValue=false}={}) {
+  const previous=preserveValue?$('#rbt12').value:'';
+  clearRbt12();S.rbt12Mode=mode;
+  const manual=mode==='MANUAL',input=$('#rbt12');
+  input.readOnly=!manual;input.required=manual;input.placeholder=manual?'Informe a RBT12':'Leia o PDF';input.value=previous;
+  $('label[for="rbt12"]').textContent=manual?'RBT12 informada manualmente *':'RBT12 · seção 2.2';
+  $('#rbt12-help').textContent=manual?'Receita efetiva dos 12 meses anteriores ao PA.':'Soma das 12 competências anteriores ao PA.';
+  $('.sim-pdf-upload').hidden=manual;$('#rbt12-manual').hidden=manual;$('#rbt12-use-pdf').hidden=!manual;$('#rbt12-manual-notice').hidden=!manual;
+  $('#rbt12-manual-confirm').checked=false;$('#rbt12-manual-confirm').required=manual;
+  updateGuidedRbt12();
+}
+function setupGuidedRbt12() {
+  S.guidedStage=true;
+  $('#simulator-intro').insertAdjacentHTML('afterend',`<section class="card sim-guided-rbt12" id="guided-rbt12-stage" aria-labelledby="guided-rbt12-title"><div class="eyebrow">COMPRAS E VENDAS CONCLUÍDAS</div><h2 id="guided-rbt12-title" tabindex="-1">Agora, o extrato do Simples</h2><p>Se tiver o PDF, adicione abaixo. Vamos ler a seção 2.2 e preencher a RBT12 automaticamente.</p><div id="guided-rbt12-reader"></div><div class="sim-guided-actions"><button type="button" id="guided-rbt12-skip">Não tenho o extrato agora</button><button type="button" class="primary" id="guided-rbt12-continue" disabled>Continuar com a RBT12</button></div><p class="sim-guided-note">Sem o PDF, você poderá informar a RBT12 nos próximos dados.</p></section>`);
+  const reader=$('#guided-rbt12-reader');
+  for(const selector of ['.sim-pdf-grid','#rbt12-details'])reader.append($(selector));
+  if(S.rbt12Mode==='MANUAL'){
+    // A previous manual draft remains available if the user chooses to continue without a PDF.
+    S.manualDraft={value:$('#rbt12').value,valid:value('rbt12')!==null,confirmed:$('#rbt12-manual-confirm').checked};
+    setRbt12Mode('PDF');
+  }
+  $('#simulator-form').hidden=true;$('.sim-context').hidden=true;$('.sim-step-track').hidden=true;
+  $('#rbt12-pdf').insertAdjacentHTML('beforebegin','<span class="sim-guided-placeholder" aria-hidden="true">Adicione o extrato em PDF<br><small>A leitura começa ao selecionar o arquivo · até 8 MiB</small></span>');
+  $('#guided-rbt12-continue').onclick=()=>{if(!S.readingPdf&&isSection22(S.rbt12Data)&&S.rbt12ExtractionId)finishGuidedRbt12(false);};
+  $('#guided-rbt12-skip').onclick=()=>{if(!S.readingPdf)finishGuidedRbt12(true);};
+  updateGuidedRbt12();$('#guided-rbt12-title').focus({preventScroll:true});
+  if(S.guidedResume){
+    if(S.manualDraft?.valid&&S.manualDraft.confirmed)finishGuidedRbt12(true);
+    else if(isSection22(S.rbt12Data)&&S.rbt12ExtractionId)finishGuidedRbt12(false);
+  }
+}
+function updateGuidedRbt12() {
+  if(!S.guidedStage)return;
+  const valid=isSection22(S.rbt12Data)&&S.rbt12ExtractionId===(S.rbt12Data.extractionId||S.rbt12Data.id);
+  $('#guided-rbt12-continue').disabled=S.readingPdf||!valid;
+  $('#guided-rbt12-skip').disabled=S.readingPdf;
+  $('#guided-rbt12-continue').textContent=S.readingPdf?'Lendo a seção 2.2…':'Continuar com a RBT12';
+  $('#rbt12-read').hidden=S.readingPdf||valid||!$('#rbt12-pdf')?.files?.length;
+  $('#rbt12-read').textContent='Tentar ler novamente';
+  $('#guided-rbt12-stage').setAttribute('aria-busy',String(S.readingPdf));
+}
+function finishGuidedRbt12(manual) {
+  S.guidedStage=false;S.guidedResume=false;
+  const section=$('#sim-section-extrato'),mode=$('.sim-rbt12-mode');
+  for(const selector of ['.sim-pdf-grid','#rbt12-details'])section.insertBefore($(selector),mode);
+  $('.sim-guided-placeholder')?.remove();$('#guided-rbt12-stage').remove();
+  $('#simulator-form').hidden=false;$('.sim-context').hidden=false;$('.sim-step-track').hidden=false;
+  $('#rbt12-read').hidden=false;$('#rbt12-read').textContent='Ler RBT12';
+  if(manual){
+    setRbt12Mode('MANUAL');
+    if(S.manualDraft){$('#rbt12').value=S.manualDraft.value;$('#rbt12-manual-confirm').checked=S.manualDraft.confirmed;}
+  }
+  S.manualDraft=null;saveDraft();renderNotices();
+  const params=new URLSearchParams(location.search);params.set('step','dados');history.replaceState(null,'','/simulator.html?'+params);
+  const form=$('#simulator-form');
+  (form.querySelector('input:invalid')||$('#generate-simulation')).focus();
+}
+function rbt12Reference() {
+  if(S.snapshot)return S.snapshot.rbt12Extraction||S.snapshot.rbt12Manual||null;
+  if(S.rbt12Mode==='MANUAL')return value('rbt12')===null?null:{source:'MANUAL',confirmed:$('#rbt12-manual-confirm').checked,rbt12Cents:Math.round(value('rbt12')*100)};
+  return S.rbt12Data;
+}
 function clearRbt12(keepDocument=false) {
   S.rbt12ExtractionId=null;S.rbt12Data=null;if(!keepDocument)S.rbt12DocumentId=null;
   if(S.pdfUrl)URL.revokeObjectURL(S.pdfUrl);S.pdfUrl=null;
@@ -149,10 +218,13 @@ function clearRbt12(keepDocument=false) {
   for(const id of ['rbt12-view-original','rbt12-view-searchable','rbt12-reprocess'])if($('#'+id))$('#'+id).hidden=true;
   if($('#rbt12-details'))$('#rbt12-details').innerHTML='';
   if($('#rbt12-status'))$('#rbt12-status').textContent='Selecione o PDF para confirmar as 12 competências da seção 2.2. Até 8 MiB.';
+  updateGuidedRbt12();
 }
 function setReadingPdf(reading) {
   S.readingPdf=reading;
   for(const id of ['rbt12-pdf','rbt12-read','rbt12-reprocess','generate-simulation'])if($('#'+id))$('#'+id).disabled=reading;
+  for(const id of ['rbt12-manual','rbt12-use-pdf'])if($('#'+id))$('#'+id).disabled=reading;
+  updateGuidedRbt12();
 }
 function applyRbt12(data) {
   if(!isSection22(data)||!(data.extractionId||data.id))throw new Error('Leitura incompleta da seção 2.2. Leia novamente o extrato.');
@@ -176,13 +248,17 @@ function applyRbt12(data) {
     $('#rbt12-reprocess').hidden=false;
   }
   if(data.downloadNotice)$('#rbt12-status').textContent+=' '+data.downloadNotice;
+  updateGuidedRbt12();
 }
 async function restoreRbt12() {
   const id=S.rbt12ExtractionId,client=S.source.clientId;
   S.rbt12Data=null;$('#rbt12').value='';
   try {
     const data=await api('/api/simples?'+new URLSearchParams({extractionId:id,clientId:client}));
-    if(S.rbt12ExtractionId===id&&S.source.clientId===client)applyRbt12(data);
+    if(S.rbt12ExtractionId===id&&S.source.clientId===client){
+      applyRbt12(data);
+      if(S.guidedResume&&S.guidedStage)finishGuidedRbt12(false);
+    }
   }catch(error){if(S.rbt12ExtractionId===id){clearRbt12();$('#rbt12-status').textContent=error.message;}}
 }
 async function processStoredRbt12(urls) {
@@ -254,7 +330,8 @@ function classificationDetails() {
   ].map(([label,count,cents])=>`<article><span>${label}</span><strong>${money(cents==null?null:cents/100)}</strong><small>${count==null?'Contagem não disponível':esc(count)+' registros'} · incluídos em Não optantes</small></article>`).join('')}</div>`;
 }
 function renderNotices() {
-  const notices=[...(S.source.warnings||[]).map(detail=>({title:'Conferência dos relatórios',detail})),{title:'Classificação de vendas e créditos',detail:'Os três grupos de vendas compõem a receita total. A classificação do comprador não cria uma alíquota diferente neste modelo. As compras alimentam as bases de crédito presumidas pela calculadora; confira o direito ao crédito nos documentos fiscais.'},...(S.result?.result.warnings||[])];
+  const manual=S.snapshot?.rbt12Source==='MANUAL'||(!S.readonly&&S.rbt12Mode==='MANUAL');
+  const notices=[...(manual?[{title:'RBT12 informada manualmente',detail:'A RBT12 foi informada pelo usuário e não foi validada pelo OCR do extrato. Confira a receita efetiva dos 12 meses anteriores ao período de apuração.'}]:[]),...(S.source.warnings||[]).map(detail=>({title:'Conferência dos relatórios',detail})),{title:'Classificação de vendas e créditos',detail:'Os três grupos de vendas compõem a receita total. A classificação do comprador não cria uma alíquota diferente neste modelo. As compras alimentam as bases de crédito presumidas pela calculadora; confira o direito ao crédito nos documentos fiscais.'},...(S.result?.result.warnings||[])];
   const unique=[...new Map(notices.map(w=>[w.detail,w])).values()];
   const host=$('#simulation-notices'); if(!host)return;
   const open=host.querySelector('details')?.open;
@@ -264,7 +341,8 @@ function fillSnapshot(snapshot) {
   S.months=snapshot.reportMonths; $('#period-months').value=String(S.months); applyReports();
   for(const key of IMPORTED) $('#'+key).value=Number(snapshot.monthlyGroups[key]).toFixed(2);
   for(const key of MANUAL) $('#'+key).value=Number(snapshot.draft.values[key]).toFixed(2);
-  if(isSection22(snapshot.rbt12Extraction))applyRbt12(snapshot.rbt12Extraction);
+  if(snapshot.rbt12Source==='MANUAL'&&Number.isFinite(snapshot.draft.rbt12)) {setRbt12Mode('MANUAL');$('#rbt12').value=Number(snapshot.draft.rbt12).toFixed(2);}
+  else if(isSection22(snapshot.rbt12Extraction))applyRbt12(snapshot.rbt12Extraction);
   else clearRbt12();
   $('#simulation-year').value=String(snapshot.draft.year);$('#sales-annex').value=String(snapshot.draft.salesAnnex);$('#service-annex').value=String(snapshot.draft.serviceAnnex);
   $('#period-confirm').checked=S.source.periodBasis==='COLUMN_H'; S.edited=snapshot.manuallyAdjusted;
@@ -277,13 +355,15 @@ function setSaving(value) {
 }
 async function simulate() {
   if(S.saving||S.readingPdf)return;
-  if(!isSection22(S.rbt12Data)||!S.rbt12ExtractionId||S.rbt12ExtractionId!==(S.rbt12Data.extractionId||S.rbt12Data.id)||Math.round(value('rbt12')*100)!==S.rbt12Data.rbt12Cents){fail(new Error('Leia o PDF: novas simulações usam somente a RBT12 da seção 2.2 do extrato.'));$('#rbt12-pdf').focus();return;}
+  const manual=S.rbt12Mode==='MANUAL';
+  if(manual&&(value('rbt12')===null||!$('#rbt12-manual-confirm').checked)){fail(new Error('Informe a RBT12 efetiva e confirme a origem manual para gerar a simulação.'));(value('rbt12')===null?$('#rbt12'):$('#rbt12-manual-confirm')).focus();return;}
+  if(!manual&&(!isSection22(S.rbt12Data)||!S.rbt12ExtractionId||S.rbt12ExtractionId!==(S.rbt12Data.extractionId||S.rbt12Data.id)||Math.round(value('rbt12')*100)!==S.rbt12Data.rbt12Cents)){fail(new Error('Leia a seção 2.2 do PDF ou escolha informar a RBT12 sem o extrato.'));$('#rbt12-pdf').focus();return;}
   if(!$('#simulator-form').reportValidity())return;
   try {
     $('#simulator-error').textContent='';
     const input=draft(),result=calculateSimulation(input),groups=Object.fromEntries(IMPORTED.map(key=>[key,value(key)]));
     S.result={input,result,monthlyGroups:groups,projection:{...annualizeReports(S.source.fields,S.months),scenario:projectScenario(groups,input.values)}};S.snapshot=null;S.saveError=null;S.viewPeriod='annual';saveDraft();
-    S.pending=canSave()?{simulationId:crypto.randomUUID(),generationId:S.source.generationId,clientId:S.source.clientId,reportMonths:S.months,periodConfirmed:true,monthlyGroups:groups,draft:input,...(S.rbt12ExtractionId?{rbt12ExtractionId:S.rbt12ExtractionId}:{}),...(S.parentId?{parentSimulationId:S.parentId}:{})}:null;
+    S.pending=canSave()?{simulationId:crypto.randomUUID(),generationId:S.source.generationId,clientId:S.source.clientId,reportMonths:S.months,periodConfirmed:true,monthlyGroups:groups,draft:input,...(manual?{rbt12Source:'MANUAL',rbt12ManualConfirmed:true}:{rbt12ExtractionId:S.rbt12ExtractionId}),...(S.parentId?{parentSimulationId:S.parentId}:{})}:null;
     renderResult();renderNotices();
     $('#results-top').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'});
     if(canSave())await persist();
@@ -321,7 +401,7 @@ function renderResult() {
     <div class="sim-subheading"><h3>Comparação por regime</h3><span>${monthly?'Por mês':'Por ano'} · ${input.year}</span></div><div class="sim-regimes">${result.regimes.map(r=>`<article class="sim-regime ${r.id===result.bestRegimeId?'best':''}"><span class="sim-badge">${r.id===result.bestRegimeId?'MAIOR RESULTADO ESTIMADO':r.available?'CENÁRIO COMPARATIVO':'REVISÃO NECESSÁRIA'}</span><h3>${esc(r.name)}</h3><strong class="${r.annualProfit<0&&r.available?'sim-negative':''}">${r.available?money(r.annualProfit/divisor):'Indisponível'}</strong><p>Resultado líquido ${monthly?'por mês':'por ano'}</p>${r.available?`<dl class="sim-regime-metrics"><div><dt>Tributos e encargos</dt><dd>${money(r.totalTaxes/divisor)}</dd></div><div><dt>Margem líquida</dt><dd>${pct(r.margin)}</dd></div><div><dt>Carga sobre receita</dt><dd>${pct(r.taxBurden)}</dd></div></dl>`:`<p>${esc(r.status)}</p>`}</article>`).join('')}</div>
     <details class="card sim-charts-details"><summary>Ver gráficos<span>Resultados, tributos, receitas e despesas</span></summary>${renderSimulationCharts({input,result,monthlyGroups,period:S.viewPeriod})}</details>
     ${memoryDetails()}
-    ${monthly?renderMonthlyDre({result,year:input.year,reference:S.snapshot?.rbt12Extraction||S.rbt12Data,period:S.source.period,regimeId:S.calendarRegime,calendar:S.snapshot?.monthlyDre}):`<section class="card sim-dre"><div class="eyebrow">DRE · PROJEÇÃO ${periodLabel}</div><h2>DRE comparativa</h2><p class="sim-help">Para ver a DRE completa, arraste para o lado ou deite o celular. A coluna Indicador permanece fixa.</p><div class="sim-table-wrap" tabindex="0" role="region" aria-label="DRE comparativa com rolagem horizontal"><table><thead><tr><th scope="col">Indicador</th>${result.regimes.map(r=>`<th scope="col">${esc(r.name)}</th>`).join('')}</tr></thead><tbody>${DRE.map(([key,label])=>`<tr class="${['revenue','netRevenue','grossProfit','preTax','netProfit'].includes(key)?'total':''}"><th scope="row">${label}</th>${result.regimes.map(r=>`<td>${r.available?money(r.dre[key]/divisor):'—'}</td>`).join('')}</tr>`).join('')}</tbody></table></div></section>`}</section>`;
+    ${monthly?renderMonthlyDre({result,year:input.year,reference:rbt12Reference(),period:S.source.period,regimeId:S.calendarRegime,calendar:S.snapshot?.monthlyDre}):`<section class="card sim-dre"><div class="eyebrow">DRE · PROJEÇÃO ${periodLabel}</div><h2>DRE comparativa</h2><p class="sim-help">Para ver a DRE completa, arraste para o lado ou deite o celular. A coluna Indicador permanece fixa.</p><div class="sim-table-wrap" tabindex="0" role="region" aria-label="DRE comparativa com rolagem horizontal"><table><thead><tr><th scope="col">Indicador</th>${result.regimes.map(r=>`<th scope="col">${esc(r.name)}</th>`).join('')}</tr></thead><tbody>${DRE.map(([key,label])=>`<tr class="${['revenue','netRevenue','grossProfit','preTax','netProfit'].includes(key)?'total':''}"><th scope="row">${label}</th>${result.regimes.map(r=>`<td>${r.available?money(r.dre[key]/divisor):'—'}</td>`).join('')}</tr>`).join('')}</tbody></table></div></section>`}</section>`;
   document.querySelectorAll('#simulation-result details').forEach(el=>{if(openedDetails.includes(el.className))el.open=true;});
   $('#export-simulation').onclick=exportSimulation;
   document.querySelectorAll('[data-period]').forEach(button=>button.onclick=()=>{S.viewPeriod=button.dataset.period;renderResult();document.querySelector(`[data-period="${S.viewPeriod}"]`)?.focus({preventScroll:true});});
@@ -359,7 +439,7 @@ function showSnapshot(snapshot) {
 }
 function exportSimulation() {
   if(!S.result)return;
-  const payload=S.snapshot||{saved:false,generatedAt:new Date().toISOString(),calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,source:S.source,reportMonths:S.months,manuallyAdjusted:S.edited,monthlyGroups:S.result.monthlyGroups,monthlyGroupsUnit:'BRL',projection:S.result.projection,rbt12Source:'SIMPLES_SECTION_22',rbt12Extraction:S.rbt12Data,monthlyDre:buildMonthlyDre(S.result.result,S.result.input.year,S.rbt12Data,S.source.period),draft:S.result.input,result:S.result.result};
+  const payload=S.snapshot||{saved:false,generatedAt:new Date().toISOString(),calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,source:S.source,reportMonths:S.months,manuallyAdjusted:S.edited,monthlyGroups:S.result.monthlyGroups,monthlyGroupsUnit:'BRL',projection:S.result.projection,rbt12Source:S.rbt12Mode==='MANUAL'?'MANUAL':'SIMPLES_SECTION_22',rbt12Extraction:S.rbt12Data,...(S.rbt12Mode==='MANUAL'?{rbt12Manual:{source:'MANUAL',confirmed:$('#rbt12-manual-confirm').checked,rbt12Cents:Math.round(value('rbt12')*100)}}:{}),monthlyDre:buildMonthlyDre(S.result.result,S.result.input.year,rbt12Reference(),S.source.period),draft:S.result.input,result:S.result.result};
   const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json;charset=utf-8'}));
   const anchor=document.createElement('a');anchor.href=url;anchor.download=`simulacao-${String(S.source.company.code||'empresa').replace(/[^\w-]/g,'_')}-${S.result.input.year}.json`;document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);
 }
@@ -378,6 +458,7 @@ async function boot() {
       if(snapshot.generationId!==generation||snapshot.clientId!==client)throw new Error('A versão de origem pertence a outra empresa ou geração.');
       S.source=snapshot.source;S.parentId=parent;S.key=`maximum-simulator:copy:${S.user._id}:${parent}`;display(snapshot);return;
     }
+    S.guided=params.get('guided')==='1';S.guidedResume=params.get('step')==='dados';
     S.source=await api(`/api/v4/generations/${generation}/simulator?${new URLSearchParams({clientId:client})}`);
     S.key=`maximum-simulator:v1:${S.user._id}:${generation}:${client}:${S.source.purchases.jobId}:${S.source.sales.jobId}`;
     display();

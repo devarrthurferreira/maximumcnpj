@@ -5,11 +5,12 @@ export const DRE_ROWS = Object.freeze([['services','Receita de serviços'],['sal
 export function buildMonthlyDre(result, year, reference=null, reportPeriod=null) {
   if (!Number.isInteger(year) || year<2000 || year>2100 || !Array.isArray(result?.regimes)) throw new Error('Calendário da DRE inválido.');
   const months=MONTH_NAMES.map((label,i)=>({number:i+1,label,period:`${year}-${String(i+1).padStart(2,'0')}`}));
-  const rbt12=reference?.sourceSection==='2.2'&&reference?.parserVersion==='SIMPLES_SECTION_22_V2' ? {
+  const manual=reference?.source==='MANUAL'&&reference?.confirmed===true&&Number.isSafeInteger(reference?.rbt12Cents)&&reference.rbt12Cents>=0&&reference.rbt12Cents<=100_000_000_000_000;
+  const rbt12=manual ? {source:'MANUAL',rbt12Cents:reference.rbt12Cents} : reference?.sourceSection==='2.2'&&reference?.parserVersion==='SIMPLES_SECTION_22_V2' ? {
     sourceSection:'2.2',parserVersion:reference.parserVersion,id:reference.id||reference.extractionId,
     pa:reference.pa,rbt12Cents:reference.rbt12Cents,basis:reference.rbt12Basis
   }:null;
-  return {version:CALENDAR_VERSION,year,unit:'BRL',method:'AVERAGE_X12_FIXED_STATEMENT_RBT12',
+  return {version:CALENDAR_VERSION,year,unit:'BRL',method:manual?'AVERAGE_X12_FIXED_MANUAL_RBT12':'AVERAGE_X12_FIXED_STATEMENT_RBT12',
     reportPeriod,rbt12Reference:rbt12,months,
     rounding:'Valores completos preservados. Exibição com duas casas; somas de células exibidas podem diferir por centavos do total anual.',
     regimes:result.regimes.map(regime=>({id:regime.id,name:regime.name,available:regime.available,
