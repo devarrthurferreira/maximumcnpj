@@ -43,6 +43,20 @@ def scanned_pdf(*, native_footer=False):
         return scan.tobytes()
 
 
+def paged_pdf(*texts, scanned_tail=True):
+    """Synthetic pages with a non-text tail that must not need OCR for 2.2."""
+    import fitz
+    with fitz.open() as doc:
+        for text in texts:
+            page=doc.new_page()
+            for i,line in enumerate(text.splitlines()):
+                page.insert_text((30,40+i*19),line,fontsize=9,fontname='helv')
+        if scanned_tail:
+            page=doc.new_page()
+            page.draw_rect(fitz.Rect(50,50,400,300),color=(0,0,0),fill=(.5,.5,.5))
+        return doc.tobytes()
+
+
 class SimplesExtractTests(unittest.TestCase):
     def test_only_section_22_even_when_21_disagrees(self):
         result=parse_statement_text(sample())
@@ -150,6 +164,88 @@ class SimplesExtractTests(unittest.TestCase):
                    'pages':[{'page':1,'rows':rows}]}
         with patch('reporting.pdf_ocr.searchable_pdf',return_value=converted):
             self.assertEqual(convert_statement_pdf(b'%PDF-fixture')[0]['rbt12Cents'],16200000)
+
+    def test_section_mode_skips_unrelated_ocr_and_preserves_original_pages(self):
+        import fitz
+        content=paged_pdf(sample())
+        def reject(*_):raise AssertionError('Unrelated tail page must not run OCR')
+        result,pdf,text=convert_statement_pdf(content,section_only=True,ocr_engine=reject)
+        self.assertEqual(result['rbt12Cents'],16200000)
+        self.assertEqual(result['pageCount'],2)
+        self.assertEqual(result['processedPages'],1)
+        self.assertEqual(result['processedPageNumbers'],[1])
+        self.assertEqual(result['preservedPages'],[2])
+        self.assertEqual(result['searchablePdfScope'],'SELECTED_PAGES')
+        self.assertEqual(result['extractionScope'],'SECTION_22')
+        with fitz.open(stream=content,filetype='pdf') as original,fitz.open(stream=pdf,filetype='pdf') as output:
+            self.assertEqual(len(output),len(original))
+            self.assertEqual(output[1].get_pixmap().samples,original[1].get_pixmap().samples)
+
+    def test_section_mode_follows_both_tables_across_pages(self):
+        internal,external=sample().split('2.2.2) Mercado Externo')
+        result,_,_=convert_statement_pdf(paged_pdf(internal,'2.2.2) Mercado Externo'+external),section_only=True,
+            ocr_engine=lambda _:self.fail('Tail OCR must not run'))
+        self.assertEqual(result['rbt12Cents'],16200000)
+        self.assertEqual(result['processedPages'],2)
+        self.assertEqual(result['preservedPages'],[3])
+
+    def test_section_mode_does_not_stop_before_boundary_or_accept_later_conflict(self):
+        complete=sample().split('2.3)')[0]
+        conflict='08/2025 1,00\n2.3) Folha de Salários Anteriores\nSem outras receitas neste documento fiscal de teste'
+        with self.assertRaisesRegex(ValueError,'conflitantes'):
+            convert_statement_pdf(paged_pdf(complete,conflict),section_only=True)
+
+    def test_section_mode_missing_values_still_block_at_boundary(self):
+        with self.assertRaisesRegex(ValueError,'ausentes'):
+            convert_statement_pdf(paged_pdf(sample().replace('08/2025 8.000,00','')),section_only=True,
+                ocr_engine=lambda _:self.fail('An incomplete section must not start unrelated OCR'))
+
+    def test_section_mode_checks_native_identity_on_preserved_pages(self):
+        other='CNPJ Básico: 87.654.321 Nome Empresarial: OUTRA EMPRESA SINTETICA\nDados de outra empresa não podem ser aceitos'
+        with self.assertRaisesRegex(ValueError,'CNPJ'):
+            convert_statement_pdf(paged_pdf(sample(),other),section_only=True)
+
+    def test_section_mode_reads_later_native_section_for_conflicts(self):
+        other=sample().replace('08/2025 8.000,00','08/2025 8.001,00')
+        with self.assertRaisesRegex(ValueError,'conflitantes'):
+            convert_statement_pdf(paged_pdf(sample(),other),section_only=True)
+
+    def test_section_mode_accepts_eof_after_complete_tables(self):
+        result,_,_=convert_statement_pdf(paged_pdf(sample().split('2.3)')[0],scanned_tail=False),section_only=True)
+        self.assertEqual(result['rbt12Cents'],16200000)
+        self.assertEqual(result['processedPages'],1)
+        self.assertEqual(result['preservedPages'],[])
+
+    def test_section_mode_keeps_critical_ocr_confidence_gate(self):
+        from types import SimpleNamespace
+        lines=sample().splitlines()
+        boxes=[[[100,100+i*50],[2200,100+i*50],[2200,135+i*50],[100,135+i*50]] for i in range(len(lines))]
+        scores=[.99]*len(lines);scores[8]=.5
+        engine=lambda _:SimpleNamespace(boxes=boxes,txts=lines,scores=scores)
+        with self.assertRaisesRegex(ValueError,'baixa confiança'):
+            convert_statement_pdf(scanned_pdf(),section_only=True,ocr_engine=engine)
+
+    def test_section_mode_requires_boundary_after_last_reopened_table(self):
+        from types import SimpleNamespace
+        for header in ['2.2) Receitas Brutas Anteriores (R$)\n2.2.1) Mercado Interno', '2.2) Receitas Brutas Anteriores (R$)\n2.2.2) Mercado Externo']:
+            with self.subTest(header=header):
+                # A second table is still open, even though the first had 2.3.
+                amount='8.000,00' if 'Interno' in header else '0,00'
+                first=sample()+'\n'+header+'\n08/2025 '+amount
+                lines=['08/2025 8.001,00','2.3) Folha de Salários Anteriores']
+                boxes=[[[50,50+i*40],[600,50+i*40],[600,80+i*40],[50,80+i*40]] for i in range(2)]
+                engine=lambda _:SimpleNamespace(boxes=boxes,txts=lines,scores=[.99,.99])
+                with self.assertRaisesRegex(ValueError,'conflitantes'):
+                    convert_statement_pdf(paged_pdf(first),section_only=True,ocr_engine=engine)
+
+    def test_section_mode_waits_for_identification_on_later_page(self):
+        identity='CNPJ Básico: 12.345.678 Nome Empresarial: EMPRESA SINTETICA\nPeríodo de Apuração (PA): 08/2026'
+        first='\n'.join(line for line in sample().splitlines() if not line.startswith(('CNPJ Básico:','Período de Apuração')))
+        result,_,_=convert_statement_pdf(paged_pdf(first,identity),section_only=True,
+            ocr_engine=lambda _:self.fail('Unrelated tail must not be processed'))
+        self.assertEqual(result['rbt12Cents'],16200000)
+        self.assertEqual(result['processedPages'],2)
+        self.assertEqual(result['preservedPages'],[3])
 
     @unittest.skipUnless(os.getenv('SIMPLES_TEST_OCR')=='1','Set SIMPLES_TEST_OCR=1 for a single real OCR regression')
     def test_image_pdf_real_ocr_and_searchable_layer(self):

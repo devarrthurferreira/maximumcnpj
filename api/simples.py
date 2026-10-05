@@ -1,4 +1,4 @@
-"""Leitura autenticada do extrato: OCR integral, 2.2 exclusiva, PDF pesquisável efêmero."""
+"""Leitura autenticada da identificação e seção 2.2, preservando o PDF completo."""
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlsplit, parse_qs, unquote
 import base64
@@ -156,7 +156,7 @@ class handler(BaseHTTPRequestHandler):
             else:
                 raise ReportError(415, 'CONTENT_TYPE', 'Envie o Extrato pelo armazenamento seguro ou em PDF.')
 
-            result, searchable, _ = convert_statement_pdf(content)
+            result, searchable, _ = convert_statement_pdf(content, section_only=True, timeout_seconds=180)
             registered = re.sub(r'[^A-Z0-9]', '', str(client.get('cnpj') or '').upper())
             if registered:
                 require(registered[:8] == result['cnpjBasico'], 422, 'RBT12_COMPANY', 'O CNPJ básico do extrato não corresponde à empresa selecionada. Nenhuma RBT12 foi vinculada.')

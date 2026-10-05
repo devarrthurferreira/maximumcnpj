@@ -154,6 +154,32 @@ test('OCR indisponível preserva original e reprocessa sem novo upload no endpoi
  await expect(page.locator('#rbt12-pdf')).toBeEnabled();
  expect(uploads).toBe(1);expect(reads).toBe(2);
 });
+test('Leitura da seção 2.2 aguarda além de 55 segundos e informa as páginas preservadas',async({page})=>{
+ await setup(page);await page.clock.install();
+ let release!:()=>void;const gate=new Promise<void>(resolve=>release=resolve);
+ await page.route('**/api/simples?*',async r=>{await gate;return r.fulfill({json:{...section22(15000000),
+   extractionId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',documentId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+   searchableStored:true,extractionScope:'SECTION_22',searchablePdfScope:'SELECTED_PAGES',pageCount:8,processedPages:2,
+   processedPageNumbers:[1,2],preservedPages:[3,4,5,6,7,8],ocrPages:[1,2],searchablePdfBase64:Buffer.from('%PDF-synthetic').toString('base64')}});});
+ await page.goto(url);
+ await page.locator('#rbt12-pdf').setInputFiles({name:'sintetico.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic')});
+ const processing=page.waitForRequest(r=>new URL(r.url()).pathname==='/api/simples'&&r.method()==='POST');
+ await page.locator('#rbt12-read').click();await processing;
+ try {
+   await page.clock.fastForward(60000);
+   await expect(page.locator('#rbt12-pdf')).toBeDisabled();
+   await expect(page.locator('#rbt12-status')).not.toContainText('demorou');
+ } finally {release();}
+ await expect(page.locator('#rbt12')).toHaveValue('150000.00');
+ await expect(page.locator('#rbt12-status')).toContainText('2 de 8 páginas analisadas (páginas 1, 2)');
+ await page.locator('#rbt12-details summary').click();
+ await expect(page.locator('#rbt12-details')).toContainText('demais foram preservadas sem OCR adicional');
+ await expect(page.locator('#rbt12-view-searchable')).toHaveText('Ver PDF com seção 2.2 pesquisável');
+ await expect(page.locator('#rbt12-download')).toHaveText('Baixar PDF com seção 2.2 pesquisável');
+ await readStatement(page);
+ await expect(page.locator('#rbt12-status')).toContainText('3 página(s) processada(s)');
+ await expect(page.locator('#rbt12-view-searchable')).toHaveText('Ver PDF pesquisável');
+});
 test('DRE mensal mostra 12 meses, muda regime e conserva a RBT12 do extrato',async({page},info)=>{
  await setup(page);await page.setViewportSize({width:1440,height:1100});await page.goto(url);await complete(page,{serviceRevenue:1000,salaries:3000,rent:700});
  await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');

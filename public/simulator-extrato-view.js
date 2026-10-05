@@ -2,6 +2,14 @@ import {buildMonthlyDre} from './simulator-calendar.js';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>v==null?'—':Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 export const isSection22 = d => d?.parserVersion==='SIMPLES_SECTION_22_V2' && d?.sourceSection==='2.2' && Number.isSafeInteger(d?.rbt12Cents) && d.rbt12Cents>=0 && Array.isArray(d?.rbt12Window) && d.rbt12Window.length===12;
+export function statementProcessingSummary(data) {
+  if(data.extractionScope==='SECTION_22'||data.searchablePdfScope==='SELECTED_PAGES') {
+    const pages=Array.isArray(data.processedPageNumbers)&&data.processedPageNumbers.length?' (páginas '+data.processedPageNumbers.join(', ')+')':'';
+    return `Leitura da identificação e da seção 2.2: ${data.processedPages??'—'} de ${data.pageCount??'—'} páginas analisadas${pages}. `+
+      (data.searchablePdfScope==='SELECTED_PAGES'?'O PDF mantém todas as páginas; as demais foram preservadas sem OCR adicional.':'O PDF completo está pesquisável.');
+  }
+  return `${data.ocrUsed?'OCR das páginas digitalizadas':'Texto nativo do PDF'} · ${data.processedPages||data.pageCount||'—'} página(s) processada(s).`;
+}
 export function renderSection22(data) {
   if(!isSection22(data))return '';
   return `<details class="sim-extrato-details"><summary>Conferir seção 2.2 · 12 competências · ${money(data.rbt12Cents/100)}</summary>
@@ -10,7 +18,7 @@ export function renderSection22(data) {
     <div class="sim-extrato-table-wrap" tabindex="0" role="region" aria-label="Doze receitas da seção 2.2 que compõem a RBT12"><table><thead><tr><th>Competência</th><th>Mercado interno</th><th>Mercado externo</th><th>Total</th></tr></thead><tbody>
     ${data.rbt12Window.map(row=>`<tr><th scope="row">${esc(row.period)}</th><td>${money(row.internalCents/100)}</td><td>${money(row.externalCents/100)}</td><td>${money(row.totalCents/100)}</td></tr>`).join('')}
     </tbody><tfoot><tr><th scope="row">RBT12 · soma das 12 competências</th><td>${money(data.rbt12Basis?.internalCents/100)}</td><td>${money(data.rbt12Basis?.externalCents/100)}</td><td>${money(data.rbt12Cents/100)}</td></tr></tfoot></table></div>
-    <p class="sim-help">${data.ocrUsed?'OCR das páginas digitalizadas':'Texto nativo do PDF'} · ${esc(data.processedPages||data.pageCount||'—')} página(s) processada(s). Confira os valores reconhecidos na imagem original.</p>
+    <p class="sim-help">${esc(statementProcessingSummary(data))} Confira os valores reconhecidos na imagem original.</p>
     ${(data.warnings||[]).map(w=>`<p class="sim-extrato-warning">${esc(w)}</p>`).join('')}</details>`;
 }
 export function renderMonthlyDre({result,year,reference,period,regimeId,calendar}) {
