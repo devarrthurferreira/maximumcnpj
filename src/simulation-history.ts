@@ -8,6 +8,7 @@ import { annualizeReports, projectScenario } from '../public/simulator-projectio
 import {readRbt12Reference} from './simulation-extrato.ts';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import { generationSimulator } from './simulator-store.ts';
+import { assertGenerationNotDeleted } from './generation-deletion.ts';
 import { calculateSimulation, draftToInput, MODEL_VERSION, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
   SIMULATION_VALUE_FIELDS } from '../public/simulator-engine.js';
 import type { SimulationDraft } from '../public/simulator-engine.js';
@@ -87,20 +88,33 @@ function visible(record: Doc) {
   return snapshot;
 }
 
+function deletionAuditId(id: string) {
+  return 'simulation-delete:' + digest(JSON.stringify([scope().workspaceId, id]));
+}
+
+async function deletionReceipt(id: string) {
+  return (await collection('audit')).findOne(scope({_id: deletionAuditId(id), action: 'simulation.delete', target: id}));
+}
+
+async function requireUnremovedId(id: string) {
+  need(!await deletionReceipt(id), 'Esta simulação foi excluída. Use um novo identificador para salvar outra simulação.',
+    409, 'SIMULATION_DELETED');
+}
+
 /** Read the frozen result: no source hydration, provider request or recalculation. */
 export async function getSimulation(id: string) {
   const c = await simulations();
   const record = await c.findOne(scope({_id: uuid(id), deletedAt: {$exists: false}}));
-  need(record, 'Simulação não encontrada.', 404, 'NOT_FOUND');
-  const parentDeleted = record.parentSimulationId && await c.findOne(scope({
-    _id: record.parentSimulationId, deletedAt: {$exists: true}
+  need(record && !await deletionReceipt(id), 'Simulação não encontrada.', 404, 'NOT_FOUND');
+  const parentDeleted = record.parentSimulationId && !await c.findOne(scope({
+    _id: record.parentSimulationId, deletedAt: {$exists: false}
   }), {projection: {_id: 1}});
   const snapshot = visible(record);
   if (parentDeleted) snapshot.parentSimulationDeleted = true;
   return snapshot;
 }
 
-/** Keep the frozen record and its ID reserved; retries retain the original deletion event. */
+/** Permanently remove only this snapshot; the minimal audit receipt reserves its ID. */
 export async function deleteSimulation(actor: LookupActor, id: string) {
   write(actor);
   const simulationId = uuid(id), c = await simulations();
@@ -110,12 +124,13 @@ export async function deleteSimulation(actor: LookupActor, id: string) {
   const deleted = claimed || await c.findOne(scope({_id: simulationId, deletedAt: {$exists: true}}), {
     projection: {_id: 1, workspaceId: 1, deletedAt: 1, deletedBy: 1}
   });
-  need(deleted, 'Simulação não encontrada.', 404, 'NOT_FOUND');
-  // A deterministic event also repairs a prior audit write failure, without changing its original author/date.
-  const auditId = 'simulation-delete:' + digest(JSON.stringify([deleted.workspaceId, simulationId]));
-  await (await collection('audit')).updateOne(scope({_id: auditId}), {$setOnInsert: {
-    ...scope(), actor: deleted.deletedBy.id, action: 'simulation.delete', target: simulationId, createdAt: deleted.deletedAt
-  }}, {upsert: true});
+  if (deleted) {
+    // Save the receipt before removal, so retries can finish an interrupted deletion without retaining fiscal data.
+    await (await collection('audit')).updateOne(scope({_id: deletionAuditId(simulationId)}), {$setOnInsert: {
+      ...scope(), actor: deleted.deletedBy.id, action: 'simulation.delete', target: simulationId, createdAt: deleted.deletedAt
+    }}, {upsert: true});
+  } else need(await deletionReceipt(simulationId), 'Simulação não encontrada.', 404, 'NOT_FOUND');
+  await c.deleteOne(scope({_id: simulationId}));
   return {deleted: true, id: simulationId};
 }
 
@@ -125,15 +140,18 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
   const validated = request(input), {simulationId, generationId, clientId, draft, reportMonths, monthlyGroups, parentSimulationId, rbt12ExtractionId} = validated;
   const requestHash = digest(JSON.stringify(validated));
   const c = await simulations();
-  const repeated = (record: Doc) => {
+  const repeated = async (record: Doc) => {
+    await requireUnremovedId(simulationId);
     need(!Object.hasOwn(record, 'deletedAt'), 'Esta simulação foi excluída. Use um novo identificador para salvar outra simulação.',
       409, 'SIMULATION_DELETED');
     need(record.createdBy.id === actor._id && record.requestHash === requestHash,
       'Este identificador já pertence a outra simulação. Gere uma nova versão para guardar alterações.', 409, 'SIMULATION_EXISTS');
     return visible(record);
   };
+  await requireUnremovedId(simulationId);
   const existing = await c.findOne(scope({_id: simulationId}));
   if (existing) return repeated(existing);
+  await assertGenerationNotDeleted(generationId);
   if (parentSimulationId) {
     const parent = await getSimulation(parentSimulationId);
     need(parent.clientId === clientId && parent.generationId === generationId,
@@ -167,12 +185,28 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
     rbt12Source, rbt12Extraction, monthlyDre: buildMonthlyDre(result, draft.year, rbt12Extraction, source.period || null),
     year: draft.year, annualRevenue: result.annualRevenue, bestRegimeId: result.bestRegimeId,
     bestRegimeName: best?.name || null, bestAnnualProfit: best?.annualProfit ?? null};
+  const requireSources = async () => {
+    await requireUnremovedId(simulationId);
+    await assertGenerationNotDeleted(generationId);
+    if (parentSimulationId) await getSimulation(parentSimulationId);
+  };
+  await requireSources();
   try { await c.insertOne(snapshot); }
   catch (error: any) {
     if (error.code !== 11000) throw error;
+    await requireUnremovedId(simulationId);
     const concurrent = await c.findOne(scope({_id: simulationId}));
     need(concurrent, 'Identificador de simulação indisponível. Gere um novo identificador.', 409, 'SIMULATION_EXISTS');
     return repeated(concurrent);
+  }
+  // Deletion can win while this request hydrates its sources or waits to insert.
+  // Discard a late insert before returning or auditing it as a new simulation.
+  try { await requireSources(); }
+  catch (error: any) {
+    if (['SIMULATION_DELETED', 'GENERATION_DELETED', 'NOT_FOUND'].includes(error.code)) {
+      await c.deleteOne(scope({_id: simulationId}));
+    }
+    throw error;
   }
   await audit(actor._id, 'simulation.create', simulationId);
   return visible(snapshot);

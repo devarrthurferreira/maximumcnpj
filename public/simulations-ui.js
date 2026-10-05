@@ -18,10 +18,10 @@ function layout(){
  const writable=['admin','operator'].includes(state.user.role);
  $('#simulations-app').innerHTML=`<div class="history-hero"><div><div class="eyebrow">SIMULADOR · HISTÓRICO</div><h1>Histórico de simulações</h1><p>Consulte os valores, resultados e detalhes dos cenários salvos.</p></div>${writable?`<a class="history-action primary" href="/generations.html">${icon('start')}Nova simulação</a>`:''}</div><form id="history-filters" class="history-filters"><label for="simulation-search">Buscar simulações<input id="simulation-search" type="search" maxlength="100" autocomplete="off" placeholder="Nome da empresa, código ou título" value="${esc(state.search)}"></label><label for="simulation-year-filter">Ano do cenário<select id="simulation-year-filter"><option value="">Todos os anos</option><option value="2027" ${state.year==='2027'?'selected':''}>2027</option><option value="2028" ${state.year==='2028'?'selected':''}>2028</option></select></label><button type="submit">Buscar</button></form>${state.clientId?'<div class="history-context">Mostrando simulações da empresa selecionada. <a href="/simulations.html">Ver todas as empresas</a></div>':''}<div id="history-feedback" role="status" aria-live="polite"></div><div id="history-results" aria-live="polite"></div>
  <dialog id="delete-simulation-dialog" class="history-delete-dialog" aria-labelledby="delete-simulation-heading" aria-describedby="delete-simulation-description">
-  <h2 id="delete-simulation-heading">Excluir simulação?</h2><p id="delete-simulation-description">Esta simulação será removida do histórico. Os relatórios e as outras versões continuam disponíveis.</p>
+  <h2 id="delete-simulation-heading">Excluir simulação definitivamente?</h2><p id="delete-simulation-description">Os dados e resultados desta simulação serão apagados permanentemente. Esta ação não pode ser desfeita. Os relatórios e as outras versões continuam disponíveis.</p>
   <div class="history-delete-target"><strong id="delete-simulation-company"></strong><span id="delete-simulation-title"></span><small id="delete-simulation-year"></small></div>
   <p id="delete-simulation-error" class="history-delete-error" role="alert"></p><p id="delete-simulation-status" role="status" aria-live="polite"></p>
-  <div class="history-delete-actions"><button id="delete-simulation-cancel" type="button" autofocus>Cancelar</button><button id="delete-simulation-confirm" type="button">Excluir simulação</button></div>
+  <div class="history-delete-actions"><button id="delete-simulation-cancel" type="button" autofocus>Cancelar</button><button id="delete-simulation-confirm" type="button">Excluir definitivamente</button></div>
  </dialog>`;
  const dialog=$('#delete-simulation-dialog');
  $('#delete-simulation-cancel').onclick=()=>{if(!state.deleting)dialog.close();};
@@ -31,7 +31,7 @@ function layout(){
  $('#history-filters').onsubmit=event=>{event.preventDefault();state.search=$('#simulation-search').value.trim();state.year=$('#simulation-year-filter').value;state.page=1;load();};
  $('#simulation-year-filter').onchange=()=>$('#history-filters').requestSubmit();
 }
-function card(item){return `<article class="history-item" data-simulation-id="${esc(item._id)}"><div class="history-company"><span class="history-company-symbol">${icon('companies')}</span><div><small>EMPRESA ${esc(item.company.code||'SEM CÓDIGO')}</small><h3>${esc(item.company.name)}</h3></div></div><p class="history-title">${esc(item.title||'Simulação tributária')}</p><div class="history-tags"><span class="history-tag">CENÁRIO ${esc(item.year)}</span><span class="history-tag">${esc(item.reportMonths)} ${item.reportMonths===1?'MÊS':'MESES'} NOS RELATÓRIOS</span>${item.manuallyAdjusted?'<span class="history-tag adjusted">VALORES AJUSTADOS</span>':''}</div><div class="history-financials"><div><span>Receita anual estimada</span><strong>${money(item.annualRevenue)}</strong><small>Referência mensal × 12</small></div><div class="best"><span>Maior resultado anual</span><strong>${money(item.bestAnnualProfit)}</strong><small>${esc(item.bestRegimeName||'Sem ranking neste cenário')}</small></div></div><div class="history-item-footer"><p>Salva em ${date(item.createdAt)}<br>Por ${esc(item.createdBy?.name||'Equipe Maximum')}</p><div class="history-item-actions"><a href="/simulator.html?${new URLSearchParams({simulation:item._id})}">Rever simulação →</a>${canDelete()?`<button type="button" class="history-delete" data-delete-simulation="${esc(item._id)}" aria-label="Excluir simulação de ${esc(item.company.name)}">Excluir</button>`:''}</div></div></article>`;}
+function card(item){return `<article class="history-item" data-simulation-id="${esc(item._id)}"><div class="history-company"><span class="history-company-symbol">${icon('companies')}</span><div><small>EMPRESA ${esc(item.company.code||'SEM CÓDIGO')}</small><h3>${esc(item.company.name)}</h3></div></div><p class="history-title">${esc(item.title||'Simulação tributária')}</p><div class="history-tags"><span class="history-tag">CENÁRIO ${esc(item.year)}</span><span class="history-tag">${esc(item.reportMonths)} ${item.reportMonths===1?'MÊS':'MESES'} NOS RELATÓRIOS</span>${item.manuallyAdjusted?'<span class="history-tag adjusted">VALORES AJUSTADOS</span>':''}</div><div class="history-financials"><div><span>Receita anual estimada</span><strong>${money(item.annualRevenue)}</strong><small>Referência mensal × 12</small></div><div class="best"><span>Maior resultado anual</span><strong>${money(item.bestAnnualProfit)}</strong><small>${esc(item.bestRegimeName||'Sem ranking neste cenário')}</small></div></div><div class="history-item-footer"><p>Salva em ${date(item.createdAt)}<br>Por ${esc(item.createdBy?.name||'Equipe Maximum')}</p><div class="history-item-actions"><a href="/simulator.html?${new URLSearchParams({simulation:item._id})}">Rever simulação →</a>${canDelete()?`<button type="button" class="history-delete" data-delete-simulation="${esc(item._id)}" aria-label="Excluir simulação de ${esc(item.company.name)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg>Excluir</button>`:''}</div></div></article>`;}
 function openDelete(id,trigger){
  const item=state.items.find(record=>record._id===id);
  if(!item||!canDelete()||state.deleting)return;
@@ -44,7 +44,7 @@ function openDelete(id,trigger){
 }
 function setDeleting(value){
  state.deleting=value;$('#delete-simulation-confirm').disabled=value;$('#delete-simulation-cancel').disabled=value;
- $('#delete-simulation-confirm').textContent=value?'Excluindo…':'Excluir simulação';
+ $('#delete-simulation-confirm').textContent=value?'Excluindo…':'Excluir definitivamente';
  $('#delete-simulation-dialog').setAttribute('aria-busy',String(value));
 }
 async function confirmDelete(){
@@ -59,7 +59,7 @@ async function confirmDelete(){
   $('#delete-simulation-status').textContent='';return;
  }finally{clearTimeout(timer);setDeleting(false);}
  $('#delete-simulation-dialog').close();
- $('#history-feedback').textContent='Simulação excluída do histórico.';
+ $('#history-feedback').textContent='Simulação excluída definitivamente.';
  await load(true);
 }
 async function load(focusAfter=false){

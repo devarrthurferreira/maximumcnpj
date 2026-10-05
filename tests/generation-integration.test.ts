@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { database, collection, scope, closeDatabase } from '../src/store.ts';
-import { resetLookupIndexes } from '../src/lookup-db.ts';
+import { resetLookupIndexes, getJob, withJob } from '../src/lookup-db.ts';
 import { importCatalog } from '../src/lookup-catalog.ts';
-import { createGeneration, getGeneration, generationHistory, attachGenerationPurchase, attachGenerationSale, withGeneration } from '../src/generation-store.ts';
-import { uploadLookup, finalizeLookup, cancelLookup, processLookup } from '../src/lookup-jobs.ts';
+import { createGeneration, getGeneration, generationHistory, attachGenerationPurchase, attachGenerationSale, withGeneration, deleteGeneration } from '../src/generation-store.ts';
+import { createLookup, uploadLookup, finalizeLookup, cancelLookup, processLookup } from '../src/lookup-jobs.ts';
+import { PURCHASE_MODE } from '../src/purchase-domain.ts';
+import { generationDeletion } from '../src/generation-deletion.ts';
 import { purchaseSummary, purchaseHistory } from '../src/purchase-store.ts';
 import { routeV4 } from '../src/lookup-http.ts';
 import { generationSimulator } from '../src/simulator-store.ts';
@@ -302,5 +304,132 @@ test('MongoDB gerações: vendas e compras independentes, requisitos e históric
     resetLookupIndexes();
     if (oldDb === undefined) delete process.env.MONGODB_DB; else process.env.MONGODB_DB = oldDb;
     if (oldWs === undefined) delete process.env.WORKSPACE_ID; else process.env.WORKSPACE_ID = oldWs;
+  }
+});
+
+test('MongoDB exclusão de geração: purge exclusivo, leases, recibos e retomada sem recriação', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
+  const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
+  process.env.MONGODB_DB = 'maximum_generation_delete_test_' + randomUUID().replaceAll('-', '');
+  process.env.WORKSPACE_ID = 'generation_delete_test'; resetLookupIndexes();
+  const actor = {_id:'deleter',role:'operator',name:'Operador',email:'delete@example.test'};
+  const errorCode = (code: string) => (error: any) => error.code === code;
+  const row = {document:'12345678900',name:'Pessoa sintética',serviceDate:'2026-08-15',quantity:'1',
+    grossCents:10000,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:10000};
+  try {
+    const catalog = await importCatalog({...actor,role:'admin'}, [{code:'1',name:'Empresa sintética'},{code:'2',name:'Outra empresa'}]);
+    const [clientId, otherClient] = catalog.items.map((client:any)=>client.id);
+    const input = {generationId:randomUUID(),clientIds:[clientId]};
+    const generation = await createGeneration(actor,input), id = generation._id;
+    const importInput = {clientId,importId:randomUUID(),fileName:'compras-sinteticas.csv',expectedRows:1};
+    const purchase = (await attachGenerationPurchase(actor,id,importInput)).job;
+    await uploadLookup(actor,purchase._id,{offset:0,rows:[row]}); await finalizeLookup(actor,purchase._id);
+    const cancelled = (await attachGenerationSale(actor,id,{...importInput,importId:randomUUID()})).job;
+    await uploadLookup(actor,cancelled._id,{offset:0,rows:[row]}); await cancelLookup(actor,cancelled._id);
+    const sale = (await attachGenerationSale(actor,id,{...importInput,importId:randomUUID()})).job;
+    await uploadLookup(actor,sale._id,{offset:0,rows:[row]});
+    const orphan = await createLookup(actor,{...importInput,importId:randomUUID()},PURCHASE_MODE);
+    await (await collection('lookupJobs')).updateOne(scope({_id:orphan._id}),{$set:{generationId:id}});
+    const independent = await createLookup(actor,{...importInput,importId:randomUUID()},PURCHASE_MODE);
+    const otherGeneration = await createGeneration(actor,{generationId:randomUUID(),clientIds:[otherClient]});
+    const otherJob = (await attachGenerationPurchase(actor,otherGeneration._id,{...importInput,clientId:otherClient,importId:randomUUID()})).job;
+    const jobIds = [purchase._id,cancelled._id,sale._id,orphan._id];
+    await (await collection('lookupItems')).insertOne({_id:purchase._id+':synthetic',...scope(),jobId:purchase._id,state:'DONE'});
+    await (await collection('lookupItems')).insertOne({_id:'foreign-item',workspaceId:'other_workspace',jobId:purchase._id,state:'DONE'});
+    await (await collection('chunks')).insertOne({_id:'lookup:'+purchase._id+':foreign',workspaceId:'other_workspace'});
+    const snapshotId = randomUUID(), pdfId = randomUUID();
+    await (await collection('simulations')).insertOne({_id:snapshotId,...scope(),generationId:id,frozen:true});
+    await (await collection('simplesDocuments')).insertOne({_id:pdfId,...scope(),clientId});
+    await (await collection('cnpjStates')).insertOne({_id:'shared-state',...scope(),cnpj:'00000000000191'});
+    await (await collection('cnpjEntities')).insertOne({_id:'shared-entity',...scope(),cnpj:'00000000000191'});
+    const url = new URL('https://test/api/v4/generations/'+id);
+    await assert.rejects(routeV4({...actor,role:'viewer'},'DELETE',url,{}),errorCode('FORBIDDEN'));
+    process.env.WORKSPACE_ID = 'other_workspace';
+    await assert.rejects(deleteGeneration(actor,id),errorCode('NOT_FOUND'));
+    process.env.WORKSPACE_ID = 'generation_delete_test';
+
+    for (const kind of ['generation','job']) {
+      let acquired!:()=>void, release!:()=>void;
+      const ready = new Promise<void>(resolve=>{acquired=resolve;}), wait = new Promise<void>(resolve=>{release=resolve;});
+      const held = kind==='generation'
+        ? withGeneration(id,async()=>{acquired();await wait;})
+        : withJob(sale._id,async()=>{acquired();await wait;});
+      await ready;
+      try {
+        await assert.rejects(deleteGeneration(actor,id),errorCode('GENERATION_BUSY'));
+        assert.equal(await generationDeletion(id),null);
+        assert.equal(await (await collection('lookupJobs')).countDocuments(scope({_id:{$in:jobIds}})),4);
+        assert.equal((await (await collection('generations')).findOne(scope({_id:id})))?.deletionStartedAt,undefined);
+      } finally { release(); await held; }
+    }
+
+    // Failure before the reservation is durable must keep a visible, retryable generation.
+    const events = await collection('audit'), eventProto = Object.getPrototypeOf(events), originalUpdateOne = eventProto.updateOne;
+    eventProto.updateOne = function(...args:any[]) {
+      if(this.collectionName==='audit'&&args[1]?.$setOnInsert?.action==='generation.delete')throw new Error('synthetic receipt interruption');
+      return originalUpdateOne.apply(this,args);
+    };
+    try { await assert.rejects(deleteGeneration(actor,id),/synthetic receipt interruption/); }
+    finally { eventProto.updateOne = originalUpdateOne; }
+    assert.equal(await generationDeletion(id),null);
+    assert.equal((await generationHistory(1)).items.some(item=>item._id===id),true);
+    assert.equal((await (await collection('generations')).findOne(scope({_id:id})))?.deletionStartedAt,undefined);
+    assert.equal(await (await collection('lookupJobs')).countDocuments(scope({_id:{$in:jobIds}})),4);
+
+    // If per-job receipts fail, the durable generation receipt still fences every writer.
+    const originalBulkWrite = eventProto.bulkWrite;
+    eventProto.bulkWrite = function(...args:any[]) {
+      if(this.collectionName==='audit')throw new Error('synthetic job receipt interruption');
+      return originalBulkWrite.apply(this,args);
+    };
+    try { await assert.rejects(deleteGeneration(actor,id),/synthetic job receipt interruption/); }
+    finally { eventProto.bulkWrite = originalBulkWrite; }
+    assert(await generationDeletion(id));
+    await assert.rejects(getJob(sale._id),errorCode('NOT_FOUND'));
+    await assert.rejects(uploadLookup(actor,sale._id,{offset:0,rows:[row]}),errorCode('GENERATION_DELETED'));
+
+    // A failed cleanup leaves reservations in place, then DELETE resumes using its owned IDs.
+    const lines = await collection('purchaseLines'), proto = Object.getPrototypeOf(lines), originalDeleteMany = proto.deleteMany;
+    let interrupted = false;
+    proto.deleteMany = function(...args:any[]) {
+      if(this.collectionName==='purchaseLines'&&!interrupted){interrupted=true;throw new Error('synthetic purge interruption');}
+      return originalDeleteMany.apply(this,args);
+    };
+    try { await assert.rejects(deleteGeneration(actor,id),/synthetic purge interruption/); }
+    finally { proto.deleteMany = originalDeleteMany; }
+    assert.equal(interrupted,true);
+    assert.equal((await generationHistory(1)).items.some(item=>item._id===id),false);
+    await assert.rejects(getGeneration(id),errorCode('NOT_FOUND'));
+    await assert.rejects(uploadLookup(actor,sale._id,{offset:0,rows:[row]}),errorCode('LOOKUP_DELETED'));
+    const receiptBefore = await generationDeletion(id);
+    assert.deepEqual((await routeV4(actor,'DELETE',url,{})),{deleted:true,id});
+    assert.deepEqual(await deleteGeneration({...actor,_id:'another-operator'},id),{deleted:true,id});
+    const receipt = await generationDeletion(id);
+    assert.equal(receipt?.actor,'deleter');
+    assert.equal(receipt?.createdAt.getTime(),receiptBefore?.createdAt.getTime());
+    assert.deepEqual([...receipt!.jobIds].sort(),jobIds.sort());
+    assert.deepEqual(Object.keys(receipt!).sort(),['_id','action','actor','createdAt','jobIds','target','workspaceId'].sort());
+    assert.equal(await (await collection('generations')).countDocuments(scope({_id:id})),0);
+    assert.equal(await (await collection('lookupJobs')).countDocuments(scope({_id:{$in:jobIds}})),0);
+    for(const name of ['lookupStage','purchaseLines','lookupItems']){
+      assert.equal(await (await collection(name)).countDocuments(scope({jobId:{$in:jobIds}})),0,name);
+    }
+    assert.equal(await (await collection('chunks')).countDocuments(scope({_id:{$regex:'^lookup:(?:'+jobIds.join('|')+'):'}})),0);
+    assert.equal(await (await collection('lookupJobs')).countDocuments(scope({_id:{$in:[independent._id,otherJob._id]}})),2);
+    assert.equal(await (await collection('simulations')).countDocuments(scope({_id:snapshotId})),1);
+    assert.equal(await (await collection('simplesDocuments')).countDocuments(scope({_id:pdfId})),1);
+    assert.equal(await (await collection('clients')).countDocuments(scope()),2);
+    assert.equal(await (await collection('cnpjStates')).countDocuments(scope()),1);
+    assert.equal(await (await collection('cnpjEntities')).countDocuments(scope()),1);
+    assert.equal(await (await collection('lookupItems')).countDocuments({workspaceId:'other_workspace',jobId:purchase._id}),1);
+    assert.equal(await (await collection('chunks')).countDocuments({_id:'lookup:'+purchase._id+':foreign'}),1);
+    await assert.rejects(createGeneration(actor,input),errorCode('GENERATION_DELETED'));
+    await assert.rejects(createLookup(actor,importInput,PURCHASE_MODE),errorCode('LOOKUP_DELETED'));
+    await assert.rejects(attachGenerationPurchase(actor,id,{...importInput,importId:randomUUID()}),errorCode('NOT_FOUND'));
+    await assert.rejects(getJob(purchase._id),errorCode('NOT_FOUND'));
+    assert.equal((await getGeneration(otherGeneration._id))._id,otherGeneration._id);
+  } finally {
+    await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
+    if(oldDb===undefined)delete process.env.MONGODB_DB;else process.env.MONGODB_DB=oldDb;
+    if(oldWs===undefined)delete process.env.WORKSPACE_ID;else process.env.WORKSPACE_ID=oldWs;
   }
 });

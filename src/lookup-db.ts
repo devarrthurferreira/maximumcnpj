@@ -2,6 +2,7 @@ import { collection, scope } from './store.ts';
 import { need } from './security.ts';
 import { randomUUID } from 'node:crypto';
 import type { Doc } from './store.ts';
+import { assertLookupNotDeleted, lookupDeleted, assertGenerationNotDeleted, generationDeletion } from './generation-deletion.ts';
 let ready:Promise<void>|undefined;
 export function ensureLookupIndexes() {
   if (!ready) ready=(async()=>{
@@ -25,10 +26,11 @@ export function resetLookupIndexes(){ready=undefined;}
 export type LookupActor={_id:string;role:string;name:string;email:string};
 export function write(actor:LookupActor){need(['admin','operator'].includes(actor.role),'Acesso somente de leitura.',403,'FORBIDDEN');}
 export function admin(actor:LookupActor){need(actor.role==='admin','Ação exclusiva do administrador.',403,'FORBIDDEN');}
-export async function getJob(id:string){const j=await (await collection('lookupJobs')).findOne(scope({_id:id}));need(j,'Consulta não encontrada.',404);return j;}
+export async function getJob(id:string){const j=await (await collection('lookupJobs')).findOne(scope({_id:id}));need(j,'Consulta não encontrada.',404,'NOT_FOUND');need(!await lookupDeleted(id)&&(!j.generationId||!await generationDeletion(j.generationId)),'Consulta não encontrada.',404,'NOT_FOUND');return j;}
 export async function withJob<T>(id:string, action:(job:Doc)=>Promise<T>):Promise<T>{
+  await assertLookupNotDeleted(id);
   const c=await collection('lookupJobs'),owner=randomUUID(),now=new Date();
   const job=await c.findOneAndUpdate(scope({_id:id,$or:[{leaseUntil:{$exists:false}},{leaseUntil:{$lt:now}}]}),{$set:{leaseOwner:owner,leaseUntil:new Date(Date.now()+120000)}},{returnDocument:'after'});
   need(job,'Consulta ocupada. Tente novamente em instantes.',409,'JOB_BUSY');
-  try{return await action(job);}finally{await c.updateOne(scope({_id:id,leaseOwner:owner}),{$unset:{leaseUntil:'',leaseOwner:''}});}
+  try{await assertLookupNotDeleted(id);if(job.generationId)await assertGenerationNotDeleted(job.generationId);return await action(job);}finally{await c.updateOne(scope({_id:id,leaseOwner:owner}),{$unset:{leaseUntil:'',leaseOwner:''}});}
 }

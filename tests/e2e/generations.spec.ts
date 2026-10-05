@@ -58,3 +58,62 @@ test('Simulator unlocks only the two completed reports of the same company',asyn
  await expect(first.getByRole('link',{name:'Ir para o simulador'})).toHaveAttribute('href',`/simulator.html?generation=${id}&client=${clients[0]._id}`);
  await expect(second.getByRole('button',{name:'Ir para o simulador'})).toBeDisabled();
 });
+test('Histórico tem botão Excluir independente do link e cancelar não altera a geração',async({page},info)=>{
+ await session(page);let deletions=0,detailReads=0;
+ await page.route(/\/api\/v4\/generations(?:[/?]|$)/,r=>{
+  if(r.request().method()==='DELETE'){deletions++;return r.fulfill({json:{deleted:true,id}});}
+  if(new URL(r.request().url()).pathname!=='/api/v4/generations'){detailReads++;return r.fulfill({json:base});}
+  return r.fulfill({json:{items:[base],total:1,page:1,pageSize:20}});
+ });
+ await page.goto('/generations.html?view=history');
+ const remove=page.locator(`button[data-delete-generation="${id}"]`),dialog=page.getByRole('dialog',{name:'Excluir geração definitivamente?'});
+ await expect(page.locator(`.generation-history-item[href="/generations.html?id=${id}"]`)).toBeVisible();
+ expect(await remove.evaluate(el=>el.closest('a')===null)).toBe(true);
+ for(const width of [1440,390]){
+  await page.setViewportSize({width,height:900});await expect(remove).toBeVisible();
+  const list=info.outputPath(`historico-excluir-${width}.png`);await page.screenshot({path:list});await info.attach(`Botão no Histórico ${width}`,{path:list,contentType:'image/png'});
+  const before=page.url();await remove.click();await expect(dialog).toBeVisible();expect(page.url()).toBe(before);
+  await expect(page.locator('#delete-generation-cancel')).toBeFocused();await expect(page.locator('#delete-generation-target')).toContainText(clients[0].name);
+  await expect(page.locator('#delete-generation-description')).toContainText('compras');await expect(page.locator('#delete-generation-confirm')).toHaveText('Excluir definitivamente');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  const modal=info.outputPath(`geracao-excluir-confirmacao-${width}.png`);await page.screenshot({path:modal});await info.attach(`Confirmação da geração ${width}`,{path:modal,contentType:'image/png'});
+  if(width===1440)await page.locator('#delete-generation-cancel').click();else await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();await expect(remove).toBeFocused();
+ }
+ expect(deletions).toBe(0);expect(detailReads).toBe(0);
+});
+test('Excluir geração confirma o alvo, preserva após falha e ajusta a última página após repetir',async({page})=>{
+ await session(page);let deleted=false;const deletions:string[]=[];let release!:()=>void;const gate=new Promise<void>(resolve=>release=resolve);
+ const remaining=Array.from({length:20},(_,index)=>({...base,_id:`00000000-0000-4000-8000-${String(index+100).padStart(12,'0')}`}));
+ await page.route(/\/api\/v4\/generations(?:[/?]|$)/,async r=>{
+  const url=new URL(r.request().url());
+  if(r.request().method()==='DELETE'){
+   deletions.push(url.pathname);
+   if(deletions.length===1){await gate;return r.fulfill({status:503,json:{message:'Não foi possível excluir agora. Tente novamente.'}});}
+   deleted=true;return r.fulfill({json:{deleted:true,id}});
+  }
+  expect(url.pathname).toBe('/api/v4/generations');const pageNumber=Number(url.searchParams.get('page'));
+  return r.fulfill({json:{items:pageNumber===2?(deleted?[]:[base]):remaining,total:deleted?20:21,page:pageNumber,pageSize:20}});
+ });
+ await page.goto('/generations.html?view=history');await page.getByRole('button',{name:'Próxima',exact:true}).click();
+ await expect(page.locator('.pagination')).toContainText('2 / 2');await page.locator(`[data-delete-generation="${id}"]`).click();
+ const dialog=page.getByRole('dialog',{name:'Excluir geração definitivamente?'}),confirm=page.locator('#delete-generation-confirm');
+ const started=page.waitForRequest(r=>r.method()==='DELETE');await confirm.click();await started;
+ try{
+  await expect(confirm).toBeDisabled();await expect(page.locator('#delete-generation-cancel')).toBeDisabled();
+  await page.keyboard.press('Enter');await page.keyboard.press('Escape');await expect(dialog).toBeVisible();
+  expect(deletions).toEqual([`/api/v4/generations/${id}`]);
+ }finally{release();}
+ await expect(page.locator('#delete-generation-error')).toContainText('Tente novamente');await expect(confirm).toBeEnabled();
+ await expect(page.locator(`[data-generation-id="${id}"]`)).toHaveCount(1);
+ await confirm.click();await expect(dialog).toBeHidden();await expect(page.locator('.pagination')).toContainText('1 / 1');
+ await expect(page.locator(`[data-generation-id="${id}"]`)).toHaveCount(0);await expect(page.locator('.generation-history-row')).toHaveCount(20);
+ await expect(page.locator('#generation-feedback')).toContainText('excluídos definitivamente');
+ expect(deletions).toEqual([`/api/v4/generations/${id}`,`/api/v4/generations/${id}`]);
+});
+test('Histórico de gerações permanece consultável para viewer sem botão Excluir',async({page})=>{
+ await session(page);await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'reader',role:'viewer',name:'Leitura'}}}));
+ await page.route('**/api/v4/generations?*',r=>r.fulfill({json:{items:[base],total:1,page:1,pageSize:20}}));
+ await page.goto('/generations.html?view=history');await expect(page.locator('.generation-history-item')).toBeVisible();
+ await expect(page.locator('[data-delete-generation]')).toHaveCount(0);await expect(page.getByRole('dialog')).toHaveCount(0);
+});

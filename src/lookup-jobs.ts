@@ -8,16 +8,21 @@ import type { LookupActor } from './lookup-db.ts';
 import { PURCHASE_MODE, SALES_MODE, isFinancialMode, PURCHASE_CALCULATION_VERSION, calculationVersion, compactPurchaseLine } from './purchase-domain.ts';
 import { finalizePurchaseUpload, purchaseSummary } from './purchase-store.ts';
 import { processLookupBatch } from './lookup-engine.ts';
+import { assertLookupNotDeleted, assertGenerationNotDeleted } from './generation-deletion.ts';
 export async function createLookup(actor:LookupActor,input:any,mode=LOOKUP_MODE){
   need([LOOKUP_MODE,PURCHASE_MODE,SALES_MODE].includes(mode),'Tipo de consulta inválido.');
   write(actor);await ensureLookupIndexes();
   const id=text(input.importId);need(/^[a-f0-9-]{36}$/.test(id),'Identificador inválido.');
+  await assertLookupNotDeleted(id);
   const c=await (await collection('clients')).findOne(scope({_id:text(input.clientId),active:true}));need(c,'Escolha uma empresa/carteira ativa.');
   const expected=integer(input.expectedRows,1,MAX_ROWS),fileName=text(input.fileName,200);
   const jobs=await collection('lookupJobs'),old=await jobs.findOne(scope({_id:id}));
-  if(old){need(old.mode===mode&&old.clientId===c._id&&old.expectedRows===expected&&old.fileName===fileName&&old.createdBy===actor._id,'Identificador já utilizado por outro lote.',409);return old;}
+  if(old){if(old.generationId)await assertGenerationNotDeleted(old.generationId);need(old.mode===mode&&old.clientId===c._id&&old.expectedRows===expected&&old.fileName===fileName&&old.createdBy===actor._id,'Identificador já utilizado por outro lote.',409);return old;}
   const job={_id:id,...scope(),mode,...(isFinancialMode(mode)?{calculationVersion:PURCHASE_CALCULATION_VERSION}:{}),clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
-  await jobs.insertOne(job);await audit(actor._id,'lookup.create',id);return job;
+  await jobs.insertOne(job);
+  try { await assertLookupNotDeleted(id); }
+  catch (error) { await jobs.deleteOne(scope({_id:id})); throw error; }
+  await audit(actor._id,'lookup.create',id);return job;
 }
 export async function uploadLookup(actor:LookupActor,id:string,input:any){
   write(actor);return withJob(id,async j=>{
