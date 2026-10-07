@@ -132,11 +132,15 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
   }
   const excluded = [...excludedByKind.values()];
   const lines = grouped.reduce((sum, g) => sum + g.lines, 0), cnpjLines = valid.reduce((sum, g) => sum + g.lines, 0);
-  const cnpjCents = mode === SALES_MODE ? exactSignedCents(valid.reduce((sum, g) => sum + reportingValue(g), 0)) : exactCents(valid.reduce((sum, g) => sum + reportingValue(g), 0));
+  const rawTotalCents = exactCents(grouped.reduce((sum, g) => sum + exactCents(g.totalCents), 0));
+  const rawCnpjCents = exactCents(valid.reduce((sum, g) => sum + exactCents(g.totalCents), 0));
+  const cnpjCents = mode === SALES_MODE ? exactSignedCents(valid.reduce((sum, g) => sum + reportingValue(g), 0)) : rawCnpjCents;
   const nonCnpjCents = mode === SALES_MODE ? exactSignedCents(excluded.reduce((sum, g) => sum + g.totalCents, 0)) : exactCents(excluded.reduce((sum, g) => sum + g.totalCents, 0));
-  const totalCents = mode === SALES_MODE ? exactSignedCents(cnpjCents + nonCnpjCents) : exactCents(cnpjCents + nonCnpjCents);
+  const totalCents = mode === SALES_MODE ? exactSignedCents(cnpjCents + nonCnpjCents) : rawTotalCents;
   need(lines === job.expectedRows && lines === job.summary.lines && valid.length === job.summary.unique && items.length === valid.length &&
-    lines - cnpjLines === job.summary.invalid && cnpjLines - valid.length === job.summary.duplicates && (mode === SALES_MODE ? job.purchaseInput.balanceCents === totalCents : job.purchaseInput.totalCents === totalCents) && (mode === SALES_MODE || job.purchaseInput.cnpjCents === cnpjCents),
+    lines - cnpjLines === job.summary.invalid && cnpjLines - valid.length === job.summary.duplicates &&
+    job.purchaseInput.totalCents === rawTotalCents && job.purchaseInput.cnpjCents === rawCnpjCents &&
+    (mode !== SALES_MODE || job.purchaseInput.balanceCents === totalCents),
     'Linhas, CNPJs ou valores divergentes do snapshot. Emissão bloqueada.', 409, 'RESULT_COUNT');
   const indexed = new Map(items.map(item => [item.cnpj, item]));
   const groups = PURCHASE_STATUSES.map(status => ({status, count: 0, lines: 0, totalCents: 0, countPercent: 0, valuePercent: 0}));
