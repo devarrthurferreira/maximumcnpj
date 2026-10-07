@@ -15,7 +15,7 @@ const guided = new URLSearchParams(location.search).get('guided') === '1';
 const sales = reportType === 'SALES';
 const labels = {ALL:'Todos os enquadramentos', ...REPORTING_LABELS, ...(sales ? {CPF:'CPF'} : {})};
 const groupLabels = sales ? {OPTANTE:'Faturamento vendas Optantes SN',NAO_OPTANTE:'Faturamento vendas Não Optantes SN',CPF:'Faturamento Vendas de CPFs'} : {OPTANTE:'Compras de empresas do Simples',NAO_OPTANTE:'Compras de empresas fora do Simples'};
-const operationLabels = {VENDA:'Vendas',SERVICO:'Serviços',DEVOLUCAO:'Devoluções',OUTRAS:'Outras'};
+const operationLabels = {VENDA:'Vendas',SERVICO:'Serviços',DEVOLUCAO:'Devoluções',OUTRAS:'Outras',MISTAS:'Múltiplas'};
 const groupingHelp = sales ? 'Vendas separadas em três grupos: optantes pelo Simples, não optantes e CPFs. CNPJs não confirmados, CNO e documentos inválidos ou ausentes entram em Não optantes. CPF tem seu próprio grupo. Devoluções sempre abatem o saldo líquido.' : 'Compras separadas em dois grupos: empresas do Simples e empresas fora do Simples. CPF, CNO, documentos inválidos ou ausentes e resultados não confirmados entram em fora do Simples.';
 const reportName = sales ? 'Vendas' : 'Compras', reportLower = reportName.toLowerCase();
 const party = sales ? 'comprador' : 'fornecedor', parties = sales ? 'compradores' : 'fornecedores';
