@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from html import escape
 from io import BytesIO
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
 from pathlib import Path
 from functools import lru_cache
@@ -74,6 +74,13 @@ def _check(condition):
             'Linhas, CNPJs ou valores divergentes do snapshot. Emissão bloqueada para conferência.')
 
 
+def _signed_integer(value, maximum=MAX_SAFE_INTEGER):
+    _check(isinstance(value, (int, float)) and not isinstance(value, bool) and
+           (not isinstance(value, float) or math.isfinite(value) and value.is_integer()) and
+           -min(maximum, MAX_SAFE_INTEGER) <= value <= min(maximum, MAX_SAFE_INTEGER))
+    return int(value)
+
+
 def _integer(value, maximum=MAX_SAFE_INTEGER):
     # The Node MongoDB driver writes large JavaScript Numbers as BSON doubles.
     # Accept their exact integral values, then keep every calculation in Python ints.
@@ -124,7 +131,8 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     _integer(financial.get('cnpjCents'))
 
     by_cnpj, indexes, non_cnpj_documents, cpf_documents = {}, set(), set(), set()
-    total_cents = non_cnpj_cents = excluded_lines = cpf_cents = cpf_lines = 0
+    total_raw_cents = total_cents = non_cnpj_cents = excluded_lines = cpf_cents = cpf_lines = 0
+    operation_totals = {key: {'operation': key, 'lines': 0, 'totalCents': 0, 'balanceCents': 0} for key in ('VENDA','SERVICO','DEVOLUCAO','OUTRAS')}
     quantity = Decimal(0)
     # v0.8.0 dropped the redundant partner kind when copying financial lines.
     # Its server-owned SALES_V1 job still identifies buyers; explicit mismatches
@@ -142,7 +150,18 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         _check(row.get('documentKind') == _document_kind(document))
         valid = _valid_cnpj(document)
         _check(row['valid'] == valid and row.get('cnpj') == (document if valid else ''))
-        cents = _integer(row.get('totalCents'), 100_000_000_000)
+        raw_cents = _integer(row.get('totalCents'), 100_000_000_000)
+        operation = row.get('operation') if sales else None
+        if sales:
+            operation = operation if operation in operation_totals else 'OUTRAS'
+            balance_cents = _signed_integer(row.get('balanceCents', -raw_cents if operation == 'DEVOLUCAO' else raw_cents), 100_000_000_000)
+            _check(balance_cents == (-raw_cents if operation == 'DEVOLUCAO' else raw_cents))
+            operation_totals[operation]['lines'] += 1
+            operation_totals[operation]['totalCents'] = _integer(operation_totals[operation]['totalCents'] + raw_cents)
+            operation_totals[operation]['balanceCents'] = _signed_integer(operation_totals[operation]['balanceCents'] + balance_cents)
+        else:
+            balance_cents = raw_cents
+        cents = raw_cents
         if components is not None:
             values = {key: _integer(row.get(key), 100_000_000_000) for key in COMPONENT_FIELDS}
             _check(values['grossCents'] - values['discountCents'] + values['freightCents'] - values['abatementCents'] == cents)
@@ -151,24 +170,28 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         qty = row.get('quantity')
         _check(isinstance(qty, str) and re.fullmatch(r'\d{1,9}(?:\.\d{1,6})?', qty))
         quantity += Decimal(qty)
-        total_cents = _integer(total_cents + cents)
+        total_raw_cents = _integer(total_raw_cents + raw_cents)
+        total_cents = _signed_integer(total_cents + balance_cents) if sales else _integer(total_cents + balance_cents)
         if valid:
-            supplier = by_cnpj.setdefault(document, {'lines': 0, 'totalCents': 0})
+            supplier = by_cnpj.setdefault(document, {'lines': 0, 'totalCents': 0, 'balanceCents': 0})
             supplier['lines'] += 1
-            supplier['totalCents'] = _integer(supplier['totalCents'] + cents)
+            supplier['totalCents'] = _integer(supplier['totalCents'] + raw_cents)
+            supplier['balanceCents'] = _signed_integer(supplier['balanceCents'] + balance_cents) if sales else _integer(supplier['balanceCents'] + balance_cents)
         else:
             excluded_lines += 1
-            non_cnpj_cents = _integer(non_cnpj_cents + cents)
+            non_cnpj_cents = _signed_integer(non_cnpj_cents + balance_cents) if sales else _integer(non_cnpj_cents + balance_cents)
             non_cnpj_documents.add((row['documentKind'], document) if document else ('AUSENTE', index))
             if row['documentKind'] == 'CPF':
                 cpf_documents.add(document)
                 cpf_lines += 1
-                cpf_cents = _integer(cpf_cents + cents)
+                cpf_cents = _signed_integer(cpf_cents + balance_cents) if sales else _integer(cpf_cents + balance_cents)
     line_count, unique = len(indexes), len(by_cnpj)
     cnpj_cents = total_cents - non_cnpj_cents
     _check(line_count == expected == summary['lines'] and unique == summary['unique'] and
            excluded_lines == summary['invalid'] and line_count - excluded_lines - unique == summary['duplicates'] and
-           total_cents == financial['totalCents'] and cnpj_cents == financial['cnpjCents'])
+           total_raw_cents == financial['totalCents'])
+    if sales and 'balanceCents' in financial:
+        _check(_signed_integer(financial.get('balanceCents')) == total_cents)
     if components is not None:
         stored_components = financial.get('components')
         _check(isinstance(stored_components, dict))
@@ -198,13 +221,13 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         group = groups[item['status']]
         group['suppliers'] += 1
         group['lines'] += supplier['lines']
-        group['totalCents'] += supplier['totalCents']
+        group['totalCents'] += supplier['balanceCents'] if sales else supplier['totalCents']
     _check(len(seen) == unique)
     groups['NAO_CONSULTAVEL'].update(lines=excluded_lines, totalCents=non_cnpj_cents)
     for group in groups.values():
         group['supplierPercent'] = percentage(group['suppliers'], unique)
-        group['valuePercent'] = percentage(group['totalCents'], cnpj_cents) if group['status'] != 'NAO_CONSULTAVEL' else None
-        group['fileValuePercent'] = percentage(group['totalCents'], total_cents)
+        group['valuePercent'] = (round(group['totalCents'] / cnpj_cents * 100, 2) if sales and cnpj_cents else percentage(group['totalCents'], cnpj_cents)) if group['status'] != 'NAO_CONSULTAVEL' else None
+        group['fileValuePercent'] = round(group['totalCents'] / total_cents * 100, 2) if sales and total_cents else percentage(group['totalCents'], total_cents)
     unknown = dict(groups['NAO_CONFIRMADO'])
     unique_documents = unique + len(non_cnpj_documents)
     optant = groups['OPTANTE']
@@ -230,9 +253,16 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         reporting_groups.append({'status': 'CPF', 'count': len(cpf_documents), 'lines': cpf_lines, 'totalCents': cpf_cents,
                                  'unconfirmedCount': 0, 'unconfirmedCents': 0,
                                  'nonCnpjCount': len(cpf_documents), 'nonCnpjCents': cpf_cents})
-        for metric, field in (('count', 'countPercent'), ('totalCents', 'valuePercent')):
-            for group, value in zip(reporting_groups, reporting_percentages([group[metric] for group in reporting_groups])):
-                group[field] = value
+        for group, value in zip(reporting_groups, reporting_percentages([group['count'] for group in reporting_groups])):
+            group['countPercent'] = value
+        if total_cents:
+            values = [int((Decimal(group['totalCents']) * Decimal(10000) / Decimal(total_cents)).quantize(Decimal('1'), rounding=ROUND_HALF_UP)) for group in reporting_groups]
+            values[-1] += 10000 - sum(values)
+            for group, value in zip(reporting_groups, values):
+                group['valuePercent'] = value / 100
+        else:
+            for group in reporting_groups:
+                group['valuePercent'] = 0
     labels = {'OPTANTE': 'Optantes SN', 'NAO_OPTANTE': 'Não optantes SN', 'CPF': 'CPFs'} if sales else {
         'OPTANTE': 'Simples', 'NAO_OPTANTE': 'Não optante'}
     managerial_groups = [{**group, 'label': labels[group['status']],
@@ -246,7 +276,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             'uniqueDocuments': unique_documents, 'nonCnpjDocumentCount': len(non_cnpj_documents),
             'cpfCents': cpf_cents, 'cpfDocumentCount': len(cpf_documents), 'cpfLineCount': cpf_lines,
             'reportingGroups': reporting_groups, 'managerialGroups': managerial_groups,
-            'unconfirmed': unknown, 'components': components, 'calculationVersion': version,
+            'unconfirmed': unknown, 'components': components, 'operationTotals': list(operation_totals.values()) if sales else [], 'calculationVersion': version,
             'quantityDisplay': quantity_text.replace('.', ','), 'generatedAt': utcnow(),
             'firstCheck': min(checks) if checks else None, 'lastCheck': max(checks) if checks else None}
 
@@ -255,7 +285,7 @@ def purchase_metadata(db, job, workspace):
     """Read only the selected job and join states by workspace, exact identity and state ID."""
     query = {'workspaceId': workspace, 'jobId': job['_id']}
     lines = db.purchaseLines.find(query, {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'index': 1, 'document': 1,
-                                        'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'totalCents': 1, 'valid': 1, 'kind': 1,
+                                        'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'operation': 1, 'balanceCents': 1, 'totalCents': 1, 'valid': 1, 'kind': 1,
                                         **{key: 1 for key in COMPONENT_FIELDS}})
     lines = lines.limit(50_001).batch_size(500).max_time_ms(20000)
     items = db.lookupItems.aggregate([
@@ -271,8 +301,10 @@ def purchase_metadata(db, job, workspace):
 
 
 def money(cents):
-    """Format integer cents without conversion to floating point."""
-    return f'R$ {number(cents // 100)},{cents % 100:02d}'
+    """Format integer cents without conversion to floating point, including returns."""
+    sign = '-' if cents < 0 else ''
+    value = abs(cents)
+    return f'{sign}R$ {number(value // 100)},{value % 100:02d}'
 
 
 def purchase_pdf_styles():
@@ -334,6 +366,12 @@ def purchase_story(meta, width, styles):
     rows.append(['TOTAL', number(meta['uniqueDocuments']), percent(100 if meta['uniqueDocuments'] else 0),
                  number(meta['lineCount']), money(meta['totalCents']), percent(100 if meta['totalCents'] else 0)])
     story += [purchase_table(rows, (.24, .12, .16, .08, .24, .16), width, styles, True), Spacer(1, 6)]
+    if sales and meta.get('operationTotals'):
+        operation_labels = {'VENDA':'Vendas','SERVICO':'Serviços','DEVOLUCAO':'Devoluções','OUTRAS':'Outras'}
+        operation_rows = [['Operação','Linhas','Valor antes do sinal','Impacto no saldo']]
+        for item in meta['operationTotals']:
+            operation_rows.append([operation_labels.get(item['operation'], item['operation']), number(item['lines']), money(item['totalCents']), money(item['balanceCents'])])
+        story += [p('Vendas, serviços, devoluções e outras', 'heading'), purchase_table(operation_rows, (.32,.12,.28,.28), width, styles), Spacer(1, 6)]
     unknown = meta['unconfirmed']
     if sales:
         story.append(p(f'Já incluídos em Não optantes SN: não confirmados na fonte = {number(unknown["suppliers"])} CNPJs '
