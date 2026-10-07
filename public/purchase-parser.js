@@ -201,7 +201,9 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       if (net) for (const field of Object.keys(components)) components[field] += financial[field];
       const kind = documentKind(document);
       if (kind === 'CNPJ') unique.add(normalizeCnpj(document).cnpj); else nonCnpjLines++;
-      rows.push({document, name, serviceDate, quantity, natureCode, description, operation, balanceCents:lineBalanceCents, ...financial});
+      rows.push(type === 'SALES'
+        ? {document, name, serviceDate, quantity, natureCode, description, operation, balanceCents:lineBalanceCents, ...financial}
+        : {document, name, serviceDate, quantity, ...financial});
       if (repaired) repairs.push({line:sourceLine, descriptionSeparators:repaired.descriptionSeparators,
         reason:'Separadores extras da descrição (O) recompostos; colunas P a AD realinhadas com os valores originais.'});
     } catch (error) { errors.push({line:sourceLine, message:error.message}); }
