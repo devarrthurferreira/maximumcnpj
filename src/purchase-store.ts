@@ -178,8 +178,9 @@ async function financialPage(id: string, status: string, page: number, pageSize:
   if (grouped) stages.push({$sort: {index: 1}}, {$group: {
     _id: documentIdentity(), index: {$first: '$index'}, document: {$first: '$document'}, documentKind: {$first: '$documentKind'},
     cnpj: {$first: '$cnpj'}, name: {$first: '$name'}, valid: {$first: '$valid'}, kind: {$first: '$kind'},
+    operations: {$addToSet: {$ifNull: ['$operation', 'OUTRAS']}},
     occurrences: {$sum: 1}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}}
-  }});
+  }}, {$set: {operation: {$cond: [{$eq: [{$size: '$operations'}, 1]}, {$arrayElemAt: ['$operations', 0]}, 'MISTAS']}}});
   stages.push({$lookup: {from: 'lookupItems', let: {identity: '$cnpj'}, pipeline: [
     {$match: {...scope({jobId: id}), $expr: {$eq: ['$cnpj', '$$identity']}}},
     {$project: {status: 1, checkedAt: 1, stateId: 1, reason: 1, source: 1}}
