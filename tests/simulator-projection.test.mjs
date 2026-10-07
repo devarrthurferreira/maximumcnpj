@@ -34,10 +34,27 @@ test('Centavos são reconciliados por lado antes da repetição anual; entradas 
 test('Zero é válido, mas campos ausentes, inválidos, frações de centavo e overflow são recusados',()=>{
  const zero=annualizeReports(Object.fromEntries(REPORT_GROUPS.map(k=>[k,0])),4);assert.equal(zero.totals.sales.annualCents,0);
  for(const n of[0,13,-1,1.5,'4',null,undefined,NaN,Infinity])assert.throws(()=>annualizeReports(fields,n));
- for(const value of[-1,0.1,'100',null,undefined,NaN,Infinity,Number.MAX_SAFE_INTEGER+1])assert.throws(()=>annualizeReports({...fields,salesCpfCents:value},4));
+ for(const value of[0.1,'100',null,undefined,NaN,Infinity,Number.MAX_SAFE_INTEGER+1])assert.throws(()=>annualizeReports({...fields,salesCpfCents:value},4));
+ assert.throws(()=>annualizeReports({...fields,purchasesOptantCents:-1},4));
  assert.throws(()=>annualizeReports({...fields,salesCpfCents:Number.MAX_SAFE_INTEGER},1));
  assert.throws(()=>annualizeReports({},4));
 });
+test('Devolução pode deixar um grupo de vendas negativo sem quebrar a projeção; total líquido negativo é bloqueado',()=>{
+ const signed={...fields,salesOptantCents:-10001,salesNonOptantCents:50000,salesCpfCents:0};
+ const p=annualizeReports(signed,3);
+ assert.equal(p.monthlyGroupsCents.salesOptantCents,-3334);
+ assert.equal(p.monthlyGroupsCents.salesNonOptantCents,16667);
+ assert.equal(p.totals.sales.totalCents,39999);
+ assert.equal(p.totals.sales.monthlyCents,13333);
+ assert.equal(p.totals.sales.annualCents,159996);
+ const groups=Object.fromEntries(REPORT_GROUPS.map(k=>[k,p.monthlyGroupsCents[k]/100]));
+ const scenario=projectScenario(groups,{...manual,salesRevenue:133.33,simplePurchases:p.monthlyGroupsCents.purchasesOptantCents/100,regularPurchases:p.monthlyGroupsCents.purchasesNonOptantCents/100});
+ assert.equal(scenario.monthly.salesCents,13333);
+ assert.equal(scenario.monthlyGroupsCents.salesOptantCents,-3334);
+ assert.throws(()=>annualizeReports({...fields,salesOptantCents:-50000000,salesNonOptantCents:0,salesCpfCents:0},3),/saldo líquido total de vendas/i);
+ assert.throws(()=>projectScenario({...groups,salesOptantCents:-999999,salesNonOptantCents:0,salesCpfCents:0},manual),/saldo líquido mensal de vendas/i);
+});
+
 test('Cenário separa médias importadas de serviços/despesas mensais e não altera a RBT12',()=>{
  const p=annualizeReports(fields,4),groups=Object.fromEntries(REPORT_GROUPS.map(k=>[k,p.monthlyGroupsCents[k]/100]));
  const values={...manual,salesRevenue:100000,simplePurchases:20000,regularPurchases:40000};
