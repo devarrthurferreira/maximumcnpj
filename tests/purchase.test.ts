@@ -70,7 +70,7 @@ test('Vendas: comprador CLIENTE, natureza com 4 dígitos, quantidade opcional e 
   assert(csv.includes('"10,50";"10,50";"Q - Y + AA - AB";"NET_V2";"NAO_OPTANTE";"NAO_CONFIRMADO"'));
   const returnCsv = purchaseCsv({mode:SALES_MODE,calculationVersion:'NET_V2',_id:'return',clientName:'Empresa',fileName:'vendas.csv'}, [{...returned,index:0,status:'NAO_CONFIRMADO'}]);
   assert(returnCsv.includes('"5202";"Devolução";"DEVOLUCAO"'));
-  assert(returnCsv.includes('"10,50";"-10,50";"Q - Y + AA - AB"'));
+  assert(returnCsv.includes('"10,50";"\'-10,50";"Q - Y + AA - AB"'));
 });
 
 test('Classificação gerencial: somente CNPJ com OPTANTE explícito é Simples; demais valores preservam a fonte', () => {
