@@ -48,7 +48,7 @@ for (const type of ['PURCHASES','SALES']) test(`${type} imports cp1252 columns, 
   await expect(page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'})).toBeVisible();
   await page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'}).click();
   await expect(page.getByRole('heading',{name:`Total de ${report} do relatório`})).toBeVisible();
-  expect(posted).toEqual(lines);
+  expect(posted).toEqual(sales ? lines.map(line => ({...line,natureCode:'',description:'',operation:'OUTRAS',balanceCents:line.totalCents})) : lines);
   if (sales) {await expect(page.getByRole('heading',{name:'Explore os compradores e valores'})).toBeVisible();await expect(page).toHaveURL(/type=SALES/);}
   await expect(page.locator('.purchase-hero')).toContainText('165,20');
   await expect(page.locator('.purchase-group').first()).toContainText('115,20');
@@ -135,7 +135,7 @@ for (const type of ['PURCHASES','SALES']) test(`${type} resumes the original upl
  });
  await page.goto(`/purchases.html?generation=${generationId}&client=${clientId}&job=${jobId}${sales?'&type=SALES':''}`);await expect(page.getByRole('heading',{name:'Importação incompleta'})).toBeVisible();await expect(page.locator('#purchase-company')).toBeDisabled();await expect(page.locator('.purchase-history')).toBeHidden();
  await page.locator('#purchase-file').setInputFiles({name:'000-COMPRAS.csv',mimeType:'text/csv',buffer:Buffer.from(csv(),'latin1')});await page.getByRole('button',{name:'Conferir colunas e valores'}).click();await page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'}).click();
- await expect(page.getByRole('heading',{name:`Total de ${report} do relatório`})).toBeVisible();expect(attached).toMatchObject({importId:jobId,clientId,expectedRows:3,type});expect(attachPath).toBe(`/api/v4/generations/${generationId}/${endpoint}`);expect(rows.offset).toBe(0);expect(rows.rows).toEqual(lines);expect(requestedHistory).toBe(false);await expect(page).toHaveURL(new RegExp(`generation=${generationId}`));
+ await expect(page.getByRole('heading',{name:`Total de ${report} do relatório`})).toBeVisible();expect(attached).toMatchObject({importId:jobId,clientId,expectedRows:3,type});expect(attachPath).toBe(`/api/v4/generations/${generationId}/${endpoint}`);expect(rows.offset).toBe(0);expect(rows.rows).toEqual(sales ? lines.map(line => ({...line,natureCode:'',description:'',operation:'OUTRAS',balanceCents:line.totalCents})) : lines);expect(requestedHistory).toBe(false);await expect(page).toHaveURL(new RegExp(`generation=${generationId}`));
  await expect(page.locator('.purchase-group')).toHaveCount(sales ? 3 : 2);await expect(page.locator('[data-status="NAO_OPTANTE"]')).toContainText('Inclui 1 não confirmado(s)');await expect(page.locator('#purchase-result-list')).toContainText('Origem: não confirmado. Fonte sem resposta');await expect(page.getByRole('link',{name:'← Voltar à geração e às outras empresas'})).toHaveAttribute('href','/generations.html?id='+generationId);
 });
 
