@@ -1,6 +1,6 @@
 import { getGeneration } from './generation-store.ts';
 import { purchaseSummary } from './purchase-store.ts';
-import { PURCHASE_MODE, SALES_MODE, exactCents } from './purchase-domain.ts';
+import { PURCHASE_MODE, SALES_MODE, exactCents, exactSignedCents } from './purchase-domain.ts';
 import { need } from './security.ts';
 import { annualizeReports } from '../public/simulator-projection.js';
 import { sameReportCompetences } from './report-competence.ts';
@@ -10,7 +10,7 @@ type FinancialSummary = Awaited<ReturnType<typeof purchaseSummary>>;
 function valueFor(summary: FinancialSummary, status: string) {
   const group = summary.reportingGroups.find(group => group.status === status);
   need(group, 'Classificação financeira incompleta. Reimporte o relatório.', 409, 'SIMULATOR_INCONSISTENT');
-  return exactCents(group.totalCents);
+  return summary.job.mode === SALES_MODE ? exactSignedCents(group.totalCents) : exactCents(group.totalCents);
 }
 
 function sourceMetadata(summary: FinancialSummary) {
@@ -41,7 +41,7 @@ export async function generationSimulator(id: string, clientId: string) {
     salesOptantCents: valueFor(sales, 'OPTANTE'), salesNonOptantCents: valueFor(sales, 'NAO_OPTANTE'), salesCpfCents: valueFor(sales, 'CPF'),
     purchasesOptantCents: valueFor(purchases, 'OPTANTE'), purchasesNonOptantCents: valueFor(purchases, 'NAO_OPTANTE')
   };
-  need(exactCents(fields.salesOptantCents + fields.salesNonOptantCents + fields.salesCpfCents) === sales.totals.totalCents &&
+  need(exactSignedCents(fields.salesOptantCents + fields.salesNonOptantCents + fields.salesCpfCents) === sales.totals.totalCents &&
     exactCents(fields.purchasesOptantCents + fields.purchasesNonOptantCents) === purchases.totals.totalCents,
   'Os campos do simulador divergem dos relatórios. Revise os arquivos.', 409, 'SIMULATOR_INCONSISTENT');
   const purchaseOther = purchases.reportingGroups.find(group => group.status === 'NAO_OPTANTE')!;
@@ -70,6 +70,7 @@ export async function generationSimulator(id: string, clientId: string) {
   }
   if (classification.purchases.nonCnpjCount) warnings.push('As compras de CPF e outros documentos não consultáveis estão em Compras de empresas fora do Simples, com subtotal disponível para conferência.');
   if (classification.sales.otherDocumentsCount) warnings.push('As vendas com CNO, documentos inválidos ou ausentes estão em Vendas Não Optantes SN. Vendas identificadas como CPF têm campo próprio.');
+  if (sales.operationTotals?.some((item: any) => item.operation === 'DEVOLUCAO' && item.lines > 0)) warnings.push('Devoluções foram identificadas na aba de vendas e abatidas do saldo líquido antes do preenchimento dos campos do simulador.');
   const projection = reportMonths ? annualizeReports(fields, reportMonths) : null;
   return {projection, generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
     purchases: sourceMetadata(purchases), sales: sourceMetadata(sales), fields, classification, warnings};
