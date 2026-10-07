@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compactPurchaseLine, calculationVersion, exactCents, percentage, reconciledPercentages, purchaseCsv, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus, reportPeriod, normalizeNatureCode, salesOperation } from '../src/purchase-domain.ts';
+import { compactPurchaseLine, calculationVersion, exactCents, percentage, reconciledPercentages, purchaseCsv, moneyText, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus, reportPeriod, normalizeNatureCode, salesOperation } from '../src/purchase-domain.ts';
 
 const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', serviceDate: '2026-08-15', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050};
 test('Compras: valida componentes no servidor, centavos exatos e não multiplica P por Q', () => {
@@ -52,6 +52,9 @@ test('Vendas: comprador CLIENTE, natureza com 4 dígitos, quantidade opcional e 
   assert.equal(sales.kind, 'CLIENTE'); assert.equal(sales.quantity, '0'); assert.equal(sales.totalCents, 1050);
   assert.equal(sales.natureCode, '9000'); assert.equal(sales.operation, 'SERVICO');
   assert.equal(normalizeNatureCode(' 52.0201 '), '5202'); assert.equal(salesOperation('900001', ''), 'SERVICO');
+  const returned = compactPurchaseLine({...row, natureCode:'520201', description:'Devolução'}, 'NET_V2', SALES_MODE);
+  assert.equal(returned.natureCode,'5202'); assert.equal(returned.operation,'DEVOLUCAO'); assert.equal(returned.balanceCents,-1050);
+  assert.equal(moneyText(-1050), '-10,50');
   assert.equal(compactPurchaseLine({...row, quantity:''}, 'NET_V2', SALES_MODE).quantity, '0');
   assert.equal(compactPurchaseLine({...row, quantity:'2.50'}, 'NET_V2', SALES_MODE).quantity, '2.5');
   assert.throws(() => compactPurchaseLine({...row, quantity:'Kit'}, 'NET_V2', SALES_MODE), /Quantidade/);
@@ -64,7 +67,10 @@ test('Vendas: comprador CLIENTE, natureza com 4 dígitos, quantidade opcional e 
   assert.equal(financialKind(SALES_MODE), 'CLIENTE'); assert.equal(financialKind(PURCHASE_MODE), 'FORNECEDOR');
   const csv = purchaseCsv({mode:SALES_MODE,calculationVersion:'NET_V2',_id:'sales',clientName:'Empresa',fileName:'vendas.csv'}, [{...sales,index:0,status:'NAO_CONFIRMADO'}]);
   assert(csv.includes('Comprador (I)')); assert(csv.includes('Quantidade (P) — opcional'));
-  assert(csv.includes('"10,50";"Q - Y + AA - AB";"NET_V2";"NAO_OPTANTE";"NAO_CONFIRMADO"'));
+  assert(csv.includes('"10,50";"10,50";"Q - Y + AA - AB";"NET_V2";"NAO_OPTANTE";"NAO_CONFIRMADO"'));
+  const returnCsv = purchaseCsv({mode:SALES_MODE,calculationVersion:'NET_V2',_id:'return',clientName:'Empresa',fileName:'vendas.csv'}, [{...returned,index:0,status:'NAO_CONFIRMADO'}]);
+  assert(returnCsv.includes('"5202";"Devolução";"DEVOLUCAO"'));
+  assert(returnCsv.includes('"10,50";"-10,50";"Q - Y + AA - AB"'));
 });
 
 test('Classificação gerencial: somente CNPJ com OPTANTE explícito é Simples; demais valores preservam a fonte', () => {
