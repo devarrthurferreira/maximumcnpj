@@ -133,12 +133,15 @@ test('known CSV recovery only rejoins descriptive fragments and preserves exact 
   assert.equal(report.errors.length, 0); assert.equal(report.rows.length, 1); assert.equal(report.repairedCount, 1);
   assert.deepEqual(report.repairs, [{line:2, descriptionSeparators:1,
     reason:'Separadores extras da descrição (O) recompostos; colunas P a AD realinhadas com os valores originais.'}]);
-  assert.deepEqual(report.rows[0], parsePurchaseMatrix([exportHeader, original],0,{type:'SALES'}).rows[0]);
+  const aligned = parsePurchaseMatrix([exportHeader, original],0,{type:'SALES'}).rows[0];
+  assert.equal(report.rows[0].description, 'Descrição sintética;Tamanho:10M');
+  assert.deepEqual({...report.rows[0], description:aligned.description}, aligned);
   assert.equal(report.totalCents, 8160); assert.equal(report.components.accessoryCents, 99999);
   assert.equal(report.rows[0].document, original[0]); assert.equal(report.rows[0].name, original[8]);
   const multiple = parsePurchaseMatrix([exportHeader, splitDescription(original, ['Cor:Azul','Tamanho:10M','Kit:2'])],0,recoveryOptions);
   assert.equal(multiple.errors.length,0); assert.equal(multiple.repairs[0].descriptionSeparators,3);
-  assert.deepEqual(multiple.rows, report.rows);
+  assert.equal(multiple.rows[0].description, 'Descrição sintética;Cor:Azul;Tamanho:10M;Kit:2');
+  assert.deepEqual({...multiple.rows[0], description:report.rows[0].description}, report.rows[0]);
 });
 
 test('CSV recovery uses trustworthy company anchors and leaves correctly quoted descriptions unchanged', () => {
