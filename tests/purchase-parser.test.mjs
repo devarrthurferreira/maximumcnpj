@@ -93,13 +93,15 @@ test('vendas rejeita colunas deslocadas mesmo com mesma largura do cabeçalho', 
   assert.equal(parsePurchaseMatrix([sparseHeader,sparse],0,{type:'SALES'}).rows[0].quantity,'0');
 });
 
-test('vendas usa comprador A/I, admite P vazio e calcula Q-Y+AA-AB sem Z', () => {
+test('vendas usa comprador A/I, admite P vazio, reduz natureza aos 4 primeiros dígitos e calcula Q-Y+AA-AB sem Z', () => {
   const input = row('11222333000181','Comprador sintético','','100,00');
+  input[11]='900001'; input[14]='Venda de serviços';
   input[24]='20,10'; input[25]='999,99'; input[26]='2,20'; input[27]='0,50';
   const result = parsePurchaseMatrix([header,input], 0, {type:'SALES'});
   assert.equal(result.errors.length, 0); assert.equal(result.reportType,'SALES');
   assert.equal(result.totalCents, 8160); assert.equal(result.components.accessoryCents, 99999);
   assert.equal(result.rows[0].document, '11222333000181'); assert.equal(result.rows[0].name, 'Comprador sintético');
+  assert.equal(result.rows[0].natureCode, '9000'); assert.equal(result.rows[0].operation, 'SERVICO');
   assert.equal(result.rows[0].quantity, '0');
   assert.equal(parsePurchaseMatrix([header,input]).errors.length, 1);
   input[8]=''; assert.match(parsePurchaseMatrix([header,input],0,{type:'SALES'}).errors[0].message,/Comprador/);
