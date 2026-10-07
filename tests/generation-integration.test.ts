@@ -22,7 +22,7 @@ test('MongoDB gerações: empresas, retomada, concorrência, conclusão conjunta
   const viewer = {...actor, role: 'viewer'};
   const errorCode = (code: string) => (error: any) => error.code === code;
   const row = {document: '12345678900', name: 'Pessoa sintética', serviceDate: '2026-08-15', quantity: '2', grossCents: 10000, discountCents: 2000,
-    accessoryCents: 999, freightCents: 500, abatementCents: 300, totalCents: 8200};
+    accessoryCents: 999, freightCents: 500, abatementCents: 300, totalCents: 8200, natureCode:'5102002', description:'Venda de mercadoria'};
   try {
     const catalog = await importCatalog(actor, [{code: '936', name: 'Empresa A'}, {code: '937', name: 'Empresa B'}, {code: '938', name: 'Empresa C'}]);
     const [first, second, outside] = catalog.items.map((client: any) => client.id);
@@ -215,7 +215,7 @@ test('MongoDB gerações: vendas e compras independentes, requisitos e históric
   const colleague = {...actor, _id: 'colleague', role: 'operator'};
   const errorCode = (code: string) => (error: any) => error.code === code;
   const row = {document: '12345678900', name: 'Pessoa sintética', serviceDate: '2026-08-15', quantity: '2', grossCents: 10000, discountCents: 2000,
-    accessoryCents: 999, freightCents: 500, abatementCents: 300, totalCents: 8200};
+    accessoryCents: 999, freightCents: 500, abatementCents: 300, totalCents: 8200, natureCode:'5102002', description:'Venda de mercadoria'};
   const finish = async (job: any) => {
     await uploadLookup(actor, job._id, {offset: 0, rows: [row]});
     await finalizeLookup(actor, job._id);
@@ -314,7 +314,7 @@ test('MongoDB exclusão de geração: purge exclusivo, leases, recibos e retomad
   const actor = {_id:'deleter',role:'operator',name:'Operador',email:'delete@example.test'};
   const errorCode = (code: string) => (error: any) => error.code === code;
   const row = {document:'12345678900',name:'Pessoa sintética',serviceDate:'2026-08-15',quantity:'1',
-    grossCents:10000,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:10000};
+    grossCents:10000,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:10000,natureCode:'5102002',description:'Venda de mercadoria'};
   try {
     const catalog = await importCatalog({...actor,role:'admin'}, [{code:'1',name:'Empresa sintética'},{code:'2',name:'Outra empresa'}]);
     const [clientId, otherClient] = catalog.items.map((client:any)=>client.id);

@@ -16,7 +16,7 @@ test('MongoDB: comparação mensal libera o simulador sem alterar datas, valores
   process.env.MONGODB_DB = testDb; process.env.WORKSPACE_ID = 'competence_test'; resetLookupIndexes();
   const actor = {_id: 'tester', role: 'admin', name: 'Teste sintético', email: 'test@example.test'};
   const row = (serviceDate: string) => ({document: '12345678900', name: 'Pessoa sintética', serviceDate, quantity: '1',
-    grossCents: 12000, discountCents: 2000, accessoryCents: 900, freightCents: 500, abatementCents: 500, totalCents: 10000});
+    grossCents: 12000, discountCents: 2000, accessoryCents: 900, freightCents: 500, abatementCents: 500, totalCents: 10000, natureCode:'5102002', description:'Venda de mercadoria'});
   try {
     const catalog = await importCatalog(actor, [{code: '991', name: 'Empresa sintética'}]);
     const clientId = catalog.items[0].id;

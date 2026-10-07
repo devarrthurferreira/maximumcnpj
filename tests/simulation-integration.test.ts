@@ -34,7 +34,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
   }) as typeof fetch;
   const reportRows = [[ids[0], 10001], [ids[1], 20001], ['12345678900', 30001]].map(([document, totalCents], index) => ({
     document, name: 'Parceiro sintético', serviceDate: ['2026-06-15','2026-07-15','2026-08-15'][index], quantity: '1', totalCents,
-    grossCents: totalCents, discountCents: 0, accessoryCents: 0, freightCents: 0, abatementCents: 0
+    grossCents: totalCents, discountCents: 0, accessoryCents: 0, freightCents: 0, abatementCents: 0, natureCode:'5102002', description:'Venda de mercadoria'
   }));
   let server: http.Server | undefined;
   try {

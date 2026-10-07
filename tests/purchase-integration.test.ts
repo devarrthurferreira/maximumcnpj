@@ -31,7 +31,7 @@ test('MongoDB compras e vendas: idempotência, isolamento, cálculos e PDF Pytho
       {document:ids[1],name:'Fornecedor sintético',quantity:'1',totalCents:20000},
       {document:ids[2],name:'Fornecedor sintético',quantity:'1',totalCents:9990},
       {document:'12345678900',name:'Pessoa sintética',quantity:'1',totalCents:3000}
-    ].map((row,index)=>({...row,serviceDate:index < 2 ? '2026-07-15' : '2026-08-15',grossCents:row.totalCents+500,discountCents:600,accessoryCents:99,freightCents:150,abatementCents:50}));
+    ].map((row,index)=>({...row,serviceDate:index < 2 ? '2026-07-15' : '2026-08-15',grossCents:row.totalCents+500,discountCents:600,accessoryCents:99,freightCents:150,abatementCents:50,natureCode:'5102002',description:'Venda de mercadoria'}));
     const input = {importId:randomUUID(),clientId,fileName:'sintetico.csv',expectedRows:rows.length};
     const job = await createLookup(actor, input, PURCHASE_MODE);
     assert.equal(job.calculationVersion,'NET_V2');
@@ -106,7 +106,7 @@ test('MongoDB compras e vendas: idempotência, isolamento, cálculos e PDF Pytho
     await (await collection('providerControl')).deleteMany({});
     assert.equal((await processLookup(actor,sales._id,transport)).status,'COMPLETED'); assert.equal(calls,6);
     const salesSummary:any = await routeV4(actor,'GET',new URL('https://test/api/v4/sales/'+sales._id+'/summary'),{});
-    assert.deepEqual(salesSummary.totals,summary.totals); assert.deepEqual(salesSummary.components,summary.components);
+    assert.equal(salesSummary.totals.totalCents,summary.totals.totalCents); assert.equal(salesSummary.totals.balanceCents,summary.totals.totalCents); assert.equal(salesSummary.salesOperationVersion,'CFOP_BALANCE_V1'); assert.deepEqual(salesSummary.components,summary.components);
     assert.deepEqual(salesSummary.reportingGroups.map((g:any)=>[g.status,g.count,g.lines,g.totalCents,g.countPercent,g.valuePercent]), [
       ['OPTANTE',1,2,10010,25,23.28], ['NAO_OPTANTE',2,2,29990,50,69.74], ['CPF',1,1,3000,25,6.98]
     ]);

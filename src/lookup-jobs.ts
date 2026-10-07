@@ -5,7 +5,7 @@ import { VERSION, MAX_ROWS } from './domain.ts';
 import { LOOKUP_MODE, compactLine, SOURCE_NAME } from './lookup-domain.ts';
 import { ensureLookupIndexes, withJob, getJob, write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
-import { PURCHASE_MODE, SALES_MODE, isFinancialMode, PURCHASE_CALCULATION_VERSION, calculationVersion, compactPurchaseLine } from './purchase-domain.ts';
+import { PURCHASE_MODE, SALES_MODE, isFinancialMode, PURCHASE_CALCULATION_VERSION, calculationVersion, compactPurchaseLine, SALES_OPERATION_VERSION, salesOperationVersion } from './purchase-domain.ts';
 import { finalizePurchaseUpload, purchaseSummary } from './purchase-store.ts';
 import { processLookupBatch } from './lookup-engine.ts';
 import { assertLookupNotDeleted, assertGenerationNotDeleted } from './generation-deletion.ts';
@@ -18,7 +18,7 @@ export async function createLookup(actor:LookupActor,input:any,mode=LOOKUP_MODE)
   const expected=integer(input.expectedRows,1,MAX_ROWS),fileName=text(input.fileName,200);
   const jobs=await collection('lookupJobs'),old=await jobs.findOne(scope({_id:id}));
   if(old){if(old.generationId)await assertGenerationNotDeleted(old.generationId);need(old.mode===mode&&old.clientId===c._id&&old.expectedRows===expected&&old.fileName===fileName&&old.createdBy===actor._id,'Identificador já utilizado por outro lote.',409);return old;}
-  const job={_id:id,...scope(),mode,...(isFinancialMode(mode)?{calculationVersion:PURCHASE_CALCULATION_VERSION}:{}),clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
+  const job={_id:id,...scope(),mode,...(isFinancialMode(mode)?{calculationVersion:PURCHASE_CALCULATION_VERSION}:{}),...(mode===SALES_MODE?{salesOperationVersion:SALES_OPERATION_VERSION}:{}),clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
   await jobs.insertOne(job);
   try { await assertLookupNotDeleted(id); }
   catch (error) { await jobs.deleteOne(scope({_id:id})); throw error; }
@@ -29,7 +29,7 @@ export async function uploadLookup(actor:LookupActor,id:string,input:any){
     need(j.status==='UPLOADING','Este lote não aceita novas linhas.',409);
     need(Array.isArray(input.rows)&&input.rows.length>0&&input.rows.length<=250,'Envie até 250 linhas por parte.');
     const offset=integer(input.offset,0,j.expectedRows-1);need(offset+input.rows.length<=j.expectedRows,'Linhas excedem o tamanho do lote.');
-    const lines=input.rows.map((row:any)=>isFinancialMode(j.mode)?compactPurchaseLine(row,calculationVersion(j),j.mode):compactLine(row)),hash=digest(JSON.stringify(lines)),chunks=await collection('chunks'),key=`lookup:${id}:${offset}`;
+    const lines=input.rows.map((row:any)=>isFinancialMode(j.mode)?compactPurchaseLine(row,calculationVersion(j),j.mode,salesOperationVersion(j)):compactLine(row)),hash=digest(JSON.stringify(lines)),chunks=await collection('chunks'),key=`lookup:${id}:${offset}`;
     const old=await chunks.findOne(scope({_id:key}));if(old){need(old.hash===hash,'Parte já enviada com outros dados.',409);if(old.complete)return {uploaded:j.uploaded};}
     need(offset===j.uploaded || (old && offset+lines.length===j.uploaded),'Retome a próxima parte esperada.',409,'UPLOAD_OFFSET');
     await chunks.updateOne(scope({_id:key}),{$setOnInsert:{...scope(),hash,complete:false,createdAt:new Date()}},{upsert:true});
@@ -78,8 +78,10 @@ export async function recheckLookup(actor: LookupActor, id: string) {
   if (!isFinancialMode(old.mode)) return repeatLookup(actor, id);
   const reconciled = await purchaseSummary(id, true, old.mode);
   need(reconciled.totals.uniqueCnpjs > 0, 'Este relatório não tem CNPJs consultáveis.');
+  const oldSalesOperationVersion = old.mode === SALES_MODE ? salesOperationVersion(old) : null;
   const fresh = await createLookup(actor, {importId: randomUUID(), clientId: old.clientId,
     fileName: 'Reconsulta · ' + old.fileName.slice(0,170), expectedRows: old.expectedRows}, old.mode);
+  if (old.mode === SALES_MODE && !oldSalesOperationVersion) await (await collection('lookupJobs')).updateOne(scope({_id:fresh._id}), {$unset:{salesOperationVersion:''}});
   return withJob(fresh._id, async locked => {
   need(locked.status === 'UPLOADING', 'O novo lote já foi alterado. Confira o histórico.', 409);
   await (await collection('purchaseLines')).aggregate([
