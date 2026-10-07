@@ -20,11 +20,14 @@ export type PurchaseComponents = Record<typeof COMPONENT_FIELDS[number], number>
 export type SalesOperation = 'VENDA' | 'SERVICO' | 'DEVOLUCAO' | 'OUTRAS';
 const SALES_RETURN_CFOPS = new Set(['5201','5202','5208','5209','5210','5410','5411','5412','5413','5503','5553','5555','5556','5660','5661','5662','5921','6201','6202','6208','6209','6210','6410','6411','6412','6413','6503','6553','6556','6660','6661','6662','7201','7202','7210','7211','7212','7553','7556']);
 const SALES_OTHER_CFOPS = new Set(['5213','5214','5215','5216','5918','5919','6213','6214','6215','6216','6555','6918','6919','6921','7930']);
+const SALES_SERVICE_CFOPS = new Set(['9000']);
+export function normalizeNatureCode(value: unknown): string { return String(value ?? '').replace(/\D/g, '').slice(0, 4); }
 function normalizedOperationText(value: unknown) {
   return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 export function salesOperation(natureCode: unknown, description: unknown): SalesOperation {
-  const code = String(natureCode ?? '').match(/\b([567]\d{3})\b/)?.[1] || '';
+  const code = normalizeNatureCode(natureCode);
+  if (SALES_SERVICE_CFOPS.has(code)) return 'SERVICO';
   if (SALES_OTHER_CFOPS.has(code)) return 'OUTRAS';
   if (SALES_RETURN_CFOPS.has(code)) return 'DEVOLUCAO';
   const text = normalizedOperationText(description);
@@ -92,8 +95,8 @@ export function compactPurchaseLine(input: any, version: PurchaseCalculationVers
     need(calculated >= 0, 'Q - Y + AA - AB resulta em total negativo. Revise os valores da linha.');
     need(calculated === input.totalCents, 'Total divergente da fórmula Q - Y + AA - AB. A despesa Z não entra no cálculo.');
   }
-  const natureCode = String(input.natureCode ?? '').trim(), description = String(input.description ?? '').trim();
-  need(natureCode.length <= 80 && description.length <= 2000, 'Natureza/descrição acima do limite.');
+  const rawNatureCode = String(input.natureCode ?? '').trim(), natureCode = normalizeNatureCode(rawNatureCode), description = String(input.description ?? '').trim();
+  need(rawNatureCode.length <= 80 && description.length <= 2000, 'Natureza/descrição acima do limite.');
   const operation = mode === SALES_MODE ? salesOperation(natureCode, description) : null;
   const balanceCents = mode === SALES_MODE && operation === 'DEVOLUCAO' ? -input.totalCents : input.totalCents;
   need(Number.isSafeInteger(balanceCents) && Math.abs(balanceCents) <= MAX_LINE_CENTS, 'Saldo da operação inválido.');
