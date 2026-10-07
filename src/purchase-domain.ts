@@ -71,7 +71,7 @@ export function sameReportPeriod(left: any, right: any) {
 }
 export type PurchaseLine = Partial<Omit<PurchaseComponents, 'totalCents'>> & {
   document: string; documentKind: string; cnpj: string; name: string; serviceDate: string | null; quantity: string;
-  totalCents: number; balanceCents: number; natureCode: string; description: string; operation: SalesOperation | null; valid: boolean; kind: 'FORNECEDOR' | 'CLIENTE'; uf: ''; reason: string | null; documentHint: string;
+  totalCents: number; balanceCents?: number; natureCode?: string; description?: string; operation?: SalesOperation; valid: boolean; kind: 'FORNECEDOR' | 'CLIENTE'; uf: ''; reason: string | null; documentHint: string;
 };
 /** Browser parsing is only a convenience: the server validates the reduced financial payload. */
 export function compactPurchaseLine(input: any, version: PurchaseCalculationVersion = PURCHASE_CALCULATION_VERSION, mode: FinancialMode = PURCHASE_MODE): PurchaseLine {
@@ -95,16 +95,20 @@ export function compactPurchaseLine(input: any, version: PurchaseCalculationVers
     need(calculated >= 0, 'Q - Y + AA - AB resulta em total negativo. Revise os valores da linha.');
     need(calculated === input.totalCents, 'Total divergente da fórmula Q - Y + AA - AB. A despesa Z não entra no cálculo.');
   }
-  const rawNatureCode = String(input.natureCode ?? '').trim(), natureCode = normalizeNatureCode(rawNatureCode), description = String(input.description ?? '').trim();
-  need(rawNatureCode.length <= 80 && description.length <= 2000, 'Natureza/descrição acima do limite.');
-  const operation = mode === SALES_MODE ? salesOperation(natureCode, description) : null;
-  const balanceCents = mode === SALES_MODE && operation === 'DEVOLUCAO' ? -input.totalCents : input.totalCents;
-  need(Number.isSafeInteger(balanceCents) && Math.abs(balanceCents) <= MAX_LINE_CENTS, 'Saldo da operação inválido.');
+  const salesFields: Partial<PurchaseLine> = {};
+  if (mode === SALES_MODE) {
+    const rawNatureCode = String(input.natureCode ?? '').trim(), natureCode = normalizeNatureCode(rawNatureCode), description = String(input.description ?? '').trim();
+    need(rawNatureCode.length <= 80 && description.length <= 2000, 'Natureza/descrição acima do limite.');
+    const operation = salesOperation(natureCode, description);
+    const balanceCents = operation === 'DEVOLUCAO' ? -input.totalCents : input.totalCents;
+    need(Number.isSafeInteger(balanceCents) && Math.abs(balanceCents) <= MAX_LINE_CENTS, 'Saldo da operação inválido.');
+    Object.assign(salesFields, {natureCode, description, operation, balanceCents});
+  }
   const document = input.document.trim().replace(/[.\/\-\s]/g, '').toUpperCase();
   const checked = normalizeCnpj(document), type = documentKind(document);
   const quantity = inputQuantity.replace(/^0+(?=\d)/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
   return { document, documentKind: type, cnpj: checked.valid ? checked.cnpj : '', name: input.name.trim(), serviceDate, quantity,
-    natureCode, description, operation, ...components, totalCents: input.totalCents, balanceCents, valid: checked.valid, kind: financialKind(mode), uf: '', reason: checked.valid ? null : type,
+    ...components, totalCents: input.totalCents, ...salesFields, valid: checked.valid, kind: financialKind(mode), uf: '', reason: checked.valid ? null : type,
     documentHint: checked.valid ? checked.cnpj : type === 'CPF' ? 'CPF — não consultado' : 'Documento não consultável — revisar na origem' };
 }
 export function exactCents(value: unknown): number {
