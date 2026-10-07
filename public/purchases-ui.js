@@ -393,7 +393,7 @@ function operationSummary(m) {
   if (!sales || !m.operationTotals?.length) return '';
   const order=['VENDA','SERVICO','DEVOLUCAO','OUTRAS'];
   const items=order.map(key=>m.operationTotals.find(item=>item.operation===key) || {operation:key,lines:0,totalCents:0,balanceCents:0});
-  return `<section class="card purchase-section"><div class="card-header"><h2>Vendas, serviços, devoluções e outras</h2><p>A Natureza/CFOP é reduzida sempre aos 4 primeiros dígitos (ex.: 900001 → 9000). A descrição complementa Venda/Serviço/Outras; devoluções sempre entram negativas no saldo.</p></div><div class="purchase-cards purchase-cards-sales">${items.map(item=>`<article class="purchase-group"><span>${esc(operationLabels[item.operation])}</span><strong>${money(item.balanceCents)}</strong><small>${number(item.lines)} linhas<br>Valor antes do sinal: ${money(item.totalCents)}</small></article>`).join('')}</div></section>`;
+  return `<section class="card purchase-section"><div class="card-header"><h2>Vendas, serviços, devoluções e outras</h2><p>A Natureza/CFOP é reduzida sempre aos 4 primeiros dígitos (ex.: 900001 → 9000). A descrição complementa Venda/Serviço/Outras; devoluções sempre entram negativas no saldo.</p></div><div class="purchase-cards purchase-cards-sales">${items.map(item=>`<article class="purchase-operation-card"><span>${esc(operationLabels[item.operation])}</span><strong>${money(item.balanceCents)}</strong><small>${number(item.lines)} linhas<br>Valor antes do sinal: ${money(item.totalCents)}</small></article>`).join('')}</div></section>`;
 }
 function renderSummary() {
   const m = S.summary, t = m.totals, groups = reportingGroups(m), net = m.calculationVersion === 'NET_V2';
