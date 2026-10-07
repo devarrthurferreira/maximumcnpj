@@ -3,7 +3,7 @@ import type { Doc } from './store.ts';
 import { getJob } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { need, integer } from './security.ts';
-import { PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialLabel, type FinancialMode, PURCHASE_STATUSES, COMPONENT_FIELDS, MAX_LINE_CENTS, calculationVersion, purchaseFormula, exactCents, percentage, reconciledPercentages, purchaseCsv, reportPeriod, sameReportPeriod } from './purchase-domain.ts';
+import { PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialLabel, type FinancialMode, PURCHASE_STATUSES, COMPONENT_FIELDS, MAX_LINE_CENTS, calculationVersion, purchaseFormula, exactCents, exactSignedCents, percentage, reconciledPercentages, purchaseCsv, reportPeriod, sameReportPeriod } from './purchase-domain.ts';
 
 const FINANCIAL_FIELDS = [...COMPONENT_FIELDS, 'totalCents'] as const;
 // Stored documents are already normalized. An absent identifier represents its own row, never a shared person.
@@ -21,7 +21,7 @@ async function financialGroups(name: string, id: string, job: Doc) {
   const groups = await (await collection(name)).aggregate([
     {$match: scope({jobId: id})}, {$sort: {index: 1}},
     {$group: {_id: documentIdentity(), valid: {$first: '$valid'}, name: {$first: '$name'}, documentKind: {$first: '$documentKind'},
-      lines: {$sum: 1}, invalidAmounts: {$sum: {$cond: [valid, 0, 1]}}, totalCents: {$sum: '$totalCents'},
+      lines: {$sum: 1}, invalidAmounts: {$sum: {$cond: [valid, 0, 1]}}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}},
       ...(net ? Object.fromEntries(COMPONENT_FIELDS.map(field => [field, {$sum: '$' + field}])) : {})}}
   ], {allowDiskUse: true, maxTimeMS: 20000}).toArray();
   need(groups.every(group => group.invalidAmounts === 0), 'Componentes ausentes, inválidos ou divergentes de Q - Y + AA - AB. Emissão bloqueada.', 409, 'PURCHASE_TOTAL');
@@ -37,6 +37,7 @@ async function financialPeriod(name: string, id: string, job: Doc) {
   return reportPeriod(rows.map(row => row.serviceDate));
 }
 type DocumentTotals = {count: number; lines: number; totalCents: number};
+function signedPercent(value: number, denominator: number) { return denominator ? Math.round(value / denominator * 10000) / 100 : 0; }
 function reportingGroups(groups: any[], unique: number, cents: number, nonCnpj: DocumentTotals, cpf: DocumentTotals, mode: FinancialMode) {
   const optant = groups.find(group => group.status === 'OPTANTE')!;
   const nonOptant = groups.find(group => group.status === 'NAO_OPTANTE')!;
@@ -46,7 +47,7 @@ function reportingGroups(groups: any[], unique: number, cents: number, nonCnpj: 
   const otherDocuments = {count: nonCnpj.count - (separateCpf ? cpf.count : 0), lines: nonCnpj.lines - (separateCpf ? cpf.lines : 0), totalCents: nonCnpj.totalCents - (separateCpf ? cpf.totalCents : 0)};
   const combined = {status: 'NAO_OPTANTE', count: nonOptant.count + unconfirmed.count + otherDocuments.count,
     lines: nonOptant.lines + unconfirmed.lines + otherDocuments.lines,
-    totalCents: exactCents(nonOptant.totalCents + unconfirmed.totalCents + otherDocuments.totalCents),
+    totalCents: mode === SALES_MODE ? exactSignedCents(nonOptant.totalCents + unconfirmed.totalCents + otherDocuments.totalCents) : exactCents(nonOptant.totalCents + unconfirmed.totalCents + otherDocuments.totalCents),
     unconfirmedCount: unconfirmed.count, unconfirmedCents: unconfirmed.totalCents,
     nonCnpjCount: otherDocuments.count, nonCnpjCents: otherDocuments.totalCents};
   if (separateCpf) {
@@ -55,7 +56,7 @@ function reportingGroups(groups: any[], unique: number, cents: number, nonCnpj: 
       {status: 'CPF', count: cpf.count, lines: cpf.lines, totalCents: cpf.totalCents, unconfirmedCount: 0, unconfirmedCents: 0, nonCnpjCount: cpf.count, nonCnpjCents: cpf.totalCents}
     ];
     const counts = reconciledPercentages(salesGroups.map(group => group.count), unique);
-    const values = reconciledPercentages(salesGroups.map(group => group.totalCents), cents);
+    const values = salesGroups.map(group => signedPercent(group.totalCents, cents));
     return salesGroups.map((group, index) => ({...group, countPercent: counts[index], valuePercent: values[index]}));
   }
   // Complement the second rounded percentage so the two displayed groups reconcile to exactly 100%.
@@ -81,7 +82,7 @@ export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
   // Persist only approved financial components plus row/document identity. Never retain the uploaded workbook.
   await stage.aggregate([
     {$match: scope({jobId: id})},
-    {$project: {_id: 1, workspaceId: 1, jobId: 1, index: 1, document: 1, documentKind: 1, cnpj: 1, name: 1, serviceDate: 1, quantity: 1, totalCents: 1, valid: 1, kind: 1, ...Object.fromEntries(COMPONENT_FIELDS.map(field => [field, 1]))}},
+    {$project: {_id: 1, workspaceId: 1, jobId: 1, index: 1, document: 1, documentKind: 1, cnpj: 1, name: 1, serviceDate: 1, quantity: 1, natureCode: 1, description: 1, operation: 1, totalCents: 1, balanceCents: 1, valid: 1, kind: 1, ...Object.fromEntries(COMPONENT_FIELDS.map(field => [field, 1]))}},
     {$merge: {into: 'purchaseLines', on: '_id', whenMatched: 'keepExisting', whenNotMatched: 'insert'}}
   ], {maxTimeMS: 20000}).toArray();
   need(await rows.countDocuments(scope({jobId: id})) === count, 'Cópia financeira incompleta.', 409, 'RESULT_COUNT');
@@ -94,7 +95,7 @@ export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
   }
   need(await items.countDocuments(scope({jobId: id})) === valid.length, 'Quantidade de CNPJs inconsistente.', 409, 'RESULT_COUNT');
   const summary = {lines: count, unique: valid.length, invalid, duplicates: count - invalid - valid.length};
-  const update: any = {summary, ...(period ? {reportPeriod: period} : {}), purchaseInput: {totalCents, cnpjCents: exactCents(valid.reduce((sum, g) => sum + g.totalCents, 0)), ...(calculationVersion(job) === 'NET_V2' ? {components: componentTotals(groups)} : {})}, status: 'PROCESSING', received: 0, startedAt: new Date()};
+  const update: any = {summary, ...(period ? {reportPeriod: period} : {}), purchaseInput: {totalCents, cnpjCents: exactCents(valid.reduce((sum, g) => sum + g.totalCents, 0)), ...(job.mode === SALES_MODE ? {balanceCents: exactSignedCents(groups.reduce((sum, g) => sum + exactSignedCents(g.balanceCents), 0))} : {}), ...(calculationVersion(job) === 'NET_V2' ? {components: componentTotals(groups)} : {})}, status: 'PROCESSING', received: 0, startedAt: new Date()};
   // Non-CNPJ documents do not need provider lookups; sales CPF remains its own managerial group.
   if (!valid.length) { update.status = 'COMPLETED'; update.completedAt = new Date(); }
   await (await collection('lookupJobs')).updateOne(scope({_id: id}), {$set: update});
@@ -122,18 +123,20 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
     {$project: {cnpj: 1, clientId: 1, kind: 1, state: 1, stateId: 1, status: 1, occurrences: 1, totalCents: 1, sourceState: 1}}
   ], {maxTimeMS: 20000}).toArray();
   const valid = grouped.filter(g => g.valid), nonCnpj = grouped.filter(g => !g.valid);
+  const reportingValue = (group: any) => mode === SALES_MODE ? exactSignedCents(group.balanceCents ?? group.totalCents) : exactCents(group.totalCents);
   const excludedByKind = new Map<string, {documentKind: string; count: number; lines: number; totalCents: number}>();
   for (const group of nonCnpj) {
     const excluded = excludedByKind.get(group.documentKind) || {documentKind: group.documentKind, count: 0, lines: 0, totalCents: 0};
-    excluded.count++; excluded.lines += group.lines; excluded.totalCents = exactCents(excluded.totalCents + exactCents(group.totalCents));
+    excluded.count++; excluded.lines += group.lines; excluded.totalCents = mode === SALES_MODE ? exactSignedCents(excluded.totalCents + reportingValue(group)) : exactCents(excluded.totalCents + reportingValue(group));
     excludedByKind.set(group.documentKind, excluded);
   }
   const excluded = [...excludedByKind.values()];
   const lines = grouped.reduce((sum, g) => sum + g.lines, 0), cnpjLines = valid.reduce((sum, g) => sum + g.lines, 0);
-  const cnpjCents = exactCents(valid.reduce((sum, g) => sum + exactCents(g.totalCents), 0)), nonCnpjCents = exactCents(excluded.reduce((sum, g) => sum + g.totalCents, 0));
-  const totalCents = exactCents(cnpjCents + nonCnpjCents);
+  const cnpjCents = mode === SALES_MODE ? exactSignedCents(valid.reduce((sum, g) => sum + reportingValue(g), 0)) : exactCents(valid.reduce((sum, g) => sum + reportingValue(g), 0));
+  const nonCnpjCents = mode === SALES_MODE ? exactSignedCents(excluded.reduce((sum, g) => sum + g.totalCents, 0)) : exactCents(excluded.reduce((sum, g) => sum + g.totalCents, 0));
+  const totalCents = mode === SALES_MODE ? exactSignedCents(cnpjCents + nonCnpjCents) : exactCents(cnpjCents + nonCnpjCents);
   need(lines === job.expectedRows && lines === job.summary.lines && valid.length === job.summary.unique && items.length === valid.length &&
-    lines - cnpjLines === job.summary.invalid && cnpjLines - valid.length === job.summary.duplicates && job.purchaseInput.totalCents === totalCents && job.purchaseInput.cnpjCents === cnpjCents,
+    lines - cnpjLines === job.summary.invalid && cnpjLines - valid.length === job.summary.duplicates && (mode === SALES_MODE ? job.purchaseInput.balanceCents === totalCents : job.purchaseInput.totalCents === totalCents) && (mode === SALES_MODE || job.purchaseInput.cnpjCents === cnpjCents),
     'Linhas, CNPJs ou valores divergentes do snapshot. Emissão bloqueada.', 409, 'RESULT_COUNT');
   const indexed = new Map(items.map(item => [item.cnpj, item]));
   const groups = PURCHASE_STATUSES.map(status => ({status, count: 0, lines: 0, totalCents: 0, countPercent: 0, valuePercent: 0}));
@@ -144,11 +147,14 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
     need(item.stateId ? item.sourceState.length === 1 && item.sourceState[0].status === item.status : item.status === 'NAO_CONFIRMADO',
       'Estado de origem ausente ou divergente.', 409, 'RESULT_COUNT');
     const group = groups.find(g => g.status === item.status)!;
-    group.count++; group.lines += line.lines; group.totalCents = exactCents(group.totalCents + line.totalCents);
+    group.count++; group.lines += line.lines; group.totalCents = mode === SALES_MODE ? exactSignedCents(group.totalCents + reportingValue(line)) : exactCents(group.totalCents + reportingValue(line));
   }
-  for (const group of groups) { group.countPercent = percentage(group.count, valid.length); group.valuePercent = percentage(group.totalCents, cnpjCents); }
+  for (const group of groups) { group.countPercent = percentage(group.count, valid.length); group.valuePercent = mode === SALES_MODE ? signedPercent(group.totalCents, cnpjCents) : percentage(group.totalCents, cnpjCents); }
   const uniqueDocuments = grouped.length, nonCnpjDocumentCount = nonCnpj.length;
-  return {job, calculationVersion: version, formula, components, period,
+  const operationTotals = mode === SALES_MODE ? await (await collection('purchaseLines')).aggregate([
+    {$match: scope({jobId: id})}, {$group: {_id: {$ifNull: ['$operation', 'OUTRAS']}, lines: {$sum: 1}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}}}}, {$sort: {_id: 1}}
+  ], {maxTimeMS: 20000}).toArray() : [];
+  return {job, calculationVersion: version, formula, components, period, operationTotals: operationTotals.map(row => ({operation: row._id, lines: row.lines, totalCents: exactCents(row.totalCents), balanceCents: exactSignedCents(row.balanceCents)})),
     reportingGroups: reportingGroups(groups, uniqueDocuments, totalCents, {count: nonCnpjDocumentCount, lines: lines - cnpjLines, totalCents: nonCnpjCents}, excludedByKind.get('CPF') || {count: 0, lines: 0, totalCents: 0}, mode),
     totals: {lines, uniqueCnpjs: valid.length, uniqueDocuments, nonCnpjDocumentCount, cnpjLines, nonCnpjLines: lines - cnpjLines, totalCents, cnpjCents, nonCnpjCents}, groups, excluded,
     denominators: {count: 'Documentos distintos do relatório, incluindo CPF, CNO e inválidos. Cada linha sem documento conta separadamente.', value: `Soma de ${formula} de todas as linhas do relatório. Apenas optantes confirmados entram em Simples; ${mode === SALES_MODE ? 'CPF tem grupo próprio nas vendas; os demais, incluindo não confirmados e outros documentos, integram Não optantes.' : 'todo o restante integra Não optantes no agrupamento gerencial.'}`},
@@ -172,7 +178,7 @@ async function financialPage(id: string, status: string, page: number, pageSize:
   if (grouped) stages.push({$sort: {index: 1}}, {$group: {
     _id: documentIdentity(), index: {$first: '$index'}, document: {$first: '$document'}, documentKind: {$first: '$documentKind'},
     cnpj: {$first: '$cnpj'}, name: {$first: '$name'}, valid: {$first: '$valid'}, kind: {$first: '$kind'},
-    occurrences: {$sum: 1}, totalCents: {$sum: '$totalCents'}
+    occurrences: {$sum: 1}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}}
   }});
   stages.push({$lookup: {from: 'lookupItems', let: {identity: '$cnpj'}, pipeline: [
     {$match: {...scope({jobId: id}), $expr: {$eq: ['$cnpj', '$$identity']}}},
@@ -193,7 +199,7 @@ async function financialPage(id: string, status: string, page: number, pageSize:
   const [result] = await (await collection('purchaseLines')).aggregate([
     ...stages, {$facet: {items: pageStages, count: [{$count: 'total'}]}}
   ], {allowDiskUse: true, maxTimeMS: 20000}).toArray();
-  return {items: (result?.items || []).map((row: any) => grouped ? row : {...row, occurrences: 1}), total: result?.count?.[0]?.total || 0, page, pageSize};
+  return {items: (result?.items || []).map((row: any) => ({...(grouped ? row : {...row, occurrences: 1}), reportingCents: mode === SALES_MODE ? exactSignedCents(row.balanceCents ?? row.totalCents) : exactCents(row.totalCents)})), total: result?.count?.[0]?.total || 0, page, pageSize};
 }
 export async function purchaseRows(id: string, status: string, page: number, lines = false, mode: FinancialMode = PURCHASE_MODE) {
   await purchaseSummary(id, true, mode); purchaseFilter(status, mode);
