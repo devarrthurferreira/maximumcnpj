@@ -1,6 +1,7 @@
 import { normalizeCnpj, csvEncode } from './domain.ts';
 import { documentKind } from './lookup-domain.ts';
 import { need } from './security.ts';
+import { SALES_OPERATION_VERSION, SALES_OPERATION_LABELS, classifySalesOperation, salesBalanceCents } from '../public/sales-operations.js';
 
 export const PURCHASE_MODE = 'PURCHASES_V1';
 export const SALES_MODE = 'SALES_V1';
@@ -24,6 +25,12 @@ export function calculationVersion(job: any): PurchaseCalculationVersion {
   return job.calculationVersion || 'Q_V1';
 }
 export function purchaseFormula(version: PurchaseCalculationVersion) { return version === 'NET_V2' ? 'Q - Y + AA - AB' : 'Q'; }
+export { SALES_OPERATION_VERSION };
+export function salesOperationVersion(job: any): string | null {
+  if (job?.mode !== SALES_MODE || job.salesOperationVersion === undefined || job.salesOperationVersion === null) return null;
+  need(job.salesOperationVersion === SALES_OPERATION_VERSION, 'Versão da classificação de vendas desconhecida.', 409, 'SALES_OPERATION_VERSION');
+  return SALES_OPERATION_VERSION;
+}
 export const MAX_LINE_CENTS = 100_000_000_000;
 export type ReportPeriod = {startDate: string; endDate: string; startMonth: string; endMonth: string; months: number; observedMonths: number; missingMonths: string[]};
 function canonicalFiscalDate(value: unknown) {
@@ -53,9 +60,11 @@ export function sameReportPeriod(left: any, right: any) {
 export type PurchaseLine = Partial<Omit<PurchaseComponents, 'totalCents'>> & {
   document: string; documentKind: string; cnpj: string; name: string; serviceDate: string | null; quantity: string;
   totalCents: number; valid: boolean; kind: 'FORNECEDOR' | 'CLIENTE'; uf: ''; reason: string | null; documentHint: string;
+  natureCode?: string; description?: string; salesOperation?: string; balanceCents?: number;
 };
 /** Browser parsing is only a convenience: the server validates the reduced financial payload. */
-export function compactPurchaseLine(input: any, version: PurchaseCalculationVersion = PURCHASE_CALCULATION_VERSION, mode: FinancialMode = PURCHASE_MODE): PurchaseLine {
+export function compactPurchaseLine(input: any, version: PurchaseCalculationVersion = PURCHASE_CALCULATION_VERSION, mode: FinancialMode = PURCHASE_MODE,
+  operationVersion: string | null = mode === SALES_MODE ? SALES_OPERATION_VERSION : null): PurchaseLine {
   need(isFinancialMode(mode), 'Tipo de relatório inválido.');
   need(mode !== SALES_MODE || version === 'NET_V2', 'Relatório de vendas requer a fórmula Q - Y + AA - AB.', 409, 'PURCHASE_VERSION');
   need(input && typeof input === 'object' && !Array.isArray(input), 'Linha financeira inválida.');
@@ -76,11 +85,20 @@ export function compactPurchaseLine(input: any, version: PurchaseCalculationVers
     need(calculated >= 0, 'Q - Y + AA - AB resulta em total negativo. Revise os valores da linha.');
     need(calculated === input.totalCents, 'Total divergente da fórmula Q - Y + AA - AB. A despesa Z não entra no cálculo.');
   }
+  let salesFields: {natureCode?: string; description?: string; salesOperation?: string; balanceCents?: number} = {};
+  if (mode === SALES_MODE && operationVersion !== null) {
+    need(operationVersion === SALES_OPERATION_VERSION, 'Versão da classificação de vendas desconhecida.', 409, 'SALES_OPERATION_VERSION');
+    need(typeof input.natureCode === 'string' && /^\d{4,10}$/.test(input.natureCode.trim()), 'Natureza/CFOP (L) inválida.');
+    need(typeof input.description === 'string' && input.description.length <= 2000, 'Descrição (O) inválida.');
+    const natureCode = input.natureCode.trim(), description = input.description.trim();
+    const salesOperation = classifySalesOperation(natureCode, description);
+    salesFields = {natureCode, description, salesOperation, balanceCents:salesBalanceCents(input.totalCents, salesOperation)};
+  }
   const document = input.document.trim().replace(/[.\/\-\s]/g, '').toUpperCase();
   const checked = normalizeCnpj(document), type = documentKind(document);
   const quantity = inputQuantity.replace(/^0+(?=\d)/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
   return { document, documentKind: type, cnpj: checked.valid ? checked.cnpj : '', name: input.name.trim(), serviceDate, quantity,
-    ...components, totalCents: input.totalCents, valid: checked.valid, kind: financialKind(mode), uf: '', reason: checked.valid ? null : type,
+    ...components, totalCents: input.totalCents, ...salesFields, valid: checked.valid, kind: financialKind(mode), uf: '', reason: checked.valid ? null : type,
     documentHint: checked.valid ? checked.cnpj : type === 'CPF' ? 'CPF — não consultado' : 'Documento não consultável — revisar na origem' };
 }
 export function exactCents(value: unknown): number {
@@ -105,15 +123,15 @@ export function reconciledPercentages(values: number[], denominator: number): nu
   for (let index = 0; index < remaining; index++) ranked[index].units++;
   return parts.map(part => part.units / 100);
 }
-export function moneyText(cents: number): string { return `${Math.floor(cents / 100)},${String(cents % 100).padStart(2, '0')}`; }
+export function moneyText(cents: number): string { const sign = cents < 0 ? '-' : '', value = Math.abs(cents); return `${sign}${Math.floor(value / 100)},${String(value % 100).padStart(2, '0')}`; }
 export function purchaseCsv(job: any, rows: any[]): string {
-  const version = calculationVersion(job), net = version === 'NET_V2', sales = job.mode === SALES_MODE;
+  const version = calculationVersion(job), net = version === 'NET_V2', sales = job.mode === SALES_MODE, operationVersion = salesOperationVersion(job);
   return csvEncode([
-    ['Código da empresa', 'Empresa', 'Consulta', 'Arquivo', 'Conclusão', 'Linha importada', 'Data Escrituração/Serviço (H)', sales ? 'Documento do comprador (A)' : 'Documento do fornecedor (A)', 'Tipo de documento', sales ? 'Comprador (I)' : 'Razão social informada (I)', sales ? 'Quantidade (P) — opcional' : 'Quantidade (P)', 'Valor bruto Q (R$)', 'Desconto Y (R$)', 'Despesa acessória Z — informativa (R$)', 'Frete AA (R$)', 'Abatimento AB (R$)', 'Total calculado (R$)', 'Fórmula', 'Versão do cálculo', 'Grupo gerencial', 'Situação Simples na fonte', 'Data da consulta', 'Fonte'],
+    ['Código da empresa', 'Empresa', 'Consulta', 'Arquivo', 'Conclusão', 'Linha importada', 'Data Escrituração/Serviço (H)', sales ? 'Documento do comprador (A)' : 'Documento do fornecedor (A)', 'Tipo de documento', sales ? 'Comprador (I)' : 'Razão social informada (I)', sales ? 'Quantidade (P) — opcional' : 'Quantidade (P)', 'Valor bruto Q (R$)', 'Desconto Y (R$)', 'Despesa acessória Z — informativa (R$)', 'Frete AA (R$)', 'Abatimento AB (R$)', 'Total calculado (R$)', ...(operationVersion ? ['Natureza/CFOP (L)', 'Descrição (O)', 'Operação', 'Impacto no saldo (R$)'] : []), 'Fórmula', 'Versão do cálculo', 'Grupo gerencial', 'Situação Simples na fonte', 'Data da consulta', 'Fonte'],
     ...rows.map(row => [job.clientCode || '', job.clientName, job._id, job.fileName, job.completedAt?.toISOString?.() || job.completedAt || '', row.index + 1, row.serviceDate || '',
       row.document, row.documentKind, row.name, row.quantity, moneyText(net ? row.grossCents : row.totalCents),
       ...['discountCents', 'accessoryCents', 'freightCents', 'abatementCents'].map(field => net ? moneyText(row[field]) : ''),
-      moneyText(row.totalCents), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,
+      moneyText(row.totalCents), ...(operationVersion ? [row.natureCode, row.description, SALES_OPERATION_LABELS[row.salesOperation] || row.salesOperation, moneyText(row.balanceCents)] : []), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,
       row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado'])
   ]);
 }

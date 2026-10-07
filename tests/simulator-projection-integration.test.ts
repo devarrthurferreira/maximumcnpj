@@ -15,7 +15,7 @@ test('MongoDB: quatro competências -> média -> doze meses, histórico imutáve
  const oldDb=process.env.MONGODB_DB,oldWs=process.env.WORKSPACE_ID,testDb='maximum_annual_test_'+randomUUID().replaceAll('-','');
  process.env.MONGODB_DB=testDb;process.env.WORKSPACE_ID='annual_test';resetLookupIndexes();
  const actor={_id:'annual-tester',role:'admin',name:'Teste sintético',email:'test@example.test'};
- const row=(serviceDate:string,cents:number)=>({document:'12345678900',name:'Pessoa sintética',serviceDate,quantity:'1',grossCents:cents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:cents});
+ const row=(serviceDate:string,cents:number)=>({document:'12345678900',name:'Pessoa sintética',serviceDate,quantity:'1',grossCents:cents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:cents,natureCode:'5102002',description:'Venda de mercadoria'});
  try{
   const clientId=(await importCatalog(actor,[{code:'991',name:'Empresa sintética'}])).items[0].id;
   const gen=await createGeneration(actor,{generationId:randomUUID(),clientIds:[clientId]});

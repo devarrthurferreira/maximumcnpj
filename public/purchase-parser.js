@@ -1,6 +1,7 @@
 /* Browser-only preview. The API validates every value again before persistence. */
 import {csvParse, MAX_ROWS, MAX_COLUMNS, normalizeCnpj} from './domain.js';
 import {documentKind} from './lookup-domain.js';
+import {SALES_OPERATION, SALES_OPERATION_LABELS, classifySalesOperation, salesBalanceCents} from './sales-operations.js';
 
 export function decimal(value, places, field) {
   if (typeof value === 'number') {
@@ -136,14 +137,15 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   if (type === 'SALES' && version !== 'NET_V2') throw new Error('Relatório de vendas requer a fórmula Q - Y + AA - AB.');
   const net = version === 'NET_V2';
   if (!Number.isInteger(headerIndex) || headerIndex < 0 || headerIndex > 20) throw new Error('Escolha a linha de cabeçalho entre 1 e 21.');
-  const header = matrix[headerIndex] || [], required = net ? [0,7,8,16,24,25,26,27] : [0,8,16];
-  if (header.length < (net ? 28 : 17) || required.some(index => !String(header[index] ?? '').trim())) throw new Error(`O relatório precisa conter cabeçalhos nas colunas ${net ? 'A, H, I, Q, Y, Z, AA e AB' : 'A, I e Q'}. Confira a aba e o cabeçalho.`);
+  const header = matrix[headerIndex] || [], required = net ? [0,7,8,16,24,25,26,27,...(type === 'SALES' ? [11,14] : [])] : [0,8,16];
+  if (header.length < (net ? 28 : 17) || required.some(index => !String(header[index] ?? '').trim())) throw new Error(`O relatório precisa conter cabeçalhos nas colunas ${net ? (type === 'SALES' ? 'A, H, I, L, O, Q, Y, Z, AA e AB' : 'A, H, I, Q, Y, Z, AA e AB') : 'A, I e Q'}. Confira a aba e o cabeçalho.`);
   const lastHeader = header.findLastIndex(value => String(value ?? '').trim());
   const quantityRequired = type === 'PURCHASES';
   const components = net ? {grossCents:0, discountCents:0, accessoryCents:0, freightCents:0, abatementCents:0, totalCents:0} : null;
   const rows = [], errors = [], repairs = [], unique = new Set();
   const recoveryCode = recoveryCompany(matrix, headerIndex, header, options);
-  let nonCnpjLines = 0, ignored = 0, totalCents = 0;
+  const operationTotals = type === 'SALES' ? new Map(Object.values(SALES_OPERATION).map(status => [status, {status, label:SALES_OPERATION_LABELS[status], lines:0, totalCents:0, balanceCents:0}])) : null;
+  let nonCnpjLines = 0, ignored = 0, totalCents = 0, balanceCents = 0;
   for (let index = headerIndex + 1; index < matrix.length; index++) {
     let raw = matrix[index];
     const sourceLine = Number.isSafeInteger(options.sourceLines?.[index]) && options.sourceLines[index] > 0 ? options.sourceLines[index] : index + 1;
@@ -172,11 +174,23 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       if (!Number.isSafeInteger(totalCents + cents)) throw new Error('A soma dos valores excede o limite de precisão.');
       const financial = net ? {grossCents,...adjustments,totalCents:cents} : {totalCents:cents};
       if (net && Object.keys(components).some(field => !Number.isSafeInteger(components[field] + financial[field]))) throw new Error('A soma dos componentes excede o limite de precisão.');
+      let salesFields = {};
+      if (type === 'SALES') {
+        const natureCode = String(raw[11] ?? '').trim(), description = String(raw[14] ?? '').trim();
+        if (!/^\d{4,10}$/.test(natureCode)) throw new Error('Natureza/CFOP (L): informe um código numérico de 4 a 10 dígitos.');
+        if (description.length > 2000) throw new Error('Descrição (O): use até 2.000 caracteres.');
+        const salesOperation = classifySalesOperation(natureCode, description), lineBalanceCents = salesBalanceCents(cents, salesOperation);
+        if (!Number.isSafeInteger(balanceCents + lineBalanceCents)) throw new Error('O saldo de vendas excede o limite de precisão.');
+        const bucket = operationTotals.get(salesOperation);
+        if (!Number.isSafeInteger(bucket.totalCents + cents) || !Number.isSafeInteger(bucket.balanceCents + lineBalanceCents)) throw new Error('A soma por operação excede o limite de precisão.');
+        bucket.lines++; bucket.totalCents += cents; bucket.balanceCents += lineBalanceCents; balanceCents += lineBalanceCents;
+        salesFields = {natureCode, description, salesOperation, balanceCents:lineBalanceCents};
+      }
       totalCents += cents;
       if (net) for (const field of Object.keys(components)) components[field] += financial[field];
       const kind = documentKind(document);
       if (kind === 'CNPJ') unique.add(normalizeCnpj(document).cnpj); else nonCnpjLines++;
-      rows.push({document, name, serviceDate, quantity, ...financial});
+      rows.push({document, name, serviceDate, quantity, ...financial, ...salesFields});
       if (repaired) repairs.push({line:sourceLine, descriptionSeparators:repaired.descriptionSeparators,
         reason:'Separadores extras da descrição (O) recompostos; colunas P a AD realinhadas com os valores originais.'});
     } catch (error) { errors.push({line:sourceLine, message:error.message}); }
@@ -185,7 +199,9 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   if (!errors.length && rows.length && net) {
     try { period = fiscalPeriod(rows); } catch (error) { errors.push({line:headerIndex + 1, message:error.message}); }
   }
-  return {rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, components, period, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
+  return {rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, components, period, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q',
+    salesOperationVersion:type === 'SALES' ? 'CFOP_BALANCE_V1' : null, balanceCents:type === 'SALES' ? balanceCents : null,
+    operationGroups:operationTotals ? [...operationTotals.values()] : []};
 }
 
 export function decodePurchaseCsv(buffer, encoding = 'auto') {

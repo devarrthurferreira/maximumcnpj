@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compactPurchaseLine, calculationVersion, exactCents, percentage, reconciledPercentages, purchaseCsv, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus, reportPeriod } from '../src/purchase-domain.ts';
 
-const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', serviceDate: '2026-08-15', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050};
+const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', serviceDate: '2026-08-15', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050, natureCode:'5102002', description:'Venda de mercadoria'};
 test('Compras: valida componentes no servidor, centavos exatos e não multiplica P por Q', () => {
   const value = compactPurchaseLine({...row, status: 'OPTANTE', rawWorkbook: 'discard'});
   assert.equal(value.document, '00000000000191'); assert.equal(value.cnpj, '00000000000191'); assert.equal(value.documentKind, 'CNPJ');
@@ -49,9 +49,11 @@ test('NET_V2 exige componentes, recalcula o total e não inclui Z; Q_V1 mantém 
 
 test('Vendas: comprador CLIENTE, quantidade opcional e mesma fórmula sem Z', () => {
   const sales = compactPurchaseLine({...row, quantity:undefined, kind:'FORNECEDOR'}, 'NET_V2', SALES_MODE);
-  assert.equal(sales.kind, 'CLIENTE'); assert.equal(sales.quantity, '0'); assert.equal(sales.totalCents, 1050);
+  assert.equal(sales.kind, 'CLIENTE'); assert.equal(sales.quantity, '0'); assert.equal(sales.totalCents, 1050); assert.equal(sales.salesOperation,'VENDA_SERVICO'); assert.equal(sales.balanceCents,1050);
   assert.equal(compactPurchaseLine({...row, quantity:''}, 'NET_V2', SALES_MODE).quantity, '0');
   assert.equal(compactPurchaseLine({...row, quantity:'2.50'}, 'NET_V2', SALES_MODE).quantity, '2.5');
+  const returned=compactPurchaseLine({...row,natureCode:'5201',description:'Venda descrita como devolução'},'NET_V2',SALES_MODE); assert.equal(returned.salesOperation,'DEVOLUCAO'); assert.equal(returned.balanceCents,-1050);
+  const other=compactPurchaseLine({...row,natureCode:'5213',description:'Devolução de entrada com ajuste'},'NET_V2',SALES_MODE); assert.equal(other.salesOperation,'OUTRAS'); assert.equal(other.balanceCents,0);
   assert.throws(() => compactPurchaseLine({...row, quantity:'Kit'}, 'NET_V2', SALES_MODE), /Quantidade/);
   assert.throws(() => compactPurchaseLine({...row, quantity:undefined}), /Quantidade/);
   assert.throws(() => compactPurchaseLine(row, 'Q_V1', SALES_MODE), /fórmula/);

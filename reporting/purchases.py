@@ -9,6 +9,7 @@ from pathlib import Path
 from functools import lru_cache
 import math
 import re
+import unicodedata
 
 import reportlab
 from reportlab.lib import colors
@@ -38,6 +39,9 @@ MANAGEMENT_NOTE = ('Somente optantes confirmados integram Simples. Os demais doc
 SALES_MANAGEMENT_NOTE = ('Somente CNPJs optantes confirmados integram Optantes SN. CPFs ficam em um grupo próprio. '
                          'Os demais documentos e os CNPJs não confirmados integram Não optantes SN; '
                          'a situação original da fonte permanece preservada.')
+SALES_OPERATION_VERSION = 'CFOP_BALANCE_V1'
+RETURN_CFOPS = {'5201','5202','5208','5209','5210','5410','5411','5412','5413','5503','5553','5555','5556','5660','5661','5662','5921','6201','6202','6208','6209','6210','6410','6411','6412','6413','6503','6553','6556','6660','6661','6662','7201','7202','7210','7211','7212','7553','7556'}
+OTHER_CFOPS = {'5213','5214','5215','5216','5918','5919','6213','6214','6215','6216','6555','6918','6919','6921','7930'}
 
 
 @lru_cache(maxsize=1)
@@ -83,6 +87,29 @@ def _integer(value, maximum=MAX_SAFE_INTEGER):
     return int(value)
 
 
+def _signed_integer(value, maximum=MAX_SAFE_INTEGER):
+    _check(isinstance(value, (int, float)) and not isinstance(value, bool) and
+           (not isinstance(value, float) or math.isfinite(value) and value.is_integer()) and
+           -min(maximum, MAX_SAFE_INTEGER) <= value <= min(maximum, MAX_SAFE_INTEGER))
+    return int(value)
+
+
+def _sales_operation(nature_code, description):
+    _check(isinstance(nature_code, str) and re.fullmatch(r'\d{4,10}', nature_code))
+    _check(isinstance(description, str) and len(description) <= 2000)
+    cfop = nature_code[:4]
+    text = ''.join(ch for ch in unicodedata.normalize('NFD', description.lower()) if unicodedata.category(ch) != 'Mn')
+    if cfop in OTHER_CFOPS:
+        return 'OUTRAS'
+    if cfop in RETURN_CFOPS:
+        return 'DEVOLUCAO'
+    if re.search(r'\bdevoluc(?:ao|oes)\b', text):
+        return 'DEVOLUCAO'
+    if re.search(r'\b(?:vendas?|servicos?|prestacao)\b', text):
+        return 'VENDA_SERVICO'
+    return 'OUTRAS'
+
+
 def _valid_cnpj(value):
     if not isinstance(value, str) or not re.fullmatch(r'[A-Z0-9]{12}[0-9]{2}', value):
         return False
@@ -115,6 +142,9 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     version = job.get('calculationVersion', 'Q_V1')
     _check(version in ('Q_V1', 'NET_V2') and (not sales or version == 'NET_V2'))
     summary, financial = job.get('summary') or {}, job.get('purchaseInput') or {}
+    operation_version = job.get('salesOperationVersion') if sales else None
+    _check(operation_version in (None, SALES_OPERATION_VERSION))
+    operation_totals = {key: 0 for key in ('revenueCents','returnCents','otherCents','revenueLines','returnLines','otherLines')} if operation_version else None
     components = {key: 0 for key in (*COMPONENT_FIELDS, 'totalCents')} if version == 'NET_V2' else None
     expected = _integer(job.get('expectedRows'), 50_000)
     _check(expected > 0 and _integer(job.get('uploaded')) == expected)
@@ -148,6 +178,15 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             _check(values['grossCents'] - values['discountCents'] + values['freightCents'] - values['abatementCents'] == cents)
             for key, value in {**values, 'totalCents': cents}.items():
                 components[key] = _integer(components[key] + value)
+        if operation_totals is not None:
+            operation = _sales_operation(row.get('natureCode'), row.get('description'))
+            _check(row.get('salesOperation') == operation)
+            balance = _signed_integer(row.get('balanceCents'), 100_000_000_000)
+            expected_balance = -cents if operation == 'DEVOLUCAO' else cents if operation == 'VENDA_SERVICO' else 0
+            _check(balance == expected_balance)
+            prefix = {'VENDA_SERVICO':'revenue','DEVOLUCAO':'return','OUTRAS':'other'}[operation]
+            operation_totals[prefix + 'Cents'] = _integer(operation_totals[prefix + 'Cents'] + cents)
+            operation_totals[prefix + 'Lines'] += 1
         qty = row.get('quantity')
         _check(isinstance(qty, str) and re.fullmatch(r'\d{1,9}(?:\.\d{1,6})?', qty))
         quantity += Decimal(qty)
@@ -174,6 +213,19 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         _check(isinstance(stored_components, dict))
         for key, value in components.items():
             _check(_integer(stored_components.get(key)) == value)
+    operation_groups, balance_cents = [], None
+    if operation_totals is not None:
+        balance_cents = _signed_integer(operation_totals['revenueCents'] - operation_totals['returnCents'])
+        stored = financial.get('operationTotals') or {}
+        for key, value in operation_totals.items():
+            _check(_integer(stored.get(key)) == value)
+        _check(_signed_integer(stored.get('balanceCents')) == balance_cents)
+        _check(financial.get('salesOperationVersion') == SALES_OPERATION_VERSION and _signed_integer(financial.get('balanceCents')) == balance_cents)
+        operation_groups = [
+            {'status':'VENDA_SERVICO','label':'Vendas e Serviços','lines':operation_totals['revenueLines'],'totalCents':operation_totals['revenueCents'],'balanceCents':operation_totals['revenueCents']},
+            {'status':'DEVOLUCAO','label':'Devoluções','lines':operation_totals['returnLines'],'totalCents':operation_totals['returnCents'],'balanceCents':-operation_totals['returnCents']},
+            {'status':'OUTRAS','label':'Outras','lines':operation_totals['otherLines'],'totalCents':operation_totals['otherCents'],'balanceCents':0},
+        ]
     groups = {status: {'status': status, 'label': label, 'suppliers': 0, 'lines': 0, 'totalCents': 0}
               for status, label in GROUP_LABELS.items()}
     seen, checks = set(), []
@@ -247,6 +299,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             'cpfCents': cpf_cents, 'cpfDocumentCount': len(cpf_documents), 'cpfLineCount': cpf_lines,
             'reportingGroups': reporting_groups, 'managerialGroups': managerial_groups,
             'unconfirmed': unknown, 'components': components, 'calculationVersion': version,
+            'salesOperationVersion': operation_version, 'operationGroups': operation_groups, 'balanceCents': balance_cents,
             'quantityDisplay': quantity_text.replace('.', ','), 'generatedAt': utcnow(),
             'firstCheck': min(checks) if checks else None, 'lastCheck': max(checks) if checks else None}
 
@@ -256,6 +309,7 @@ def purchase_metadata(db, job, workspace):
     query = {'workspaceId': workspace, 'jobId': job['_id']}
     lines = db.purchaseLines.find(query, {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'index': 1, 'document': 1,
                                         'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'totalCents': 1, 'valid': 1, 'kind': 1,
+                                        'natureCode': 1, 'description': 1, 'salesOperation': 1, 'balanceCents': 1,
                                         **{key: 1 for key in COMPONENT_FIELDS}})
     lines = lines.limit(50_001).batch_size(500).max_time_ms(20000)
     items = db.lookupItems.aggregate([
@@ -271,8 +325,10 @@ def purchase_metadata(db, job, workspace):
 
 
 def money(cents):
-    """Format integer cents without conversion to floating point."""
-    return f'R$ {number(cents // 100)},{cents % 100:02d}'
+    """Format integer cents without conversion to floating point, including signed sales balance."""
+    sign = '-' if cents < 0 else ''
+    value = abs(cents)
+    return f'{sign}R$ {number(value // 100)},{value % 100:02d}'
 
 
 def purchase_pdf_styles():
@@ -334,6 +390,13 @@ def purchase_story(meta, width, styles):
     rows.append(['TOTAL', number(meta['uniqueDocuments']), percent(100 if meta['uniqueDocuments'] else 0),
                  number(meta['lineCount']), money(meta['totalCents']), percent(100 if meta['totalCents'] else 0)])
     story += [purchase_table(rows, (.24, .12, .16, .08, .24, .16), width, styles, True), Spacer(1, 6)]
+    if sales and meta.get('salesOperationVersion'):
+        operation_rows = [['Operação', 'Linhas', 'Valor do arquivo', 'Impacto no saldo']]
+        for group in meta['operationGroups']:
+            operation_rows.append([group['label'], number(group['lines']), money(group['totalCents']), money(group['balanceCents'])])
+        operation_rows.append(['SALDO DE VENDAS', number(meta['lineCount']), money(meta['totalCents']), money(meta['balanceCents'])])
+        story += [p('Saldo por tipo de operação', 'heading'), purchase_table(operation_rows, (.35,.12,.25,.28), width, styles, True),
+                  p('Vendas e Serviços somam ao saldo; Devoluções sempre abatem; Outras ficam identificadas e sem impacto no saldo. A classificação usa Natureza/CFOP (L) e Descrição (O), preservando a operação explícita da tabela de CFOP.', 'small'), Spacer(1, 6)]
     unknown = meta['unconfirmed']
     if sales:
         story.append(p(f'Já incluídos em Não optantes SN: não confirmados na fonte = {number(unknown["suppliers"])} CNPJs '

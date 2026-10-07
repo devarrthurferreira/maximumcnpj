@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {amountCents, decimal, decodePurchaseCsv, parsePurchaseMatrix, fiscalDate} from '../public/purchase-parser.js';
 
 const header = Array(28).fill('');
-for (const [index,label] of [[0,'Documento'],[7,'Data Escrituração/Serviço'],[8,'Razão social'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']]) header[index] = label;
-const row = (document, name, quantity, total, serviceDate='15/08/2026') => { const r = Array(28).fill(''); r[0] = document; r[7] = serviceDate; r[8] = name; r[15] = quantity; r[16] = total; return r; };
+for (const [index,label] of [[0,'Documento'],[7,'Data Escrituração/Serviço'],[8,'Razão social'],[11,'Natureza'],[14,'Descrição'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']]) header[index] = label;
+const row = (document, name, quantity, total, serviceDate='15/08/2026') => { const r = Array(28).fill(''); r[0] = document; r[7] = serviceDate; r[8] = name; r[11]='5102002'; r[14]='Venda de mercadoria'; r[15] = quantity; r[16] = total; return r; };
 
 test('purchase parser keeps cents exact and accepts Brazilian formatting or numeric Excel cells', () => {
   assert.equal(amountCents('1.234,56'), 123456);
@@ -194,4 +194,17 @@ test('CSV diagnostics keep physical line numbers across blank and quoted multili
   const parsed=parsePurchaseMatrix(decoded.matrix,0,{...recoveryOptions,...decoded});
   assert.equal(parsed.rows.length,2); assert.equal(parsed.repairs[0].line,5); assert.equal(parsed.errors[0].line,6);
   assert.equal(parsed.totalCents,16320);
+});
+
+
+test('vendas classifica Vendas e Serviços, Devoluções e Outras e calcula o saldo sem reinterpretar CFOP explícito', () => {
+  const revenue=row('11222333000181','Venda','','100,00'), returned=row('11222333000181','Devolução','','100,00'), explicitOther=row('11222333000181','Outras','','100,00'), textReturn=row('11222333000181','Devolução textual','','100,00'), service=row('11222333000181','Serviço','','100,00');
+  returned[11]='5201'; returned[14]='Venda com CFOP de devolução';
+  explicitOther[11]='5213'; explicitOther[14]='Devolução de entrada com ajuste';
+  textReturn[11]='5949'; textReturn[14]='Devolução de mercadoria';
+  service[11]='5933'; service[14]='Prestação de serviços';
+  const result=parsePurchaseMatrix([header,revenue,returned,explicitOther,textReturn,service],0,{type:'SALES'});
+  assert.equal(result.errors.length,0); assert.equal(result.totalCents,50000); assert.equal(result.balanceCents,0);
+  assert.deepEqual(result.rows.map(item=>[item.salesOperation,item.balanceCents]),[['VENDA_SERVICO',10000],['DEVOLUCAO',-10000],['OUTRAS',0],['DEVOLUCAO',-10000],['VENDA_SERVICO',10000]]);
+  assert.deepEqual(result.operationGroups.map(group=>[group.status,group.lines,group.totalCents,group.balanceCents]),[['VENDA_SERVICO',2,20000,20000],['DEVOLUCAO',2,20000,-20000],['OUTRAS',1,10000,0]]);
 });

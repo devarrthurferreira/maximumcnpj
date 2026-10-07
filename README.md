@@ -1,6 +1,16 @@
-# Maximum CNPJ · v0.17.0
+# Maximum CNPJ · v0.18.0
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Entrega 07/10/2026 — Vendas e Serviços, Devoluções e Outras no saldo de vendas
+
+- [x] Novas importações de **Vendas** passam a preservar **Natureza/CFOP (L)** e **Descrição (O)** e recebem a versão de classificação `CFOP_BALANCE_V1`. O navegador antecipa a leitura, mas o servidor recalcula a operação antes de persistir.
+- [x] O relatório separa **Vendas e Serviços**, **Devoluções** e **Outras**. Os CFOPs explicitamente marcados na tabela desta entrega prevalecem sobre palavras da descrição; fora deles, descrições de venda/serviço somam, descrições de devolução abatem e os demais lançamentos ficam em Outras.
+- [x] **Devoluções** têm impacto negativo no saldo. **Outras** permanecem visíveis com impacto zero. O total bruto `Q - Y + AA - AB` continua preservado, e o novo saldo é apresentado separadamente para não perder a memória do arquivo.
+- [x] O detalhamento da aba de vendas expõe operação e impacto no saldo por linha/documento. CSV e PDF também registram Natureza/CFOP, Descrição, operação e o saldo reconciliado.
+- [x] Históricos anteriores continuam na regra original e não são reinterpretados. Revalidações preservam a versão de classificação do snapshot de origem.
+- [x] Esta entrega **não altera a segregação fiscal do simulador tributário** entre venda e serviço: o novo saldo fica no relatório de vendas. ICMS/ISS, anexos e campos do simulador permanecem como estavam até homologação fiscal específica.
+- [x] Regressões sintéticas cobrem CFOP de devolução, CFOP explicitamente Outras mesmo com “devolução” na descrição, devolução identificada pela descrição, prestação de serviço, persistência MongoDB, CSV/PDF e navegador.
 
 ## Entrega 05/10/2026 — início guiado, arquivos automáticos e RBT12 opcional por PDF
 

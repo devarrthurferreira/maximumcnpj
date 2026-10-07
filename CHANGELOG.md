@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.18.0] — 2026-10-07
+
+- Vendas versionadas com `CFOP_BALANCE_V1`: Natureza/CFOP (L) e Descrição (O) passam a compor o snapshot reduzido e são revalidadas no servidor.
+- Nova separação **Vendas e Serviços / Devoluções / Outras**. A operação explícita da tabela de CFOP prevalece; fora dela, a descrição complementa a classificação.
+- Devoluções reduzem o saldo, Outras têm impacto zero e Vendas/Serviços somam. O total bruto original permanece preservado e reconciliado separadamente.
+- Aba de vendas, linhas/documentos, CSV e PDF exibem a nova memória de operação e saldo; snapshots antigos continuam legíveis sem reclassificação.
+- Simulador tributário preservado sem mudança em ICMS/ISS ou anexos; a nova classificação comercial não altera silenciosamente a segregação fiscal.
+- Testes de parser, domínio, MongoDB e navegador cobrem os novos campos e a precedência entre CFOP e descrição.
+
 ## [0.17.0] — 2026-10-05
 
 - Iniciar simplificado: busca por código/nome/CNPJ e seleção dos relatórios em diálogo; seleção múltipla preservada separadamente.
