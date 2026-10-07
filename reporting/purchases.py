@@ -186,10 +186,11 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
                 cpf_lines += 1
                 cpf_cents = _signed_integer(cpf_cents + balance_cents) if sales else _integer(cpf_cents + balance_cents)
     line_count, unique = len(indexes), len(by_cnpj)
+    raw_cnpj_cents = _integer(sum(supplier['totalCents'] for supplier in by_cnpj.values()))
     cnpj_cents = total_cents - non_cnpj_cents
     _check(line_count == expected == summary['lines'] and unique == summary['unique'] and
            excluded_lines == summary['invalid'] and line_count - excluded_lines - unique == summary['duplicates'] and
-           total_raw_cents == financial['totalCents'])
+           total_raw_cents == financial['totalCents'] and raw_cnpj_cents == financial['cnpjCents'])
     if sales and 'balanceCents' in financial:
         _check(_signed_integer(financial.get('balanceCents')) == total_cents)
     if components is not None:

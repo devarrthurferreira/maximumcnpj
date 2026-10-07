@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.18.0] — 2026-10-07
+
+- Vendas passam a separar **Venda, Serviço, Devolução e Outras**, com resumo por operação e detalhamento no relatório.
+- Natureza/CFOP normalizada sempre pelos **4 primeiros dígitos numéricos**; `900001` passa a `9000`, classificado como Serviço.
+- Devoluções mantêm o valor original para auditoria, mas entram com sinal negativo no saldo líquido.
+- KPIs por Simples/Não optante/CPF, simulador, CSV e PDF usam o saldo líquido das vendas, preservando a classificação fiscal original.
+- Validação duplicada no navegador e servidor impede que natureza completa ou sinal enviado pelo cliente alterem o resultado.
+- Compatibilidade mantida para históricos anteriores sem os novos campos.
+
 ## [0.17.0] — 2026-10-05
 
 - Iniciar simplificado: busca por código/nome/CNPJ e seleção dos relatórios em diálogo; seleção múltipla preservada separadamente.

@@ -20,11 +20,14 @@ export type PurchaseComponents = Record<typeof COMPONENT_FIELDS[number], number>
 export type SalesOperation = 'VENDA' | 'SERVICO' | 'DEVOLUCAO' | 'OUTRAS';
 const SALES_RETURN_CFOPS = new Set(['5201','5202','5208','5209','5210','5410','5411','5412','5413','5503','5553','5555','5556','5660','5661','5662','5921','6201','6202','6208','6209','6210','6410','6411','6412','6413','6503','6553','6556','6660','6661','6662','7201','7202','7210','7211','7212','7553','7556']);
 const SALES_OTHER_CFOPS = new Set(['5213','5214','5215','5216','5918','5919','6213','6214','6215','6216','6555','6918','6919','6921','7930']);
+const SALES_SERVICE_CFOPS = new Set(['9000']);
+export function normalizeNatureCode(value: unknown): string { return String(value ?? '').replace(/\D/g, '').slice(0, 4); }
 function normalizedOperationText(value: unknown) {
   return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 export function salesOperation(natureCode: unknown, description: unknown): SalesOperation {
-  const code = String(natureCode ?? '').match(/\b([567]\d{3})\b/)?.[1] || '';
+  const code = normalizeNatureCode(natureCode);
+  if (SALES_SERVICE_CFOPS.has(code)) return 'SERVICO';
   if (SALES_OTHER_CFOPS.has(code)) return 'OUTRAS';
   if (SALES_RETURN_CFOPS.has(code)) return 'DEVOLUCAO';
   const text = normalizedOperationText(description);
@@ -68,7 +71,7 @@ export function sameReportPeriod(left: any, right: any) {
 }
 export type PurchaseLine = Partial<Omit<PurchaseComponents, 'totalCents'>> & {
   document: string; documentKind: string; cnpj: string; name: string; serviceDate: string | null; quantity: string;
-  totalCents: number; balanceCents: number; natureCode: string; description: string; operation: SalesOperation | null; valid: boolean; kind: 'FORNECEDOR' | 'CLIENTE'; uf: ''; reason: string | null; documentHint: string;
+  totalCents: number; balanceCents?: number; natureCode?: string; description?: string; operation?: SalesOperation; valid: boolean; kind: 'FORNECEDOR' | 'CLIENTE'; uf: ''; reason: string | null; documentHint: string;
 };
 /** Browser parsing is only a convenience: the server validates the reduced financial payload. */
 export function compactPurchaseLine(input: any, version: PurchaseCalculationVersion = PURCHASE_CALCULATION_VERSION, mode: FinancialMode = PURCHASE_MODE): PurchaseLine {
@@ -92,16 +95,20 @@ export function compactPurchaseLine(input: any, version: PurchaseCalculationVers
     need(calculated >= 0, 'Q - Y + AA - AB resulta em total negativo. Revise os valores da linha.');
     need(calculated === input.totalCents, 'Total divergente da fórmula Q - Y + AA - AB. A despesa Z não entra no cálculo.');
   }
-  const natureCode = String(input.natureCode ?? '').trim(), description = String(input.description ?? '').trim();
-  need(natureCode.length <= 80 && description.length <= 2000, 'Natureza/descrição acima do limite.');
-  const operation = mode === SALES_MODE ? salesOperation(natureCode, description) : null;
-  const balanceCents = mode === SALES_MODE && operation === 'DEVOLUCAO' ? -input.totalCents : input.totalCents;
-  need(Number.isSafeInteger(balanceCents) && Math.abs(balanceCents) <= MAX_LINE_CENTS, 'Saldo da operação inválido.');
+  const salesFields: Partial<PurchaseLine> = {};
+  if (mode === SALES_MODE) {
+    const rawNatureCode = String(input.natureCode ?? '').trim(), natureCode = normalizeNatureCode(rawNatureCode), description = String(input.description ?? '').trim();
+    need(rawNatureCode.length <= 80 && description.length <= 2000, 'Natureza/descrição acima do limite.');
+    const operation = salesOperation(natureCode, description);
+    const balanceCents = operation === 'DEVOLUCAO' ? -input.totalCents : input.totalCents;
+    need(Number.isSafeInteger(balanceCents) && Math.abs(balanceCents) <= MAX_LINE_CENTS, 'Saldo da operação inválido.');
+    Object.assign(salesFields, {natureCode, description, operation, balanceCents});
+  }
   const document = input.document.trim().replace(/[.\/\-\s]/g, '').toUpperCase();
   const checked = normalizeCnpj(document), type = documentKind(document);
   const quantity = inputQuantity.replace(/^0+(?=\d)/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
   return { document, documentKind: type, cnpj: checked.valid ? checked.cnpj : '', name: input.name.trim(), serviceDate, quantity,
-    natureCode, description, operation, ...components, totalCents: input.totalCents, balanceCents, valid: checked.valid, kind: financialKind(mode), uf: '', reason: checked.valid ? null : type,
+    ...components, totalCents: input.totalCents, ...salesFields, valid: checked.valid, kind: financialKind(mode), uf: '', reason: checked.valid ? null : type,
     documentHint: checked.valid ? checked.cnpj : type === 'CPF' ? 'CPF — não consultado' : 'Documento não consultável — revisar na origem' };
 }
 export function exactCents(value: unknown): number {
@@ -130,7 +137,11 @@ export function reconciledPercentages(values: number[], denominator: number): nu
   for (let index = 0; index < remaining; index++) ranked[index].units++;
   return parts.map(part => part.units / 100);
 }
-export function moneyText(cents: number): string { return `${Math.floor(cents / 100)},${String(cents % 100).padStart(2, '0')}`; }
+export function moneyText(cents: number): string {
+  need(typeof cents === 'number' && Number.isSafeInteger(cents), 'Valor monetário inconsistente.', 409, 'PURCHASE_TOTAL');
+  const sign = cents < 0 ? '-' : '', value = Math.abs(cents);
+  return `${sign}${Math.floor(value / 100)},${String(value % 100).padStart(2, '0')}`;
+}
 export function purchaseCsv(job: any, rows: any[]): string {
   const version = calculationVersion(job), net = version === 'NET_V2', sales = job.mode === SALES_MODE;
   return csvEncode([
@@ -138,7 +149,7 @@ export function purchaseCsv(job: any, rows: any[]): string {
     ...rows.map(row => [job.clientCode || '', job.clientName, job._id, job.fileName, job.completedAt?.toISOString?.() || job.completedAt || '', row.index + 1, row.serviceDate || '',
       row.document, row.documentKind, row.name, row.natureCode || '', row.description || '', row.operation || '', row.quantity, moneyText(net ? row.grossCents : row.totalCents),
       ...['discountCents', 'accessoryCents', 'freightCents', 'abatementCents'].map(field => net ? moneyText(row[field]) : ''),
-      moneyText(row.totalCents), moneyText(Math.abs(row.balanceCents ?? row.totalCents)) + ((row.balanceCents ?? row.totalCents) < 0 ? ' D' : ''), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,
+      moneyText(row.totalCents), moneyText(row.balanceCents ?? row.totalCents), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,
       row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado'])
   ]);
 }

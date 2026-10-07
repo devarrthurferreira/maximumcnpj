@@ -80,9 +80,12 @@ const numericId = value => /^\d{1,18}$/.test(String(value ?? '').trim()) && /[1-
 
 const SALES_RETURN_CFOPS = new Set(['5201','5202','5208','5209','5210','5410','5411','5412','5413','5503','5553','5555','5556','5660','5661','5662','5921','6201','6202','6208','6209','6210','6410','6411','6412','6413','6503','6553','6556','6660','6661','6662','7201','7202','7210','7211','7212','7553','7556']);
 const SALES_OTHER_CFOPS = new Set(['5213','5214','5215','5216','5918','5919','6213','6214','6215','6216','6555','6918','6919','6921','7930']);
+const SALES_SERVICE_CFOPS = new Set(['9000']);
+const natureCode4 = value => String(value ?? '').replace(/\D/g, '').slice(0, 4);
 
 function salesOperation(natureCode, description) {
-  const code = String(natureCode ?? '').match(/\b([567]\d{3})\b/)?.[1] || '';
+  const code = natureCode4(natureCode);
+  if (SALES_SERVICE_CFOPS.has(code)) return 'SERVICO';
   if (SALES_OTHER_CFOPS.has(code)) return 'OUTRAS';
   if (SALES_RETURN_CFOPS.has(code)) return 'DEVOLUCAO';
   const text = normalizedHeader(description);
@@ -173,8 +176,8 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
         raw = repaired.row;
       }
       const document = String(raw[0] ?? '').trim(), name = String(raw[8] ?? '').trim();
-      const natureCode = String(raw[11] ?? '').trim(), description = String(raw[14] ?? '').trim();
-      if (natureCode.length > 80 || description.length > 2000) throw new Error('Natureza/descrição acima do limite.');
+      const rawNatureCode = String(raw[11] ?? '').trim(), natureCode = natureCode4(rawNatureCode), description = String(raw[14] ?? '').trim();
+      if (rawNatureCode.length > 80 || description.length > 2000) throw new Error('Natureza/descrição acima do limite.');
       if (document.length > 40 || name.length > 200) throw new Error('Documento ou razão social acima do limite.');
       if (!name) throw new Error(`${type === 'SALES' ? 'Comprador' : 'Razão social'} (I): preenchimento obrigatório.`);
       if ([0,8,15,16,...(net ? [7,24,25,26,27] : [])].map(index => raw[index]).some(v => String(v).includes('[FORMULA_NAO_SUPORTADA]'))) throw new Error('Cole as fórmulas como valores antes de importar.');
@@ -198,7 +201,9 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       if (net) for (const field of Object.keys(components)) components[field] += financial[field];
       const kind = documentKind(document);
       if (kind === 'CNPJ') unique.add(normalizeCnpj(document).cnpj); else nonCnpjLines++;
-      rows.push({document, name, serviceDate, quantity, natureCode, description, operation, balanceCents:lineBalanceCents, ...financial});
+      rows.push(type === 'SALES'
+        ? {document, name, serviceDate, quantity, natureCode, description, operation, balanceCents:lineBalanceCents, ...financial}
+        : {document, name, serviceDate, quantity, ...financial});
       if (repaired) repairs.push({line:sourceLine, descriptionSeparators:repaired.descriptionSeparators,
         reason:'Separadores extras da descrição (O) recompostos; colunas P a AD realinhadas com os valores originais.'});
     } catch (error) { errors.push({line:sourceLine, message:error.message}); }

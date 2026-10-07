@@ -39,6 +39,12 @@ function money(value: unknown) {
   'Informe valores entre zero e um trilhão, com no máximo duas casas decimais. Use 0 quando não houver valor.');
   return Math.round(value * 100) / 100;
 }
+function signedSalesMoney(value: unknown) {
+  need(typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= VALUE_LIMIT &&
+    value === Math.round(value * 100) / 100,
+  'Informe os grupos de vendas entre menos um trilhão e um trilhão, com no máximo duas casas decimais.');
+  return Math.round(value * 100) / 100;
+}
 
 /** Convert report cents into BRL using the same balanced rounding as the form. */
 function baselineGroups(source: Source, months: number): MonthlyGroups {
@@ -57,7 +63,7 @@ function request(input: unknown) {
   need(input.periodConfirmed === true, 'Confirme que os relatórios correspondem ao mesmo período.');
   const title = input.title === undefined ? null : text(input.title, 160);
   object(input.monthlyGroups, GROUPS);
-  const monthlyGroups = Object.fromEntries(GROUPS.map(key => [key, money(input.monthlyGroups[key])])) as MonthlyGroups;
+  const monthlyGroups = Object.fromEntries(GROUPS.map((key, index) => [key, index < 3 ? signedSalesMoney(input.monthlyGroups[key]) : money(input.monthlyGroups[key])])) as MonthlyGroups;
   object(input.draft, ['year', 'salesAnnex', 'serviceAnnex', 'values'], ['rbt12']);
   need([2027, 2028].includes(input.draft.year) && [1, 2].includes(input.draft.salesAnnex) && [3, 4, 5].includes(input.draft.serviceAnnex),
     'Ano ou anexo inválido para o modelo da calculadora.');
