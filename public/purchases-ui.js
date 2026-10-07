@@ -406,7 +406,7 @@ function renderSummary() {
     <section class="card purchase-section"><div class="purchase-split"><div><h2>Relatório e arquivos</h2><p class="hint mt">Resumo completo em PDF e linhas detalhadas em CSV, com quantidade e valor.</p></div><div class="purchase-view-actions"><button id="purchase-pdf" class="primary">Baixar resumo PDF</button><button id="purchase-print">Imprimir resumo</button></div></div><p id="purchase-download-status" class="purchase-status" role="status"></p><p class="purchase-print-note">Resumo financeiro completo. A relação detalhada de linhas está disponível no CSV do relatório.</p></section>
     <section class="card purchase-section" id="purchase-results"><div class="card-header"><h2>Explore os ${parties} e valores</h2><p>Compare os documentos agrupados ou confira cada linha do arquivo importado.</p></div><div class="purchase-toolbar"><label>Enquadramento<select id="purchase-status-filter">${Object.entries(labels).map(([key,label]) => `<option value="${key}" ${key === S.status ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label><label>Visualização<select id="purchase-view-filter"><option value="suppliers">Documentos agrupados</option><option value="lines">Linhas do relatório</option></select></label></div><div id="purchase-result-list"></div><div class="pagination"><button id="purchase-prev">Anterior</button><span id="purchase-page"></span><button id="purchase-next">Próxima</button></div><div class="purchase-controls mt"><label>Parte do CSV (linhas do grupo)<select id="purchase-csv-part"></select></label><button id="purchase-csv">Baixar CSV das linhas</button></div><p id="purchase-csv-note" class="hint mt"></p></section>
     <div class="warning info purchase-disclosure">Fonte dos CNPJs: Minha Receita. ${groupingHelp} O resultado original da fonte é preservado; esse agrupamento não comprova uma situação fiscal.</div>`;
-  document.querySelectorAll('.purchase-group').forEach(b => b.onclick = () => filterStatus(b.dataset.status));
+  document.querySelectorAll('.purchase-group[data-status]').forEach(b => b.onclick = () => filterStatus(b.dataset.status));
   $('#purchase-status-filter').onchange = () => filterStatus($('#purchase-status-filter').value);
   $('#purchase-view-filter').onchange = () => { S.view = $('#purchase-view-filter').value; loadRows(1).catch(error); };
   $('#purchase-prev').onclick = () => loadRows(S.page - 1).catch(error);
@@ -422,7 +422,7 @@ function renderGuidedSummary(m) {
 }
 function filterStatus(value) {
   S.status = value; $('#purchase-status-filter').value = value;
-  document.querySelectorAll('.purchase-group').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.status === value)));
+  document.querySelectorAll('.purchase-group[data-status]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.status === value)));
   updateCsvParts(); loadRows(1).catch(error);
 }
 function groupLines() {
