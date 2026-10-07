@@ -9,8 +9,8 @@ Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples e
 - [x] A natureza **9000** é tratada como **Serviço**. Venda/Serviço/Outras entram positivas; **Devolução sempre abate o saldo**, inclusive nos grupos gerenciais, CSV, PDF e campos enviados ao simulador.
 - [x] CFOPs de devolução e outras fornecidos na tabela operacional têm precedência. Quando não houver regra explícita, a descrição complementa a identificação de venda/serviço/devolução/outras.
 - [x] O backend recalcula a natureza de 4 dígitos e o sinal da operação; o navegador não é fonte de verdade. O valor original da linha permanece separado do impacto no saldo.
-- [x] A tela de vendas mostra o quadro **Vendas | Serviços | Devoluções | Outras**, quantidade de linhas, valor antes do sinal e impacto líquido. A listagem detalhada também exibe a operação e o saldo.
-- [x] Os KPIs de Optantes SN, Não Optantes SN e CPF usam o **saldo líquido**; devoluções reduzem o grupo correspondente antes de preencher o simulador.
+- [x] A tela de vendas mostra o quadro **Vendas | Serviços | Devoluções | Outras**, quantidade de linhas, valor antes do sinal e impacto líquido. A listagem detalhada também exibe a operação e o saldo; quando um comprador agrupado possui operações diferentes, a coluna indica **Múltiplas** em vez de classificar incorretamente como Outras.
+- [x] Os KPIs de Optantes SN, Não Optantes SN e CPF usam o **saldo líquido**; devoluções reduzem o grupo correspondente antes de preencher o simulador. Um grupo isolado pode ficar negativo quando suas devoluções superam as vendas daquele grupo; a projeção aceita esse saldo assinado e bloqueia somente quando o **total líquido das vendas** do período fica negativo.
 - [x] Históricos anteriores continuam legíveis: snapshots sem operação/saldo usam o comportamento anterior como fallback e não são reclassificados retroativamente.
 - [x] Testes cobrem `900001 → 9000 → SERVIÇO`, normalização de naturezas maiores que quatro dígitos e validação server-side.
 
