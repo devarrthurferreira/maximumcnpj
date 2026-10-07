@@ -1,6 +1,18 @@
-# Maximum CNPJ · v0.17.0
+# Maximum CNPJ · v0.18.0
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Entrega 07/10/2026 — natureza em 4 dígitos, vendas, serviços, devoluções e outras
+
+- [x] O relatório de vendas passa a classificar cada linha em **Venda**, **Serviço**, **Devolução** ou **Outras**, preservando o valor bruto e a descrição original para conferência.
+- [x] A coluna **Natureza / CFOP** é normalizada sempre para os **4 primeiros dígitos numéricos** antes da classificação e antes de persistir. Exemplos: `900001 → 9000`, `520201 → 5202`, `5.202.01 → 5202`.
+- [x] A natureza **9000** é tratada como **Serviço**. Venda/Serviço/Outras entram positivas; **Devolução sempre abate o saldo**, inclusive nos grupos gerenciais, CSV, PDF e campos enviados ao simulador.
+- [x] CFOPs de devolução e outras fornecidos na tabela operacional têm precedência. Quando não houver regra explícita, a descrição complementa a identificação de venda/serviço/devolução/outras.
+- [x] O backend recalcula a natureza de 4 dígitos e o sinal da operação; o navegador não é fonte de verdade. O valor original da linha permanece separado do impacto no saldo.
+- [x] A tela de vendas mostra o quadro **Vendas | Serviços | Devoluções | Outras**, quantidade de linhas, valor antes do sinal e impacto líquido. A listagem detalhada também exibe a operação e o saldo.
+- [x] Os KPIs de Optantes SN, Não Optantes SN e CPF usam o **saldo líquido**; devoluções reduzem o grupo correspondente antes de preencher o simulador.
+- [x] Históricos anteriores continuam legíveis: snapshots sem operação/saldo usam o comportamento anterior como fallback e não são reclassificados retroativamente.
+- [x] Testes cobrem `900001 → 9000 → SERVIÇO`, normalização de naturezas maiores que quatro dígitos e validação server-side.
 
 ## Entrega 05/10/2026 — início guiado, arquivos automáticos e RBT12 opcional por PDF
 
