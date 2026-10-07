@@ -77,6 +77,20 @@ const EXPORT_SUFFIX = ['Descrição', 'Quantidade', 'Valor Total', 'CST ICMS', '
 const EXPORT_PREFIX_ANCHORS = ['Estado', 'Contribuinte ICMS', 'Natureza', 'Classificação Fiscal', 'Produto'];
 const normalizedHeader = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const numericId = value => /^\d{1,18}$/.test(String(value ?? '').trim()) && /[1-9]/.test(String(value));
+
+const SALES_RETURN_CFOPS = new Set(['5201','5202','5208','5209','5210','5410','5411','5412','5413','5503','5553','5555','5556','5660','5661','5662','5921','6201','6202','6208','6209','6210','6410','6411','6412','6413','6503','6553','6556','6660','6661','6662','7201','7202','7210','7211','7212','7553','7556']);
+const SALES_OTHER_CFOPS = new Set(['5213','5214','5215','5216','5918','5919','6213','6214','6215','6216','6555','6918','6919','6921','7930']);
+
+function salesOperation(natureCode, description) {
+  const code = String(natureCode ?? '').match(/\b([567]\d{3})\b/)?.[1] || '';
+  if (SALES_OTHER_CFOPS.has(code)) return 'OUTRAS';
+  if (SALES_RETURN_CFOPS.has(code)) return 'DEVOLUCAO';
+  const text = normalizedHeader(description);
+  if (text.includes('devolucao')) return 'DEVOLUCAO';
+  if (text.includes('servico') || text.includes('prestacao')) return 'SERVICO';
+  if (text.includes('venda') || text.includes('faturamento')) return 'VENDA';
+  return 'OUTRAS';
+}
 function isDescriptionText(value) {
   if (typeof value !== 'string' || !/\p{L}/u.test(value) || !value.trim()) return false;
   try { decimal(value, 6, 'Descrição'); return false; } catch { return true; }
@@ -143,7 +157,8 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   const components = net ? {grossCents:0, discountCents:0, accessoryCents:0, freightCents:0, abatementCents:0, totalCents:0} : null;
   const rows = [], errors = [], repairs = [], unique = new Set();
   const recoveryCode = recoveryCompany(matrix, headerIndex, header, options);
-  let nonCnpjLines = 0, ignored = 0, totalCents = 0;
+  let nonCnpjLines = 0, ignored = 0, totalCents = 0, balanceCents = 0;
+  const operations = {VENDA:{lines:0,totalCents:0,balanceCents:0},SERVICO:{lines:0,totalCents:0,balanceCents:0},DEVOLUCAO:{lines:0,totalCents:0,balanceCents:0},OUTRAS:{lines:0,totalCents:0,balanceCents:0}};
   for (let index = headerIndex + 1; index < matrix.length; index++) {
     let raw = matrix[index];
     const sourceLine = Number.isSafeInteger(options.sourceLines?.[index]) && options.sourceLines[index] > 0 ? options.sourceLines[index] : index + 1;
@@ -158,6 +173,8 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
         raw = repaired.row;
       }
       const document = String(raw[0] ?? '').trim(), name = String(raw[8] ?? '').trim();
+      const natureCode = String(raw[11] ?? '').trim(), description = String(raw[14] ?? '').trim();
+      if (natureCode.length > 80 || description.length > 2000) throw new Error('Natureza/descrição acima do limite.');
       if (document.length > 40 || name.length > 200) throw new Error('Documento ou razão social acima do limite.');
       if (!name) throw new Error(`${type === 'SALES' ? 'Comprador' : 'Razão social'} (I): preenchimento obrigatório.`);
       if ([0,8,15,16,...(net ? [7,24,25,26,27] : [])].map(index => raw[index]).some(v => String(v).includes('[FORMULA_NAO_SUPORTADA]'))) throw new Error('Cole as fórmulas como valores antes de importar.');
@@ -173,10 +190,15 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       const financial = net ? {grossCents,...adjustments,totalCents:cents} : {totalCents:cents};
       if (net && Object.keys(components).some(field => !Number.isSafeInteger(components[field] + financial[field]))) throw new Error('A soma dos componentes excede o limite de precisão.');
       totalCents += cents;
+      const operation = type === 'SALES' ? salesOperation(natureCode, description) : null;
+      const lineBalanceCents = type === 'SALES' && operation === 'DEVOLUCAO' ? -cents : cents;
+      if (!Number.isSafeInteger(balanceCents + lineBalanceCents)) throw new Error('O saldo das operações excede o limite de precisão.');
+      balanceCents += lineBalanceCents;
+      if (operation) { operations[operation].lines++; operations[operation].totalCents += cents; operations[operation].balanceCents += lineBalanceCents; }
       if (net) for (const field of Object.keys(components)) components[field] += financial[field];
       const kind = documentKind(document);
       if (kind === 'CNPJ') unique.add(normalizeCnpj(document).cnpj); else nonCnpjLines++;
-      rows.push({document, name, serviceDate, quantity, ...financial});
+      rows.push({document, name, serviceDate, quantity, natureCode, description, operation, balanceCents:lineBalanceCents, ...financial});
       if (repaired) repairs.push({line:sourceLine, descriptionSeparators:repaired.descriptionSeparators,
         reason:'Separadores extras da descrição (O) recompostos; colunas P a AD realinhadas com os valores originais.'});
     } catch (error) { errors.push({line:sourceLine, message:error.message}); }
@@ -185,7 +207,7 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   if (!errors.length && rows.length && net) {
     try { period = fiscalPeriod(rows); } catch (error) { errors.push({line:headerIndex + 1, message:error.message}); }
   }
-  return {rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, components, period, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
+  return {rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, balanceCents:type === 'SALES' ? balanceCents : totalCents, operations:type === 'SALES' ? operations : null, components, period, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
 }
 
 export function decodePurchaseCsv(buffer, encoding = 'auto') {
