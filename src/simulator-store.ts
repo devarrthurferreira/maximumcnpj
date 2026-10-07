@@ -41,7 +41,10 @@ export async function generationSimulator(id: string, clientId: string) {
     salesOptantCents: valueFor(sales, 'OPTANTE'), salesNonOptantCents: valueFor(sales, 'NAO_OPTANTE'), salesCpfCents: valueFor(sales, 'CPF'),
     purchasesOptantCents: valueFor(purchases, 'OPTANTE'), purchasesNonOptantCents: valueFor(purchases, 'NAO_OPTANTE')
   };
-  need(exactSignedCents(fields.salesOptantCents + fields.salesNonOptantCents + fields.salesCpfCents) === sales.totals.totalCents &&
+  const salesNetCents = exactSignedCents(fields.salesOptantCents + fields.salesNonOptantCents + fields.salesCpfCents);
+  need(salesNetCents >= 0,
+    'As devoluções superam o total de vendas no período. Revise o relatório antes de projetar o simulador.', 409, 'SIMULATOR_NEGATIVE_SALES');
+  need(salesNetCents === sales.totals.totalCents &&
     exactCents(fields.purchasesOptantCents + fields.purchasesNonOptantCents) === purchases.totals.totalCents,
   'Os campos do simulador divergem dos relatórios. Revise os arquivos.', 409, 'SIMULATOR_INCONSISTENT');
   const purchaseOther = purchases.reportingGroups.find(group => group.status === 'NAO_OPTANTE')!;
