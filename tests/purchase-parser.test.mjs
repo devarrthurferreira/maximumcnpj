@@ -82,6 +82,31 @@ test('NET_V2 aplica Q-Y+AA-AB, preserva Z informativa e denuncia total negativo'
   assert.equal(legacy.totalCents,10000); assert.equal(legacy.components,null); assert(!('grossCents' in legacy.rows[0]));
 });
 
+test('vendas reduz natureza aos 4 primeiros dígitos e devolução sempre abate o saldo', () => {
+  const service = row('11222333000181','Comprador','','100,00');
+  service[11]='900001'; service[14]='Venda de serviços';
+  const serviceReport = parsePurchaseMatrix([header,service],0,{type:'SALES'});
+  assert.equal(serviceReport.errors.length,0);
+  assert.equal(serviceReport.rows[0].natureCode,'9000');
+  assert.equal(serviceReport.rows[0].operation,'SERVICO');
+  assert.equal(serviceReport.rows[0].balanceCents,10000);
+
+  const returned = row('11222333000181','Comprador','','100,00');
+  returned[11]='520201'; returned[14]='Mercadoria devolvida';
+  const returnReport = parsePurchaseMatrix([header,returned],0,{type:'SALES'});
+  assert.equal(returnReport.rows[0].natureCode,'5202');
+  assert.equal(returnReport.rows[0].operation,'DEVOLUCAO');
+  assert.equal(returnReport.rows[0].balanceCents,-10000);
+  assert.equal(returnReport.balanceCents,-10000);
+
+  const other = row('11222333000181','Comprador','','10,00');
+  other[11]='521399'; other[14]='Ajuste';
+  const otherReport = parsePurchaseMatrix([header,other],0,{type:'SALES'});
+  assert.equal(otherReport.rows[0].natureCode,'5213');
+  assert.equal(otherReport.rows[0].operation,'OUTRAS');
+  assert.equal(otherReport.rows[0].balanceCents,1000);
+});
+
 test('vendas rejeita colunas deslocadas mesmo com mesma largura do cabeçalho', () => {
   const salesHeader = [...header,'Código','Chave',''];
   const normal = [...row('11222333000181','Comprador','1','100,00'),'936','chave',''];
@@ -93,13 +118,15 @@ test('vendas rejeita colunas deslocadas mesmo com mesma largura do cabeçalho', 
   assert.equal(parsePurchaseMatrix([sparseHeader,sparse],0,{type:'SALES'}).rows[0].quantity,'0');
 });
 
-test('vendas usa comprador A/I, admite P vazio e calcula Q-Y+AA-AB sem Z', () => {
+test('vendas usa comprador A/I, admite P vazio, reduz natureza aos 4 primeiros dígitos e calcula Q-Y+AA-AB sem Z', () => {
   const input = row('11222333000181','Comprador sintético','','100,00');
+  input[11]='900001'; input[14]='Venda de serviços';
   input[24]='20,10'; input[25]='999,99'; input[26]='2,20'; input[27]='0,50';
   const result = parsePurchaseMatrix([header,input], 0, {type:'SALES'});
   assert.equal(result.errors.length, 0); assert.equal(result.reportType,'SALES');
   assert.equal(result.totalCents, 8160); assert.equal(result.components.accessoryCents, 99999);
   assert.equal(result.rows[0].document, '11222333000181'); assert.equal(result.rows[0].name, 'Comprador sintético');
+  assert.equal(result.rows[0].natureCode, '9000'); assert.equal(result.rows[0].operation, 'SERVICO');
   assert.equal(result.rows[0].quantity, '0');
   assert.equal(parsePurchaseMatrix([header,input]).errors.length, 1);
   input[8]=''; assert.match(parsePurchaseMatrix([header,input],0,{type:'SALES'}).errors[0].message,/Comprador/);
@@ -131,12 +158,15 @@ test('known CSV recovery only rejoins descriptive fragments and preserves exact 
   assert.equal(report.errors.length, 0); assert.equal(report.rows.length, 1); assert.equal(report.repairedCount, 1);
   assert.deepEqual(report.repairs, [{line:2, descriptionSeparators:1,
     reason:'Separadores extras da descrição (O) recompostos; colunas P a AD realinhadas com os valores originais.'}]);
-  assert.deepEqual(report.rows[0], parsePurchaseMatrix([exportHeader, original],0,{type:'SALES'}).rows[0]);
+  const aligned = parsePurchaseMatrix([exportHeader, original],0,{type:'SALES'}).rows[0];
+  assert.equal(report.rows[0].description, 'Descrição sintética;Tamanho:10M');
+  assert.deepEqual({...report.rows[0], description:aligned.description}, aligned);
   assert.equal(report.totalCents, 8160); assert.equal(report.components.accessoryCents, 99999);
   assert.equal(report.rows[0].document, original[0]); assert.equal(report.rows[0].name, original[8]);
   const multiple = parsePurchaseMatrix([exportHeader, splitDescription(original, ['Cor:Azul','Tamanho:10M','Kit:2'])],0,recoveryOptions);
   assert.equal(multiple.errors.length,0); assert.equal(multiple.repairs[0].descriptionSeparators,3);
-  assert.deepEqual(multiple.rows, report.rows);
+  assert.equal(multiple.rows[0].description, 'Descrição sintética;Cor:Azul;Tamanho:10M;Kit:2');
+  assert.deepEqual({...multiple.rows[0], description:report.rows[0].description}, report.rows[0]);
 });
 
 test('CSV recovery uses trustworthy company anchors and leaves correctly quoted descriptions unchanged', () => {
