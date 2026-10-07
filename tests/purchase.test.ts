@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compactPurchaseLine, calculationVersion, exactCents, percentage, reconciledPercentages, purchaseCsv, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus, reportPeriod } from '../src/purchase-domain.ts';
+import { compactPurchaseLine, calculationVersion, exactCents, percentage, reconciledPercentages, purchaseCsv, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus, reportPeriod, normalizeNatureCode, salesOperation } from '../src/purchase-domain.ts';
 
 const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', serviceDate: '2026-08-15', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050};
 test('Compras: valida componentes no servidor, centavos exatos e não multiplica P por Q', () => {
@@ -47,9 +47,11 @@ test('NET_V2 exige componentes, recalcula o total e não inclui Z; Q_V1 mantém 
   assert(csv.includes('"1,00";"";"";"";"";"1,00"'));
 });
 
-test('Vendas: comprador CLIENTE, quantidade opcional e mesma fórmula sem Z', () => {
-  const sales = compactPurchaseLine({...row, quantity:undefined, kind:'FORNECEDOR'}, 'NET_V2', SALES_MODE);
+test('Vendas: comprador CLIENTE, natureza com 4 dígitos, quantidade opcional e mesma fórmula sem Z', () => {
+  const sales = compactPurchaseLine({...row, quantity:undefined, kind:'FORNECEDOR', natureCode:'900001', description:'Venda de serviços'}, 'NET_V2', SALES_MODE);
   assert.equal(sales.kind, 'CLIENTE'); assert.equal(sales.quantity, '0'); assert.equal(sales.totalCents, 1050);
+  assert.equal(sales.natureCode, '9000'); assert.equal(sales.operation, 'SERVICO');
+  assert.equal(normalizeNatureCode(' 52.0201 '), '5202'); assert.equal(salesOperation('900001', ''), 'SERVICO');
   assert.equal(compactPurchaseLine({...row, quantity:''}, 'NET_V2', SALES_MODE).quantity, '0');
   assert.equal(compactPurchaseLine({...row, quantity:'2.50'}, 'NET_V2', SALES_MODE).quantity, '2.5');
   assert.throws(() => compactPurchaseLine({...row, quantity:'Kit'}, 'NET_V2', SALES_MODE), /Quantidade/);
