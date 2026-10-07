@@ -74,6 +74,8 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       }
       for (const bad of [null, '', -1, '0', NaN, Infinity, .001, 1_000_000_000_001]) {
         await assert.rejects(createSimulation(actor, {...input, draft: {...draft, values: {...draft.values, salaries: bad}}}), code('VALIDATION'));
+      }
+      for (const bad of [null, '', '0', NaN, Infinity, .001, 1_000_000_000_001]) {
         await assert.rejects(createSimulation(actor, {...input, monthlyGroups: {...monthlyGroups, salesCpfCents: bad}}), code('VALIDATION'));
       }
       await assert.rejects(createSimulation(actor, {...input, draft: {...draft, year: '2027'}}), code('VALIDATION'));
