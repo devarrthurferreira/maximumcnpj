@@ -133,7 +133,11 @@ export function reconciledPercentages(values: number[], denominator: number): nu
   for (let index = 0; index < remaining; index++) ranked[index].units++;
   return parts.map(part => part.units / 100);
 }
-export function moneyText(cents: number): string { return `${Math.floor(cents / 100)},${String(cents % 100).padStart(2, '0')}`; }
+export function moneyText(cents: number): string {
+  need(typeof cents === 'number' && Number.isSafeInteger(cents), 'Valor monetário inconsistente.', 409, 'PURCHASE_TOTAL');
+  const sign = cents < 0 ? '-' : '', value = Math.abs(cents);
+  return `${sign}${Math.floor(value / 100)},${String(value % 100).padStart(2, '0')}`;
+}
 export function purchaseCsv(job: any, rows: any[]): string {
   const version = calculationVersion(job), net = version === 'NET_V2', sales = job.mode === SALES_MODE;
   return csvEncode([
@@ -141,7 +145,7 @@ export function purchaseCsv(job: any, rows: any[]): string {
     ...rows.map(row => [job.clientCode || '', job.clientName, job._id, job.fileName, job.completedAt?.toISOString?.() || job.completedAt || '', row.index + 1, row.serviceDate || '',
       row.document, row.documentKind, row.name, row.natureCode || '', row.description || '', row.operation || '', row.quantity, moneyText(net ? row.grossCents : row.totalCents),
       ...['discountCents', 'accessoryCents', 'freightCents', 'abatementCents'].map(field => net ? moneyText(row[field]) : ''),
-      moneyText(row.totalCents), moneyText(Math.abs(row.balanceCents ?? row.totalCents)) + ((row.balanceCents ?? row.totalCents) < 0 ? ' D' : ''), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,
+      moneyText(row.totalCents), moneyText(row.balanceCents ?? row.totalCents), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,
       row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado'])
   ]);
 }
