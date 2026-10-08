@@ -433,7 +433,7 @@
 }
 
 @media(max-width:520px){
-  :root{--navigation-edge:10px;--navigation-rail:74px}
+  :root{--navigation-edge:12px;--navigation-rail:74px}
   .sidebar{padding-inline:8px!important;border-radius:23px!important}
   .navigation-rail-cap{width:50px;height:50px;min-height:50px;flex-basis:50px;border-radius:16px}
   .navigation-dock{padding-inline:5px;border-radius:21px}
