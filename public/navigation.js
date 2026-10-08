@@ -61,13 +61,16 @@ function syncToggle(toggle) {
   mountToggleVisual(toggle);
   const mobile = isMobileNavigation();
   const visible = navigationVisible();
-  const label = visible ? (mobile ? 'Fechar navegação' : 'Recolher navegação') : 'Abrir navegação';
+  const action = visible ? (mobile ? 'Fechar navegação' : 'Recolher navegação') : 'Abrir navegação';
   toggle.dataset.navigationState = visible ? 'open' : 'closed';
+  toggle.dataset.navigationAction = action;
   toggle.setAttribute('aria-expanded', String(visible));
   toggle.setAttribute('aria-controls', 'maximum-navigation');
-  toggle.setAttribute('aria-label', label);
+  toggle.setAttribute('aria-label', 'Alternar navegação');
+  toggle.setAttribute('aria-description', action);
+  toggle.title = action;
   const tip = toggle.querySelector('.navigation-toggle-tooltip');
-  if (tip) tip.textContent = label;
+  if (tip) tip.textContent = action;
 }
 
 function closeMobileNavigation(toggle, restoreFocus = false) {
