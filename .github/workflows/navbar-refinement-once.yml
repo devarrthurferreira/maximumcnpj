@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   update-release-files:
-    if: github.actor != 'github-actions[bot]'
+    if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,33 +55,37 @@ jobs:
           readme = readme_path.read_text(encoding='utf-8')
           readme = readme.replace('# Maximum CNPJ · v0.18.0', '# Maximum CNPJ · v0.18.1', 1)
           marker = 'Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.\n\n'
-          section = '''## Entrega 08/10/2026 — navbar flutuante, centralizada e com recolhimento refinado
-
-- [x] A navegação lateral passa a funcionar como um **dock flutuante**, com respiro em todas as bordas, cantos amplos e acabamento em camadas, sem ficar colada à lateral da tela.
-- [x] Todos os ícones ficam rigorosamente centralizados no eixo do dock e recebem áreas individuais com `border-radius`, estados ativo, hover e foco mais claros.
-- [x] **Iniciar** continua sendo a ação principal, agora com halo, profundidade e contraste reforçados sem alterar a rota ou as permissões existentes.
-- [x] O botão de recolher foi redesenhado com representação visual do painel, seta animada, tooltip e estados distintos para abrir, recolher e fechar no celular.
-- [x] Desktop preserva a preferência de navegação recolhida. No celular, a barra abre sobre um overlay desfocado, fecha por toque externo, link ou tecla Esc e não cria rolagem horizontal.
-- [x] Acessibilidade preservada com `aria-controls`, `aria-expanded`, rótulos dinâmicos, foco visível e redução de movimentos quando solicitada pelo sistema.
-- [x] Nenhum endpoint, cálculo, importação, relatório, permissão ou dado fiscal foi alterado.
-
-'''
+          section = '\n'.join([
+              '## Entrega 08/10/2026 — navbar flutuante, centralizada e com recolhimento refinado',
+              '',
+              '- [x] A navegação lateral passa a funcionar como um **dock flutuante**, com respiro em todas as bordas, cantos amplos e acabamento em camadas, sem ficar colada à lateral da tela.',
+              '- [x] Todos os ícones ficam rigorosamente centralizados no eixo do dock e recebem áreas individuais com `border-radius`, estados ativo, hover e foco mais claros.',
+              '- [x] **Iniciar** continua sendo a ação principal, agora com halo, profundidade e contraste reforçados sem alterar a rota ou as permissões existentes.',
+              '- [x] O botão de recolher foi redesenhado com representação visual do painel, seta animada, tooltip e estados distintos para abrir, recolher e fechar no celular.',
+              '- [x] Desktop preserva a preferência de navegação recolhida. No celular, a barra abre sobre um overlay desfocado, fecha por toque externo, link ou tecla Esc e não cria rolagem horizontal.',
+              '- [x] Acessibilidade preservada com `aria-controls`, `aria-expanded`, rótulos dinâmicos, foco visível e redução de movimentos quando solicitada pelo sistema.',
+              '- [x] Nenhum endpoint, cálculo, importação, relatório, permissão ou dado fiscal foi alterado.',
+              '',
+              '',
+          ])
           if marker not in readme:
               raise SystemExit('Ponto de inserção do README não encontrado')
           readme_path.write_text(readme.replace(marker, marker + section, 1), encoding='utf-8')
 
           changelog_path = Path('CHANGELOG.md')
           changelog = changelog_path.read_text(encoding='utf-8')
-          changelog_section = '''## [0.18.1] — 2026-10-08
-
-- Navbar transformada em dock flutuante, com padding em relação às bordas, borda arredondada, sombra em camadas e ícones centralizados.
-- Áreas dos ícones, item ativo e ação **Iniciar** refinados com novos estados de hover, foco, profundidade e contraste Maximum.
-- Botão de recolhimento redesenhado com painel e chevron animados, tooltip, rótulo dinâmico e estado persistente no desktop.
-- Drawer móvel recebe margem externa, overlay com desfoque e fechamento por overlay, link ou tecla Esc sem overflow horizontal.
-- Teste visual cobre posição do dock, centralização, cantos, recolhimento, estados do botão e comportamento móvel.
-- Regras fiscais, APIs, autenticação, permissões e contratos de importação permanecem inalterados.
-
-'''
+          changelog_section = '\n'.join([
+              '## [0.18.1] — 2026-10-08',
+              '',
+              '- Navbar transformada em dock flutuante, com padding em relação às bordas, borda arredondada, sombra em camadas e ícones centralizados.',
+              '- Áreas dos ícones, item ativo e ação **Iniciar** refinados com novos estados de hover, foco, profundidade e contraste Maximum.',
+              '- Botão de recolhimento redesenhado com painel e chevron animados, tooltip, rótulo dinâmico e estado persistente no desktop.',
+              '- Drawer móvel recebe margem externa, overlay com desfoque e fechamento por overlay, link ou tecla Esc sem overflow horizontal.',
+              '- Teste visual cobre posição do dock, centralização, cantos, recolhimento, estados do botão e comportamento móvel.',
+              '- Regras fiscais, APIs, autenticação, permissões e contratos de importação permanecem inalterados.',
+              '',
+              '',
+          ])
           changelog_marker = '# Histórico de alterações\n\n'
           if changelog_marker not in changelog:
               raise SystemExit('Ponto de inserção do CHANGELOG não encontrado')
