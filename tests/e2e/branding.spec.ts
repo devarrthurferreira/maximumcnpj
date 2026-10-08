@@ -44,8 +44,9 @@ test('Maximum: dock lateral flutuante mantém ícones centralizados e recolhimen
   const toggle=page.locator('#toggle-nav');
   await expect(toggle).toHaveCSS('width','46px');
   await expect(toggle).toHaveCSS('border-radius','16px');
+  await expect(toggle).toHaveAttribute('aria-label','Alternar navegação');
   await expect(toggle).toHaveAttribute('data-navigation-state','open');
-  await expect(toggle).toHaveAttribute('aria-label','Recolher navegação');
+  await expect(toggle).toHaveAttribute('data-navigation-action','Recolher navegação');
 
   const start=page.locator('.sidebar .navigation-start'),tooltip=start.locator('.navigation-tooltip');
   await start.hover();
@@ -58,19 +59,20 @@ test('Maximum: dock lateral flutuante mantém ícones centralizados e recolhimen
   await toggle.click();
   await expect(page.locator('body')).toHaveClass(/navigation-hidden/);
   await expect(toggle).toHaveAttribute('data-navigation-state','closed');
-  await expect(toggle).toHaveAttribute('aria-label','Abrir navegação');
+  await expect(toggle).toHaveAttribute('data-navigation-action','Abrir navegação');
   await expect.poll(async()=>Math.round((await sidebar.boundingBox())?.x??0)).toBeLessThan(-70);
   await toggle.click();
   await expect(page.locator('body')).not.toHaveClass(/navigation-hidden/);
   await expect(toggle).toHaveAttribute('data-navigation-state','open');
+  await expect.poll(async()=>Math.round((await sidebar.boundingBox())?.x??-999)).toBe(16);
 
   await page.setViewportSize({width:390,height:844});await page.reload();
-  await page.locator('#toggle-nav').click();
+  await expect(toggle).toHaveAttribute('data-navigation-state','closed');
+  await toggle.click();
   await expect(page.locator('body')).toHaveClass(/mobile-open/);
-  const mobileRail=await page.locator('.sidebar').boundingBox();
-  expect(mobileRail).not.toBeNull();
-  expect(Math.round(mobileRail!.x)).toBe(12);
-  expect(Math.round(mobileRail!.y)).toBe(12);
+  await expect(toggle).toHaveAttribute('data-navigation-action','Fechar navegação');
+  await expect.poll(async()=>Math.round((await sidebar.boundingBox())?.x??-999)).toBe(12);
+  await expect.poll(async()=>Math.round((await sidebar.boundingBox())?.y??-999)).toBe(12);
   await expect(page.locator('.navigation-overlay')).toBeVisible();
   await expect(page.locator('.sidebar .navigation-start')).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
