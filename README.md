@@ -1,6 +1,16 @@
-# Maximum CNPJ · v0.18.0
+# Maximum CNPJ · v0.18.1
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Entrega 08/10/2026 — navbar flutuante, centralizada e com recolhimento refinado
+
+- [x] A navegação lateral passa a funcionar como um **dock flutuante**, com respiro em todas as bordas, cantos amplos e acabamento em camadas, sem ficar colada à lateral da tela.
+- [x] Todos os ícones ficam rigorosamente centralizados no eixo do dock e recebem áreas individuais com `border-radius`, estados ativo, hover e foco mais claros.
+- [x] **Iniciar** continua sendo a ação principal, agora com halo, profundidade e contraste reforçados sem alterar a rota ou as permissões existentes.
+- [x] O botão de recolher foi redesenhado com representação visual do painel, seta animada, tooltip e estados distintos para abrir, recolher e fechar no celular.
+- [x] Desktop preserva a preferência de navegação recolhida. No celular, a barra abre sobre um overlay desfocado, fecha por toque externo, link ou tecla Esc e não cria rolagem horizontal.
+- [x] Acessibilidade preservada com `aria-controls`, `aria-expanded`, rótulos dinâmicos, foco visível e redução de movimentos quando solicitada pelo sistema.
+- [x] Nenhum endpoint, cálculo, importação, relatório, permissão ou dado fiscal foi alterado.
 
 ## Entrega 07/10/2026 — natureza em 4 dígitos, vendas, serviços, devoluções e outras
 

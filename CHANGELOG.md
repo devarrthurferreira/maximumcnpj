@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.18.1] — 2026-10-08
+
+- Navbar transformada em dock flutuante, com padding em relação às bordas, borda arredondada, sombra em camadas e ícones centralizados.
+- Áreas dos ícones, item ativo e ação **Iniciar** refinados com novos estados de hover, foco, profundidade e contraste Maximum.
+- Botão de recolhimento redesenhado com painel e chevron animados, tooltip, rótulo dinâmico e estado persistente no desktop.
+- Drawer móvel recebe margem externa, overlay com desfoque e fechamento por overlay, link ou tecla Esc sem overflow horizontal.
+- Teste visual cobre posição do dock, centralização, cantos, recolhimento, estados do botão e comportamento móvel.
+- Regras fiscais, APIs, autenticação, permissões e contratos de importação permanecem inalterados.
+
 ## [0.18.0] — 2026-10-07
 
 - Vendas passam a separar **Venda, Serviço, Devolução e Outras**, com resumo por operação e detalhamento no relatório.

@@ -20,15 +20,19 @@ function ensureStylesheet(href) {
   link.dataset.navigationStyle = href;
   document.head.append(link);
 }
-ensureStylesheet('/navigation.css?v=0.18.0-ui2');
+ensureStylesheet('/navigation.css?v=0.18.1-dock');
 
 function tooltip(label) {
   return `<span class="navigation-tooltip" role="tooltip">${escape(label)}</span>`;
 }
 
+function brandMark() {
+  return `<a href="/#overview" class="navigation-rail-cap" aria-label="Maximum CNPJ · Início" data-tooltip="Maximum CNPJ"><span class="navigation-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>${tooltip('Maximum CNPJ')}</a>`;
+}
+
 export function navigationMarkup(user, active = 'overview', internal = false) {
-  const entry = (key, label, image, href, primary = false) => `<a href="${href}" class="navigation-item${primary ? ' navigation-start' : ''}" aria-label="${escape(label)}" ${internal && ['overview','clients'].includes(key) ? `data-nav="${key}"` : ''} data-navigation="${key}" data-tooltip="${escape(label)}" ${active===key?'aria-current="page"':''}>${icon(image)}${tooltip(label)}</a>`;
-  return `<div class="navigation-rail-cap" aria-hidden="true"><span></span><span></span><span></span></div><nav class="nav" aria-label="Navegação principal">${entry('overview','Início','home','/#overview')}${entry('clients','Empresas','companies','/#clients')}${entry('start','Iniciar','start','/generations.html',true)}${entry('history','Histórico','history','/generations.html?view=history')}${entry('simulations','Simulações','simulations','/simulations.html')}</nav><div class="side-bottom"><a class="navigation-item navigation-account" href="/#settings" aria-label="Configurações" data-tooltip="Configurações">${icon('settings')}${tooltip('Configurações')}</a><button id="logout" class="navigation-item navigation-logout" type="button" aria-label="Sair da conta" data-tooltip="Sair">${icon('logout')}${tooltip('Sair')}</button></div><span class="sr-only">Usuário conectado: ${escape(user?.name || user?.email || 'Equipe Maximum')}</span>`;
+  const entry = (key, label, image, href, primary = false) => `<a href="${href}" class="navigation-item${primary ? ' navigation-start' : ''}" aria-label="${escape(label)}" ${internal && ['overview','clients'].includes(key) ? `data-nav="${key}"` : ''} data-navigation="${key}" data-tooltip="${escape(label)}" ${active===key?'aria-current="page"':''}><span class="navigation-icon">${icon(image)}</span>${tooltip(label)}</a>`;
+  return `${brandMark()}<div class="navigation-dock"><nav class="nav" aria-label="Navegação principal">${entry('overview','Início','home','/#overview')}${entry('clients','Empresas','companies','/#clients')}${entry('start','Iniciar','start','/generations.html',true)}${entry('history','Histórico','history','/generations.html?view=history')}${entry('simulations','Simulações','simulations','/simulations.html')}</nav></div><div class="side-bottom navigation-utility-dock"><a class="navigation-item navigation-account" href="/#settings" aria-label="Configurações" data-tooltip="Configurações"><span class="navigation-icon">${icon('settings')}</span>${tooltip('Configurações')}</a><button id="logout" class="navigation-item navigation-logout" type="button" aria-label="Sair da conta" data-tooltip="Sair"><span class="navigation-icon">${icon('logout')}</span>${tooltip('Sair')}</button></div><span class="sr-only">Usuário conectado: ${escape(user?.name || user?.email || 'Equipe Maximum')}</span>`;
 }
 
 export function markNavigation(active) {
@@ -38,29 +42,63 @@ export function markNavigation(active) {
   });
 }
 
+function isMobileNavigation() {
+  return innerWidth <= 850;
+}
+
 function navigationVisible() {
-  return innerWidth <= 850 ? document.body.classList.contains('mobile-open') : !document.body.classList.contains('navigation-hidden');
+  return isMobileNavigation() ? document.body.classList.contains('mobile-open') : !document.body.classList.contains('navigation-hidden');
+}
+
+function mountToggleVisual(toggle) {
+  if (!toggle || toggle.querySelector('.navigation-toggle-glyph')) return;
+  toggle.textContent = '';
+  toggle.insertAdjacentHTML('afterbegin', `<span class="navigation-toggle-glyph" aria-hidden="true"><span class="navigation-toggle-panel"></span><span class="navigation-toggle-content"><i></i><i></i><i></i></span><span class="navigation-toggle-chevron"></span></span><span class="navigation-toggle-tooltip" role="tooltip"></span>`);
 }
 
 function syncToggle(toggle) {
   if (!toggle) return;
+  mountToggleVisual(toggle);
+  const mobile = isMobileNavigation();
   const visible = navigationVisible();
+  const action = visible ? (mobile ? 'Fechar navegação' : 'Recolher navegação') : 'Abrir navegação';
+  toggle.dataset.navigationState = visible ? 'open' : 'closed';
+  toggle.dataset.navigationAction = action;
   toggle.setAttribute('aria-expanded', String(visible));
-  toggle.setAttribute('aria-label', visible ? 'Ocultar navegação' : 'Abrir navegação');
+  toggle.setAttribute('aria-controls', 'maximum-navigation');
+  toggle.setAttribute('aria-label', 'Alternar navegação');
+  toggle.setAttribute('aria-description', action);
+  toggle.title = action;
+  const tip = toggle.querySelector('.navigation-toggle-tooltip');
+  if (tip) tip.textContent = action;
+}
+
+function closeMobileNavigation(toggle, restoreFocus = false) {
+  if (!document.body.classList.contains('mobile-open')) return;
+  document.body.classList.remove('mobile-open');
+  syncToggle(toggle);
+  if (restoreFocus) toggle?.focus();
 }
 
 export function bindNavigation(onLogout) {
+  const side = document.querySelector('.sidebar');
+  if (side) side.id = 'maximum-navigation';
   const toggle = document.querySelector('#toggle-nav');
-  if (innerWidth > 850 && localStorage.getItem('maximum:navigation-hidden') === '1') document.body.classList.add('navigation-hidden');
+  if (!isMobileNavigation() && localStorage.getItem('maximum:navigation-hidden') === '1') document.body.classList.add('navigation-hidden');
   syncToggle(toggle);
+
   if (toggle) toggle.onclick = () => {
-    if (innerWidth <= 850) document.body.classList.toggle('mobile-open');
+    if (isMobileNavigation()) document.body.classList.toggle('mobile-open');
     else {
       document.body.classList.toggle('navigation-hidden');
       localStorage.setItem('maximum:navigation-hidden', document.body.classList.contains('navigation-hidden') ? '1' : '0');
     }
     syncToggle(toggle);
   };
+
+  side?.querySelectorAll('a').forEach(link => link.addEventListener('click', () => {
+    if (isMobileNavigation()) closeMobileNavigation(toggle);
+  }));
 
   const logout = document.querySelector('#logout');
   if (logout) logout.onclick = onLogout || (async () => {
@@ -80,17 +118,22 @@ export function bindNavigation(onLogout) {
   if (!overlay) {
     overlay = document.createElement('button');
     overlay.className = 'navigation-overlay';
+    overlay.type = 'button';
     overlay.setAttribute('aria-label','Fechar navegação');
-    overlay.onclick = () => { document.body.classList.remove('mobile-open'); syncToggle(toggle); };
     document.body.append(overlay);
   }
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && document.body.classList.contains('mobile-open')) {
-      document.body.classList.remove('mobile-open');
-      syncToggle(toggle);
-      toggle?.focus();
-    }
-  }, {once:false});
+  overlay.onclick = () => closeMobileNavigation(toggle, true);
+
+  if (!window.__maximumNavigationGlobalBound) {
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') closeMobileNavigation(document.querySelector('#toggle-nav'), true);
+    });
+    window.addEventListener('resize', () => {
+      if (!isMobileNavigation()) document.body.classList.remove('mobile-open');
+      syncToggle(document.querySelector('#toggle-nav'));
+    });
+    window.__maximumNavigationGlobalBound = true;
+  }
 }
 
 export function mountNavigation(user, active) {
