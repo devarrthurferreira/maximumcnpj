@@ -23,6 +23,7 @@ test('Maximum: navegação compacta usa somente ícones, tooltips e destaque em 
   });
 
   await page.setViewportSize({width:1440,height:1000});await page.goto('/');
+  await expect(page.locator('.sidebar')).toHaveCSS('width','92px');
   await expect(page.locator('.sidebar .maximum-logo')).toHaveCount(0);
   await expect(page.locator('.sidebar .nav-label')).toHaveCount(0);
   await expect(page.locator('.sidebar .navigation-start')).toBeVisible();
@@ -30,9 +31,12 @@ test('Maximum: navegação compacta usa somente ícones, tooltips e destaque em 
   await expect(page.locator('#toggle-nav')).toHaveAttribute('aria-label','Ocultar navegação');
   const sizes=await page.locator('.sidebar [data-navigation="overview"],.sidebar .navigation-start').evaluateAll((items:any[])=>items.map(item=>item.getBoundingClientRect().width));
   expect(sizes[1]).toBeGreaterThan(sizes[0]);
-  await page.locator('.sidebar .navigation-start').hover();
-  await expect(page.locator('.navigation-start .navigation-tooltip')).toBeVisible();
-  await expect(page.locator('.navigation-start .navigation-tooltip')).toHaveText('Iniciar');
+  const start=page.locator('.sidebar .navigation-start'),tooltip=start.locator('.navigation-tooltip');
+  await start.hover();
+  await expect(tooltip).toHaveCSS('visibility','visible');
+  await expect(tooltip).toHaveCSS('opacity','1');
+  await expect(tooltip).toHaveText('Iniciar');
+  expect(await tooltip.boundingBox()).not.toBeNull();
   await page.screenshot({path:'test-results/maximum-brand/painel-navegacao-compacta.png',fullPage:true});
 
   await page.locator('#toggle-nav').click();
