@@ -1,32 +1,31 @@
-/* One document step before the remaining scenario inputs. */
+/* A compact document step before the remaining scenario inputs. */
 .simulator-clean [hidden] { display: none !important; }
-.simulator-clean .sim-guided-rbt12 { width: min(100%, 680px); margin: 30px auto 48px; padding: 32px; border: 1px solid #e9e1e4; border-radius: 18px; box-shadow: 0 12px 40px #39242b08; }
-.sim-guided-rbt12 > h2 { margin: 10px 0; font-size: clamp(24px, 3vw, 30px); letter-spacing: -.7px; }
+.simulator-clean .sim-guided-rbt12 { width: min(100%, 680px); margin: 24px auto 32px; padding: 28px; border: 1px solid #e8e1e3; border-radius: 14px; box-shadow: 0 2px 8px #33252d04; }
+.sim-guided-rbt12 > h2 { margin: 10px 0; font-size: clamp(22px, 2.4vw, 26px); letter-spacing: -.6px; }
 #guided-rbt12-title:focus { outline: none; }
-.sim-guided-rbt12 > p { color: #75656b; font-size: 14px; line-height: 1.7; margin: 0 0 24px; }
-.sim-guided-rbt12 .sim-pdf-grid { grid-template-columns: minmax(0, 1fr); gap: 22px; }
-.sim-guided-rbt12 .sim-pdf-upload > label { display: none; }
-.sim-guided-rbt12 .sim-upload-controls { padding: 26px 20px; border: 1.5px dashed #c6b6bc; background: #fcfafb; border-radius: 12px; display: flex; flex-direction: column; gap: 18px; text-align: center; }
+.sim-guided-rbt12 > p { color: #75656b; font-size: 13px; line-height: 1.6; margin: 0 0 22px; }
+.sim-guided-rbt12 .sim-pdf-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.sim-guided-rbt12 .sim-pdf-upload > label { margin-bottom: 9px; }
+.sim-guided-rbt12 .sim-upload-controls { padding: 22px 18px; border: 1px dashed #c9b8bc; background: #fdfbfc; border-radius: 10px; display: flex; flex-direction: column; gap: 14px; text-align: center; }
 .sim-guided-rbt12 .sim-upload-controls:focus-within { outline: 2px solid #750207; outline-offset: 3px; }
-.sim-guided-placeholder { font-size: 17px; font-weight: 600; color: #51343f; }
-.sim-guided-placeholder small { display: block; font-size: 12px; font-weight: 400; margin-top: 8px; }
-.simulator-clean .sim-guided-rbt12 #rbt12-pdf { flex: none; width: 100%; min-height: 44px; font-size: 13px; margin: 0; padding: 10px; background: #fff; border: 1px solid #e5dce0; }
+.sim-guided-placeholder { font-size: 15px; font-weight: 600; color: #51343f; line-height: 1.5; }
+.sim-guided-placeholder small { display: block; font-size: 12px; font-weight: 400; margin-top: 6px; }
+.simulator-clean .sim-guided-rbt12 #rbt12-pdf { flex: none; width: 100%; min-height: 44px; font-size: 13px; margin: 0; padding: 8px; background: #fff; border: 1px solid #e5dce0; }
 .simulator-clean .sim-guided-rbt12 #rbt12-pdf::file-selector-button { min-height: 28px; }
-.simulator-clean .sim-guided-rbt12 #rbt12-status { margin: 12px 0 0; line-height: 1.65; }
-.sim-guided-actions { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding-top: 24px; margin-top: 24px; border-top: 1px solid #eee6e9; }
-.sim-guided-actions button { min-height: 46px; padding: 12px 16px; font-size: 13px; border-radius: 8px; }
-.sim-guided-actions button:disabled { opacity: .55; cursor: wait; }
-.sim-guided-rbt12 > .sim-guided-note { font-size: 12px; margin: 14px 0 0; }
+.simulator-clean .sim-guided-rbt12 #rbt12-status { margin: 12px 0 0; line-height: 1.6; }
+.sim-guided-actions { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding-top: 20px; margin-top: 20px; border-top: 1px solid #eee6e9; }
+.sim-guided-actions button { min-height: 44px; padding: 10px 14px; font-size: 13px; border-radius: 8px; white-space: normal; }
+.sim-guided-actions button:disabled { opacity: .55; cursor: not-allowed; }
+.sim-guided-rbt12 > .sim-guided-note { font-size: 12px; margin: 12px 0 0; }
 .sim-rbt12-mode { margin-top: 16px; }
-.sim-rbt12-mode > button { min-height: 42px; padding: 10px 14px; font-size: 12px; }
+.sim-rbt12-mode > button { min-height: 44px; padding: 10px 14px; font-size: 12px; white-space: normal; }
 #rbt12-manual-notice { border: 1px solid #e8d5b3; border-radius: 10px; padding: 14px 16px; margin-top: 14px; background: #fffcf6; }
 #rbt12-manual-notice .sim-help { margin: 0 0 12px; color: #67543c; }
-#rbt12-manual-notice .sim-confirm { align-items: flex-start; font-size: 13px; line-height: 1.6; }
-#rbt12-manual-confirm { flex: 0 0 18px; width: 18px; min-height: 18px; margin: 2px 8px 0 0; }
+#rbt12-manual-notice .sim-confirm { align-items: flex-start; font-size: 13px; line-height: 1.6; cursor: pointer; }
+#rbt12-manual-confirm { flex: 0 0 18px; width: 18px; min-height: 18px; margin: 2px 0 0; }
 @media (max-width: 650px) {
   .simulator-clean .sim-guided-rbt12 { margin: 20px auto 28px; padding: 22px 18px; }
-  .sim-guided-rbt12 .sim-upload-controls { padding: 22px 12px; }
+  .sim-guided-rbt12 .sim-upload-controls { padding: 20px 12px; }
   .sim-guided-actions { flex-direction: column-reverse; align-items: stretch; }
   .sim-guided-actions button { width: 100%; }
-  .sim-guided-placeholder { font-size: 16px; }
 }

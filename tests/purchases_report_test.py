@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 from reporting.core import ReportError, utcnow, MAX_RESPONSE_BYTES
 from reporting.purchases import (reconcile_purchase_snapshot, render_purchase_pdf, purchase_story, purchase_pdf_styles,
-                                money, percentage, reporting_percentages, _integer, MAX_SAFE_INTEGER, COMPONENT_FIELDS)
+                                money, percentage, reporting_percentages, signed_percentage, signed_reporting_percentages,
+                                _integer, MAX_SAFE_INTEGER, COMPONENT_FIELDS)
 
 JOB = '00000000-0000-4000-8000-000000000071'
 CLIENT = '00000000-0000-4000-8000-000000000072'
@@ -147,6 +148,25 @@ class PurchaseReportTests(unittest.TestCase):
                                  ([0, 0, MAX_SAFE_INTEGER], [0, 0, 100])):
             with self.subTest(values=values):
                 self.assertEqual(reporting_percentages(values), expected)
+
+    def test_sales_signed_percentages_match_node_and_preserve_empty_groups(self):
+        self.assertEqual(signed_percentage(10010, 40000), 25.03)
+        self.assertEqual(signed_percentage(-10010, 40000), -25.03)
+        self.assertEqual(signed_percentage(10010, -40000), -25.03)
+        for values, denominator, expected in (
+            ([1, 1, 1], 3, [33.34, 33.33, 33.33]),
+            ([-10010, 45000, 5010], 40000, [-25.02, 112.5, 12.52]),
+            ([-1, -1, -1], -3, [33.34, 33.33, 33.33]),
+            ([1, 31, 0], 32, [3.13, 96.87, 0]),
+            ([-1, 33, 0], 32, [-3.12, 103.12, 0]),
+            ([-100, 100, 0], 0, [0, 0, 0]),
+            ([0, 0, 0], 0, [0, 0, 0]),
+        ):
+            with self.subTest(values=values):
+                self.assertEqual(signed_reporting_percentages(values, denominator), expected)
+        for values, denominator in (([1, 2, 3], 5), ([0.5, 0.5, 0], 1)):
+            with self.assertRaises(ReportError):
+                signed_reporting_percentages(values, denominator)
 
     def test_sales_reject_legacy_formula_and_wrong_partner_kind(self):
         def legacy(job, lines, items): job.pop('calculationVersion')

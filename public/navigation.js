@@ -20,19 +20,21 @@ function ensureStylesheet(href) {
   link.dataset.navigationStyle = href;
   document.head.append(link);
 }
-ensureStylesheet('/navigation.css?v=0.18.1-dock');
+ensureStylesheet('/navigation.css?v=0.19.0');
 
-function tooltip(label) {
-  return `<span class="navigation-tooltip" role="tooltip">${escape(label)}</span>`;
+function navigationLabel(label) {
+  return `<span class="navigation-label">${escape(label)}</span>`;
 }
 
 function brandMark() {
-  return `<a href="/#overview" class="navigation-rail-cap" aria-label="Maximum CNPJ · Início" data-tooltip="Maximum CNPJ"><span class="navigation-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>${tooltip('Maximum CNPJ')}</a>`;
+  return `<a href="/#overview" class="navigation-rail-cap" aria-label="Maximum CNPJ · Início"><span class="navigation-mark" aria-hidden="true"><img src="/img/maximum-symbol.png" width="78" height="65" alt=""></span><span class="navigation-brand-copy"><strong>Maximum</strong><small>CNPJ</small></span></a>`;
 }
 
 export function navigationMarkup(user, active = 'overview', internal = false) {
-  const entry = (key, label, image, href, primary = false) => `<a href="${href}" class="navigation-item${primary ? ' navigation-start' : ''}" aria-label="${escape(label)}" ${internal && ['overview','clients'].includes(key) ? `data-nav="${key}"` : ''} data-navigation="${key}" data-tooltip="${escape(label)}" ${active===key?'aria-current="page"':''}><span class="navigation-icon">${icon(image)}</span>${tooltip(label)}</a>`;
-  return `${brandMark()}<div class="navigation-dock"><nav class="nav" aria-label="Navegação principal">${entry('overview','Início','home','/#overview')}${entry('clients','Empresas','companies','/#clients')}${entry('start','Iniciar','start','/generations.html',true)}${entry('history','Histórico','history','/generations.html?view=history')}${entry('simulations','Simulações','simulations','/simulations.html')}</nav></div><div class="side-bottom navigation-utility-dock"><a class="navigation-item navigation-account" href="/#settings" aria-label="Configurações" data-tooltip="Configurações"><span class="navigation-icon">${icon('settings')}</span>${tooltip('Configurações')}</a><button id="logout" class="navigation-item navigation-logout" type="button" aria-label="Sair da conta" data-tooltip="Sair"><span class="navigation-icon">${icon('logout')}</span>${tooltip('Sair')}</button></div><span class="sr-only">Usuário conectado: ${escape(user?.name || user?.email || 'Equipe Maximum')}</span>`;
+  const entry = (key, label, image, href, primary = false) => `<a href="${href}" class="navigation-item${primary ? ' navigation-start' : ''}" aria-label="${escape(label)}" ${internal && ['overview','clients','settings'].includes(key) ? `data-nav="${key}"` : ''} data-navigation="${key}" ${active===key?'aria-current="page"':''}><span class="navigation-icon">${icon(image)}</span>${navigationLabel(label)}</a>`;
+  const name = user?.name || user?.email || 'Equipe Maximum';
+  const role = {admin:'Administrador',operator:'Operador',viewer:'Visualização'}[user?.role] || 'Equipe Maximum';
+  return `<div class="navigation-heading">${brandMark()}<button class="navigation-close" type="button" aria-label="Fechar navegação"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m6 6 12 12M6 18 18 6"/></svg></button></div><div class="navigation-dock"><span class="navigation-section" aria-hidden="true">Workspace</span><nav class="nav" aria-label="Navegação principal">${entry('overview','Início','home','/#overview')}${entry('clients','Empresas','companies','/#clients')}${entry('start','Iniciar','start','/generations.html',true)}${entry('history','Histórico','history','/generations.html?view=history')}${entry('simulations','Simulações','simulations','/simulations.html')}</nav></div><div class="side-bottom navigation-utility-dock">${entry('settings','Configurações','settings','/#settings')}<button id="logout" class="navigation-item navigation-logout" type="button" aria-label="Sair da conta"><span class="navigation-icon">${icon('logout')}</span>${navigationLabel('Sair')}</button><div class="navigation-profile" title="${escape(name)}"><span class="navigation-avatar" aria-hidden="true">${escape(Array.from(name)[0]?.toUpperCase() || 'M')}</span><span class="navigation-user-copy"><strong>${escape(name)}</strong><small>${escape(role)}</small></span><span class="sr-only">Usuário conectado: ${escape(name)}</span></div></div>`;
 }
 
 export function markNavigation(active) {
@@ -40,68 +42,113 @@ export function markNavigation(active) {
     if (link.dataset.navigation === active) link.setAttribute('aria-current','page');
     else link.removeAttribute('aria-current');
   });
+  syncNavigation();
 }
 
 function isMobileNavigation() {
   return innerWidth <= 850;
 }
 
-function navigationVisible() {
-  return isMobileNavigation() ? document.body.classList.contains('mobile-open') : !document.body.classList.contains('navigation-hidden');
+function navigationExpanded() {
+  return isMobileNavigation() ? document.body.classList.contains('mobile-open') : document.body.classList.contains('navigation-expanded');
 }
 
 function mountToggleVisual(toggle) {
   if (!toggle || toggle.querySelector('.navigation-toggle-glyph')) return;
-  toggle.textContent = '';
-  toggle.insertAdjacentHTML('afterbegin', `<span class="navigation-toggle-glyph" aria-hidden="true"><span class="navigation-toggle-panel"></span><span class="navigation-toggle-content"><i></i><i></i><i></i></span><span class="navigation-toggle-chevron"></span></span><span class="navigation-toggle-tooltip" role="tooltip"></span>`);
+  toggle.innerHTML = `<svg class="navigation-toggle-glyph" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/><path class="navigation-toggle-chevron" d="m13 9 3 3-3 3"/></svg>`;
 }
 
-function syncToggle(toggle) {
-  if (!toggle) return;
-  mountToggleVisual(toggle);
+function syncNavigation() {
+  const toggle = document.querySelector('#toggle-nav');
+  const side = document.querySelector('#maximum-navigation');
   const mobile = isMobileNavigation();
-  const visible = navigationVisible();
-  const action = visible ? (mobile ? 'Fechar navegação' : 'Recolher navegação') : 'Abrir navegação';
-  toggle.dataset.navigationState = visible ? 'open' : 'closed';
-  toggle.dataset.navigationAction = action;
-  toggle.setAttribute('aria-expanded', String(visible));
-  toggle.setAttribute('aria-controls', 'maximum-navigation');
-  toggle.setAttribute('aria-label', 'Alternar navegação');
-  toggle.setAttribute('aria-description', action);
-  toggle.title = action;
-  const tip = toggle.querySelector('.navigation-toggle-tooltip');
-  if (tip) tip.textContent = action;
+  const expanded = navigationExpanded();
+  const action = expanded ? (mobile ? 'Fechar navegação' : 'Recolher navegação') : (mobile ? 'Abrir navegação' : 'Expandir navegação');
+  if (toggle) {
+    mountToggleVisual(toggle);
+    toggle.dataset.navigationState = expanded ? 'open' : 'closed';
+    toggle.dataset.navigationAction = action;
+    toggle.setAttribute('aria-expanded', String(expanded));
+    toggle.setAttribute('aria-controls', 'maximum-navigation');
+    toggle.setAttribute('aria-label', 'Alternar navegação');
+    toggle.setAttribute('aria-description', action);
+    toggle.title = action;
+  }
+  if (side) {
+    side.inert = mobile && !expanded;
+    if (mobile && expanded) {
+      side.setAttribute('role', 'dialog');
+      side.setAttribute('aria-modal', 'true');
+      side.setAttribute('aria-label', 'Navegação');
+    } else {
+      side.removeAttribute('role');
+      side.removeAttribute('aria-modal');
+      side.removeAttribute('aria-label');
+    }
+  }
+  document.querySelectorAll('.main').forEach(main => {
+    if (mobile && expanded) {
+      if (!main.inert) {
+        main.dataset.navigationInert = 'true';
+        main.inert = true;
+      }
+    } else if (main.dataset.navigationInert) {
+      main.inert = false;
+      delete main.dataset.navigationInert;
+    }
+  });
 }
 
-function closeMobileNavigation(toggle, restoreFocus = false) {
-  if (!document.body.classList.contains('mobile-open')) return;
+function closeMobileNavigation(restoreFocus = false) {
+  const wasOpen = document.body.classList.contains('mobile-open');
   document.body.classList.remove('mobile-open');
-  syncToggle(toggle);
-  if (restoreFocus) toggle?.focus();
+  syncNavigation();
+  if (restoreFocus && wasOpen) document.querySelector('#toggle-nav')?.focus();
+}
+
+function focusableNavigation() {
+  return [...document.querySelectorAll('#maximum-navigation a[href], #maximum-navigation button:not(:disabled)')].filter(element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
 }
 
 export function bindNavigation(onLogout) {
   const side = document.querySelector('.sidebar');
   if (side) side.id = 'maximum-navigation';
   const toggle = document.querySelector('#toggle-nav');
-  if (!isMobileNavigation() && localStorage.getItem('maximum:navigation-hidden') === '1') document.body.classList.add('navigation-hidden');
-  syncToggle(toggle);
+  document.body.classList.remove('navigation-hidden');
+  try {
+    document.body.classList.toggle('navigation-expanded', localStorage.getItem('maximum:navigation-expanded') === '1');
+  } catch {
+    // Navigation remains usable when the browser blocks preference storage.
+  }
+  syncNavigation();
 
   if (toggle) toggle.onclick = () => {
-    if (isMobileNavigation()) document.body.classList.toggle('mobile-open');
-    else {
-      document.body.classList.toggle('navigation-hidden');
-      localStorage.setItem('maximum:navigation-hidden', document.body.classList.contains('navigation-hidden') ? '1' : '0');
+    if (isMobileNavigation()) {
+      const open = !document.body.classList.contains('mobile-open');
+      document.body.classList.toggle('mobile-open', open);
+      syncNavigation();
+      if (open) side?.querySelector('.navigation-close')?.focus();
+    } else {
+      document.body.classList.toggle('navigation-expanded');
+      try {
+        localStorage.setItem('maximum:navigation-expanded', document.body.classList.contains('navigation-expanded') ? '1' : '0');
+      } catch {
+        // A blocked preference must not prevent opening the sidebar.
+      }
+      syncNavigation();
     }
-    syncToggle(toggle);
   };
 
   side?.querySelectorAll('a').forEach(link => link.addEventListener('click', () => {
-    if (isMobileNavigation()) closeMobileNavigation(toggle);
+    if (isMobileNavigation()) closeMobileNavigation(true);
   }));
+  const close = side?.querySelector('.navigation-close');
+  if (close) close.onclick = () => closeMobileNavigation(true);
 
   const logout = document.querySelector('#logout');
-  if (logout) logout.onclick = onLogout || (async () => {
+  if (logout) logout.onclick = async () => {
+    closeMobileNavigation(true);
+    if (onLogout) return onLogout();
     logout.disabled = true;
     try {
       const response = await fetch('/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',credentials:'same-origin'});
@@ -112,25 +159,45 @@ export function bindNavigation(onLogout) {
       const toast = document.querySelector('#toast');
       if (toast) toast.textContent = error.message;
     }
-  });
+  };
 
   let overlay = document.querySelector('.navigation-overlay');
   if (!overlay) {
     overlay = document.createElement('button');
     overlay.className = 'navigation-overlay';
     overlay.type = 'button';
-    overlay.setAttribute('aria-label','Fechar navegação');
+    overlay.tabIndex = -1;
+    overlay.setAttribute('aria-label', 'Fechar navegação');
+    overlay.setAttribute('aria-hidden', 'true');
     document.body.append(overlay);
   }
-  overlay.onclick = () => closeMobileNavigation(toggle, true);
+  overlay.onclick = () => closeMobileNavigation(true);
 
   if (!window.__maximumNavigationGlobalBound) {
     document.addEventListener('keydown', event => {
-      if (event.key === 'Escape') closeMobileNavigation(document.querySelector('#toggle-nav'), true);
+      if (!isMobileNavigation() || !document.body.classList.contains('mobile-open')) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeMobileNavigation(true);
+      } else if (event.key === 'Tab') {
+        const items = focusableNavigation();
+        const first = items[0], last = items.at(-1);
+        if (event.shiftKey && (document.activeElement === first || !items.includes(document.activeElement))) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !items.includes(document.activeElement))) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
     });
     window.addEventListener('resize', () => {
+      const active = document.activeElement;
+      const closingDrawer = !isMobileNavigation() && document.body.classList.contains('mobile-open');
       if (!isMobileNavigation()) document.body.classList.remove('mobile-open');
-      syncToggle(document.querySelector('#toggle-nav'));
+      syncNavigation();
+      // The browser may already have blurred the mobile close button after its CSS changed.
+      if (closingDrawer || (active?.closest('#maximum-navigation') && (active.closest('[inert]') || getComputedStyle(active).display === 'none'))) document.querySelector('#toggle-nav')?.focus();
     });
     window.__maximumNavigationGlobalBound = true;
   }

@@ -3,7 +3,7 @@ import type { Doc } from './store.ts';
 import { getJob } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { need, integer } from './security.ts';
-import { PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialLabel, type FinancialMode, PURCHASE_STATUSES, COMPONENT_FIELDS, MAX_LINE_CENTS, calculationVersion, purchaseFormula, exactCents, exactSignedCents, percentage, reconciledPercentages, purchaseCsv, reportPeriod, sameReportPeriod } from './purchase-domain.ts';
+import { PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialLabel, type FinancialMode, PURCHASE_STATUSES, COMPONENT_FIELDS, MAX_LINE_CENTS, calculationVersion, purchaseFormula, exactCents, exactSignedCents, percentage, signedPercentage, reconciledPercentages, reconciledSignedPercentages, purchaseCsv, reportPeriod, sameReportPeriod } from './purchase-domain.ts';
 
 const FINANCIAL_FIELDS = [...COMPONENT_FIELDS, 'totalCents'] as const;
 // Stored documents are already normalized. An absent identifier represents its own row, never a shared person.
@@ -37,7 +37,6 @@ async function financialPeriod(name: string, id: string, job: Doc) {
   return reportPeriod(rows.map(row => row.serviceDate));
 }
 type DocumentTotals = {count: number; lines: number; totalCents: number};
-function signedPercent(value: number, denominator: number) { return denominator ? Math.round(value / denominator * 10000) / 100 : 0; }
 function reportingGroups(groups: any[], unique: number, cents: number, nonCnpj: DocumentTotals, cpf: DocumentTotals, mode: FinancialMode) {
   const optant = groups.find(group => group.status === 'OPTANTE')!;
   const nonOptant = groups.find(group => group.status === 'NAO_OPTANTE')!;
@@ -56,7 +55,7 @@ function reportingGroups(groups: any[], unique: number, cents: number, nonCnpj: 
       {status: 'CPF', count: cpf.count, lines: cpf.lines, totalCents: cpf.totalCents, unconfirmedCount: 0, unconfirmedCents: 0, nonCnpjCount: cpf.count, nonCnpjCents: cpf.totalCents}
     ];
     const counts = reconciledPercentages(salesGroups.map(group => group.count), unique);
-    const values = salesGroups.map(group => signedPercent(group.totalCents, cents));
+    const values = reconciledSignedPercentages(salesGroups.map(group => group.totalCents), cents);
     return salesGroups.map((group, index) => ({...group, countPercent: counts[index], valuePercent: values[index]}));
   }
   // Complement the second rounded percentage so the two displayed groups reconcile to exactly 100%.
@@ -140,7 +139,8 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
   need(lines === job.expectedRows && lines === job.summary.lines && valid.length === job.summary.unique && items.length === valid.length &&
     lines - cnpjLines === job.summary.invalid && cnpjLines - valid.length === job.summary.duplicates &&
     job.purchaseInput.totalCents === rawTotalCents && job.purchaseInput.cnpjCents === rawCnpjCents &&
-    (mode !== SALES_MODE || job.purchaseInput.balanceCents === totalCents),
+    // Before sales operations existed, the reconciled raw total was also the saved balance.
+    (mode !== SALES_MODE || (job.purchaseInput.balanceCents === undefined ? rawTotalCents : job.purchaseInput.balanceCents) === totalCents),
     'Linhas, CNPJs ou valores divergentes do snapshot. Emissão bloqueada.', 409, 'RESULT_COUNT');
   const indexed = new Map(items.map(item => [item.cnpj, item]));
   const groups = PURCHASE_STATUSES.map(status => ({status, count: 0, lines: 0, totalCents: 0, countPercent: 0, valuePercent: 0}));
@@ -153,7 +153,7 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
     const group = groups.find(g => g.status === item.status)!;
     group.count++; group.lines += line.lines; group.totalCents = mode === SALES_MODE ? exactSignedCents(group.totalCents + reportingValue(line)) : exactCents(group.totalCents + reportingValue(line));
   }
-  for (const group of groups) { group.countPercent = percentage(group.count, valid.length); group.valuePercent = mode === SALES_MODE ? signedPercent(group.totalCents, cnpjCents) : percentage(group.totalCents, cnpjCents); }
+  for (const group of groups) { group.countPercent = percentage(group.count, valid.length); group.valuePercent = mode === SALES_MODE ? signedPercentage(group.totalCents, cnpjCents) : percentage(group.totalCents, cnpjCents); }
   const uniqueDocuments = grouped.length, nonCnpjDocumentCount = nonCnpj.length;
   const operationTotals = mode === SALES_MODE ? await (await collection('purchaseLines')).aggregate([
     {$match: scope({jobId: id})}, {$group: {_id: {$ifNull: ['$operation', 'OUTRAS']}, lines: {$sum: 1}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}}}}, {$sort: {_id: 1}}
