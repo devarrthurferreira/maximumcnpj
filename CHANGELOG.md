@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.20.1] — 2026-10-09
+
+- Alternativa OpenCNPJ para indisponibilidade da Minha Receita, com orçamento total de 12 segundos, validação de identidade e indicadores explícitos por provedor.
+- Bloqueios, limites, Retry-After e divergência de identidade preservados; fontes e motivos de falha registrados sem dados de clientes nos logs.
+- Diagnósticos agregados também no acompanhamento guiado e nos históricos, distinguindo consulta encerrada com pendências de confirmação completa.
+- Nova consulta acessível no resumo, retomada automática para operadores e pedido idempotente que conserva linhas, totais, CFOP e DIFAL sem modificar snapshots anteriores.
+- Fonte efetiva no resumo, CSV e PDF; testes de indisponibilidade, recuperação, limites, dados ausentes, isolamento, conciliação financeira e navegador.
+
 ## [0.20.0] — 2026-10-09
 
 - DIFAL gerencial estimado em 10% para vendas de mercadorias a CPF de outra UF, com lista explícita de naturezas elegíveis.

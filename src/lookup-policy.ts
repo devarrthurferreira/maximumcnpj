@@ -1,5 +1,7 @@
 /** Bounded throughput defaults. Rate limits are shared in MongoDB, not per browser. */
 export const LOOKUP_TIMEOUT_MS = 12_000;
+/** Reserve room for an independent fallback without extending the total lookup budget. */
+export const LOOKUP_SOURCE_TIMEOUT_MS = 6_000;
 export const LOOKUP_BATCH_MS = 24_000;
 export const LOOKUP_BATCH_SIZE = 40;
 export function lookupPolicy(env: Record<string, string | undefined> = process.env) {

@@ -8,7 +8,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, LongTable
-from .core import (VERSION, STATUSES, REPORTING_STATUSES, reporting_status, KINDS, NOTICE, display_date, number, percent,
+from .core import (VERSION, STATUSES, REPORTING_STATUSES, reporting_status, KINDS, NOTICE, display_date, number, percent, snapshot_source,
                    percentage, cnpj_mask, PDF_PART_SIZE)
 
 INK = colors.HexColor('#222222')
@@ -86,7 +86,7 @@ def render_pdf(meta, result, options):
         story += [PageBreak(), p(f'{group_label} · listagem detalhada','title'),
                   p(f'Parte {result["page"]} de {result["parts"]} | {number(len(result["items"]))} de {number(result["total"])} CNPJs do grupo.'),
                   p(f'Limite de {PDF_PART_SIZE} CNPJs por parte; baixe todas as partes para a relação completa. O resumo acima sempre considera o lote/tipo completo.','small'),Spacer(1,8)]
-        data = [[p(x,'head') for x in ('CNPJ / Grupo gerencial','Nome informado / API','Tipo / UF / repetições','Conferência e cadastro','Datas de opção / exclusão','Consultado em')]]
+        data = [[p(x,'head') for x in ('CNPJ / Grupo gerencial','Nome informado / API','Tipo / UF / repetições','Conferência e cadastro','Datas de opção / exclusão','Consultado em / Fonte')]]
         for row in result['items']:
             d = row.get('details') or {}
             names = f'Informado: {row.get("submittedName") or "Não informado"}\nAPI: {d.get("name") or "Não retornado"}'
@@ -96,7 +96,7 @@ def render_pdf(meta, result, options):
               p(f'{row.get("kind") or "Sem tipo"}\nUF: {d.get("uf") or row.get("uf") or "—"}\nOcorrências: {row.get("occurrences",1)}','cell'),
               p(f'{row.get("nameMatch") or "Não informada"}\n{row.get("reason") or "Sem impedimento registrado"}\nCadastro: {d.get("registryStatus") or "Não informado"}\nMEI: '+('Sim' if d.get('mei') is True else 'Não' if d.get('mei') is False else 'Não confirmado'),'cell'),
               p(f'Opção: {display_date(d.get("optionDate"))}\nExclusão: {display_date(d.get("exclusionDate"))}','cell'),
-              p(display_date(row.get('checkedAt')),'cell')])
+              p(display_date(row.get('checkedAt'))+'\n'+snapshot_source(row, job),'cell')])
         if result['items']:
             story.append(table(data,[width*x for x in (.15,.28,.105,.205,.15,.11)]))
         else:

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseProvider, flagStatus} from '../src/lookup-domain.ts';
+import {parseProvider, parseOpenCnpj, flagStatus} from '../src/lookup-domain.ts';
 import {lookupCnpj, SourceError, retrySeconds} from '../src/lookup-provider.ts';
 import {lookupPolicy, boundedWorkers} from '../src/lookup-policy.ts';
 const cnpj = '00000000000191';
@@ -70,4 +70,94 @@ test('Falhas pontuais não pausam a fonte; limites e indisponibilidade HTTP pres
     await assert.rejects(lookupCnpj(cnpj, (async () => new Response('', {status})) as typeof fetch),
       (error: SourceError) => error.retryable && error.pauseProvider && error.retryAfter >= 5);
   }
+});
+
+test('Indisponibilidade da principal consulta OpenCNPJ uma vez, preservando fonte e projeção mínima', async () => {
+  for (const failure of ['network', '503', 'invalid-json']) {
+    const urls: string[] = [];
+    const mock = (async (url: any, options: any) => {
+      urls.push(String(url)); assert.equal(options.cache, 'no-store'); assert.equal(options.redirect, 'error');
+      if (urls.length === 1) {
+        if (failure === 'network') throw new TypeError('Network timeout');
+        if (failure === '503') return new Response('', {status: 503});
+        return new Response('{', {headers: {'content-type': 'application/json'}});
+      }
+      return Response.json({cnpj, razao_social: 'Empresa sintética', opcao_simples: 'S', opcao_mei: 'N',
+        data_opcao_simples: '2020-01-01', data_exclusao_simples: '', situacao_cadastral: 'Ativa', QSA: ['descartar']});
+    }) as typeof fetch;
+    const result = await lookupCnpj(cnpj, mock);
+    assert.deepEqual(urls, [`https://minhareceita.org/${cnpj}`, `https://api.opencnpj.org/${cnpj}?datasets=receita`]);
+    assert.equal(result.source, 'OpenCNPJ'); assert.equal(result.status, 'OPTANTE'); assert.equal(result.mei, false);
+    assert.equal(result.optionDate, '2020-01-01'); assert.equal(result.exclusionDate, null);
+    assert.equal(result.registryStatus, 'Ativa'); assert(!JSON.stringify(result).includes('descartar'));
+  }
+});
+
+test('OpenCNPJ exige S/N explícitos, identidade completa e não transforma ausência em negativa', () => {
+  assert.equal(parseOpenCnpj(cnpj, {cnpj, opcao_simples: 'N', opcao_mei: 'N'}).status, 'NAO_OPTANTE');
+  assert.equal(parseOpenCnpj(cnpj, {cnpj, opcao_simples: 'N', opcao_mei: 'S'}).reason, 'CONFLITO_NA_FONTE');
+  for (const value of ['', null, undefined, false, true, 0, 1, 'false', 'Sim', 'Não', 's', 'n']) {
+    const result = parseOpenCnpj(cnpj, {cnpj, opcao_simples: value, opcao_mei: value});
+    assert.equal(result.status, 'NAO_CONFIRMADO'); assert.equal(result.reason, 'INDICADOR_AUSENTE'); assert.equal(result.mei, null);
+  }
+  for (const payload of [null, [], {cnpj: 191}, {cnpj: '11222333000181'}]) assert.throws(() => parseOpenCnpj(cnpj, payload), /SOURCE_IDENTITY/);
+});
+
+test('Nenhuma fonte adicional contorna limites, Retry-After, autenticação ou identidade divergente', async () => {
+  for (const response of [
+    () => new Response('', {status: 429, headers: {'retry-after': '75'}}),
+    () => new Response('', {status: 503, headers: {'retry-after': '90'}}),
+    () => new Response('', {status: 401}), () => new Response('', {status: 403}), () => new Response('', {status: 404}),
+    () => Response.json({cnpj: '11222333000181', opcao_pelo_simples: true})
+  ]) {
+    let calls = 0;
+    await assert.rejects(lookupCnpj(cnpj, (async () => { calls++; return response(); }) as typeof fetch),
+      (error: SourceError) => error instanceof SourceError && error.source === 'Minha Receita');
+    assert.equal(calls, 1);
+  }
+  let calls = 0;
+  const result = await lookupCnpj(cnpj, (async () => { calls++; return Response.json({cnpj, opcao_pelo_simples: null}); }) as typeof fetch);
+  assert.equal(result.status, 'NAO_CONFIRMADO'); assert.equal(result.source, 'Minha Receita'); assert.equal(calls, 1);
+});
+
+test('Duas fontes com falha preservam causa, origem e maior pausa, sem inventar resultado fiscal', async () => {
+  for (const [status, code, seconds] of [[503, 'FONTE_INDISPONIVEL', 5], [429, 'LIMITE_DA_FONTE', 120]] as const) {
+    let calls = 0;
+    await assert.rejects(lookupCnpj(cnpj, (async () => {
+      calls++;
+      return calls === 1 ? new Response('', {status: 503}) : new Response('', {status, headers: status === 429 ? {'retry-after': String(seconds)} : {}});
+    }) as typeof fetch), (error: SourceError) => error.code === code && error.source === 'Minha Receita / OpenCNPJ'
+      && error.retryable && error.pauseProvider && error.retryAfter === seconds);
+    assert.equal(calls, 2);
+  }
+  let calls = 0;
+  await assert.rejects(lookupCnpj(cnpj, (async () => ++calls === 1 ? new Response('', {status: 503})
+    : Response.json({cnpj: '11222333000181', opcao_simples: 'S'})) as typeof fetch),
+  (error: SourceError) => error.code === 'IDENTIDADE_DIVERGENTE' && !error.retryable && error.source === 'Minha Receita / OpenCNPJ');
+  assert.equal(calls, 2);
+});
+
+test('Consulta de contingência também informa indicador ausente sem reusar a falha como negativa', async () => {
+  let calls = 0;
+  const result = await lookupCnpj(cnpj, (async () => ++calls === 1 ? new Response('', {status: 503})
+    : Response.json({cnpj, opcao_simples: '', opcao_mei: ''})) as typeof fetch);
+  assert.equal(calls, 2); assert.equal(result.source, 'OpenCNPJ'); assert.equal(result.status, 'NAO_CONFIRMADO');
+  assert.equal(result.reason, 'INDICADOR_AUSENTE');
+});
+
+test('Fonte alternativa recebe somente o orçamento restante e não inicia após o prazo total', async (context) => {
+  let now = 100_000;
+  context.mock.method(Date, 'now', () => now);
+  const timeout = AbortSignal.timeout, budgets: number[] = [];
+  context.mock.method(AbortSignal, 'timeout', (milliseconds: number) => { budgets.push(milliseconds); return timeout(milliseconds); });
+  let calls = 0;
+  const result = await lookupCnpj(cnpj, (async () => {
+    if (++calls === 1) { now += 9_000; return new Response('', {status: 503}); }
+    return Response.json({cnpj, opcao_simples: 'S'});
+  }) as typeof fetch);
+  assert.equal(result.status, 'OPTANTE'); assert.deepEqual(budgets, [6_000, 3_000]);
+  calls = 0; budgets.length = 0;
+  await assert.rejects(lookupCnpj(cnpj, (async () => { calls++; now += 12_000; return new Response('', {status: 503}); }) as typeof fetch),
+    (error: SourceError) => error.code === 'FONTE_INDISPONIVEL' && error.source === 'Minha Receita');
+  assert.equal(calls, 1); assert.deepEqual(budgets, [6_000]);
 });

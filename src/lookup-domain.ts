@@ -2,6 +2,7 @@ import { normalizeCnpj } from './domain.ts';
 import type { Status } from './domain.ts';
 export const LOOKUP_MODE = 'API_MINIMAL_V1';
 export const SOURCE_NAME = 'Minha Receita';
+export const FALLBACK_SOURCE_NAME = 'OpenCNPJ';
 export const fold = (v: unknown) => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
 export const cleanText = (v: unknown, max = 200) => String(v ?? '').trim().slice(0,max);
 export function documentKind(v: unknown): string {
@@ -47,6 +48,18 @@ export function parseProvider(cnpj: string, payload: any) {
     reason: conflict ? 'CONFLITO_NA_FONTE' : status === 'NAO_CONFIRMADO' ? 'INDICADOR_AUSENTE' : null,
     optionDate: isoDate(payload.data_opcao_pelo_simples), exclusionDate: isoDate(payload.data_exclusao_do_simples),
     registryStatus: cleanText(payload.descricao_situacao_cadastral,60), source: SOURCE_NAME };
+}
+/** OpenCNPJ's published schema uses only S/N/empty, not truthy strings or booleans. */
+export function parseOpenCnpj(cnpj: string, payload: any) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('SOURCE_IDENTITY');
+  const flag = (value: unknown) => value === 'S' ? true : value === 'N' ? false : null;
+  const result = parseProvider(cnpj, {
+    cnpj: payload.cnpj, razao_social: payload.razao_social, nome_fantasia: payload.nome_fantasia, uf: payload.uf,
+    opcao_pelo_simples: flag(payload.opcao_simples), opcao_pelo_mei: flag(payload.opcao_mei),
+    data_opcao_pelo_simples: payload.data_opcao_simples, data_exclusao_do_simples: payload.data_exclusao_simples,
+    descricao_situacao_cadastral: payload.situacao_cadastral
+  });
+  return {...result, source: FALLBACK_SOURCE_NAME};
 }
 export function mappedClient(row: any) {
   const code=cleanText(row.code,32).replace(/^0+(?=\d)/,'');

@@ -57,7 +57,12 @@ test('MongoDB compras e vendas: idempotência, isolamento, cálculos e PDF Pytho
     await (await collection('providerControl')).deleteMany({});
     const complete = await processLookup(actor, job._id, transport);
     assert.equal(complete.status, 'COMPLETED'); assert.equal(calls, 3);
+    // A report attributes each persisted lookup, even when the job still has the legacy source label.
+    assert.deepEqual((await purchaseSummary(job._id)).sources, ['Minha Receita']);
+    await (await collection('lookupItems')).updateOne(scope({jobId:job._id,cnpj:ids[1]}), {$set:{source:'OpenCNPJ.org'}});
     const summary = await purchaseSummary(job._id);
+    assert.deepEqual(summary.sources, ['Minha Receita', 'OpenCNPJ.org']);
+    assert.match(summary.source, /^Minha Receita, OpenCNPJ\.org —/);
     assert.deepEqual(summary.totals, {lines:5,uniqueCnpjs:3,uniqueDocuments:4,nonCnpjDocumentCount:1,cnpjLines:4,nonCnpjLines:1,totalCents:43000,cnpjCents:40000,nonCnpjCents:3000});
     assert.deepEqual(summary.groups.map(g=>[g.status,g.count,g.totalCents,g.countPercent,g.valuePercent]), [
       ['OPTANTE',1,10010,33.33,25.03], ['NAO_OPTANTE',1,20000,33.33,50], ['NAO_CONFIRMADO',1,9990,33.33,24.98]
@@ -143,14 +148,14 @@ try:
         meta = purchase_metadata(db, job, workspace)
         pdf = render_purchase_pdf(meta)
         assert pdf.startswith(b'%PDF') and 1000 < len(pdf) <= 4_000_000
-        reports.append({key: meta[key] for key in ('reportType', 'lineCount', 'uniqueSuppliers', 'uniqueDocuments', 'nonCnpjDocumentCount', 'totalCents', 'cnpjCents', 'components', 'reportingGroups')})
+        reports.append({key: meta[key] for key in ('reportType', 'lineCount', 'uniqueSuppliers', 'uniqueDocuments', 'nonCnpjDocumentCount', 'totalCents', 'cnpjCents', 'components', 'reportingGroups', 'sources')})
     print(json.dumps(reports))
 finally:
     connection.close()
 `, job._id, sales._id], {encoding:'utf8', env:process.env, timeout:30000, maxBuffer:100000});
     assert.equal(pythonPdf.error,undefined, 'O processo Python dos PDFs deve executar.');
     assert.equal(pythonPdf.status,0, `O PDF deve aceitar o snapshot persistido pelo Node: ${pythonPdf.stderr}`);
-    assert.deepEqual(JSON.parse(pythonPdf.stdout), ['PURCHASES','SALES'].map(reportType=>({reportType,lineCount:5,uniqueSuppliers:3,uniqueDocuments:4,nonCnpjDocumentCount:1,totalCents:43000,cnpjCents:40000,components:summary.components,reportingGroups:reportType==='SALES'?salesSummary.reportingGroups:summary.reportingGroups})));
+    assert.deepEqual(JSON.parse(pythonPdf.stdout), ['PURCHASES','SALES'].map(reportType=>({reportType,lineCount:5,uniqueSuppliers:3,uniqueDocuments:4,nonCnpjDocumentCount:1,totalCents:43000,cnpjCents:40000,components:summary.components,reportingGroups:reportType==='SALES'?salesSummary.reportingGroups:summary.reportingGroups,sources:reportType==='SALES'?['Minha Receita']:['Minha Receita','OpenCNPJ.org']})));
     const salesCsv:any = await routeV4(actor,'POST',new URL('https://test/api/v4/sales/'+sales._id+'/csv'),{status:'ALL',part:1});
     assert.match(salesCsv.fileName,/^vendas-/); assert(salesCsv.content.includes('Comprador (I)'));
     assert.equal((await purchaseHistory(clientId,1,SALES_MODE)).total,1); assert.equal((await purchaseHistory(clientId,1)).total,1);

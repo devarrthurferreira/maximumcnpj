@@ -19,7 +19,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 from .brand import draw_brand_header
-from .core import VERSION, display_date, number, percent, require, utcnow
+from .core import VERSION, display_date, number, percent, require, utcnow, snapshot_source
 from .difal import DIFAL_VERSION, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
 
 PURCHASES_MODE = 'PURCHASES_V1'
@@ -255,7 +255,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             _check(_integer(stored_difal.get(key)) == difal[key])
     groups = {status: {'status': status, 'label': label, 'suppliers': 0, 'lines': 0, 'totalCents': 0}
               for status, label in GROUP_LABELS.items()}
-    seen, checks = set(), []
+    seen, checks, sources = set(), [], set()
     for item in items:
         cnpj = item.get('cnpj')
         _check(item.get('workspaceId') == workspace and item.get('jobId') == job['_id'] and
@@ -274,6 +274,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         checked_at = item.get('checkedAt')
         _check(isinstance(checked_at, datetime))
         checks.append(checked_at)
+        sources.add(snapshot_source(item, job))
         group = groups[item['status']]
         group['suppliers'] += 1
         group['lines'] += supplier['lines']
@@ -329,7 +330,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             'reportingGroups': reporting_groups, 'managerialGroups': managerial_groups,
             'unconfirmed': unknown, 'components': components, 'operationTotals': list(operation_totals.values()) if sales else [], 'calculationVersion': version,
             'difal': difal,
-            'quantityDisplay': quantity_text.replace('.', ','), 'generatedAt': utcnow(),
+            'quantityDisplay': quantity_text.replace('.', ','), 'generatedAt': utcnow(), 'sources': sorted(sources),
             'firstCheck': min(checks) if checks else None, 'lastCheck': max(checks) if checks else None}
 
 
@@ -348,7 +349,7 @@ def purchase_metadata(db, job, workspace):
                          {'$eq': ['$_id', '$$ref']}, {'$eq': ['$cnpj', '$$identity']}]}}},
                                   {'$project': {'_id': 0, 'status': 1}}], 'as': 'sourceState'}},
         {'$project': {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'clientId': 1, 'cnpj': 1, 'state': 1,
-                      'stateId': 1, 'status': 1, 'occurrences': 1, 'totalCents': 1, 'checkedAt': 1, 'sourceState': 1, 'kind': 1}}
+                      'stateId': 1, 'status': 1, 'occurrences': 1, 'totalCents': 1, 'checkedAt': 1, 'sourceState': 1, 'kind': 1, 'source': 1}}
     ], maxTimeMS=20000)
     return reconcile_purchase_snapshot(job, lines, items, workspace)
 
@@ -461,7 +462,8 @@ def purchase_story(meta, width, styles):
            f'Valores somados por linha, sem multiplicar por P. Quantidade P total: {meta["quantityDisplay"]}. '
            'A = CNPJ fornecedor; I = razão social; P = quantidade; ') + 'Q = valor bruto; Y = desconto; '
           'Z = despesa acessória; AA = frete; AB = abatimento não tributado.', 'small'),
-        p(f'Fonte: Minha Receita. Chamadas de {display_date(meta.get("firstCheck"))} a {display_date(meta.get("lastCheck"))}. '
+        p(f'Fontes: {", ".join(meta["sources"]) or "Nenhuma consulta CNPJ neste relatório"}. '
+          f'Chamadas de {display_date(meta.get("firstCheck"))} a {display_date(meta.get("lastCheck"))}. '
           f'A observação salva não comprova o regime na data da {"venda" if sales else "compra"} nem a atualização fiscal da base. '
           'Referência fiscal não informada. Este PDF lê o snapshot reconciliado e não faz nova consulta.', 'small'),
     ]

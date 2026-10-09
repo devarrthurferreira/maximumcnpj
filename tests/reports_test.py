@@ -66,11 +66,32 @@ class PureTests(unittest.TestCase):
         audit = list(csv.reader(io.StringIO(csv_bytes(m['job'],r['items']).decode('utf-8-sig')),delimiter=';'))
         self.assertEqual(audit[0][6:8], ['GRUPO GERENCIAL', 'SITUACAO ORIGINAL DA FONTE'])
         self.assertEqual(audit[1][6:8], ['Não optante', 'Não confirmados'])
+    def test_csv_preserves_each_snapshot_source_and_legacy_fallback(self):
+        meta, result, _ = fixture(3)
+        meta['job']['source'] = 'Fonte legada do lote'
+        result['items'][0]['source'] = 'Minha Receita'
+        result['items'][1]['source'] = 'OpenCNPJ.org'
+        rows = list(csv.reader(io.StringIO(csv_bytes(meta['job'], result['items']).decode('utf-8-sig')), delimiter=';'))
+        self.assertEqual([row[17] for row in rows[1:]], ['Minha Receita', 'OpenCNPJ.org', 'Fonte legada do lote'])
+        self.assertEqual(snapshot_source({}, {}), 'Minha Receita')
+        self.assertEqual(snapshot_source({'source': ' '}, {'source': 'OpenCNPJ.org'}), 'OpenCNPJ.org')
+        self.assertIn('fontes públicas de CNPJ registradas no snapshot', NOTICE)
+        self.assertNotIn('API Minha Receita', NOTICE)
     def test_summary_and_empty_pdf(self):
         for size in (0,3):
             m,r,o=fixture(size);o['layout']='summary'
             pdf=render_pdf(m,r,o);self.assertTrue(pdf.startswith(b'%PDF'));self.assertLess(len(pdf),MAX_RESPONSE_BYTES)
             o['layout']='detailed';self.assertTrue(render_pdf(m,r,o).startswith(b'%PDF'))
+    def test_detailed_pdf_identifies_the_actual_provider_per_result(self):
+        import pymupdf
+        meta, result, options = fixture(2)
+        result['items'][0]['source'] = 'Minha Receita'
+        result['items'][1]['source'] = 'OpenCNPJ.org'
+        with pymupdf.open(stream=render_pdf(meta, result, options), filetype='pdf') as document:
+            text = '\n'.join(page.get_text() for page in document)
+        self.assertIn('Minha Receita', text)
+        self.assertIn('OpenCNPJ.org', text)
+        self.assertIn('Não confirmados na fonte já incluídos em Não optante', text)
     def test_500_rows_long_text_pdf(self):
         m,r,o=fixture(500)
         r['items'][0]['submittedName']='TEXTO SEM ESPAÇOS '+('M'*200)

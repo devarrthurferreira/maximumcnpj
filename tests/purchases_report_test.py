@@ -74,6 +74,30 @@ def large_double_fixture():
 
 
 class PurchaseReportTests(unittest.TestCase):
+    def test_actual_snapshot_sources_are_listed_without_changing_unknowns_or_totals(self):
+        job, lines, items = fixture()
+        original = reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
+        self.assertEqual(original['sources'], ['Minha Receita'])
+        job['source'] = 'Fonte legada do lote'
+        items[0]['source'] = 'Minha Receita'
+        items[1]['source'] = 'OpenCNPJ.org'
+        items[2]['source'] = 'OpenCNPJ.org'
+        meta = reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
+        self.assertEqual(meta['sources'], ['Minha Receita', 'OpenCNPJ.org'])
+        self.assertEqual(meta['totalCents'], original['totalCents'])
+        self.assertEqual(meta['reportingGroups'], original['reportingGroups'])
+        self.assertEqual(meta['unconfirmed'], original['unconfirmed'])
+        text = '\n'.join(part.getPlainText() for part in purchase_story(meta, 778, purchase_pdf_styles())
+                         if hasattr(part, 'getPlainText'))
+        self.assertIn('Fontes: Minha Receita, OpenCNPJ.org.', text)
+        self.assertNotIn('Fonte legada do lote', text)
+        self.assertIn('não confirmados na fonte = 1 CNPJs', text)
+        self.assertIn('não comprova o regime na data da compra', text)
+        self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+        del items[2]['source']
+        self.assertEqual(reconcile_purchase_snapshot(job, lines, items, WORKSPACE)['sources'],
+                         ['Fonte legada do lote', 'Minha Receita', 'OpenCNPJ.org'])
+
     def test_sales_use_net_formula_and_buyer_labels_with_separate_source_status(self):
         job, lines, items = sales_fixture()
         meta = reconcile_purchase_snapshot(job, lines, items, WORKSPACE)

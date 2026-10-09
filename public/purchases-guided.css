@@ -51,6 +51,9 @@
 .purchase-guided-summary-title h2 { font-size: 23px; letter-spacing: -.5px; margin: 5px 0; }
 .purchase-guided-summary-title p { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .purchase-guided-success { flex: 0 0 40px; margin: 0; background: #edf5ef; color: #347049; }
+.purchase-guided-warning { flex: 0 0 40px; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px; background: #fff5df; color: #795105; font-size: 23px; font-weight: 700; }
+.purchase-lookup-warning { margin: 18px 0; }
+.purchase-lookup-warning p { margin-top: 8px; line-height: 1.6; }
 .purchase-guided-summary .purchase-hero { background: #fff; color: #33252d; border-color: #e8e1e3; border-radius: 12px; padding: 22px; }
 .purchase-guided-summary .purchase-hero p { color: var(--muted); font-size: 12px; }
 .purchase-guided-summary .purchase-hero .purchase-stat { border-color: #e8e1e3; }
