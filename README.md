@@ -1,6 +1,17 @@
-# Maximum CNPJ · v0.19.1
+# Maximum CNPJ · v0.20.0
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Entrega 09/10/2026 — DIFAL estimado nas vendas
+
+- **DIFAL = total da venda × 10%**, em centavos inteiros com arredondamento de meio centavo para cima. O percentual é uma média estimada solicitada para uso gerencial, não uma alíquota legal universal.
+- A regra exige venda de mercadoria, CPF, UF brasileira do emitente diferente da UF do destinatário e natureza explicitamente habilitada. A configuração inicial contempla **6101, 6102, 6103, 6104, 6105, 6106, 6107 e 6108**. Outros CFOPs dependem de inclusão explícita após validação; o prefixo 6, sozinho, nunca habilita o cálculo. Serviços, devoluções, remessas, transferências e CNPJs ficam fora.
+- Selecione a **UF do estabelecimento emitente** na importação; a UF cadastrada é reaproveitada quando disponível. A coluna **J — Estado** fornece a UF do destinatário. UF ausente/ inválida é indicada como pendência para operações candidatas, sem estimar localização pelo CPF.
+- A base é o total já registrado pela fórmula **Q − Y + AA − AB**, preservando frete, descontos, abatimentos, a despesa Z informativa e os demais tributos. O DIFAL aparece separado e não é somado novamente ao total da venda ou aos impostos do simulador.
+- Prévia, resumo guiado, relatório detalhado, CSV e PDF apresentam o DIFAL estimado. Alterar a UF na prévia recalcula o resultado; trocar o arquivo recalcula valores, destinatários e naturezas. Como os relatórios concluídos são snapshots imutáveis, correções posteriores exigem nova importação. Reenvios da mesma parte não duplicam valores.
+- O servidor recalcula cada linha e reconcilia o total antes da emissão. Relatórios anteriores à regra permanecem legíveis e indicam DIFAL indisponível; não recebem cálculo retroativo. O simulador apresenta a estimativa do relatório de origem separadamente dos ajustes do cenário.
+
+Detalhes da regra, arquivos e validação: [`docs/DIFAL-V0.20.md`](docs/DIFAL-V0.20.md).
 
 ## Correção 09/10/2026 — consulta de CNPJs mais rápida
 

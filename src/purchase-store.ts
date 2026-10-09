@@ -1,3 +1,4 @@
+import { calculateDifal, salesOperation, normalizeUf, summarizeDifal, DIFAL_VERSION, type DifalSummary } from './difal.ts';
 import { collection, scope, audit } from './store.ts';
 import type { Doc } from './store.ts';
 import { getJob } from './lookup-db.ts';
@@ -35,6 +36,24 @@ async function financialPeriod(name: string, id: string, job: Doc) {
   const rows = await (await collection(name)).find(scope({jobId: id})).project({serviceDate: 1}).sort({index: 1}).maxTimeMS(20000).toArray();
   need(rows.length === job.expectedRows, 'Período fiscal incompleto. Reimporte o relatório.', 409, 'REPORT_PERIOD');
   return reportPeriod(rows.map(row => row.serviceDate));
+}
+/** Recompute from source fields and compare every persisted estimate before exposing it. */
+async function financialDifal(name: string, id: string, job: Doc): Promise<DifalSummary | null> {
+  if (job.mode !== SALES_MODE || job.difalVersion === undefined) return null;
+  need(job.difalVersion === DIFAL_VERSION, 'Versão do DIFAL desconhecida. Reimporte as vendas.', 409, 'DIFAL_VERSION');
+  need(typeof job.issuerUf === 'string' && job.issuerUf === normalizeUf(job.issuerUf), 'UF do emitente divergente do snapshot.', 409, 'DIFAL_SNAPSHOT');
+  const rows = await (await collection(name)).find(scope({jobId: id})).project({totalCents: 1, natureCode: 1, description: 1, operation: 1, document: 1, recipientUf: 1, difal: 1}).maxTimeMS(20000).toArray();
+  need(rows.length === job.expectedRows, 'Linhas do DIFAL incompletas. Reimporte as vendas.', 409, 'DIFAL_SNAPSHOT');
+  for (const row of rows) {
+    const expected = calculateDifal({...row, totalCents: row.totalCents, issuerUf: job.issuerUf});
+    need(row.operation === salesOperation(row.natureCode, row.description) && typeof row.recipientUf === 'string' && row.recipientUf === normalizeUf(row.recipientUf) && row.difal &&
+      Object.entries(expected).every(([field, value]) => row.difal[field] === value),
+      'DIFAL divergente dos dados da venda. Emissão bloqueada.', 409, 'DIFAL_SNAPSHOT');
+  }
+  return summarizeDifal(rows.map(row => ({...row, totalCents: row.totalCents})), job.issuerUf);
+}
+function sameDifalSummary(actual: DifalSummary, saved: any) {
+  return !!saved && Object.entries(actual).every(([field, value]) => saved[field] === value);
 }
 type DocumentTotals = {count: number; lines: number; totalCents: number};
 function reportingGroups(groups: any[], unique: number, cents: number, nonCnpj: DocumentTotals, cpf: DocumentTotals, mode: FinancialMode) {
@@ -75,13 +94,14 @@ export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
   const count = await stage.countDocuments(scope({jobId: id}));
   need(count === job.expectedRows && job.uploaded === count, 'Envio incompleto ou expirado. Reenvie a planilha.', 409, 'INCOMPLETE');
   const groups = await financialGroups('lookupStage', id, job);
+  const difal = await financialDifal('lookupStage', id, job);
   const period = calculationVersion(job) === 'NET_V2' ? await financialPeriod('lookupStage', id, job) : null;
   const valid = groups.filter(g => g.valid), invalid = groups.filter(g => !g.valid).reduce((sum, g) => sum + g.lines, 0);
   const totalCents = exactCents(groups.reduce((sum, g) => sum + exactCents(g.totalCents), 0));
   // Persist only approved financial components plus row/document identity. Never retain the uploaded workbook.
   await stage.aggregate([
     {$match: scope({jobId: id})},
-    {$project: {_id: 1, workspaceId: 1, jobId: 1, index: 1, document: 1, documentKind: 1, cnpj: 1, name: 1, serviceDate: 1, quantity: 1, natureCode: 1, description: 1, operation: 1, totalCents: 1, balanceCents: 1, valid: 1, kind: 1, ...Object.fromEntries(COMPONENT_FIELDS.map(field => [field, 1]))}},
+    {$project: {_id: 1, workspaceId: 1, jobId: 1, index: 1, document: 1, documentKind: 1, cnpj: 1, name: 1, serviceDate: 1, quantity: 1, natureCode: 1, description: 1, operation: 1, recipientUf: 1, difal: 1, totalCents: 1, balanceCents: 1, valid: 1, kind: 1, ...Object.fromEntries(COMPONENT_FIELDS.map(field => [field, 1]))}},
     {$merge: {into: 'purchaseLines', on: '_id', whenMatched: 'keepExisting', whenNotMatched: 'insert'}}
   ], {maxTimeMS: 20000}).toArray();
   need(await rows.countDocuments(scope({jobId: id})) === count, 'Cópia financeira incompleta.', 409, 'RESULT_COUNT');
@@ -94,7 +114,7 @@ export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
   }
   need(await items.countDocuments(scope({jobId: id})) === valid.length, 'Quantidade de CNPJs inconsistente.', 409, 'RESULT_COUNT');
   const summary = {lines: count, unique: valid.length, invalid, duplicates: count - invalid - valid.length};
-  const update: any = {summary, ...(period ? {reportPeriod: period} : {}), purchaseInput: {totalCents, cnpjCents: exactCents(valid.reduce((sum, g) => sum + g.totalCents, 0)), ...(job.mode === SALES_MODE ? {balanceCents: exactSignedCents(groups.reduce((sum, g) => sum + exactSignedCents(g.balanceCents), 0))} : {}), ...(calculationVersion(job) === 'NET_V2' ? {components: componentTotals(groups)} : {})}, status: 'PROCESSING', received: 0, startedAt: new Date()};
+  const update: any = {summary, ...(period ? {reportPeriod: period} : {}), purchaseInput: {...(difal ? {difal} : {}), totalCents, cnpjCents: exactCents(valid.reduce((sum, g) => sum + g.totalCents, 0)), ...(job.mode === SALES_MODE ? {balanceCents: exactSignedCents(groups.reduce((sum, g) => sum + exactSignedCents(g.balanceCents), 0))} : {}), ...(calculationVersion(job) === 'NET_V2' ? {components: componentTotals(groups)} : {})}, status: 'PROCESSING', received: 0, startedAt: new Date()};
   // Non-CNPJ documents do not need provider lookups; sales CPF remains its own managerial group.
   if (!valid.length) { update.status = 'COMPLETED'; update.completedAt = new Date(); }
   await (await collection('lookupJobs')).updateOne(scope({_id: id}), {$set: update});
@@ -109,6 +129,8 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
   if (requireComplete) need(job.status === 'COMPLETED', `Conclua a consulta para emitir o relatório de ${financialLabel(mode)}.`, 409, 'INCOMPLETE');
   need(job.summary && job.purchaseInput, 'Resumo financeiro ausente.', 409, 'INCOMPLETE');
   const version = calculationVersion(job), formula = purchaseFormula(version);
+  const difal = await financialDifal('purchaseLines', id, job);
+  if (difal) need(sameDifalSummary(difal, job.purchaseInput.difal), 'Resumo DIFAL divergente do snapshot. Emissão bloqueada.', 409, 'DIFAL_SNAPSHOT');
   const grouped = await financialGroups('purchaseLines', id, job);
   const components = version === 'NET_V2' ? componentTotals(grouped) : null;
   const period = job.reportPeriod ? await financialPeriod('purchaseLines', id, job) : null;
@@ -158,7 +180,7 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
   const operationTotals = mode === SALES_MODE ? await (await collection('purchaseLines')).aggregate([
     {$match: scope({jobId: id})}, {$group: {_id: {$ifNull: ['$operation', 'OUTRAS']}, lines: {$sum: 1}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}}}}, {$sort: {_id: 1}}
   ], {maxTimeMS: 20000}).toArray() : [];
-  return {job, calculationVersion: version, formula, components, period, operationTotals: operationTotals.map(row => ({operation: row._id, lines: row.lines, totalCents: exactCents(row.totalCents), balanceCents: exactSignedCents(row.balanceCents)})),
+  return {job, ...(mode === SALES_MODE ? {difal} : {}), calculationVersion: version, formula, components, period, operationTotals: operationTotals.map(row => ({operation: row._id, lines: row.lines, totalCents: exactCents(row.totalCents), balanceCents: exactSignedCents(row.balanceCents)})),
     reportingGroups: reportingGroups(groups, uniqueDocuments, totalCents, {count: nonCnpjDocumentCount, lines: lines - cnpjLines, totalCents: nonCnpjCents}, excludedByKind.get('CPF') || {count: 0, lines: 0, totalCents: 0}, mode),
     totals: {lines, uniqueCnpjs: valid.length, uniqueDocuments, nonCnpjDocumentCount, cnpjLines, nonCnpjLines: lines - cnpjLines, totalCents, cnpjCents, nonCnpjCents}, groups, excluded,
     denominators: {count: 'Documentos distintos do relatório, incluindo CPF, CNO e inválidos. Cada linha sem documento conta separadamente.', value: `Soma de ${formula} de todas as linhas do relatório. Apenas optantes confirmados entram em Simples; ${mode === SALES_MODE ? 'CPF tem grupo próprio nas vendas; os demais, incluindo não confirmados e outros documentos, integram Não optantes.' : 'todo o restante integra Não optantes no agrupamento gerencial.'}`},
@@ -183,7 +205,11 @@ async function financialPage(id: string, status: string, page: number, pageSize:
     _id: documentIdentity(), index: {$first: '$index'}, document: {$first: '$document'}, documentKind: {$first: '$documentKind'},
     cnpj: {$first: '$cnpj'}, name: {$first: '$name'}, valid: {$first: '$valid'}, kind: {$first: '$kind'},
     operations: {$addToSet: {$ifNull: ['$operation', 'OUTRAS']}},
-    occurrences: {$sum: 1}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}}
+    occurrences: {$sum: 1}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}},
+    ...(mode === SALES_MODE ? {difalCount: {$sum: {$cond: [{$ne: [{$type: '$difal'}, 'missing']}, 1, 0]}},
+      difalBaseCents: {$sum: '$difal.baseCents'}, difalAmountCents: {$sum: '$difal.amountCents'},
+      difalEligibleLines: {$sum: {$cond: ['$difal.eligible', 1, 0]}},
+      difalPendingLines: {$sum: {$cond: [{$in: ['$difal.reason', ['MISSING_ISSUER_UF', 'MISSING_RECIPIENT_UF']]}, 1, 0]}}} : {})
   }}, {$set: {operation: {$cond: [{$eq: [{$size: '$operations'}, 1]}, {$arrayElemAt: ['$operations', 0]}, 'MISTAS']}}});
   stages.push({$lookup: {from: 'lookupItems', let: {identity: '$cnpj'}, pipeline: [
     {$match: {...scope({jobId: id}), $expr: {$eq: ['$cnpj', '$$identity']}}},
@@ -204,7 +230,13 @@ async function financialPage(id: string, status: string, page: number, pageSize:
   const [result] = await (await collection('purchaseLines')).aggregate([
     ...stages, {$facet: {items: pageStages, count: [{$count: 'total'}]}}
   ], {allowDiskUse: true, maxTimeMS: 20000}).toArray();
-  return {items: (result?.items || []).map((row: any) => ({...(grouped ? row : {...row, occurrences: 1}), reportingCents: mode === SALES_MODE ? exactSignedCents(row.balanceCents ?? row.totalCents) : exactCents(row.totalCents)})), total: result?.count?.[0]?.total || 0, page, pageSize};
+  return {items: (result?.items || []).map((row: any) => {
+    if (grouped && mode === SALES_MODE) {
+      row.difal = row.difalCount === row.occurrences ? {baseCents: exactCents(row.difalBaseCents), amountCents: exactCents(row.difalAmountCents), eligibleLines: row.difalEligibleLines, pendingLines: row.difalPendingLines} : null;
+      for (const field of ['difalCount', 'difalBaseCents', 'difalAmountCents', 'difalEligibleLines', 'difalPendingLines']) delete row[field];
+    }
+    return {...(grouped ? row : {...row, occurrences: 1}), reportingCents: mode === SALES_MODE ? exactSignedCents(row.balanceCents ?? row.totalCents) : exactCents(row.totalCents)};
+  }), total: result?.count?.[0]?.total || 0, page, pageSize};
 }
 export async function purchaseRows(id: string, status: string, page: number, lines = false, mode: FinancialMode = PURCHASE_MODE) {
   await purchaseSummary(id, true, mode); purchaseFilter(status, mode);

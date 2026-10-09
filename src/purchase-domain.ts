@@ -1,3 +1,4 @@
+import { calculateDifal, isPendingDifal, normalizeUf, normalizeNatureCode, salesOperation, DIFAL_VERSION, DIFAL_RATE_PERCENT, type SalesOperation, type DifalResult } from './difal.ts';
 import { normalizeCnpj, csvEncode } from './domain.ts';
 import { documentKind } from './lookup-domain.ts';
 import { need } from './security.ts';
@@ -17,25 +18,8 @@ export const PURCHASE_STATUSES = ['OPTANTE', 'NAO_OPTANTE', 'NAO_CONFIRMADO'] as
 export const PURCHASE_CALCULATION_VERSION = 'NET_V2';
 export const COMPONENT_FIELDS = ['grossCents', 'discountCents', 'accessoryCents', 'freightCents', 'abatementCents'] as const;
 export type PurchaseComponents = Record<typeof COMPONENT_FIELDS[number], number> & {totalCents: number};
-export type SalesOperation = 'VENDA' | 'SERVICO' | 'DEVOLUCAO' | 'OUTRAS';
-const SALES_RETURN_CFOPS = new Set(['5201','5202','5208','5209','5210','5410','5411','5412','5413','5503','5553','5555','5556','5660','5661','5662','5921','6201','6202','6208','6209','6210','6410','6411','6412','6413','6503','6553','6556','6660','6661','6662','7201','7202','7210','7211','7212','7553','7556']);
-const SALES_OTHER_CFOPS = new Set(['5213','5214','5215','5216','5918','5919','6213','6214','6215','6216','6555','6918','6919','6921','7930']);
-const SALES_SERVICE_CFOPS = new Set(['9000']);
-export function normalizeNatureCode(value: unknown): string { return String(value ?? '').replace(/\D/g, '').slice(0, 4); }
-function normalizedOperationText(value: unknown) {
-  return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-export function salesOperation(natureCode: unknown, description: unknown): SalesOperation {
-  const code = normalizeNatureCode(natureCode);
-  if (SALES_SERVICE_CFOPS.has(code)) return 'SERVICO';
-  if (SALES_OTHER_CFOPS.has(code)) return 'OUTRAS';
-  if (SALES_RETURN_CFOPS.has(code)) return 'DEVOLUCAO';
-  const text = normalizedOperationText(description);
-  if (text.includes('devolucao')) return 'DEVOLUCAO';
-  if (text.includes('servico') || text.includes('prestacao')) return 'SERVICO';
-  if (text.includes('venda') || text.includes('faturamento')) return 'VENDA';
-  return 'OUTRAS';
-}
+export { normalizeNatureCode, salesOperation } from './difal.ts';
+export type { SalesOperation } from './difal.ts';
 export type PurchaseCalculationVersion = 'NET_V2' | 'Q_V1';
 export function calculationVersion(job: any): PurchaseCalculationVersion {
   need(job.calculationVersion === undefined || ['NET_V2', 'Q_V1'].includes(job.calculationVersion), 'Versão de cálculo desconhecida.', 409, 'PURCHASE_VERSION');
@@ -71,10 +55,10 @@ export function sameReportPeriod(left: any, right: any) {
 }
 export type PurchaseLine = Partial<Omit<PurchaseComponents, 'totalCents'>> & {
   document: string; documentKind: string; cnpj: string; name: string; serviceDate: string | null; quantity: string;
-  totalCents: number; balanceCents?: number; natureCode?: string; description?: string; operation?: SalesOperation; valid: boolean; kind: 'FORNECEDOR' | 'CLIENTE'; uf: ''; reason: string | null; documentHint: string;
+  totalCents: number; balanceCents?: number; natureCode?: string; description?: string; operation?: SalesOperation; recipientUf?: string; difal?: DifalResult; valid: boolean; kind: 'FORNECEDOR' | 'CLIENTE'; uf: ''; reason: string | null; documentHint: string;
 };
 /** Browser parsing is only a convenience: the server validates the reduced financial payload. */
-export function compactPurchaseLine(input: any, version: PurchaseCalculationVersion = PURCHASE_CALCULATION_VERSION, mode: FinancialMode = PURCHASE_MODE): PurchaseLine {
+export function compactPurchaseLine(input: any, version: PurchaseCalculationVersion = PURCHASE_CALCULATION_VERSION, mode: FinancialMode = PURCHASE_MODE, difalContext?: {issuerUf: unknown; difalVersion: unknown}): PurchaseLine {
   need(isFinancialMode(mode), 'Tipo de relatório inválido.');
   need(mode !== SALES_MODE || version === 'NET_V2', 'Relatório de vendas requer a fórmula Q - Y + AA - AB.', 409, 'PURCHASE_VERSION');
   need(input && typeof input === 'object' && !Array.isArray(input), 'Linha financeira inválida.');
@@ -99,10 +83,14 @@ export function compactPurchaseLine(input: any, version: PurchaseCalculationVers
   if (mode === SALES_MODE) {
     const rawNatureCode = String(input.natureCode ?? '').trim(), natureCode = normalizeNatureCode(rawNatureCode), description = String(input.description ?? '').trim();
     need(rawNatureCode.length <= 80 && description.length <= 2000, 'Natureza/descrição acima do limite.');
-    const operation = salesOperation(natureCode, description);
+    const operation = salesOperation(natureCode, description, !difalContext || difalContext.difalVersion === DIFAL_VERSION);
     const balanceCents = operation === 'DEVOLUCAO' ? -input.totalCents : input.totalCents;
     need(Number.isSafeInteger(balanceCents) && Math.abs(balanceCents) <= MAX_LINE_CENTS, 'Saldo da operação inválido.');
     Object.assign(salesFields, {natureCode, description, operation, balanceCents});
+    if (difalContext?.difalVersion === DIFAL_VERSION) {
+      const recipientUf = normalizeUf(input.recipientUf);
+      Object.assign(salesFields, {recipientUf, difal: calculateDifal({...input, natureCode, description, operation, recipientUf, issuerUf: difalContext.issuerUf})});
+    }
   }
   const document = input.document.trim().replace(/[.\/\-\s]/g, '').toUpperCase();
   const checked = normalizeCnpj(document), type = documentKind(document);
@@ -174,11 +162,11 @@ export function moneyText(cents: number): string {
 export function purchaseCsv(job: any, rows: any[]): string {
   const version = calculationVersion(job), net = version === 'NET_V2', sales = job.mode === SALES_MODE;
   return csvEncode([
-    ['Código da empresa', 'Empresa', 'Consulta', 'Arquivo', 'Conclusão', 'Linha importada', 'Data Escrituração/Serviço (H)', sales ? 'Documento do comprador (A)' : 'Documento do fornecedor (A)', 'Tipo de documento', sales ? 'Comprador (I)' : 'Razão social informada (I)', 'Natureza / CFOP', 'Descrição da operação', 'Operação', sales ? 'Quantidade (P) — opcional' : 'Quantidade (P)', 'Valor bruto Q (R$)', 'Desconto Y (R$)', 'Despesa acessória Z — informativa (R$)', 'Frete AA (R$)', 'Abatimento AB (R$)', 'Total calculado (R$)', 'Saldo da operação (R$)', 'Fórmula', 'Versão do cálculo', 'Grupo gerencial', 'Situação Simples na fonte', 'Data da consulta', 'Fonte'],
+    ['Código da empresa', 'Empresa', 'Consulta', 'Arquivo', 'Conclusão', 'Linha importada', 'Data Escrituração/Serviço (H)', sales ? 'Documento do comprador (A)' : 'Documento do fornecedor (A)', 'Tipo de documento', sales ? 'Comprador (I)' : 'Razão social informada (I)', 'Natureza / CFOP', 'Descrição da operação', 'Operação', sales ? 'Quantidade (P) — opcional' : 'Quantidade (P)', 'Valor bruto Q (R$)', 'Desconto Y (R$)', 'Despesa acessória Z — informativa (R$)', 'Frete AA (R$)', 'Abatimento AB (R$)', 'Total calculado (R$)', 'Saldo da operação (R$)', 'Fórmula', 'Versão do cálculo', 'Grupo gerencial', 'Situação Simples na fonte', 'Data da consulta', 'Fonte', ...(sales ? ['UF emitente', 'UF destinatário (J)', 'DIFAL estimado — alíquota média (%)', 'Base DIFAL (R$)', 'DIFAL estimado (R$)', 'Situação DIFAL', 'Versão DIFAL'] : [])],
     ...rows.map(row => [job.clientCode || '', job.clientName, job._id, job.fileName, job.completedAt?.toISOString?.() || job.completedAt || '', row.index + 1, row.serviceDate || '',
       row.document, row.documentKind, row.name, row.natureCode || '', row.description || '', row.operation || '', row.quantity, moneyText(net ? row.grossCents : row.totalCents),
       ...['discountCents', 'accessoryCents', 'freightCents', 'abatementCents'].map(field => net ? moneyText(row[field]) : ''),
       moneyText(row.totalCents), moneyText(row.balanceCents ?? row.totalCents), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,
-      row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado'])
+      row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado', ...(sales ? (job.difalVersion === DIFAL_VERSION ? [job.issuerUf || '', row.recipientUf || '', DIFAL_RATE_PERCENT, isPendingDifal(row.difal) ? '' : moneyText(row.difal.baseCents), isPendingDifal(row.difal) ? '' : moneyText(row.difal.amountCents), isPendingDifal(row.difal) ? (row.difal.reason === 'MISSING_ISSUER_UF' ? 'Pendente — UF do emitente ausente' : 'Pendente — UF do destinatário ausente') : row.difal.reason, DIFAL_VERSION] : ['', '', '', '', '', 'Indisponível — reimporte as vendas', '']) : [])])
   ]);
 }

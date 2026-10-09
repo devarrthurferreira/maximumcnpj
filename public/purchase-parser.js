@@ -1,6 +1,7 @@
 /* Browser-only preview. The API validates every value again before persistence. */
 import {csvParse, MAX_ROWS, MAX_COLUMNS, normalizeCnpj} from './domain.js';
 import {documentKind} from './lookup-domain.js';
+import {calculateDifal, normalizeUf, salesOperation, normalizeNatureCode, summarizeDifal} from './difal.js';
 
 export function decimal(value, places, field) {
   if (typeof value === 'number') {
@@ -78,22 +79,8 @@ const EXPORT_PREFIX_ANCHORS = ['Estado', 'Contribuinte ICMS', 'Natureza', 'Class
 const normalizedHeader = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const numericId = value => /^\d{1,18}$/.test(String(value ?? '').trim()) && /[1-9]/.test(String(value));
 
-const SALES_RETURN_CFOPS = new Set(['5201','5202','5208','5209','5210','5410','5411','5412','5413','5503','5553','5555','5556','5660','5661','5662','5921','6201','6202','6208','6209','6210','6410','6411','6412','6413','6503','6553','6556','6660','6661','6662','7201','7202','7210','7211','7212','7553','7556']);
-const SALES_OTHER_CFOPS = new Set(['5213','5214','5215','5216','5918','5919','6213','6214','6215','6216','6555','6918','6919','6921','7930']);
-const SALES_SERVICE_CFOPS = new Set(['9000']);
-const natureCode4 = value => String(value ?? '').replace(/\D/g, '').slice(0, 4);
+const natureCode4 = normalizeNatureCode;
 
-function salesOperation(natureCode, description) {
-  const code = natureCode4(natureCode);
-  if (SALES_SERVICE_CFOPS.has(code)) return 'SERVICO';
-  if (SALES_OTHER_CFOPS.has(code)) return 'OUTRAS';
-  if (SALES_RETURN_CFOPS.has(code)) return 'DEVOLUCAO';
-  const text = normalizedHeader(description);
-  if (text.includes('devolucao')) return 'DEVOLUCAO';
-  if (text.includes('servico') || text.includes('prestacao')) return 'SERVICO';
-  if (text.includes('venda') || text.includes('faturamento')) return 'VENDA';
-  return 'OUTRAS';
-}
 function isDescriptionText(value) {
   if (typeof value !== 'string' || !/\p{L}/u.test(value) || !value.trim()) return false;
   try { decimal(value, 6, 'Descrição'); return false; } catch { return true; }
@@ -151,7 +138,7 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   const type = options.type || 'PURCHASES', version = options.calculationVersion || 'NET_V2';
   if (!['PURCHASES', 'SALES'].includes(type) || !['NET_V2', 'Q_V1'].includes(version)) throw new Error('Formato de relatório inválido.');
   if (type === 'SALES' && version !== 'NET_V2') throw new Error('Relatório de vendas requer a fórmula Q - Y + AA - AB.');
-  const net = version === 'NET_V2';
+  const net = version === 'NET_V2', difalEnabled = type === 'SALES' && options.difalVersion !== null;
   if (!Number.isInteger(headerIndex) || headerIndex < 0 || headerIndex > 20) throw new Error('Escolha a linha de cabeçalho entre 1 e 21.');
   const header = matrix[headerIndex] || [], required = net ? [0,7,8,16,24,25,26,27] : [0,8,16];
   if (header.length < (net ? 28 : 17) || required.some(index => !String(header[index] ?? '').trim())) throw new Error(`O relatório precisa conter cabeçalhos nas colunas ${net ? 'A, H, I, Q, Y, Z, AA e AB' : 'A, I e Q'}. Confira a aba e o cabeçalho.`);
@@ -190,10 +177,11 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       if (cents < 0) throw new Error('Q - Y + AA - AB resulta em total negativo. Revise os valores da linha.');
       if (cents > 100000000000) throw new Error('Total calculado acima do limite por linha.');
       if (!Number.isSafeInteger(totalCents + cents)) throw new Error('A soma dos valores excede o limite de precisão.');
+      const recipientUf = type === 'SALES' ? normalizeUf(raw[9]) : '';
       const financial = net ? {grossCents,...adjustments,totalCents:cents} : {totalCents:cents};
       if (net && Object.keys(components).some(field => !Number.isSafeInteger(components[field] + financial[field]))) throw new Error('A soma dos componentes excede o limite de precisão.');
       totalCents += cents;
-      const operation = type === 'SALES' ? salesOperation(natureCode, description) : null;
+      const operation = type === 'SALES' ? salesOperation(natureCode, description, difalEnabled) : null;
       const lineBalanceCents = type === 'SALES' && operation === 'DEVOLUCAO' ? -cents : cents;
       if (!Number.isSafeInteger(balanceCents + lineBalanceCents)) throw new Error('O saldo das operações excede o limite de precisão.');
       balanceCents += lineBalanceCents;
@@ -202,7 +190,8 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       const kind = documentKind(document);
       if (kind === 'CNPJ') unique.add(normalizeCnpj(document).cnpj); else nonCnpjLines++;
       rows.push(type === 'SALES'
-        ? {document, name, serviceDate, quantity, natureCode, description, operation, balanceCents:lineBalanceCents, ...financial}
+        ? {document, name, serviceDate, quantity, natureCode, description, operation, balanceCents:lineBalanceCents, ...financial,
+            ...(difalEnabled ? {recipientUf,difal:calculateDifal({document,natureCode,description,operation,recipientUf,issuerUf:options.issuerUf,totalCents:cents})} : {})}
         : {document, name, serviceDate, quantity, ...financial});
       if (repaired) repairs.push({line:sourceLine, descriptionSeparators:repaired.descriptionSeparators,
         reason:'Separadores extras da descrição (O) recompostos; colunas P a AD realinhadas com os valores originais.'});
@@ -212,7 +201,7 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   if (!errors.length && rows.length && net) {
     try { period = fiscalPeriod(rows); } catch (error) { errors.push({line:headerIndex + 1, message:error.message}); }
   }
-  return {rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, balanceCents:type === 'SALES' ? balanceCents : totalCents, operations:type === 'SALES' ? operations : null, components, period, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
+  return {...(type === 'SALES' ? {difal:difalEnabled ? summarizeDifal(rows, options.issuerUf) : null} : {}), rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, balanceCents:type === 'SALES' ? balanceCents : totalCents, operations:type === 'SALES' ? operations : null, components, period, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
 }
 
 export function decodePurchaseCsv(buffer, encoding = 'auto') {

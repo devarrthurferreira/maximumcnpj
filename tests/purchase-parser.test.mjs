@@ -225,3 +225,66 @@ test('CSV diagnostics keep physical line numbers across blank and quoted multili
   assert.equal(parsed.rows.length,2); assert.equal(parsed.repairs[0].line,5); assert.equal(parsed.errors[0].line,6);
   assert.equal(parsed.totalCents,16320);
 });
+
+
+test('DIFAL preview uses registered sale total, recipient UF and the shared isolated rule', () => {
+  const sale = (document, uf, nature, description, value) => {
+    const input = row(document,'Comprador sintético','',''+value);
+    input[9]=uf; input[11]=nature; input[14]=description;
+    return input;
+  };
+  const eligible = sale('123.456.789-00',' sp ','610801','Camiseta','150,00');
+  const inputs = [eligible,
+    sale('11222333000181','SP','6108','Venda de mercadoria','150,00'),
+    sale('123.456.789-00','MG','6108','Venda de mercadoria','150,00'),
+    sale('123.456.789-00','SP','9000','Prestação de serviço','150,00'),
+    sale('123.456.789-00','SP','6108','Venda de mercadoria','1000,00'),
+    sale('123.456.789-00','SP','6949','Remessa de mercadoria','150,00')];
+  const report=parsePurchaseMatrix([header,...inputs],0,{type:'SALES',issuerUf:'MG'});
+  assert.equal(report.errors.length,0);
+  assert.equal(report.rows[0].recipientUf,'SP');
+  assert.equal(report.rows[0].operation,'VENDA');
+  assert.deepEqual(report.rows.map(row=>row.difal.amountCents),[1500,0,0,0,10000,0]);
+  assert.deepEqual(report.rows.map(row=>row.difal.eligible),[true,false,false,false,true,false]);
+  assert.equal(report.difal.amountCents,11500);
+  assert.equal(report.difal.baseCents,115000);
+  assert.equal(report.difal.eligibleLines,2);
+  assert.equal(report.difal.pendingLines,0);
+  const changedUf=parsePurchaseMatrix([header,eligible],0,{type:'SALES',issuerUf:'SP'});
+  assert.equal(changedUf.difal.amountCents,0);
+  eligible[16]='1000,00';
+  assert.equal(parsePurchaseMatrix([header,eligible],0,{type:'SALES',issuerUf:'MG'}).rows[0].difal.amountCents,10000);
+  eligible[24]='100,00'; eligible[26]='20,00'; eligible[27]='10,00'; eligible[25]='900,00';
+  const adjusted=parsePurchaseMatrix([header,eligible],0,{type:'SALES',issuerUf:'MG'});
+  assert.equal(adjusted.rows[0].totalCents,91000);
+  assert.equal(adjusted.rows[0].difal.baseCents,91000);
+  assert.equal(adjusted.rows[0].difal.amountCents,9100);
+  assert.equal(adjusted.components.accessoryCents,90000);
+});
+
+test('DIFAL missing UF stays pending; purchases never gain sales metadata', () => {
+  const input=row('123.456.789-00','Comprador sintético','1','150,00');
+  input[9]='SP'; input[11]='6108'; input[14]='Venda de mercadoria';
+  const missingIssuer=parsePurchaseMatrix([header,input],0,{type:'SALES'});
+  assert.equal(missingIssuer.difal.pendingLines,1);
+  assert.equal(missingIssuer.rows[0].difal.reason,'MISSING_ISSUER_UF');
+  input[9]='XX';
+  const missingRecipient=parsePurchaseMatrix([header,input],0,{type:'SALES',issuerUf:'MG'});
+  assert.equal(missingRecipient.rows[0].recipientUf,'');
+  assert.equal(missingRecipient.rows[0].difal.reason,'MISSING_RECIPIENT_UF');
+  assert.equal(missingRecipient.difal.pendingLines,1);
+  const purchase=parsePurchaseMatrix([header,input]);
+  for (const key of ['difal','recipientUf','natureCode','operation']) assert.equal(key in purchase.rows[0],false);
+  assert.equal('difal' in purchase,false);
+});
+
+
+test('legacy resumed sales preserve the original classification and upload fields', () => {
+  const input=row('123.456.789-00','Comprador sintético','','150,00');
+  input[9]='SP'; input[11]='6108'; input[14]='Camiseta';
+  const parsed=parsePurchaseMatrix([header,input],0,{type:'SALES',issuerUf:'MG',difalVersion:null});
+  assert.equal(parsed.rows[0].operation,'OUTRAS');
+  assert.equal('recipientUf' in parsed.rows[0],false);
+  assert.equal('difal' in parsed.rows[0],false);
+  assert.equal(parsed.difal,null);
+});

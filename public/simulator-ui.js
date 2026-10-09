@@ -43,7 +43,7 @@ function display(prefill=null) {
   $('#simulator-app').innerHTML = `<div id="simulator-intro">${hero(false)}</div><div class="sim-context">${sourceCard()}<div id="simulation-notices"></div></div>
     <form id="simulator-form"><fieldset id="simulation-fields"><p class="sim-form-guidance">Valores em reais (R$). Campos com * são obrigatórios; informe 0 quando não houver valor.</p><div id="simulator-projection"></div>${periodText}
     ${section('01','Extrato e cenário','Leia o PDF para preencher a RBT12.',`<div class="sim-pdf-grid"><div class="sim-field sim-pdf-upload"><label for="rbt12-pdf">Extrato do Simples Nacional (PDF)</label><div class="sim-upload-controls"><input id="rbt12-pdf" type="file" accept="application/pdf,.pdf"><button type="button" id="rbt12-read">Ler RBT12</button></div><small id="rbt12-status" role="status" aria-live="polite">Selecione o PDF para ler a seção 2.2. Até 8 MiB.</small><div class="sim-pdf-actions"><button type="button" id="rbt12-view-original" hidden>Ver PDF original</button><button type="button" id="rbt12-view-searchable" hidden>Ver PDF pesquisável</button><button type="button" id="rbt12-reprocess" hidden>Reprocessar OCR</button><a id="rbt12-download" hidden>Baixar PDF pesquisável</a></div></div>${moneyField('rbt12','RBT12 · seção 2.2','Soma das 12 competências anteriores ao PA.',false,true)}</div><div id="rbt12-details"></div><div class="sim-rbt12-mode"><button type="button" id="rbt12-manual">Informar RBT12 sem o extrato</button><button type="button" id="rbt12-use-pdf" hidden>Usar extrato em PDF</button><div id="rbt12-manual-notice" hidden><p class="sim-help">Informe a receita bruta efetiva dos 12 meses anteriores ao período de apuração. O valor ficará identificado como manual; não é a projeção das vendas.</p><label class="sim-confirm" for="rbt12-manual-confirm"><input id="rbt12-manual-confirm" type="checkbox">Confirmo que informei a receita bruta dos 12 meses anteriores ao período de apuração.</label></div></div><div class="sim-fields sim-scenario-fields"><div class="sim-field"><label for="simulation-year">Ano da simulação</label><select id="simulation-year"><option>2027</option><option>2028</option></select></div><div class="sim-field"><label for="sales-annex">Atividade das vendas</label><select id="sales-annex"><option value="1">Comércio · Anexo I</option><option value="2">Indústria · Anexo II</option></select></div><div class="sim-field"><label for="service-annex">Categoria dos serviços</label><select id="service-annex"><option value="3">Anexo III</option><option value="4">Anexo IV</option><option value="5">Anexo V</option></select></div></div>`,'sim-section-extrato')}
-    ${section('02','Quanto a empresa fatura?','Valores mensais · vendas preenchidas pelos relatórios.',`<div class="sim-fields">${moneyField('serviceRevenue','Receita de serviços','Informe o valor mensal. Use 0 se não houver.')}${moneyField('salesRevenue','Receita de vendas','Soma dos três grupos abaixo.',false,true)}</div><div class="sim-fields sales">${moneyField('salesOptantCents','Vendas a optantes SN','Opção pelo Simples confirmada. Devoluções podem reduzir este grupo abaixo de zero.',true,false,true)}${moneyField('salesNonOptantCents','Vendas a não optantes SN','Inclui não confirmados; exclui CPFs. Devoluções podem reduzir este grupo abaixo de zero.',true,false,true)}${moneyField('salesCpfCents','Vendas a CPFs','Clientes identificados por CPF. Devoluções podem reduzir este grupo abaixo de zero.',true,false,true)}</div><div class="sim-totals"><article><span>Faturamento mensal</span><strong id="monthly-revenue">Preencha as receitas</strong></article><article><span>Projeção anual</span><strong id="annual-revenue">Calculada automaticamente</strong></article></div><details class="sim-inline-help"><summary>Sobre os valores de faturamento</summary><p>As vendas usam a média mensal dos relatórios e podem ser ajustadas. Serviços são informados por mês, sem repetir valores das vendas. A projeção é (vendas + serviços) × 12 e não substitui a RBT12 do extrato.</p></details>`,'sim-section-revenue')}
+    ${section('02','Quanto a empresa fatura?','Valores mensais · vendas preenchidas pelos relatórios.',`<div class="sim-fields">${moneyField('serviceRevenue','Receita de serviços','Informe o valor mensal. Use 0 se não houver.')}${moneyField('salesRevenue','Receita de vendas','Soma dos três grupos abaixo.',false,true)}</div><div class="sim-fields sales">${moneyField('salesOptantCents','Vendas a optantes SN','Opção pelo Simples confirmada. Devoluções podem reduzir este grupo abaixo de zero.',true,false,true)}${moneyField('salesNonOptantCents','Vendas a não optantes SN','Inclui não confirmados; exclui CPFs. Devoluções podem reduzir este grupo abaixo de zero.',true,false,true)}${moneyField('salesCpfCents','Vendas a CPFs','Clientes identificados por CPF. Devoluções podem reduzir este grupo abaixo de zero.',true,false,true)}</div><div id="simulator-difal"></div><div class="sim-totals"><article><span>Faturamento mensal</span><strong id="monthly-revenue">Preencha as receitas</strong></article><article><span>Projeção anual</span><strong id="annual-revenue">Calculada automaticamente</strong></article></div><details class="sim-inline-help"><summary>Sobre os valores de faturamento</summary><p>As vendas usam a média mensal dos relatórios e podem ser ajustadas. Serviços são informados por mês, sem repetir valores das vendas. A projeção é (vendas + serviços) × 12 e não substitui a RBT12 do extrato.</p></details>`,'sim-section-revenue')}
     ${section('03','Quanto a empresa compra?','Valores mensais · preenchidos pelos relatórios e editáveis.',`<div class="sim-fields">${moneyField('purchasesOptantCents','Compras de empresas do Simples','Fornecedores optantes pelo Simples.',true)}${moneyField('purchasesNonOptantCents','Compras de empresas fora do Simples','Inclui não confirmados e outros documentos.',true)}</div>`,'sim-section-purchases')}
     ${section('04','Quais são as despesas?','Informe os valores por mês. Use 0 quando não houver.',`<div class="sim-fields sim-expense-fields">${moneyField('salaries','Salários e pró-labore','Pagamentos à equipe e aos sócios.')}${moneyField('benefits','Benefícios da equipe','Transporte, alimentação e outros.')}${moneyField('adminExpenses','Outras despesas da empresa','Água, energia, internet e similares.')}${moneyField('rent','Aluguel','Valor mensal do imóvel.')}${moneyField('cardExpenses','Taxas de cartão','Total das taxas em reais.')}</div><p class="sim-help">Não repita uma mesma despesa em mais de um campo.</p>`,'sim-section-expenses')}
     <div class="sim-actions"><button class="primary" type="submit" id="generate-simulation">Gerar simulação</button><button id="restore-reports" type="button">Restaurar valores dos relatórios</button><small id="draft-status" role="status">Preencha os campos obrigatórios para comparar os cenários.</small></div></fieldset></form><div id="simulation-result"></div>`;
@@ -99,6 +99,27 @@ function updateProjection() {
   if(focused)host.querySelector(`[data-projection-kind="${focused}"]`)?.focus();
 }
 
+function updateDifalSource() {
+  const host=$('#simulator-difal');if(!host)return;
+  const difal=S.source.sales.difal;
+  if(!difal){
+    // Historic simulations remain as captured; an absent estimate never means zero.
+    host.innerHTML=S.readonly?'':'<p class="sim-help">DIFAL indisponível neste relatório anterior. Reimporte as vendas com UF do emitente e do destinatário para obter a estimativa.</p>';
+    return;
+  }
+  const original=S.readonly&&S.snapshot?.projection?S.snapshot.projection:annualizeReports(S.source.fields,S.months);
+  const adjusted=IMPORTED.slice(0,3).some(key=>{
+    const current=S.readonly?S.snapshot.monthlyGroups[key]:value(key);
+    return current===null||Math.round(current*100)!==original.monthlyGroupsCents[key];
+  });
+  host.innerHTML=`<section class="sim-note" aria-labelledby="sim-difal-title"><h3 id="sim-difal-title">DIFAL estimado · total importado</h3>
+    <div class="sim-detail-grid"><article><span>DIFAL · ${esc(difal.ratePercent)}%</span><strong data-difal-amount>${money(difal.amountCents/100)}</strong></article><article><span>Base das vendas elegíveis</span><strong>${money(difal.baseCents/100)}</strong></article><article><span>Vendas elegíveis no arquivo</span><strong>${esc(difal.eligibleLines)}</strong><small>UF do emitente: ${esc(difal.issuerUf||'não informada')}</small></article></div>
+    <p>Alíquota média estimada de ${esc(difal.ratePercent)}%, que não corresponde necessariamente à alíquota legal de cada operação. Total das linhas elegíveis do relatório, sem projeção mensal ou anual. Esta referência não compõe os tributos nem a DRE da comparação.</p>
+    ${difal.pendingLines?`<p data-difal-pending>Estimativa parcial: ${esc(difal.pendingLines)} ${difal.pendingLines===1?'linha depende':'linhas dependem'} de UF para verificar a aplicação do DIFAL. Confira e reimporte as vendas.</p>`:''}
+    ${adjusted?'<p data-difal-adjusted role="status">As vendas mensais foram ajustadas. O DIFAL acima permanece vinculado às operações importadas; para atualizar sua base, valor ou elegibilidade, corrija e reimporte as vendas com os dados de cada operação.</p>':''}
+  </section>`;
+}
+
 function value(id) { const input=$('#'+id); return input.value!=='' && input.validity.valid ? Number(input.value) : null; }
 function salesTotal() { const amounts=IMPORTED.slice(0,3).map(value); return amounts.some(v=>v===null)?null:amounts.reduce((a,b)=>a+Math.round(b*100),0)/100; }
 function updateRevenue() {
@@ -107,7 +128,7 @@ function updateRevenue() {
   const total=sales===null||service===null?null:Math.round((sales+service)*100)/100;
   $('#monthly-revenue').textContent=total===null?'Preencha as receitas':money(total);
   $('#annual-revenue').textContent=total===null?'Calculada automaticamente':money(total*12);
-  updateProjection();
+  updateProjection(); updateDifalSource();
 }
 function invalidate() { S.result=null; S.snapshot=null; S.pending=null; $('#simulation-result').innerHTML=''; $('#simulator-error').textContent=''; renderNotices(); }
 function draft() {
@@ -378,7 +399,7 @@ async function persist() {
     S.snapshot=snapshot;S.source=snapshot.source;S.edited=snapshot.manuallyAdjusted;S.result={input:snapshot.draft,result:snapshot.result,monthlyGroups:snapshot.monthlyGroups,projection:snapshot.projection};S.pending=null;
     $('#simulator-intro').innerHTML=hero(false);
     const sourceDetails=$('.sim-report-details'),sourceOpen=sourceDetails.open;sourceDetails.outerHTML=sourceCard();$('.sim-report-details').open=sourceOpen;
-    renderResult();renderNotices();
+    updateDifalSource();renderResult();renderNotices();
   } catch(error) {
     if(S.pending===request)S.saveError=error.message||String(error);
   } finally {setSaving(false);renderSaveStatus();}
@@ -429,8 +450,8 @@ function capturedFields(snapshot) {
 function fieldLabel(key) { return {salesOptantCents:'Vendas Optantes SN',salesNonOptantCents:'Vendas Não Optantes SN',salesCpfCents:'Vendas de CPFs',purchasesOptantCents:'Compras do Simples',purchasesNonOptantCents:'Compras fora do Simples'}[key]||key; }
 function showSnapshot(snapshot) {
   S.snapshot=snapshot;S.source=snapshot.source;S.months=snapshot.reportMonths;S.edited=snapshot.manuallyAdjusted;S.readonly=true;S.pending=null;S.result={input:snapshot.draft,result:snapshot.result,monthlyGroups:snapshot.monthlyGroups,projection:snapshot.projection};
-  $('#simulator-app').innerHTML=`<div id="simulator-intro">${hero(true)}</div>${capturedFields(snapshot)}<div id="simulator-projection"></div>${renderSection22(snapshot.rbt12Extraction)}${sourceCard()}<div id="simulation-notices"></div><div id="simulation-result"></div>`;
-  updateProjection();renderNotices();renderResult();
+  $('#simulator-app').innerHTML=`<div id="simulator-intro">${hero(true)}</div>${capturedFields(snapshot)}<div id="simulator-projection"></div><div id="simulator-difal"></div>${renderSection22(snapshot.rbt12Extraction)}${sourceCard()}<div id="simulation-notices"></div><div id="simulation-result"></div>`;
+  updateProjection();updateDifalSource();renderNotices();renderResult();
   const button=$('#create-version');if(button)button.onclick=()=>{
     S.parentId=snapshot._id;S.key=`maximum-simulator:copy:${S.user._id}:${snapshot._id}`;
     history.replaceState(null,'',sourceUrl());display(snapshot);

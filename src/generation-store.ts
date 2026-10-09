@@ -1,3 +1,4 @@
+import { normalizeUf } from './difal.ts';
 import { randomUUID } from 'node:crypto';
 import { collection, scope, audit } from './store.ts';
 import type { Doc } from './store.ts';
@@ -15,7 +16,7 @@ const JOB_PROJECTION = {
   _id: 1, clientId: 1, mode: 1, generationId: 1, status: 1, fileName: 1,
   expectedRows: 1, uploaded: 1, received: 1, summary: 1, purchaseInput: 1,
   resultSummary: 1, createdAt: 1, updatedAt: 1, completedAt: 1, nextPollMs: 1,
-  calculationVersion: 1, reportPeriod: 1
+  calculationVersion: 1, reportPeriod: 1, difalVersion: 1, issuerUf: 1
 };
 const REPORT_TYPES = ['PURCHASES', 'SALES'] as const;
 type ReportType = typeof REPORT_TYPES[number];
@@ -273,7 +274,7 @@ async function attachGenerationReport(actor: LookupActor, id: string, input: any
   const slot = type === 'PURCHASES' ? 'purchaseJobId' : 'salesJobId';
   const historySlot = type === 'PURCHASES' ? 'purchaseJobIds' : 'salesJobIds';
   const conflict = type === 'PURCHASES' ? 'GENERATION_PURCHASE_EXISTS' : 'GENERATION_SALES_EXISTS';
-  const fileName = text(input.fileName, 200), expectedRows = integer(input.expectedRows, 1, MAX_ROWS);
+  const fileName = text(input.fileName, 200), expectedRows = integer(input.expectedRows, 1, MAX_ROWS), issuerUf = type === 'SALES' ? normalizeUf(input.issuerUf) : '';
   return withGeneration(id, async (generation, owner) => {
     const company = generation.companies.find((item: GenerationCompany) => item.clientId === clientId) as GenerationCompany | undefined;
     need(company, 'Esta empresa não pertence à geração.', 409, 'GENERATION_CLIENT');
@@ -283,8 +284,8 @@ async function attachGenerationReport(actor: LookupActor, id: string, input: any
       need(current && current.clientId === clientId && current.generationId === id && current.mode === mode,
         'Vínculo do relatório inconsistente.', 409, 'GENERATION_INCONSISTENT');
       if (current._id === importId) {
-        need(current.fileName === fileName && current.expectedRows === expectedRows,
-          'O arquivo e a quantidade de linhas devem corresponder ao relatório já vinculado.', 409, conflict);
+        need(current.fileName === fileName && current.expectedRows === expectedRows && (type !== 'SALES' || input.issuerUf === undefined || (current.issuerUf || '') === issuerUf),
+          'O arquivo, a UF do emitente e a quantidade de linhas devem corresponder ao relatório já vinculado.', 409, conflict);
         return {generation: await getGeneration(id), job: current};
       }
       if (current._id !== importId) need(['CANCELLED', 'INVALID'].includes(current.status),
@@ -292,7 +293,7 @@ async function attachGenerationReport(actor: LookupActor, id: string, input: any
     }
     need(!company[historySlot].includes(importId) || company[slot] === importId,
       'Este identificador pertence a um relatório anterior. Inicie uma nova importação.', 409, conflict);
-    const lookupInput = {clientId, importId, fileName, expectedRows};
+    const lookupInput = {clientId, importId, fileName, expectedRows, ...(type === 'SALES' && input.issuerUf !== undefined ? {issuerUf} : {})};
     let job: Doc;
     try { job = await createLookup(actor, lookupInput, mode); }
     catch (error: any) {

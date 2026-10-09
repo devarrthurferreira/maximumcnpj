@@ -1,3 +1,4 @@
+import { calculateDifal, summarizeDifal, normalizeUf, DIFAL_VERSION, DIFAL_ELIGIBLE_CFOPS } from '../src/difal.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compactPurchaseLine, calculationVersion, exactCents, percentage, signedPercentage, reconciledPercentages, reconciledSignedPercentages, purchaseCsv, moneyText, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus, reportPeriod, normalizeNatureCode, salesOperation } from '../src/purchase-domain.ts';
@@ -124,4 +125,47 @@ test('Percentuais líquidos coincidem com o PDF, inclusive devoluções, empates
   assert.throws(() => reconciledSignedPercentages([1, 2, 3], 5));
   assert.throws(() => reconciledSignedPercentages([0.5, 0.5, 0], 1));
   assert.throws(() => signedPercentage(NaN, 0));
+});
+
+const difalSale = {totalCents: 15000, natureCode: '6108', description: 'Camiseta', document: '123.456.789-00', issuerUf: 'MG', recipientUf: 'SP'};
+test('DIFAL estimado: cenários de venda CPF interestadual, exclusões e recálculo sem alterar componentes', () => {
+  assert.deepEqual(calculateDifal(difalSale), {eligible: true, baseCents: 15000, amountCents: 1500, reason: 'ELIGIBLE'});
+  for (const [change, reason] of [
+    [{document: '00.000.000/0001-91'}, 'NOT_CPF'], [{recipientUf: 'MG'}, 'SAME_UF'],
+    [{natureCode: '9000', description: 'Prestação de serviços'}, 'NOT_SALE'],
+    [{description: 'Venda de serviços'}, 'NOT_SALE'], [{natureCode: '6202', description: 'Venda'}, 'NOT_SALE'],
+    [{natureCode: '6949', description: 'Venda'}, 'INELIGIBLE_NATURE'], [{natureCode: '5108'}, 'NOT_SALE'],
+    [{description: 'Remessa de mercadoria para venda'}, 'NOT_SALE'], [{operation: 'OUTRAS'}, 'NOT_SALE'],
+    [{document: ''}, 'NOT_CPF'], [{document: '123456789012'}, 'NOT_CPF']
+  ] as const) {
+    assert.deepEqual(calculateDifal({...difalSale, ...change}), {eligible: false, baseCents: 0, amountCents: 0, reason});
+  }
+  assert.equal(calculateDifal({...difalSale, description: 'Venda de kit para conserto'}).eligible, true);
+  assert.equal(calculateDifal({...difalSale, totalCents: 100000}).amountCents, 10000);
+  assert.equal(calculateDifal({...difalSale, totalCents: 999}).amountCents, 100);
+  assert.equal(calculateDifal({...difalSale, totalCents: 5}).amountCents, 1);
+  assert.equal(calculateDifal({...difalSale, totalCents: 4}).amountCents, 0);
+  assert.equal(calculateDifal({...difalSale, totalCents: 0}).amountCents, 0);
+  assert.equal(calculateDifal({...difalSale, totalCents: 1.5}).reason, 'INVALID_TOTAL');
+  for (const natureCode of DIFAL_ELIGIBLE_CFOPS) assert.equal(calculateDifal({...difalSale, natureCode, description: ''}).eligible, true);
+  const source = {...row, ...difalSale, grossCents: 16000, discountCents: 1000, freightCents: 0, abatementCents: 0, recipientUf: ' sp ', difal: {amountCents: 999999}, operation: 'SERVICO'};
+  const compact = compactPurchaseLine(source, 'NET_V2', SALES_MODE, {issuerUf: 'mg', difalVersion: DIFAL_VERSION});
+  assert.equal(compact.difal?.amountCents, 1500); assert.equal(compact.operation, 'VENDA'); assert.equal(compact.recipientUf, 'SP');
+  assert.equal(compact.totalCents, 15000); assert.equal(compact.grossCents, 16000); assert.equal(compact.discountCents, 1000); assert.equal(compact.accessoryCents, row.accessoryCents);
+  assert.equal(compactPurchaseLine({...source, grossCents: 101000, totalCents: 100000}, 'NET_V2', SALES_MODE, {issuerUf: 'MG', difalVersion: DIFAL_VERSION}).difal?.amountCents, 10000);
+  const purchase = compactPurchaseLine(source);
+  assert.equal(purchase.difal, undefined); assert.equal(purchase.recipientUf, undefined);
+});
+test('DIFAL: pendências de UF, contexto legado e soma dos centavos por venda', () => {
+  assert.equal(normalizeUf(' mg '), 'MG'); assert.equal(normalizeUf('XX'), '');
+  assert.equal(calculateDifal({...difalSale, issuerUf: ''}).reason, 'MISSING_ISSUER_UF');
+  assert.equal(calculateDifal({...difalSale, recipientUf: 'XX'}).reason, 'MISSING_RECIPIENT_UF');
+  const result = summarizeDifal([difalSale, {...difalSale, totalCents: 100000}, {...difalSale, recipientUf: ''}, {...difalSale, document: '00000000000191'}], 'MG');
+  assert.deepEqual(result, {version: DIFAL_VERSION, ratePercent: 10, issuerUf: 'MG', eligibleLines: 2, baseCents: 115000, amountCents: 11500, pendingLines: 1});
+  assert.equal(summarizeDifal([{...difalSale, totalCents: 5}, {...difalSale, totalCents: 5}], 'MG').amountCents, 2);
+  const source = {...row, natureCode: '6108', description: 'Camiseta', recipientUf: 'SP'};
+  const legacy = compactPurchaseLine(source, 'NET_V2', SALES_MODE, {issuerUf: undefined, difalVersion: undefined});
+  assert.equal(legacy.operation, 'OUTRAS'); assert.equal(legacy.difal, undefined); assert.equal(legacy.recipientUf, undefined);
+  const csv = purchaseCsv({mode: SALES_MODE, calculationVersion: 'NET_V2', difalVersion: DIFAL_VERSION, issuerUf: 'MG', _id: 'difal', clientName: 'Empresa', fileName: 'vendas.csv'}, [{...compactPurchaseLine({...row, ...difalSale, grossCents: 15000, discountCents: 0, freightCents: 0, abatementCents: 0}, 'NET_V2', SALES_MODE, {issuerUf: 'MG', difalVersion: DIFAL_VERSION}), index: 0}]);
+  assert(csv.includes('"MG";"SP";"10";"150,00";"15,00";"ELIGIBLE";"DIFAL_ESTIMATE_V1"'));
 });

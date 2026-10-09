@@ -1,6 +1,6 @@
 {
   "name": "maximum-cnpj",
-  "version": "0.19.1",
+  "version": "0.20.0",
   "private": true,
   "type": "module",
   "description": "Consultas CNPJ, histórico por empresa e relatórios Python com Node.js e MongoDB",
@@ -23,7 +23,7 @@
     "test:reports": "python -m unittest discover -s tests -p '*_test.py' -v",
     "smoke": "node scripts/smoke-deployment.mjs",
     "provision:team": "node --experimental-strip-types --env-file-if-exists=.env scripts/provision-team.ts",
-    "test:purchases-integration": "node --experimental-strip-types --test tests/purchase-integration.test.ts",
+    "test:purchases-integration": "node --experimental-strip-types --test tests/purchase-integration.test.ts tests/difal-integration.test.ts",
     "test:generations-integration": "node --experimental-strip-types --test tests/generation-integration.test.ts tests/report-competence-integration.test.ts",
     "test:simulations-integration": "node --experimental-strip-types --test tests/simulation-integration.test.ts",
     "test:competences": "node --experimental-strip-types --test tests/report-competence.test.ts tests/report-competence-integration.test.ts",

@@ -15,7 +15,8 @@ function valueFor(summary: FinancialSummary, status: string) {
 
 function sourceMetadata(summary: FinancialSummary) {
   return {jobId: summary.job._id, fileName: summary.job.fileName, totalCents: summary.totals.totalCents,
-    formula: summary.formula, calculationVersion: summary.calculationVersion, completedAt: summary.job.completedAt, period: summary.period || null};
+    formula: summary.formula, calculationVersion: summary.calculationVersion, completedAt: summary.job.completedAt, period: summary.period || null,
+    ...(summary.job.mode === SALES_MODE && summary.difal ? {difal: summary.difal} : {})};
 }
 
 /** Only reconciled server snapshots can prefill a simulator; the browser never supplies totals. */
