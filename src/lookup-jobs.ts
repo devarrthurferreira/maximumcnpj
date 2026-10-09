@@ -1,3 +1,4 @@
+import { DIFAL_VERSION, normalizeUf } from './difal.ts';
 import { randomUUID } from 'node:crypto';
 import { collection, scope, audit } from './store.ts';
 import { need, text, integer, digest } from './security.ts';
@@ -15,10 +16,11 @@ export async function createLookup(actor:LookupActor,input:any,mode=LOOKUP_MODE)
   const id=text(input.importId);need(/^[a-f0-9-]{36}$/.test(id),'Identificador inválido.');
   await assertLookupNotDeleted(id);
   const c=await (await collection('clients')).findOne(scope({_id:text(input.clientId),active:true}));need(c,'Escolha uma empresa/carteira ativa.');
+  const issuerUf=mode===SALES_MODE?normalizeUf(input.issuerUf === undefined ? c.uf : input.issuerUf):'';
   const expected=integer(input.expectedRows,1,MAX_ROWS),fileName=text(input.fileName,200);
   const jobs=await collection('lookupJobs'),old=await jobs.findOne(scope({_id:id}));
-  if(old){if(old.generationId)await assertGenerationNotDeleted(old.generationId);need(old.mode===mode&&old.clientId===c._id&&old.expectedRows===expected&&old.fileName===fileName&&old.createdBy===actor._id,'Identificador já utilizado por outro lote.',409);return old;}
-  const job={_id:id,...scope(),mode,...(isFinancialMode(mode)?{calculationVersion:PURCHASE_CALCULATION_VERSION}:{}),clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
+  if(old){if(old.generationId)await assertGenerationNotDeleted(old.generationId);need(old.mode===mode&&old.clientId===c._id&&old.expectedRows===expected&&old.fileName===fileName&&old.createdBy===actor._id&&(mode!==SALES_MODE||input.issuerUf===undefined||(old.issuerUf||'')===issuerUf),'Identificador já utilizado por outro lote.',409);return old;}
+  const job={_id:id,...scope(),mode,...(isFinancialMode(mode)?{calculationVersion:PURCHASE_CALCULATION_VERSION}:{}),...(mode===SALES_MODE?{difalVersion:DIFAL_VERSION,issuerUf}:{}),clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
   await jobs.insertOne(job);
   try { await assertLookupNotDeleted(id); }
   catch (error) { await jobs.deleteOne(scope({_id:id})); throw error; }
@@ -29,7 +31,7 @@ export async function uploadLookup(actor:LookupActor,id:string,input:any){
     need(j.status==='UPLOADING','Este lote não aceita novas linhas.',409);
     need(Array.isArray(input.rows)&&input.rows.length>0&&input.rows.length<=250,'Envie até 250 linhas por parte.');
     const offset=integer(input.offset,0,j.expectedRows-1);need(offset+input.rows.length<=j.expectedRows,'Linhas excedem o tamanho do lote.');
-    const lines=input.rows.map((row:any)=>isFinancialMode(j.mode)?compactPurchaseLine(row,calculationVersion(j),j.mode):compactLine(row)),hash=digest(JSON.stringify(lines)),chunks=await collection('chunks'),key=`lookup:${id}:${offset}`;
+    const lines=input.rows.map((row:any)=>isFinancialMode(j.mode)?compactPurchaseLine(row,calculationVersion(j),j.mode,{issuerUf:j.issuerUf,difalVersion:j.difalVersion}):compactLine(row)),hash=digest(JSON.stringify(lines)),chunks=await collection('chunks'),key=`lookup:${id}:${offset}`;
     const old=await chunks.findOne(scope({_id:key}));if(old){need(old.hash===hash,'Parte já enviada com outros dados.',409);if(old.complete)return {uploaded:j.uploaded};}
     need(offset===j.uploaded || (old && offset+lines.length===j.uploaded),'Retome a próxima parte esperada.',409,'UPLOAD_OFFSET');
     await chunks.updateOne(scope({_id:key}),{$setOnInsert:{...scope(),hash,complete:false,createdAt:new Date()}},{upsert:true});
@@ -79,7 +81,7 @@ export async function recheckLookup(actor: LookupActor, id: string) {
   const reconciled = await purchaseSummary(id, true, old.mode);
   need(reconciled.totals.uniqueCnpjs > 0, 'Este relatório não tem CNPJs consultáveis.');
   const fresh = await createLookup(actor, {importId: randomUUID(), clientId: old.clientId,
-    fileName: 'Reconsulta · ' + old.fileName.slice(0,170), expectedRows: old.expectedRows}, old.mode);
+    fileName: 'Reconsulta · ' + old.fileName.slice(0,170), expectedRows: old.expectedRows, issuerUf: old.issuerUf}, old.mode);
   return withJob(fresh._id, async locked => {
   need(locked.status === 'UPLOADING', 'O novo lote já foi alterado. Confira o histórico.', 409);
   await (await collection('purchaseLines')).aggregate([
@@ -100,7 +102,8 @@ export async function recheckLookup(actor: LookupActor, id: string) {
   await (await collection('lookupJobs')).updateOne(scope({_id: fresh._id}), {$set: {repeatedFrom: id, uploaded: rows,
     summary: old.summary, purchaseInput: old.purchaseInput, calculationVersion: calculationVersion(old),
     ...(old.reportPeriod ? {reportPeriod: old.reportPeriod} : {}),
-    status: 'PROCESSING', startedAt: new Date()}});
+    ...(old.mode === SALES_MODE && old.difalVersion ? {difalVersion: old.difalVersion, issuerUf: old.issuerUf} : {}),
+    status: 'PROCESSING', startedAt: new Date()}, ...(old.mode === SALES_MODE && old.difalVersion === undefined ? {$unset: {difalVersion: '', issuerUf: ''}} : {})});
   await audit(actor._id, 'lookup.recheck', fresh._id);
   return getJob(fresh._id);
   });

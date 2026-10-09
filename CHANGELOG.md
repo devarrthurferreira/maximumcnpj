@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.20.0] — 2026-10-09
+
+- DIFAL gerencial estimado em 10% para vendas de mercadorias a CPF de outra UF, com lista explícita de naturezas elegíveis.
+- UF do emitente preservada no relatório e UF do destinatário importada da coluna J; ausência de dados indicada como pendência.
+- Cálculo isolado, em centavos, compartilhado entre prévia e backend, reconciliado em relatórios e exportações.
+- Exibição separada em prévia, resumos, linhas, CSV, PDF e contexto do simulador; sem alterar totais ou os demais impostos.
+- Recálculo na prévia e em nova importação, reenvios idempotentes e histórico anterior preservado sem cálculo retroativo.
+- Testes sintéticos de elegibilidade, arredondamento, recálculo, adulteração de valores, isolamento e navegador.
+
 ## [0.19.1] — 2026-10-09
 
 - Consulta CNPJ com admissão coordenada por lote, menos operações no controle Mongo e persistência independente paralela.

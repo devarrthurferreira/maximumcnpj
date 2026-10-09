@@ -198,11 +198,13 @@ test('MongoDB simulador: cinco campos vÃªm de snapshots conciliados, com CPF prÃ
     // Pre-operation sales snapshots have no saved net balance. Reopening them must
     // retain their original positive totals, without issuing new CNPJ lookups.
     const originalLines = await lines.find(scope({jobId:sales.job._id})).toArray();
-    await jobs.updateOne(scope({_id:sales.job._id}),{$unset:{'purchaseInput.balanceCents':''}});
-    await lines.updateMany(scope({jobId:sales.job._id}),{$unset:{balanceCents:'',operation:'',natureCode:'',description:''}});
+    const originalSales = await jobs.findOne(scope({_id:sales.job._id}));
+    await jobs.updateOne(scope({_id:sales.job._id}),{$unset:{'purchaseInput.balanceCents':'',difalVersion:'',issuerUf:'','purchaseInput.difal':''}});
+    await lines.updateMany(scope({jobId:sales.job._id}),{$unset:{balanceCents:'',operation:'',natureCode:'',description:'',recipientUf:'',difal:''}});
     const legacySnapshot = await generationSimulator(id,clientId);
     assert.deepEqual(legacySnapshot.fields,snapshot.fields);
     assert.equal(legacySnapshot.sales.totalCents,49200);
+    assert.equal(legacySnapshot.sales.difal,undefined);
     assert.equal(calls,6,'Reabrir vendas anteriores nÃ£o recalcula nem consulta os CNPJs novamente.');
     await jobs.updateOne(scope({_id:sales.job._id}),{$set:{'purchaseInput.balanceCents':null}});
     await assert.rejects(generationSimulator(id,clientId),errorCode('RESULT_COUNT'));
@@ -210,6 +212,7 @@ test('MongoDB simulador: cinco campos vÃªm de snapshots conciliados, com CPF prÃ
     await assert.rejects(generationSimulator(id,clientId),errorCode('RESULT_COUNT'));
     await jobs.updateOne(scope({_id:sales.job._id}),{$set:{'purchaseInput.balanceCents':49200}});
     await lines.bulkWrite(originalLines.map(line=>({replaceOne:{filter:scope({_id:line._id}),replacement:line}})));
+    await jobs.updateOne(scope({_id:sales.job._id}),{$set:{difalVersion:originalSales!.difalVersion,issuerUf:originalSales!.issuerUf,'purchaseInput.difal':originalSales!.purchaseInput.difal}});
     process.env.WORKSPACE_ID='another_workspace';
     await assert.rejects(generationSimulator(id,clientId),errorCode('NOT_FOUND'));
     process.env.WORKSPACE_ID='simulator_test';

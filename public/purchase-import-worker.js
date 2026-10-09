@@ -1,4 +1,4 @@
-/* Only A/I/P/Q/Y/Z/AA/AB leave this worker as approved financial data; source file stays local. */
+/* Only approved report fields leave this worker; the source file stays local. */
 let book, matrix, encoding, csvSource = null;
 function sheetMatrix(name, preview = false) {
   const sheet = book.Sheets[name];
@@ -21,7 +21,7 @@ function sheetMatrix(name, preview = false) {
 }
 function validate(parser, data, header) {
   return parser.parsePurchaseMatrix(matrix, Number(header), {type:data.reportType || data.type || 'PURCHASES', calculationVersion:data.calculationVersion || 'NET_V2',
-    companyCode:data.companyCode, ...(csvSource ? {sourceFormat:'CSV', delimiter:csvSource.delimiter, sourceLines:csvSource.sourceLines, recoverDescriptionSeparators:true} : {})});
+    companyCode:data.companyCode, issuerUf:data.issuerUf, difalVersion:data.difalVersion, ...(csvSource ? {sourceFormat:'CSV', delimiter:csvSource.delimiter, sourceLines:csvSource.sourceLines, recoverDescriptionSeparators:true} : {})});
 }
 self.onmessage = async ({data}) => {
   try {

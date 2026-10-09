@@ -20,6 +20,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 from .brand import draw_brand_header
 from .core import VERSION, display_date, number, percent, require, utcnow
+from .difal import DIFAL_VERSION, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
 
 PURCHASES_MODE = 'PURCHASES_V1'
 SALES_MODE = 'SALES_V1'
@@ -147,6 +148,13 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     version = job.get('calculationVersion', 'Q_V1')
     _check(version in ('Q_V1', 'NET_V2') and (not sales or version == 'NET_V2'))
     summary, financial = job.get('summary') or {}, job.get('purchaseInput') or {}
+    difal = None
+    if sales and 'difalVersion' in job:
+        _check(job['difalVersion'] == DIFAL_VERSION)
+        issuer_uf = job.get('issuerUf')
+        _check(isinstance(issuer_uf, str) and issuer_uf == normalize_uf(issuer_uf))
+        difal = {'version': DIFAL_VERSION, 'ratePercent': DIFAL_RATE_PERCENT, 'issuerUf': issuer_uf,
+                 'eligibleLines': 0, 'baseCents': 0, 'amountCents': 0, 'pendingLines': 0}
     components = {key: 0 for key in (*COMPONENT_FIELDS, 'totalCents')} if version == 'NET_V2' else None
     expected = _integer(job.get('expectedRows'), 50_000)
     _check(expected > 0 and _integer(job.get('uploaded')) == expected)
@@ -176,6 +184,22 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         valid = _valid_cnpj(document)
         _check(row['valid'] == valid and row.get('cnpj') == (document if valid else ''))
         raw_cents = _integer(row.get('totalCents'), 100_000_000_000)
+        if difal is not None:
+            _check(isinstance(row.get('recipientUf'), str) and row['recipientUf'] == normalize_uf(row['recipientUf']))
+            _check(isinstance(row.get('natureCode'), str) and
+                   row['natureCode'] == re.sub(r'[^0-9]', '', row['natureCode'])[:4] and
+                   isinstance(row.get('description'), str))
+            _check(row.get('operation') == sales_operation(row['natureCode'], row['description']))
+            expected_difal = calculate_difal(row, difal['issuerUf'])
+            stored_difal = row.get('difal')
+            _check(isinstance(stored_difal, dict) and type(stored_difal.get('eligible')) is bool and
+                   stored_difal['eligible'] == expected_difal['eligible'] and
+                   stored_difal.get('reason') == expected_difal['reason'])
+            for key in ('baseCents', 'amountCents'):
+                _check(_integer(stored_difal.get(key)) == expected_difal[key])
+                difal[key] = _integer(difal[key] + expected_difal[key])
+            difal['eligibleLines'] += int(expected_difal['eligible'])
+            difal['pendingLines'] += int(expected_difal['reason'] in PENDING_REASONS)
         operation = row.get('operation') if sales else None
         if sales:
             operation = operation if operation in operation_totals else 'OUTRAS'
@@ -223,6 +247,12 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         _check(isinstance(stored_components, dict))
         for key, value in components.items():
             _check(_integer(stored_components.get(key)) == value)
+    if difal is not None:
+        stored_difal = financial.get('difal')
+        _check(isinstance(stored_difal, dict) and stored_difal.get('version') == DIFAL_VERSION and
+               stored_difal.get('issuerUf') == difal['issuerUf'])
+        for key in ('ratePercent', 'eligibleLines', 'baseCents', 'amountCents', 'pendingLines'):
+            _check(_integer(stored_difal.get(key)) == difal[key])
     groups = {status: {'status': status, 'label': label, 'suppliers': 0, 'lines': 0, 'totalCents': 0}
               for status, label in GROUP_LABELS.items()}
     seen, checks = set(), []
@@ -298,6 +328,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             'cpfCents': cpf_cents, 'cpfDocumentCount': len(cpf_documents), 'cpfLineCount': cpf_lines,
             'reportingGroups': reporting_groups, 'managerialGroups': managerial_groups,
             'unconfirmed': unknown, 'components': components, 'operationTotals': list(operation_totals.values()) if sales else [], 'calculationVersion': version,
+            'difal': difal,
             'quantityDisplay': quantity_text.replace('.', ','), 'generatedAt': utcnow(),
             'firstCheck': min(checks) if checks else None, 'lastCheck': max(checks) if checks else None}
 
@@ -307,6 +338,7 @@ def purchase_metadata(db, job, workspace):
     query = {'workspaceId': workspace, 'jobId': job['_id']}
     lines = db.purchaseLines.find(query, {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'index': 1, 'document': 1,
                                         'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'operation': 1, 'balanceCents': 1, 'totalCents': 1, 'valid': 1, 'kind': 1,
+                                        'natureCode': 1, 'description': 1, 'recipientUf': 1, 'difal': 1,
                                         **{key: 1 for key in COMPONENT_FIELDS}})
     lines = lines.limit(50_001).batch_size(500).max_time_ms(20000)
     items = db.lookupItems.aggregate([
@@ -387,6 +419,8 @@ def purchase_story(meta, width, styles):
     rows.append(['TOTAL', number(meta['uniqueDocuments']), percent(100 if meta['uniqueDocuments'] else 0),
                  number(meta['lineCount']), money(meta['totalCents']), percent(100 if meta['totalCents'] else 0)])
     story += [purchase_table(rows, (.24, .12, .16, .08, .24, .16), width, styles, True), Spacer(1, 6)]
+    if sales:
+        story += difal_story(meta.get('difal'), width, styles)
     if sales and meta.get('operationTotals'):
         operation_labels = {'VENDA':'Vendas','SERVICO':'Serviços','DEVOLUCAO':'Devoluções','OUTRAS':'Outras'}
         operation_rows = [['Operação','Linhas','Valor antes do sinal','Impacto no saldo']]
@@ -431,6 +465,27 @@ def purchase_story(meta, width, styles):
           f'A observação salva não comprova o regime na data da {"venda" if sales else "compra"} nem a atualização fiscal da base. '
           'Referência fiscal não informada. Este PDF lê o snapshot reconciliado e não faz nova consulta.', 'small'),
     ]
+    return story
+
+
+def difal_story(difal, width, styles):
+    """Keep the estimate separate from invoice totals and preserve missing-data states."""
+    p = lambda value, style='body': purchase_paragraph(value, styles, style)
+    story = [p('DIFAL estimado (10%)', 'heading')]
+    if difal is None:
+        return story + [p('Indisponível neste histórico: o snapshot foi criado antes do cálculo de DIFAL. '
+                          'Reimporte as vendas para calcular a estimativa com as UFs da operação.', 'small')]
+    rows = [['UF do emitente', 'Linhas elegíveis', 'Base elegível', 'DIFAL estimado (10%)'],
+            [difal['issuerUf'] or 'Não informada', number(difal['eligibleLines']),
+             money(difal['baseCents']), money(difal['amountCents'])]]
+    story += [purchase_table(rows, (.20, .20, .30, .30), width, styles), Spacer(1, 4)]
+    if difal['pendingLines']:
+        story.append(p(f'Estimativa parcial: {number(difal["pendingLines"])} linhas pendentes por UF do emitente '
+                       'ou do destinatário ausente. Essas linhas não integram a base nem o valor acima.', 'small'))
+    story.append(p('Alíquota média estimada de 10%, sem equivalência automática à alíquota legal. '
+                   'Aplica-se somente a vendas de mercadoria elegíveis para CPF de outra UF; '
+                   'base = total registrado da venda. Valores arredondados por linha e somados uma única vez. '
+                   'A estimativa é informativa e não altera o total de vendas nem os demais impostos.', 'small'))
     return story
 
 

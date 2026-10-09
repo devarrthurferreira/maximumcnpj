@@ -19,3 +19,5 @@ public/lookup-domain.js
 __pycache__/
 *.pyc
 tmp/
+
+public/difal.js

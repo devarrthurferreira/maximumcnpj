@@ -64,6 +64,9 @@ def generation_metadata(db, generation_id, workspace, part=1):
     totals_by_type = {report_type: {'totalCents': 0, 'cnpjCents': 0, 'nonCnpjCents': 0,
                                    'lineCount': 0, 'unconfirmedCents': 0, 'cpfCents': 0,
                                    'optantCents': 0, 'nonoptantCents': 0} for report_type in required}
+    if 'SALES' in totals_by_type:
+        totals_by_type['SALES']['difal'] = {'baseCents': 0, 'amountCents': 0, 'eligibleLines': 0,
+                                          'pendingLines': 0, 'unavailableReports': 0}
     for company in selected:
         reports = {}
         for report_type in required:
@@ -77,6 +80,12 @@ def generation_metadata(db, generation_id, workspace, part=1):
             for group in meta['reportingGroups']:
                 key = {'OPTANTE': 'optantCents', 'NAO_OPTANTE': 'nonoptantCents', 'CPF': 'cpfCents'}[group['status']]
                 totals[key] = _integer(totals[key] + group['totalCents'])
+            if report_type == 'SALES':
+                if meta.get('difal') is None:
+                    totals['difal']['unavailableReports'] += 1
+                else:
+                    for key in ('baseCents', 'amountCents', 'eligibleLines', 'pendingLines'):
+                        totals['difal'][key] = _integer(totals['difal'][key] + meta['difal'][key])
         sections.append({'company': company, 'reports': reports})
     # Keep the internal purchases list for consumers of older generation metadata.
     purchases = [section['reports']['PURCHASES'] for section in sections if 'PURCHASES' in section['reports']]
@@ -137,6 +146,23 @@ def render_generation_pdf(meta):
         story += [purchase_table(groups, (.70, .30), width, styles, True, padding=5), Spacer(1, 6),
                   p(f'{REPORTS[report_type]["label"]} {scope}: não confirmados na fonte já incluídos em '
                     f'Não optante = {money(totals["unconfirmedCents"])}.', 'small')]
+        if report_type == 'SALES':
+            difal = totals['difal']
+            story += [p(f'DIFAL estimado (10%) {scope}', 'heading')]
+            if difal['unavailableReports'] == len(meta['sales']):
+                story.append(p('Indisponível: todos os relatórios de vendas desta parte são históricos '
+                               'anteriores ao cálculo do DIFAL.', 'small'))
+            else:
+                rows = [['Base elegível', 'DIFAL estimado (10%)', 'Linhas elegíveis', 'Linhas pendentes por UF'],
+                        [money(difal['baseCents']), money(difal['amountCents']), number(difal['eligibleLines']),
+                         number(difal['pendingLines'])]]
+                story += [purchase_table(rows, (.30, .30, .20, .20), width, styles), Spacer(1, 4)]
+                if difal['unavailableReports'] or difal['pendingLines']:
+                    story.append(p(f'Estimativa parcial: {number(difal["unavailableReports"])} relatórios históricos '
+                                   f'sem DIFAL disponível e {number(difal["pendingLines"])} linhas pendentes por UF. '
+                                   'Os valores acima incluem somente operações elegíveis reconciliadas.', 'small'))
+            story.append(p('Parâmetro médio estimado, sem equivalência automática à alíquota legal. '
+                           'Exibido separadamente, sem alterar o total de vendas ou outros impostos.', 'small'))
     story += [p('Como conferir esta geração', 'heading'),
               p('As próximas páginas apresentam, por empresa e tipo de relatório, os grupos gerenciais, as bases dos percentuais '
                 'e os valores usados no cálculo. Fórmula atual: Q - Y + AA - AB. A despesa acessória Z é informativa. '

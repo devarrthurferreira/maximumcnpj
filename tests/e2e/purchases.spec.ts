@@ -48,7 +48,7 @@ for (const type of ['PURCHASES','SALES']) test(`${type} imports cp1252 columns, 
   await expect(page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'})).toBeVisible();
   await page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'}).click();
   await expect(page.getByRole('heading',{name:`Total de ${report} do relatório`})).toBeVisible();
-  expect(posted).toEqual(sales ? lines.map(line => ({...line,natureCode:'',description:'',operation:'OUTRAS',balanceCents:line.totalCents})) : lines);
+  expect(posted).toEqual(sales ? lines.map(line => ({...line,natureCode:'',description:'',operation:'OUTRAS',recipientUf:'',balanceCents:line.totalCents})) : lines);
   if (sales) {await expect(page.getByRole('heading',{name:'Explore os compradores e valores'})).toBeVisible();await expect(page).toHaveURL(/type=SALES/);}
   await expect(page.locator('.purchase-hero')).toContainText('165,20');
   await expect(page.locator('.purchase-group').first()).toContainText('115,20');

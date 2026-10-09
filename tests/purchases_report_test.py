@@ -393,6 +393,23 @@ class PurchaseMongoTests(unittest.TestCase):
         finally:
             self.db.cnpjStates.update_one({'_id': 'synthetic-state-0'}, {'$set': {'workspaceId': WORKSPACE}})
 
+    def test_difal_database_projection_reconciles_and_rejects_tampering(self):
+        from difal_report_test import difal_fixture
+        from reporting.purchases import purchase_metadata
+        job, lines, _ = difal_fixture()
+        job['_id'] = str(uuid.uuid4())
+        for row in lines:
+            row.update(_id=f'{job["_id"]}:{row["index"]}', jobId=job['_id'])
+        self.db.lookupJobs.insert_one(job)
+        self.db.purchaseLines.insert_many(lines)
+        meta = purchase_metadata(self.db, job, WORKSPACE)
+        self.assertEqual(meta['difal']['amountCents'], 1500)
+        self.assertEqual(meta['totalCents'], 15000)
+        self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+        self.db.purchaseLines.update_one({'_id': lines[0]['_id']}, {'$set': {'difal.amountCents': 1499}})
+        with self.assertRaises(ReportError):
+            purchase_metadata(self.db, job, WORKSPACE)
+
     def test_large_bson_doubles_survive_database_read_and_pdf_render(self):
         from reporting.purchases import purchase_metadata
         from reporting.service import get_job
