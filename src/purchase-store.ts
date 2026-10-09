@@ -141,7 +141,7 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
   const items = await (await collection('lookupItems')).aggregate([
     {$match: scope({jobId: id})},
     {$lookup: {from: 'cnpjStates', let: {state: '$stateId', identity: '$cnpj'}, pipeline: [{$match: {$expr: {$and: [{$eq: ['$_id', '$$state']}, {$eq: ['$cnpj', '$$identity']}, {$eq: ['$workspaceId', scope().workspaceId]}]}}}, {$project: {status: 1}}], as: 'sourceState'}},
-    {$project: {cnpj: 1, clientId: 1, kind: 1, state: 1, stateId: 1, status: 1, occurrences: 1, totalCents: 1, sourceState: 1}}
+    {$project: {cnpj: 1, clientId: 1, kind: 1, state: 1, stateId: 1, status: 1, occurrences: 1, totalCents: 1, sourceState: 1, source: 1}}
   ], {maxTimeMS: 20000}).toArray();
   const valid = grouped.filter(g => g.valid), nonCnpj = grouped.filter(g => !g.valid);
   const reportingValue = (group: any) => mode === SALES_MODE ? exactSignedCents(group.balanceCents ?? group.totalCents) : exactCents(group.totalCents);
@@ -177,6 +177,9 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
   }
   for (const group of groups) { group.countPercent = percentage(group.count, valid.length); group.valuePercent = mode === SALES_MODE ? signedPercentage(group.totalCents, cnpjCents) : percentage(group.totalCents, cnpjCents); }
   const uniqueDocuments = grouped.length, nonCnpjDocumentCount = nonCnpj.length;
+  const sources = [...new Set(items.map(item =>
+    (typeof item.source === 'string' && item.source.trim()) ||
+    (typeof job.source === 'string' && job.source.trim()) || 'Minha Receita'))].sort();
   const operationTotals = mode === SALES_MODE ? await (await collection('purchaseLines')).aggregate([
     {$match: scope({jobId: id})}, {$group: {_id: {$ifNull: ['$operation', 'OUTRAS']}, lines: {$sum: 1}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}}}}, {$sort: {_id: 1}}
   ], {maxTimeMS: 20000}).toArray() : [];
@@ -184,7 +187,7 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
     reportingGroups: reportingGroups(groups, uniqueDocuments, totalCents, {count: nonCnpjDocumentCount, lines: lines - cnpjLines, totalCents: nonCnpjCents}, excludedByKind.get('CPF') || {count: 0, lines: 0, totalCents: 0}, mode),
     totals: {lines, uniqueCnpjs: valid.length, uniqueDocuments, nonCnpjDocumentCount, cnpjLines, nonCnpjLines: lines - cnpjLines, totalCents, cnpjCents, nonCnpjCents}, groups, excluded,
     denominators: {count: 'Documentos distintos do relatório, incluindo CPF, CNO e inválidos. Cada linha sem documento conta separadamente.', value: `Soma de ${formula} de todas as linhas do relatório. Apenas optantes confirmados entram em Simples; ${mode === SALES_MODE ? 'CPF tem grupo próprio nas vendas; os demais, incluindo não confirmados e outros documentos, integram Não optantes.' : 'todo o restante integra Não optantes no agrupamento gerencial.'}`},
-    source: `Minha Receita — enquadramento observado na consulta; não comprova o regime na data da ${mode === SALES_MODE ? 'venda' : 'compra'}.`};
+    sources, source: `${sources.join(', ') || 'Nenhuma consulta CNPJ neste relatório'} — enquadramento observado na consulta; não comprova o regime na data da ${mode === SALES_MODE ? 'venda' : 'compra'}.`};
 }
 export function purchaseFilter(value: string, mode: FinancialMode = PURCHASE_MODE) {
   need(['ALL', ...PURCHASE_STATUSES, 'NON_CNPJ', ...(mode === SALES_MODE ? ['CPF'] : [])].includes(value), 'Grupo financeiro inválido.'); return value;

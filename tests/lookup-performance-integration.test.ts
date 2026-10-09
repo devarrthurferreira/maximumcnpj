@@ -112,12 +112,12 @@ test('MongoDB: concorrência limitada, progresso correto, retries, isolamento e 
     const isolated = await fresh([20,21,22].map(n=>({cnpj:doc(n),name:'Falha pontual sintética'})));
     const isolatedCalls:string[]=[];
     const isolatedResult = await processLookup(actor,isolated,(async (url:any)=>{
-      const cnpj=String(url).split('/').at(-1)!; isolatedCalls.push(cnpj);
+      const cnpj=new URL(String(url)).pathname.split('/').at(-1)!; isolatedCalls.push(cnpj);
       if(cnpj===doc(20))throw new Error('Rede interrompida sintética');
       if(cnpj===doc(21))return new Response('{',{headers:{'content-type':'application/json'}});
       return Response.json({cnpj,opcao_pelo_simples:true});
     }) as typeof fetch);
-    assert.equal(isolatedCalls.length,3); assert.equal(isolatedResult.received,1);
+    assert.equal(isolatedCalls.length,5); assert.equal(isolatedResult.received,1);
     const isolatedProgress=await lookupProgress(isolated,1,'PENDING',true);
     assert.equal(isolatedProgress.metrics.retrying,2); assert.equal(isolatedProgress.metrics.optants,1);
     assert.equal(isolatedProgress.metrics.nonOptants,0); assert.equal(isolatedProgress.total,2);
@@ -126,7 +126,7 @@ test('MongoDB: concorrência limitada, progresso correto, retries, isolamento e 
     const recovered=await processLookup(actor,isolated,(async (url:any)=>{
       const cnpj=String(url).split('/').at(-1)!;isolatedCalls.push(cnpj);return Response.json({cnpj,opcao_pelo_simples:true});
     }) as typeof fetch);
-    assert.equal(recovered.status,'COMPLETED'); assert.equal(isolatedCalls.length,5);
+    assert.equal(recovered.status,'COMPLETED'); assert.equal(isolatedCalls.length,7);
     assert.equal(await(await collection('lookupItems')).countDocuments(scope({jobId:isolated,attempts:2,state:'DONE'})),2);
 
     const midBatchLimit=await fresh([60,61,62,63].map(n=>({cnpj:doc(n),name:'Limite com consulta em andamento'})));

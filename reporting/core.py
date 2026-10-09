@@ -10,7 +10,7 @@ from http.cookies import SimpleCookie, CookieError
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-VERSION = '0.20.0'
+VERSION = '0.20.1'
 STATUSES = {'ALL': 'Todos os CNPJs', 'OPTANTE': 'Optantes pelo Simples',
             'NAO_OPTANTE': 'Não optantes', 'NAO_CONFIRMADO': 'Não confirmados'}
 REPORTING_STATUSES = {'ALL': 'Todos os CNPJs', 'OPTANTE': 'Simples', 'NAO_OPTANTE': 'Não optante'}
@@ -22,7 +22,7 @@ PDF_PART_SIZE = 500
 CSV_PART_SIZE = 2000
 MAX_RESPONSE_BYTES = 4_000_000
 TZ = ZoneInfo('America/Sao_Paulo')
-NOTICE = ('Resultado histórico da API Minha Receita, não uma consulta fiscal em tempo real. '
+NOTICE = ('Resultado histórico das fontes públicas de CNPJ registradas no snapshot, não uma consulta fiscal em tempo real. '
           'A emissão deste relatório não consulta novamente a API. '
           'A data da requisição não comprova a atualização fiscal da base. '
           'Referência fiscal da base: não informada.')
@@ -46,6 +46,14 @@ def iso(value):
     if isinstance(value, datetime):
         return value.replace(tzinfo=value.tzinfo or timezone.utc).isoformat()
     return str(value) if value is not None else None
+
+
+def snapshot_source(row, job):
+    """Prefer the source actually saved for each lookup; keep legacy snapshots readable."""
+    for value in (row.get('source'), job.get('source')):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return 'Minha Receita'
 
 
 def display_date(value):
@@ -171,7 +179,7 @@ def csv_bytes(job, rows):
                   'Sim' if d.get('mei') is True else 'Não' if d.get('mei') is False else 'Não confirmado',
                   row.get('kind'), d.get('uf') or row.get('uf'), row.get('occurrences'),
                   row.get('nameMatch'), row.get('reason'), iso(row.get('checkedAt')),
-                  d.get('optionDate'), d.get('exclusionDate'), row.get('source') or 'Minha Receita',
+                  d.get('optionDate'), d.get('exclusionDate'), snapshot_source(row, job),
                   'Não informada']
         writer.writerow([safe(v) for v in values])
     return ('\ufeff' + out.getvalue()).encode('utf-8')

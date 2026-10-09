@@ -72,7 +72,7 @@ export async function lookupProgress(id: string, page = 1, filter = 'ALL', summa
   if (filter === 'PENDING') query.state = {$ne: 'DONE'};
   else if (filter !== 'ALL') { query.state = 'DONE'; query.status = filter; }
   const [groups, rows] = await Promise.all([
-    items.aggregate([{$match: base}, {$group: {_id: {state: '$state', status: '$status'}, count: {$sum: 1}}}], {maxTimeMS: 15000}).toArray(),
+    items.aggregate([{$match: base}, {$group: {_id: {state: '$state', status: '$status', reason: '$reason', source: '$source'}, count: {$sum: 1}}}], {maxTimeMS: 15000}).toArray(),
     summaryOnly ? Promise.resolve([]) : items.aggregate([
       {$match: query}, {$sort: {cnpj: 1}}, {$skip: (page - 1) * 25}, {$limit: 25},
       {$lookup: {from: 'cnpjStates', let: {stateId: '$stateId', identity: '$cnpj'}, pipeline: [
@@ -95,8 +95,20 @@ export async function lookupProgress(id: string, page = 1, filter = 'ALL', summa
   }
   const total = filter === 'ALL' ? metrics.total : filter === 'PENDING' ? metrics.pending + metrics.retrying :
     groups.filter(group => group._id.state === 'DONE' && group._id.status === filter).reduce((sum, group) => sum + group.count, 0);
+  // Aggregate diagnostics independently of pagination, including compact guided views
+  // and historical jobs created before these diagnostics were introduced.
+  const reasons = new Map<string, number>(), sources = new Map<string, number>();
+  for (const group of groups) {
+    if (group._id.reason && (group._id.state === 'RETRY' || (group._id.state === 'DONE' && group._id.status === 'NAO_CONFIRMADO'))) {
+      reasons.set(group._id.reason, (reasons.get(group._id.reason) || 0) + group.count);
+    }
+    if (group._id.source && group._id.state === 'DONE') sources.set(group._id.source, (sources.get(group._id.source) || 0) + group.count);
+  }
+  const diagnostics = {confirmed: metrics.optants + metrics.nonOptants, unconfirmed: metrics.unconfirmed,
+    reasons: [...reasons].map(([code, count]) => ({code, count})).sort((a, b) => b.count - a.count || a.code.localeCompare(b.code)),
+    sources: [...sources].map(([name, count]) => ({name, count})).sort((a, b) => a.name.localeCompare(b.name))};
   return {job: {_id: job._id, status: job.status, mode: job.mode, clientId: job.clientId, clientName: job.clientName, expected: job.summary?.unique || 0},
-    partial: job.status !== 'COMPLETED', metrics, items: rows, total, page, pageSize: 25, ...(summaryOnly ? {summaryOnly: true} : {})};
+    partial: job.status !== 'COMPLETED', metrics, diagnostics, items: rows, total, page, pageSize: 25, ...(summaryOnly ? {summaryOnly: true} : {})};
 }
 
 export async function processLookupBatch(actor: LookupActor, id: string, transport: typeof fetch = fetch) {
@@ -162,8 +174,9 @@ export async function processLookupBatch(actor: LookupActor, id: string, transpo
             const attempts = (item.attempts || 0) + 1, retry = error.retryable && attempts < 3;
             const seconds = error.code === 'LIMITE_DA_FONTE' ? error.retryAfter : Math.max(5, error.retryAfter);
             if (error.pauseProvider) { stop = true; await cooldown(seconds); }
+            console.warn(JSON.stringify({event: 'lookup.source_error', jobId: id, source: error.source, code: error.code, attempts, retry}));
             await items.updateOne(scope({_id: item._id}), {$set: {state: retry ? 'RETRY' : 'DONE', status: 'NAO_CONFIRMADO', reason: error.code,
-              checkedAt: new Date(), source: 'Minha Receita', ...(retry ? {nextAt: new Date(Date.now() + seconds * 1000)} : {})},
+              checkedAt: new Date(), source: error.source, ...(retry ? {nextAt: new Date(Date.now() + seconds * 1000)} : {})},
               $inc: {attempts: 1}, $unset: {stateId: '', nameMatch: '', ...(!retry ? {nextAt: ''} : {})}});
           }
         } catch (error) { stop = true; throw error; }
@@ -179,9 +192,10 @@ export async function processLookupBatch(actor: LookupActor, id: string, transpo
     const nextAt = Math.max(time(control?.nextAt), time(control?.leaseUntil), time(nextItem?.nextAt));
     const update: any = {received, updatedAt: new Date(), nextPollMs: Math.max(0, Math.min(60000, nextAt - Date.now()))};
     if (received === job.summary.unique) {
-      const docs = await items.find(scope({jobId: id})).project({cnpj: 1, status: 1}).toArray();
+      const docs = await items.find(scope({jobId: id})).project({cnpj: 1, status: 1, source: 1}).toArray();
       if (isFinancialMode(job.mode)) await purchaseSummary(id, false, job.mode);
       update.status = 'COMPLETED'; update.completedAt = new Date(); update.resultSummary = statistics(docs as any);
+      update.source = [...new Set(docs.map(doc => doc.source).filter(Boolean))].sort().join(' / ') || job.source;
       await audit(actor._id, 'lookup.completed', id);
     }
     await (await collection('lookupJobs')).updateOne(scope({_id: id}), {$set: update});

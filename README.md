@@ -1,6 +1,17 @@
-# Maximum CNPJ · v0.20.0
+# Maximum CNPJ · v0.20.1
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Correção 09/10/2026 — recuperação das consultas CNPJ
+
+- A indisponibilidade da Minha Receita pode produzir um relatório com todos os CNPJs não confirmados. O sistema agora tenta a API pública **OpenCNPJ** quando a fonte principal falha por rede, timeout, HTTP 5xx sem `Retry-After` ou resposta inválida. Não usa a BrasilAPI como alternativa porque seu endpoint CNPJ depende da própria Minha Receita.
+- Cada consulta conserva a identidade completa, a fonte realmente consultada e os indicadores explícitos do Simples/MEI. Ausência, conflito ou falha continuam **Não confirmado**; não comprovam que a empresa está fora do Simples. Os grupos gerenciais e os valores importados permanecem iguais.
+- O timeout total permanece em **12 segundos**, com até 6 segundos por fonte. Bloqueios, limites, `Retry-After`, identidade divergente e CNPJ não encontrado não acionam a alternativa. Permanecem as pausas compartilhadas e as tentativas limitadas.
+- Resumos guiados e relatórios completos passam a indicar **Consulta encerrada com pendências**, exibindo contagem e motivos. A fonte efetiva também aparece no acompanhamento e nas exportações.
+- **Consultar CNPJs novamente** reaproveita as linhas e os valores importados e abre uma nova consulta automaticamente. Reenvios do mesmo pedido não criam lotes duplicados. O relatório novo fica no histórico da empresa; o relatório e a geração anteriores ficam preservados e não são substituídos automaticamente.
+- Não há alteração nas regras financeiras, no DIFAL ou na autenticação. CPF/CNO/documentos inválidos continuam fora das APIs de CNPJ.
+
+Diagnóstico, arquivos alterados e validação: [`docs/CNPJ-RECOVERY-V0.20.1.md`](docs/CNPJ-RECOVERY-V0.20.1.md).
 
 ## Entrega 09/10/2026 — DIFAL estimado nas vendas
 
