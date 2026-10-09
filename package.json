@@ -1,6 +1,6 @@
 {
   "name": "maximum-cnpj",
-  "version": "0.19.0",
+  "version": "0.19.1",
   "private": true,
   "type": "module",
   "description": "Consultas CNPJ, histórico por empresa e relatórios Python com Node.js e MongoDB",
@@ -17,6 +17,7 @@
     "seed": "node --experimental-strip-types --env-file-if-exists=.env scripts/seed.ts",
     "test:e2e": "playwright test",
     "check:release": "node scripts/check-release.mjs",
+    "benchmark:lookups": "node --experimental-strip-types scripts/benchmark-lookups.mjs",
     "test:lookup-integration": "node --experimental-strip-types --test tests/lookup-integration.test.ts tests/lookup-performance-integration.test.ts",
     "test:deployment": "node --test tests/deployment.test.mjs",
     "test:reports": "python -m unittest discover -s tests -p '*_test.py' -v",

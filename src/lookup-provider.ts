@@ -3,8 +3,8 @@ import { normalizeCnpj, VERSION } from './domain.ts';
 import { LOOKUP_TIMEOUT_MS } from './lookup-policy.ts';
 const BASE = 'https://minhareceita.org';
 export class SourceError extends Error {
-  code: string; retryable: boolean; retryAfter: number;
-  constructor(code: string, retryable = false, retryAfter = 5) { super(code); this.code = code; this.retryable = retryable; this.retryAfter = retryAfter; }
+  code: string; retryable: boolean; retryAfter: number; pauseProvider: boolean;
+  constructor(code: string, retryable = false, retryAfter = 5, pauseProvider = false) { super(code); this.code = code; this.retryable = retryable; this.retryAfter = retryAfter; this.pauseProvider = pauseProvider; }
 }
 export function retrySeconds(value: string | null, now = Date.now()) {
   if (!value) return 60;
@@ -22,10 +22,10 @@ export async function lookupCnpj(cnpj: string, transport: typeof fetch = fetch) 
     response = await transport(`${BASE}/${encodeURIComponent(cnpj)}`, {headers: {Accept: 'application/json', 'User-Agent': `MaximumCNPJ/${VERSION}`},
       redirect: 'error', signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS), cache: 'no-store'});
   } catch { throw new SourceError('FONTE_INDISPONIVEL', true); }
-  if (response.status === 429) throw new SourceError('LIMITE_DA_FONTE', true, retrySeconds(response.headers.get('retry-after')));
+  if (response.status === 429) throw new SourceError('LIMITE_DA_FONTE', true, retrySeconds(response.headers.get('retry-after')), true);
   if (response.status === 404) throw new SourceError('NAO_ENCONTRADO');
-  if (response.status >= 500) throw new SourceError('FONTE_INDISPONIVEL', true, response.headers.has('retry-after') ? retrySeconds(response.headers.get('retry-after')) : 5);
-  if (response.status === 403 || response.status === 401) throw new SourceError(`FONTE_HTTP_${response.status}`, true, 300);
+  if (response.status >= 500) throw new SourceError('FONTE_INDISPONIVEL', true, response.headers.has('retry-after') ? retrySeconds(response.headers.get('retry-after')) : 5, true);
+  if (response.status === 403 || response.status === 401) throw new SourceError(`FONTE_HTTP_${response.status}`, true, 300, true);
   if (!response.ok) throw new SourceError(`FONTE_HTTP_${response.status}`);
   if (!response.headers.get('content-type')?.toLowerCase().includes('json')) throw new SourceError('RESPOSTA_INVALIDA', true);
   const reader = response.body?.getReader();

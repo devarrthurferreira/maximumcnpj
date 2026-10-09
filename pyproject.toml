@@ -1,6 +1,6 @@
 [project]
 name = "maximum-cnpj-python"
-version = "0.19.0"
+version = "0.19.1"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "reportlab==4.4.9",

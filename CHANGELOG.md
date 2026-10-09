@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.19.1] — 2026-10-09
+
+- Consulta CNPJ com admissão coordenada por lote, menos operações no controle Mongo e persistência independente paralela.
+- Padrão de 4 workers/300 ms, mantendo limite global compartilhado, timeout e orçamento de execução.
+- Falhas pontuais não interrompem outros CNPJs; limitações/bloqueios/indisponibilidade HTTP preservam cooldown e Retry-After.
+- Continuação sem pausa fixa quando há trabalho pronto; próxima tentativa futura respeitada sem polling vazio.
+- Navegador reaproveita o job retornado, conserva o painel durante a leitura e usa acompanhamento resumido no fluxo guiado.
+- Benchmarks sintéticos e regressões de concorrência, retry, isolamento, progresso e single-flight; sem cache fiscal ou alteração nos resultados financeiros.
+
 ## [0.19.0] — 2026-10-09
 
 - Navbar compacta com trilho de ícones, expansão para rótulos e drawer móvel acessível; removidos o dock exagerado e seus efeitos de brilho.
