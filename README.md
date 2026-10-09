@@ -1,6 +1,17 @@
-# Maximum CNPJ · v0.18.1
+# Maximum CNPJ · v0.19.0
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Entrega 09/10/2026 — navegação compacta e geração revisada
+
+- Navegação com trilho de ícones de 72 px e painel expansível com nomes. O estado fica salvo no navegador; no celular, o menu abre em um drawer com fechamento por Escape/toque externo, foco contido e conteúdo de fundo indisponível enquanto estiver aberto.
+- Busca de empresas e escolha de relatórios mais compactas, com hierarquia simples, resumo da seleção e controles acessíveis. Compras e vendas continuam selecionadas por padrão; um relatório isolado não exige o simulador.
+- Importação e campos do simulador com espaçamento consistente, menos efeitos decorativos e indicação dos valores monetários, obrigatoriedade e origem dos campos.
+- Rejeições definitivas de criação liberam novamente a empresa e os relatórios para correção. Falhas temporárias ou respostas incertas preservam a mesma identificação e os mesmos dados no reenvio, sem gerar outro pedido inadvertidamente.
+- Vendas antigas sem saldo líquido explícito continuam usando seus totais originais, conforme o contrato histórico. Percentuais de vendas seguem o mesmo arredondamento do PDF, sem alterar valores, classificações ou fórmulas tributárias.
+- Validações de naturezas/CFOP, devoluções, competências, RBT12, conciliação de snapshots e isolamento de empresas permanecem obrigatórias. Não há migração de dados nem recálculo dos históricos.
+
+A verificação usa somente dados sintéticos: tipos/build, regras, integrações com MongoDB descartável, relatórios Python/PDF e navegação em desktop e celular. Consulte a CI do commit para o resultado dos gates. Detalhes em `docs/UI-NAVIGATION-V0.19.md`.
 
 ## Entrega 08/10/2026 — navbar flutuante, centralizada e com recolhimento refinado
 

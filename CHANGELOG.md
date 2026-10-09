@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.19.0] — 2026-10-09
+
+- Navbar compacta com trilho de ícones, expansão para rótulos e drawer móvel acessível; removidos o dock exagerado e seus efeitos de brilho.
+- Busca, seleção de relatórios, importação e campos do simulador reorganizados com controles consistentes e indicação clara de seleção e valores.
+- Formulários recuperáveis após rejeição definitiva da geração, mantendo identidade e payload em reenvios incertos.
+- Compatibilidade de vendas legadas sem saldo explícito restaurada; percentuais conciliados com o arredondamento do PDF.
+- Regressões de validação, histórico, teclado, menu, armazenamento indisponível e larguras de 320/390 px. Autenticação, regras fiscais, snapshots e isolamento preservados.
+
 ## [0.18.1] — 2026-10-08
 
 - Navbar transformada em dock flutuante, com padding em relação às bordas, borda arredondada, sombra em camadas e ícones centralizados.

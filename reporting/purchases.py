@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from html import escape
 from io import BytesIO
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from datetime import datetime
 from pathlib import Path
 from functools import lru_cache
@@ -61,6 +61,31 @@ def reporting_percentages(values):
     if not denominator:
         return [0 for _ in values]
     quotients = [divmod(value * 10000, denominator) for value in values]
+    basis_points = [quotient for quotient, _ in quotients]
+    remaining = 10000 - sum(basis_points)
+    order = sorted(range(len(values)), key=lambda index: (-quotients[index][1], index))
+    for index in order[:remaining]:
+        basis_points[index] += 1
+    return [value / 100 for value in basis_points]
+
+
+def signed_percentage(value, denominator):
+    """Exact half-up rounding for signed balances, matching the Node report."""
+    numerator, base = _signed_integer(value) * 10000, _signed_integer(denominator)
+    if not base:
+        return 0
+    rounded = (abs(numerator) * 2 + abs(base)) // (abs(base) * 2)
+    return (-rounded if (numerator < 0) != (base < 0) else rounded) / 100
+
+
+def signed_reporting_percentages(values, denominator):
+    """Signed largest remainders preserve empty groups and reconcile exactly to 100%."""
+    values, denominator = [_signed_integer(value) for value in values], _signed_integer(denominator)
+    _check(bool(values) and sum(values) == denominator)
+    if not denominator:
+        return [0 for _ in values]
+    direction = -1 if denominator < 0 else 1
+    quotients = [divmod(value * 10000 * direction, abs(denominator)) for value in values]
     basis_points = [quotient for quotient, _ in quotients]
     remaining = 10000 - sum(basis_points)
     order = sorted(range(len(values)), key=lambda index: (-quotients[index][1], index))
@@ -227,8 +252,8 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     groups['NAO_CONSULTAVEL'].update(lines=excluded_lines, totalCents=non_cnpj_cents)
     for group in groups.values():
         group['supplierPercent'] = percentage(group['suppliers'], unique)
-        group['valuePercent'] = (round(group['totalCents'] / cnpj_cents * 100, 2) if sales and cnpj_cents else percentage(group['totalCents'], cnpj_cents)) if group['status'] != 'NAO_CONSULTAVEL' else None
-        group['fileValuePercent'] = round(group['totalCents'] / total_cents * 100, 2) if sales and total_cents else percentage(group['totalCents'], total_cents)
+        group['valuePercent'] = (signed_percentage(group['totalCents'], cnpj_cents) if sales else percentage(group['totalCents'], cnpj_cents)) if group['status'] != 'NAO_CONSULTAVEL' else None
+        group['fileValuePercent'] = signed_percentage(group['totalCents'], total_cents) if sales else percentage(group['totalCents'], total_cents)
     unknown = dict(groups['NAO_CONFIRMADO'])
     unique_documents = unique + len(non_cnpj_documents)
     optant = groups['OPTANTE']
@@ -256,14 +281,9 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
                                  'nonCnpjCount': len(cpf_documents), 'nonCnpjCents': cpf_cents})
         for group, value in zip(reporting_groups, reporting_percentages([group['count'] for group in reporting_groups])):
             group['countPercent'] = value
-        if total_cents:
-            values = [int((Decimal(group['totalCents']) * Decimal(10000) / Decimal(total_cents)).quantize(Decimal('1'), rounding=ROUND_HALF_UP)) for group in reporting_groups]
-            values[-1] += 10000 - sum(values)
-            for group, value in zip(reporting_groups, values):
-                group['valuePercent'] = value / 100
-        else:
-            for group in reporting_groups:
-                group['valuePercent'] = 0
+        values = signed_reporting_percentages([group['totalCents'] for group in reporting_groups], total_cents)
+        for group, value in zip(reporting_groups, values):
+            group['valuePercent'] = value
     labels = {'OPTANTE': 'Optantes SN', 'NAO_OPTANTE': 'Não optantes SN', 'CPF': 'CPFs'} if sales else {
         'OPTANTE': 'Simples', 'NAO_OPTANTE': 'Não optante'}
     managerial_groups = [{**group, 'label': labels[group['status']],

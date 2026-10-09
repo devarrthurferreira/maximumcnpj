@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compactPurchaseLine, calculationVersion, exactCents, percentage, reconciledPercentages, purchaseCsv, moneyText, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus, reportPeriod, normalizeNatureCode, salesOperation } from '../src/purchase-domain.ts';
+import { compactPurchaseLine, calculationVersion, exactCents, percentage, signedPercentage, reconciledPercentages, reconciledSignedPercentages, purchaseCsv, moneyText, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus, reportPeriod, normalizeNatureCode, salesOperation } from '../src/purchase-domain.ts';
 
 const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', serviceDate: '2026-08-15', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050};
 test('Compras: valida componentes no servidor, centavos exatos e não multiplica P por Q', () => {
@@ -108,4 +108,20 @@ test('Três percentuais de vendas conciliam 100% sem grupo negativo, inclusive e
   assert.throws(() => reconciledPercentages([1,2,3], 5));
   assert.throws(() => reconciledPercentages([1,-1,3], 3));
   assert.throws(() => reconciledPercentages([0.5,0.5,0], 1));
+});
+
+test('Percentuais líquidos coincidem com o PDF, inclusive devoluções, empates e total zero', () => {
+  assert.equal(signedPercentage(10010, 40000), 25.03);
+  assert.equal(signedPercentage(-10010, 40000), -25.03);
+  assert.equal(signedPercentage(10010, -40000), -25.03);
+  assert.deepEqual(reconciledSignedPercentages([1, 1, 1], 3), [33.34, 33.33, 33.33]);
+  assert.deepEqual(reconciledSignedPercentages([-10010, 45000, 5010], 40000), [-25.02, 112.5, 12.52]);
+  assert.deepEqual(reconciledSignedPercentages([-1, -1, -1], -3), [33.34, 33.33, 33.33]);
+  assert.deepEqual(reconciledSignedPercentages([1, 31, 0], 32), [3.13, 96.87, 0]);
+  assert.deepEqual(reconciledSignedPercentages([-1, 33, 0], 32), [-3.12, 103.12, 0]);
+  assert.deepEqual(reconciledSignedPercentages([-100, 100, 0], 0), [0, 0, 0]);
+  assert.deepEqual(reconciledSignedPercentages([0, 0, 0], 0), [0, 0, 0]);
+  assert.throws(() => reconciledSignedPercentages([1, 2, 3], 5));
+  assert.throws(() => reconciledSignedPercentages([0.5, 0.5, 0], 1));
+  assert.throws(() => signedPercentage(NaN, 0));
 });

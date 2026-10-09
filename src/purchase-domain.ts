@@ -125,6 +125,35 @@ export function percentage(value: number, denominator: number): number {
   const numerator = BigInt(value) * 10000n, base = BigInt(denominator);
   return Number((numerator * 2n + base) / (base * 2n)) / 100;
 }
+function signedPercentageUnits(value: number, denominator: number): bigint {
+  const numerator = BigInt(exactSignedCents(value)) * 10000n, base = BigInt(exactSignedCents(denominator));
+  if (!base) return 0n;
+  const magnitude = numerator < 0n ? -numerator : numerator, divisor = base < 0n ? -base : base;
+  const rounded = (magnitude * 2n + divisor) / (divisor * 2n);
+  return (numerator < 0n) !== (base < 0n) ? -rounded : rounded;
+}
+export function signedPercentage(value: number, denominator: number): number {
+  return Number(signedPercentageUnits(value, denominator)) / 100;
+}
+/** Signed largest remainders reconcile 100% without assigning a residue to an empty group. */
+export function reconciledSignedPercentages(values: number[], denominator: number): number[] {
+  const base = BigInt(exactSignedCents(denominator));
+  need(values.length > 0 && values.reduce((sum, value) => sum + BigInt(exactSignedCents(value)), 0n) === base,
+    'Grupos financeiros divergentes do total.', 409, 'PURCHASE_TOTAL');
+  if (!base) return values.map(() => 0);
+  const divisor = base < 0n ? -base : base, direction = base < 0n ? -1n : 1n;
+  const parts = values.map((value, index) => {
+    const numerator = BigInt(value) * 10000n * direction;
+    let units = numerator / divisor, remainder = numerator % divisor;
+    // BigInt division truncates toward zero; largest remainders require floor division.
+    if (remainder < 0n) { units--; remainder += divisor; }
+    return {index, units, remainder};
+  });
+  const remaining = Number(10000n - parts.reduce((sum, part) => sum + part.units, 0n));
+  const ranked = [...parts].sort((a, b) => a.remainder === b.remainder ? a.index - b.index : a.remainder > b.remainder ? -1 : 1);
+  for (let index = 0; index < remaining; index++) ranked[index].units++;
+  return parts.map(part => Number(part.units) / 100);
+}
 /** Largest-remainder apportionment keeps three rounded sales percentages at exactly 100%. */
 export function reconciledPercentages(values: number[], denominator: number): number[] {
   need(values.every(value => Number.isSafeInteger(value) && value >= 0) && exactCents(values.reduce((sum, value) => sum + value, 0)) === exactCents(denominator),
