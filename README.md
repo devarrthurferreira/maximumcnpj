@@ -1,6 +1,16 @@
-# Maximum CNPJ · v0.19.0
+# Maximum CNPJ · v0.19.1
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Correção 09/10/2026 — consulta de CNPJs mais rápida
+
+- O processamento coordena a entrada dos workers antes de consultar o controle global no MongoDB, reduzindo a disputa e as operações repetidas no banco. Gravações independentes ocorrem em paralelo; um item só fica concluído depois de persistir os dados necessários.
+- O padrão passa a **4 consultas simultâneas e intervalo global mínimo de 300 ms**, dentro dos limites já suportados. `LOOKUP_CONCURRENCY` e `LOOKUP_INTERVAL_MS` continuam configuráveis; valores explícitos no ambiente prevalecem sobre o padrão.
+- Falhas pontuais de rede ou resposta inválida tentam novamente somente o CNPJ afetado. Limites da fonte, bloqueios e indisponibilidade HTTP continuam pausando globalmente e respeitando `Retry-After`.
+- Um lote com trabalho pronto continua sem a pausa fixa anterior. Quando só há tentativas futuras, a tela espera o prazo informado pelo servidor. A resposta do processamento é reaproveitada e o acompanhamento guiado solicita somente os indicadores, sem carregar tabelas invisíveis.
+- Nenhum cache substitui uma nova consulta: cada novo lote continua verificando os CNPJs na fonte. CPFs/CNOs/inválidos não são consultados; dados financeiros, autenticação, isolamento e conciliação final são preservados.
+
+O timeout da fonte (12 s), o orçamento do lote (24 s) e o máximo de 40 itens por chamada continuam os mesmos. O tempo real depende da fonte e do banco; os testes de desempenho usam CNPJs e respostas sintéticas, sem gerar carga em dados de clientes. Medições reproduzíveis e verificações estão em `docs/LOOKUP-PERFORMANCE-V0.19.1.md`.
 
 ## Entrega 09/10/2026 — navegação compacta e geração revisada
 

@@ -33,9 +33,9 @@ test('Consulta nova não reaproveita cache nem conteúdo cadastral desnecessári
   assert.equal(first.status, 'OPTANTE'); assert.equal(second.status, 'NAO_OPTANTE'); assert.equal(calls, 2); assert(!JSON.stringify(first).includes('descartar'));
 });
 test('429 e 503 preservam Retry-After; HTML e JSON corrompido são falhas, não negativas', async () => {
-  for (const status of [429, 503]) await assert.rejects(lookupCnpj(cnpj, (async () => new Response('', {status, headers: {'retry-after': '75'}})) as typeof fetch), (e: any) => e instanceof SourceError && e.retryable && e.retryAfter === 75);
+  for (const status of [429, 503]) await assert.rejects(lookupCnpj(cnpj, (async () => new Response('', {status, headers: {'retry-after': '75'}})) as typeof fetch), (e: any) => e instanceof SourceError && e.retryable && e.retryAfter === 75 && e.pauseProvider);
   for (const response of [new Response('<html>Falha</html>', {headers: {'content-type': 'text/html'}}), new Response('{', {headers: {'content-type': 'application/json'}})])
-    await assert.rejects(lookupCnpj(cnpj, (async () => response) as typeof fetch), (e: any) => e.code === 'RESPOSTA_INVALIDA' && e.retryable);
+    await assert.rejects(lookupCnpj(cnpj, (async () => response) as typeof fetch), (e: any) => e.code === 'RESPOSTA_INVALIDA' && e.retryable && !e.pauseProvider);
   await assert.rejects(lookupCnpj(cnpj, (async () => new Response('', {status: 404})) as typeof fetch), (e: any) => e.code === 'NAO_ENCONTRADO' && !e.retryable);
 });
 test('Retry-After aceita segundos e data HTTP sem encurtar pausas longas válidas', () => {
@@ -47,9 +47,9 @@ test('Tamanho da resposta limitado, mesmo quando a fonte envia JSON excessivo', 
   await assert.rejects(lookupCnpj(cnpj, transport({cnpj, opcao_pelo_simples: true, extra: 'x'.repeat(2_000_001)})), (e: any) => e.code === 'RESPOSTA_ACIMA_DO_LIMITE');
 });
 test('Paralelismo configurável permanece limitado e valores inválidos usam padrão', () => {
-  assert.deepEqual(lookupPolicy({}), {concurrency: 3, intervalMs: 500});
+  assert.deepEqual(lookupPolicy({}), {concurrency: 4, intervalMs: 300});
   assert.deepEqual(lookupPolicy({LOOKUP_CONCURRENCY: '999', LOOKUP_INTERVAL_MS: '0'}), {concurrency: 4, intervalMs: 300});
-  assert.deepEqual(lookupPolicy({LOOKUP_CONCURRENCY: 'NaN', LOOKUP_INTERVAL_MS: ''}), {concurrency: 3, intervalMs: 500});
+  assert.deepEqual(lookupPolicy({LOOKUP_CONCURRENCY: 'NaN', LOOKUP_INTERVAL_MS: ''}), {concurrency: 4, intervalMs: 300});
   assert.deepEqual(lookupPolicy({LOOKUP_CONCURRENCY: '1', LOOKUP_INTERVAL_MS: '3000'}), {concurrency: 1, intervalMs: 3000});
 });
 test('Falha de um worker só libera o lote depois de drenar os demais', async () => {
@@ -60,4 +60,14 @@ test('Falha de um worker só libera o lote depois de drenar os demais', async ()
     await new Promise(resolve => setTimeout(resolve, 30)); drained++;
   }), /Falha sintética/);
   assert.equal(started, 3); assert.equal(drained, 2);
+});
+
+// An isolated timeout must retry its document without pausing healthy CNPJs.
+test('Falhas pontuais não pausam a fonte; limites e indisponibilidade HTTP preservam a pausa global', async () => {
+  await assert.rejects(lookupCnpj(cnpj, (async () => { throw new TypeError('Network timeout'); }) as typeof fetch),
+    (error: SourceError) => error.retryable && error.code === 'FONTE_INDISPONIVEL' && !error.pauseProvider);
+  for (const status of [401, 403, 429, 500, 503]) {
+    await assert.rejects(lookupCnpj(cnpj, (async () => new Response('', {status})) as typeof fetch),
+      (error: SourceError) => error.retryable && error.pauseProvider && error.retryAfter >= 5);
+  }
 });

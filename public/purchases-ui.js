@@ -298,11 +298,11 @@ async function upload() {
   } finally { setBusy(false); }
 }
 
-async function openJob(id, auto = false) {
+async function openJob(id, auto = false, loadedJob = null) {
   if (S.busy || S.pending) return;
   stopProcessing(); const seq = ++S.seq; S.rowsSeq++; clearError();
   $('#purchase-report-view').innerHTML = `<div class="initial">Carregando relatório de ${reportLower}…</div>`;
-  const job = await api(path('/' + encodeURIComponent(id)));
+  const job = loadedJob?._id === id ? loadedJob : await api(path('/' + encodeURIComponent(id)));
   if (seq !== S.seq) return;
   if (job.clientId !== S.company) throw new Error('Este relatório pertence a outra empresa. Selecione a empresa correspondente.');
   if (S.generation && job.generationId !== S.generation) throw new Error('Este relatório não pertence à geração selecionada.');
@@ -324,7 +324,7 @@ async function renderJob(seq = S.seq) {
     S.summary = summary; renderSummary(); if (!guided) await loadRows(1); await renderNextStep(seq); return;
   }
   if (guided) { renderGuidedJob(seq); return; }
-  $('#purchase-report-view').innerHTML = `${jobTitle(job)}<section class="card stack"><div class="purchase-split"><h2>${esc(jobLabels[job.status] || job.status)}</h2><span class="badge">${number(job.uploaded)} linhas importadas</span></div>${job.status === 'PROCESSING' ? `<p>${number(job.received)} / ${number(job.summary?.unique)} CNPJs com consulta concluída.</p><progress class="purchase-progress" value="${Number(job.received || 0)}" max="${Math.max(1, Number(job.summary?.unique || 0))}"></progress><p class="hint">Mantenha esta tela aberta para consultar. Você pode pausar e voltar ao histórico para retomar. Cada CNPJ válido é consultado uma vez neste relatório.</p>${writable() ? '<div class="row wrap"><button id="purchase-process" class="primary">Consultar / retomar</button><button id="purchase-pause">Pausar nesta tela</button></div>' : ''}<p id="purchase-process-status" class="hint" role="status"></p>` : job.status === 'UPLOADING' ? `<p>Selecione novamente o arquivo <strong>${esc(job.fileName)}</strong> na área de importação e confira as colunas. As partes já salvas serão verificadas; somente as pendências serão adicionadas.</p><p class="hint">${job.calculationVersion === 'NET_V2' ? 'Esta importação usa Q − Y + AA − AB.' : 'Este histórico usa a regra original Q. Para aplicar a regra nova, cancele este relatório e importe novamente.'}</p>` : '<p>Este relatório foi cancelado. Os registros concluídos foram preservados no histórico; ele não gera indicadores finais.</p>'}${!['COMPLETED','CANCELLED'].includes(job.status) && writable() ? '<button id="purchase-cancel" class="danger">Cancelar relatório</button>' : ''}</section>`;
+  $('#purchase-report-view').innerHTML = `${jobTitle(job)}<section class="card stack"><div class="purchase-split"><h2>${esc(jobLabels[job.status] || job.status)}</h2><span class="badge">${number(job.uploaded)} linhas importadas</span></div>${job.status === 'PROCESSING' ? `<p data-processing-count>${number(job.received)} / ${number(job.summary?.unique)} CNPJs com consulta concluída.</p><progress class="purchase-progress" value="${Number(job.received || 0)}" max="${Math.max(1, Number(job.summary?.unique || 0))}"></progress><p class="hint">Mantenha esta tela aberta para consultar. Você pode pausar e voltar ao histórico para retomar. Cada CNPJ válido é consultado uma vez neste relatório.</p>${writable() ? '<div class="row wrap"><button id="purchase-process" class="primary">Consultar / retomar</button><button id="purchase-pause">Pausar nesta tela</button></div>' : ''}<p id="purchase-process-status" class="hint" role="status"></p>` : job.status === 'UPLOADING' ? `<p>Selecione novamente o arquivo <strong>${esc(job.fileName)}</strong> na área de importação e confira as colunas. As partes já salvas serão verificadas; somente as pendências serão adicionadas.</p><p class="hint">${job.calculationVersion === 'NET_V2' ? 'Esta importação usa Q − Y + AA − AB.' : 'Este histórico usa a regra original Q. Para aplicar a regra nova, cancele este relatório e importe novamente.'}</p>` : '<p>Este relatório foi cancelado. Os registros concluídos foram preservados no histórico; ele não gera indicadores finais.</p>'}${!['COMPLETED','CANCELLED'].includes(job.status) && writable() ? '<button id="purchase-cancel" class="danger">Cancelar relatório</button>' : ''}</section>`;
   if ($('#purchase-process')) $('#purchase-process').onclick = () => { S.paused = false; clearError(); process(seq); };
   if ($('#purchase-pause')) $('#purchase-pause').onclick = () => { stopProcessing(); $('#purchase-process-status').textContent = 'Pausado nesta tela. Uma chamada já iniciada pode terminar; o progresso fica salvo.'; };
   if ($('#purchase-cancel')) $('#purchase-cancel').onclick = async () => {
@@ -344,7 +344,7 @@ function renderGuidedJob(seq) {
     $('#purchase-report-view').innerHTML = `<section class="card purchase-guided-message"><h2>${esc(jobLabels[job.status] || job.status)}</h2><p>Adicione outro arquivo para substituir este relatório.</p></section>`;
     return;
   }
-  $('#purchase-report-view').innerHTML = `<section class="card purchase-guided-processing"><div class="eyebrow">RELATÓRIO DE ${reportName.toUpperCase()}</div><h2>Consultando os CNPJs</h2><p>${esc(job.fileName)}</p><progress class="purchase-progress" value="${Number(job.received || 0)}" max="${Math.max(1,Number(job.summary?.unique || 0))}"></progress><strong>${number(job.received)} de ${number(job.summary?.unique)} concluídos</strong><p class="hint">Mantenha esta tela aberta. O progresso fica salvo no Histórico.</p>${writable() ? '<div class="purchase-guided-controls"><button id="purchase-process">Retomar consulta</button><button id="purchase-pause">Pausar</button><button id="purchase-cancel">Trocar arquivo</button></div>' : ''}<p id="purchase-process-status" class="purchase-status" role="status"></p></section>`;
+  $('#purchase-report-view').innerHTML = `<section class="card purchase-guided-processing"><div class="eyebrow">RELATÓRIO DE ${reportName.toUpperCase()}</div><h2>Consultando os CNPJs</h2><p>${esc(job.fileName)}</p><progress class="purchase-progress" value="${Number(job.received || 0)}" max="${Math.max(1,Number(job.summary?.unique || 0))}"></progress><strong data-processing-count>${number(job.received)} de ${number(job.summary?.unique)} concluídos</strong><p class="hint">Mantenha esta tela aberta. O progresso fica salvo no Histórico.</p>${writable() ? '<div class="purchase-guided-controls"><button id="purchase-process">Retomar consulta</button><button id="purchase-pause">Pausar</button><button id="purchase-cancel">Trocar arquivo</button></div>' : ''}<p id="purchase-process-status" class="purchase-status" role="status"></p></section>`;
   if ($('#purchase-process')) {
     $('#purchase-process').disabled = !S.paused || S.running;
     $('#purchase-process').onclick = () => { S.paused = false; clearError(); process(seq); };
@@ -363,23 +363,53 @@ function wireGuidedCancel() {
 }
 function scheduleProcess(seq) {
   clearTimeout(S.timer);
-  if (!S.paused && S.job?.status === 'PROCESSING' && seq === S.seq && writable()) S.timer = setTimeout(() => process(seq), Math.max(700, Number(S.job.nextPollMs || 1200)));
+  if (!S.paused && S.job?.status === 'PROCESSING' && seq === S.seq && writable()) {
+    const delay = Number.isFinite(S.job.nextPollMs) && S.job.nextPollMs >= 0 ? S.job.nextPollMs : 1200;
+    S.timer = setTimeout(() => process(seq), delay);
+  }
 }
 async function process(seq) {
-  if (seq !== S.seq || S.paused) return;
-  if (S.running) { scheduleProcess(seq); return; }
+  if (seq !== S.seq || S.paused || !writable()) return;
+  if (S.running) return;
+  clearTimeout(S.timer);
   S.running = true; if ($('#purchase-process')) $('#purchase-process').disabled = true;
   if ($('#purchase-process-status')) $('#purchase-process-status').textContent = 'Consultando a fonte. Aguarde…';
   try {
-    await api(path(`/${S.job._id}/process`), 'POST', {});
+    const id = S.job._id, result = await api(path(`/${id}/process`), 'POST', {});
     if (seq !== S.seq) return;
-    const job = await api(path(`/${S.job._id}`));
+    // /process already returns the persisted job. Read again only for an older/incomplete response.
+    const job = result?._id === id && result.clientId === S.company && result.summary && result.status
+      ? result : await api(path(`/${id}`));
     if (seq !== S.seq) return;
-    S.job = job; await renderJob(seq);
+    S.job = job;
+    if (job.status === 'PROCESSING') updateProcessingCount();
+    else await renderJob(seq);
     if (job.status === 'COMPLETED') { stopProcessing(); await loadHistory(1); }
   } catch (e) { if (seq === S.seq) { stopProcessing(); error(e); } }
-  finally { S.running = false; if (seq === S.seq) { if ($('#purchase-process')) $('#purchase-process').disabled = false; scheduleProcess(seq); } }
+  finally {
+    S.running = false;
+    if ($('#purchase-process')) $('#purchase-process').disabled = false;
+    // Switching reports while this request finishes must resume only the current, unpaused report.
+    scheduleProcess(S.seq);
+  }
 }
+
+function updateProcessingCount() {
+  const job = S.job, counter = $('#purchase-report-view [data-processing-count]'), progress = $('#purchase-report-view .purchase-progress');
+  if (!job || !counter || !progress) return;
+  counter.textContent = guided
+    ? `${number(job.received)} de ${number(job.summary?.unique)} concluídos`
+    : `${number(job.received)} / ${number(job.summary?.unique)} CNPJs com consulta concluída.`;
+  progress.max = Math.max(1, Number(job.summary?.unique || 0));
+  progress.value = Number(job.received || 0);
+}
+window.addEventListener('lookup-progress-updated', ({detail}) => {
+  const completed = detail?.metrics?.completed;
+  if (S.job?.status !== 'PROCESSING' || detail?.job?._id !== S.job._id || !Number.isInteger(completed) || completed < 0 || completed > S.job.summary?.unique) return;
+  // The read-only progress panel can receive completed items while a batch is still running.
+  S.job.received = Math.max(S.job.received || 0, completed);
+  updateProcessingCount();
+});
 
 function reportingGroups(m) {
   return m.reportingGroups || [];
@@ -490,11 +520,12 @@ async function boot() {
     if (guided && (!S.generation || !client)) throw new Error('Selecione a empresa em Iniciar para abrir esta etapa.');
     mountNavigation(S.user,S.generation ? 'start' : 'history');
     S.clients = (await api('/api/v4/clients')).items; shell();
-    let selected = client;
+    let selected = client, loadedJob = null;
     if (jobId && /^[a-f0-9-]{36}$/i.test(jobId)) {
       const job = await api(path('/' + encodeURIComponent(jobId)));
       if (guided && job.clientId !== client) throw new Error('Este relatório não pertence à empresa selecionada.');
       selected = job.clientId; if (S.generation && job.generationId !== S.generation) throw new Error('Este relatório não pertence à geração selecionada.');
+      loadedJob = job;
     }
     if (S.generation) {
       const generation = await api('/api/v4/generations/' + encodeURIComponent(S.generation));
@@ -509,7 +540,7 @@ async function boot() {
       $('#purchase-company').value = selected; await companyChanged();
       const linkedCompany = S.generationDetails?.companies.find(item => item.clientId === selected);
       const currentJob = jobId || (guided ? sales ? linkedCompany?.salesJobId : linkedCompany?.purchaseJobId : null);
-      if (currentJob && /^[a-f0-9-]{36}$/i.test(currentJob)) await openJob(currentJob, guided && writable());
+      if (currentJob && /^[a-f0-9-]{36}$/i.test(currentJob)) await openJob(currentJob, guided && writable(), loadedJob);
     }
   } catch (e) { error(e); }
 }

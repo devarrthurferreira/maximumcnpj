@@ -65,11 +65,12 @@ async function refresh() {
   const timeout = setTimeout(() => own.abort(), 20000);
   const requestedPage = page, requestedFilter = filter;
   try {
-    const response = await fetch(`/api/v4/lookups/${id}/progress?${new URLSearchParams({page, status: filter})}`, {credentials:'same-origin', cache:'no-store', signal: own.signal});
+    const response = await fetch(`/api/v4/lookups/${id}/progress?${new URLSearchParams({page, status: filter, ...(compact ? {summary:'1'} : {})})}`, {credentials:'same-origin', cache:'no-store', signal: own.signal});
     const result = await response.json();
     if (!response.ok) throw new Error(result.message || 'Não foi possível ler o acompanhamento.');
     if (current !== id || target() !== id || page !== requestedPage || filter !== requestedFilter) return;
     data = result; draw(result); panel.querySelector('[data-error]').textContent = '';
+    window.dispatchEvent(new CustomEvent('lookup-progress-updated', {detail: result}));
     nextRead = ['UPLOADING', 'PROCESSING'].includes(result.job.status) ? Date.now() + 4000 : Infinity;
   } catch (e) {
     if (current === id && panel?.isConnected && controller === own) {

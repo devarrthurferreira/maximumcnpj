@@ -47,7 +47,7 @@ export async function routeV4(actor:LookupActor,method:string,url:URL,input:any)
   if(match){const id=match[1],action=match[2];
     const job=await getJob(id);
     // These two scoped actions serve cadastral, purchases and sales jobs alike.
-    if(action==='progress'&&method==='GET')return {...await lookupProgress(id,p,url.searchParams.get('status')||'ALL'),canRecheck:['admin','operator'].includes(actor.role)};
+    if(action==='progress'&&method==='GET')return {...await lookupProgress(id,p,url.searchParams.get('status')||'ALL',url.searchParams.get('summary')==='1'),canRecheck:['admin','operator'].includes(actor.role)};
     if(action==='recheck'&&method==='POST')return recheckLookup(actor,id);
     need(!isFinancialMode(job.mode),'Consulta não encontrada.',404,'NOT_FOUND');
     if(!action&&method==='GET')return getJob(id);
