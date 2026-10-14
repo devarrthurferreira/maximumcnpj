@@ -1,6 +1,16 @@
-# Maximum CNPJ · v0.20.1
+# Maximum CNPJ · v0.20.2
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Entrega 14/10/2026 — navegação inspirada na referência visual
+
+- Menu lateral claro com cabeçalho Maximum, grupos **Principal** e **Análises**, ícones discretos e destaque bordô somente na página ativa.
+- **Visão geral** e **Nova análise** tornam os destinos mais claros. O menu abre com os nomes visíveis no primeiro acesso desktop; a preferência explícita de recolher continua preservada.
+- Atalho inferior para começar uma análise; usuários de visualização recebem um acesso ao histórico. O atalho é ocultado em telas baixas para priorizar os controles da conta.
+- O mesmo componente atende painel, gerações, compras, vendas, relatórios e simulações. O drawer móvel conserva Escape, fechamento externo, foco contido e bloqueio do conteúdo ao fundo.
+- Marca oficial, rotas, permissões de servidor, consultas, cálculos e históricos permanecem preservados. Não há migração de dados nem alteração na publicação de produção.
+
+Validação: regressões de navegação em `tests/e2e/branding.spec.ts`, incluindo preferência antiga, armazenamento indisponível, acessos de visualização e telas estreitas/baixas. A CI executa os gates de Node 22, MongoDB descartável, Python/PDF e navegador; consulte o resultado do commit para distinguir verificações aprovadas das ainda pendentes.
 
 ## Correção 09/10/2026 — recuperação das consultas CNPJ
 
