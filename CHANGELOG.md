@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.20.2] — 2026-10-14
+
+- Redesign da navegação compartilhada com superfícies claras, cabeçalho compacto, grupos de trabalho e seleção em bordô.
+- Rótulos Visão geral e Nova análise; nomes visíveis por padrão no primeiro acesso desktop, preservando a preferência de recolher existente.
+- Atalho contextual para análise ou histórico conforme o acesso, com ocultação em telas baixas.
+- Navegação responsiva, foco, tooltips, redução de movimento e isolamento do drawer móvel preservados.
+- Regressões para expansão, preferências, teclado, perfil de visualização e larguras de 320/390/1440 px. Sem alteração fiscal ou de dados.
+
 ## [0.20.1] — 2026-10-09
 
 - Alternativa OpenCNPJ para indisponibilidade da Minha Receita, com orçamento total de 12 segundos, validação de identidade e indicadores explícitos por provedor.

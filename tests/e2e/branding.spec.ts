@@ -13,21 +13,29 @@ test('Maximum: logo oficial no login desktop e móvel',async({page})=>{
   }
 });
 
-async function mockWorkspace(page:any) {
+async function mockWorkspace(page:any, role='operator') {
   await page.route('**/api/**',(route:any)=>{
     const path=new URL(route.request().url()).pathname;
-    if(path==='/api/auth/session')return route.fulfill({json:{user:{_id:'visual-test',name:'Demonstração visual',email:'visual@example.test',role:'viewer'},version:'0.18.1'}});
+    if(path==='/api/auth/session')return route.fulfill({json:{user:{_id:'visual-test',name:'Demonstração visual',email:'visual@example.test',role},version:'0.20.2'}});
     if(path==='/api/v4/clients')return route.fulfill({json:{items:[]}});
     if(path==='/api/v4/dashboard')return route.fulfill({json:{metrics:{total:0,optants:0,nonOptants:0,unknown:0,optantsPercent:0,nonOptantsPercent:0,unknownPercent:0,coverage:0},recent:[],entities:0,clientCount:0}});
     return route.fulfill({status:404,json:{message:'Rota não prevista no teste visual'}});
   });
 }
 
-test('Maximum: navegação compacta expande rótulos e preserva a preferência entre páginas',async({page})=>{
+test('Maximum: menu claro abre com rótulos e preserva a preferência entre páginas',async({page})=>{
   await mockWorkspace(page);
   await page.setViewportSize({width:1440,height:1000});await page.goto('/');
   const sidebar=page.locator('.sidebar'),toggle=page.locator('#toggle-nav');
-  await expect(sidebar).toHaveCSS('width','72px');
+  await expect(sidebar).toHaveCSS('width','252px');
+  await expect(sidebar).toHaveCSS('background-color','rgb(255, 255, 255)');
+  await expect(page.locator('.navigation-brand-copy')).toContainText('Maximum CNPJ');
+  await expect(page.locator('.sidebar .nav a')).toHaveText(['Visão geral','Empresas','Nova análise','Histórico','Simulações']);
+  await expect(page.locator('.navigation-shortcut a')).toHaveAttribute('href','/generations.html');
+  await expect(toggle).toHaveAttribute('aria-expanded','true');
+  await page.screenshot({path:'test-results/maximum-brand/navbar-expandida.png',fullPage:true});
+  await toggle.click();
+  await expect(sidebar).toHaveCSS('width','76px');
   await expect(sidebar).toHaveCSS('border-radius','0px');
   const rail=await sidebar.boundingBox();
   expect(rail).not.toBeNull();expect(rail!.x).toBe(0);expect(rail!.y).toBe(0);
@@ -40,22 +48,23 @@ test('Maximum: navegação compacta expande rótulos e preserva a preferência e
   const start=page.locator('.navigation-start');
   await expect(start).toHaveAttribute('href','/generations.html');
   await start.hover();await expect(start.locator('.navigation-label')).toBeVisible();
-  await expect(start.locator('.navigation-label')).toHaveText('Iniciar');
-  await expect(sidebar).toHaveCSS('width','72px');
+  await expect(start.locator('.navigation-label')).toHaveText('Nova análise');
+  await expect(sidebar).toHaveCSS('width','76px');
+  await expect(page.locator('.navigation-shortcut')).toBeHidden();
   await page.screenshot({path:'test-results/maximum-brand/navbar-compacta.png',fullPage:true});
 
   await toggle.click();
-  await expect(sidebar).toHaveCSS('width','232px');
+  await expect(sidebar).toHaveCSS('width','252px');
   await expect(toggle).toHaveAttribute('aria-expanded','true');
   await expect(toggle).toHaveAttribute('data-navigation-action','Recolher navegação');
   await expect(page.locator('.navigation-brand-copy')).toBeVisible();
   await expect(page.locator('.navigation-user-copy')).toContainText('Demonstração visual');
-  await expect(page.locator('.sidebar .nav a')).toHaveText(['Início','Empresas','Iniciar','Histórico','Simulações']);
+  await expect(page.locator('.sidebar .nav a')).toHaveText(['Visão geral','Empresas','Nova análise','Histórico','Simulações']);
   await page.locator('.navigation-item[data-navigation=clients]').click();
   await expect(page.locator('[data-navigation=clients]')).toHaveAttribute('aria-current','page');
   await page.screenshot({path:'test-results/maximum-brand/navbar-expandida.png',fullPage:true});
-  await page.reload();await expect(sidebar).toHaveCSS('width','232px');
-  await toggle.click();await expect(sidebar).toHaveCSS('width','72px');
+  await page.reload();await expect(sidebar).toHaveCSS('width','252px');
+  await toggle.click();await expect(sidebar).toHaveCSS('width','76px');
   await page.reload();await expect(toggle).toHaveAttribute('aria-expanded','false');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
@@ -73,7 +82,7 @@ test('Maximum: gaveta móvel tem rótulos, foco contido e fecha por Esc, botão,
   await expect(sidebar).toHaveAttribute('aria-modal','true');
   await expect(page.locator('.navigation-close')).toBeFocused();
   await expect(page.locator('.main')).toHaveJSProperty('inert',true);
-  await expect(sidebar).toHaveCSS('width','272px');
+  await expect(sidebar).toHaveCSS('width','280px');
   await expect(sidebar).toHaveCSS('transform','matrix(1, 0, 0, 1, 0, 0)');
   await expect(page.getByRole('link',{name:'Histórico',exact:true})).toBeVisible();
   await expect(page.locator('.navigation-profile')).toContainText('Demonstração visual');
@@ -110,7 +119,35 @@ test('Maximum: navegação continua utilizável sem armazenamento de preferênci
   });
   await page.goto('/');
   const toggle=page.locator('#toggle-nav');
+  await expect(toggle).toHaveAttribute('aria-expanded','true');
+  await toggle.click();await expect(toggle).toHaveAttribute('aria-expanded','false');
   await toggle.click();await expect(toggle).toHaveAttribute('aria-expanded','true');
   await page.locator('[data-navigation=clients]').click();
   await expect(page.locator('[data-navigation=clients]')).toHaveAttribute('aria-current','page');
+});
+
+test('Maximum: preferência antiga recolhida e acesso de visualização continuam válidos',async({page})=>{
+  await mockWorkspace(page,'viewer');
+  await page.setViewportSize({width:1440,height:1000});
+  await page.addInitScript(()=>localStorage.setItem('maximum:navigation-expanded','0'));
+  await page.goto('/');
+  await expect(page.locator('#toggle-nav')).toHaveAttribute('aria-expanded','false');
+  await expect(page.locator('[data-navigation=start]')).toHaveCount(0);
+  await page.locator('#toggle-nav').click();
+  await expect(page.locator('.navigation-shortcut')).toContainText('Seus relatórios,');
+  await expect(page.locator('.navigation-shortcut a')).toHaveAttribute('href','/generations.html?view=history');
+  await expect(page.locator('.navigation-user-copy')).toContainText('Visualização');
+});
+
+test('Maximum: menu mantém conta acessível em telas estreitas e baixas',async({page})=>{
+  await mockWorkspace(page);
+  for(const viewport of [{width:320,height:568},{width:390,height:844},{width:1440,height:420}]){
+    await page.setViewportSize(viewport);await page.goto('/');
+    if(viewport.width<=850)await page.locator('#toggle-nav').click();
+    await expect(page.locator('.navigation-shortcut')).toBeHidden();
+    await page.locator('#logout').focus();
+    await expect(page.locator('#logout')).toBeInViewport();
+    await expect(page.locator('#logout')).toBeFocused();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  }
 });

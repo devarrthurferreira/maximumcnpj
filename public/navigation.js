@@ -3,7 +3,8 @@ const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&
 const drawings = {
   home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',
   companies:'<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h2m4 0h2M8 11h2m4 0h2M8 15h2m4 0h2M10 21v-3h4v3"/>',
-  start:'<rect x="3" y="3" width="18" height="18" rx="6"/><path d="m10 8 6 4-6 4z"/>',
+  start:'<rect x="3" y="3" width="18" height="18" rx="5"/><path d="M12 8v8m-4-4h8"/>',
+  report:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8m-8 4h5"/>',
   history:'<path d="M3 11a9 9 0 1 1 2.4 7M3 4v7h7m2-5v6l4 2"/>',
   simulations:'<path d="M4 20h16M7 16v-5m5 5V5m5 11V8"/>',
   settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.6v-.09A1.7 1.7 0 0 0 8.55 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3V9.6h.09A1.7 1.7 0 0 0 4.6 8.55a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.45 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.14.37.36.7.66.96.3.25.68.4 1.07.4H21v4h-.09A1.7 1.7 0 0 0 19.4 15z"/>',
@@ -20,21 +21,34 @@ function ensureStylesheet(href) {
   link.dataset.navigationStyle = href;
   document.head.append(link);
 }
-ensureStylesheet('/navigation.css?v=0.19.0');
+ensureStylesheet('/navigation.css?v=0.20.2');
 
 function navigationLabel(label) {
   return `<span class="navigation-label">${escape(label)}</span>`;
 }
 
 function brandMark() {
-  return `<a href="/#overview" class="navigation-rail-cap" aria-label="Maximum CNPJ · Início"><span class="navigation-mark" aria-hidden="true"><img src="/img/maximum-symbol.png" width="78" height="65" alt=""></span><span class="navigation-brand-copy"><strong>Maximum</strong><small>CNPJ</small></span></a>`;
+  return `<a href="/#overview" class="navigation-rail-cap" aria-label="Maximum CNPJ · Visão geral"><span class="navigation-mark" aria-hidden="true"><img src="/img/maximum-symbol.png" width="78" height="65" alt=""></span><span class="navigation-brand-copy"><small>Sua central contábil</small><strong>Maximum CNPJ</strong></span></a>`;
+}
+
+function navigationShortcut(canCreate) {
+  return `<section class="navigation-shortcut" aria-label="${canCreate ? 'Começar uma análise' : 'Consultar relatórios'}">
+    <div class="navigation-preview" aria-hidden="true"><div class="navigation-preview-sheet"><span>${icon('report')}<b>Maximum</b></span><i></i><i></i><i></i></div></div>
+    <div class="navigation-shortcut-copy"><strong>${canCreate ? 'Sua próxima análise<br>começa aqui.' : 'Seus relatórios,<br>sempre à mão.'}</strong><p>${canCreate ? 'Compras, vendas e simulações em um só fluxo.' : 'Acesse as análises salvas da sua equipe.'}</p><a href="${canCreate ? '/generations.html' : '/generations.html?view=history'}">${canCreate ? 'Começar análise' : 'Consultar histórico'}<span aria-hidden="true">→</span></a></div>
+  </section>`;
 }
 
 export function navigationMarkup(user, active = 'overview', internal = false) {
   const entry = (key, label, image, href, primary = false) => `<a href="${href}" class="navigation-item${primary ? ' navigation-start' : ''}" aria-label="${escape(label)}" ${internal && ['overview','clients','settings'].includes(key) ? `data-nav="${key}"` : ''} data-navigation="${key}" ${active===key?'aria-current="page"':''}><span class="navigation-icon">${icon(image)}</span>${navigationLabel(label)}</a>`;
   const name = user?.name || user?.email || 'Equipe Maximum';
   const role = {admin:'Administrador',operator:'Operador',viewer:'Visualização'}[user?.role] || 'Equipe Maximum';
-  return `<div class="navigation-heading">${brandMark()}<button class="navigation-close" type="button" aria-label="Fechar navegação"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m6 6 12 12M6 18 18 6"/></svg></button></div><div class="navigation-dock"><span class="navigation-section" aria-hidden="true">Workspace</span><nav class="nav" aria-label="Navegação principal">${entry('overview','Início','home','/#overview')}${entry('clients','Empresas','companies','/#clients')}${entry('start','Iniciar','start','/generations.html',true)}${entry('history','Histórico','history','/generations.html?view=history')}${entry('simulations','Simulações','simulations','/simulations.html')}</nav></div><div class="side-bottom navigation-utility-dock">${entry('settings','Configurações','settings','/#settings')}<button id="logout" class="navigation-item navigation-logout" type="button" aria-label="Sair da conta"><span class="navigation-icon">${icon('logout')}</span>${navigationLabel('Sair')}</button><div class="navigation-profile" title="${escape(name)}"><span class="navigation-avatar" aria-hidden="true">${escape(Array.from(name)[0]?.toUpperCase() || 'M')}</span><span class="navigation-user-copy"><strong>${escape(name)}</strong><small>${escape(role)}</small></span><span class="sr-only">Usuário conectado: ${escape(name)}</span></div></div>`;
+  const canCreate = ['admin','operator'].includes(user?.role);
+  return `<div class="navigation-heading">${brandMark()}<button class="navigation-close" type="button" aria-label="Fechar navegação"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m6 6 12 12M6 18 18 6"/></svg></button></div>
+    <div class="navigation-dock"><nav class="nav" aria-label="Navegação principal">
+      <div class="navigation-group" role="group" aria-label="Principal"><span class="navigation-section" aria-hidden="true">Principal</span>${entry('overview','Visão geral','home','/#overview')}${entry('clients','Empresas','companies','/#clients')}</div>
+      <div class="navigation-group" role="group" aria-label="Análises"><span class="navigation-section" aria-hidden="true">Análises</span>${canCreate ? entry('start','Nova análise','start','/generations.html',true) : ''}${entry('history','Histórico','history','/generations.html?view=history')}${entry('simulations','Simulações','simulations','/simulations.html')}</div>
+    </nav></div>
+    <div class="navigation-bottom">${navigationShortcut(canCreate)}<div class="side-bottom navigation-utility-dock">${entry('settings','Configurações','settings','/#settings')}<button id="logout" class="navigation-item navigation-logout" type="button" aria-label="Sair da conta"><span class="navigation-icon">${icon('logout')}</span>${navigationLabel('Sair')}</button><div class="navigation-profile" title="${escape(name)}"><span class="navigation-avatar" aria-hidden="true">${escape(Array.from(name)[0]?.toUpperCase() || 'M')}</span><span class="navigation-user-copy"><strong>${escape(name)}</strong><small>${escape(role)}</small></span><span class="sr-only">Usuário conectado: ${escape(name)}</span></div></div></div>`;
 }
 
 export function markNavigation(active) {
@@ -116,9 +130,10 @@ export function bindNavigation(onLogout) {
   const toggle = document.querySelector('#toggle-nav');
   document.body.classList.remove('navigation-hidden');
   try {
-    document.body.classList.toggle('navigation-expanded', localStorage.getItem('maximum:navigation-expanded') === '1');
+    document.body.classList.toggle('navigation-expanded', localStorage.getItem('maximum:navigation-expanded') !== '0');
   } catch {
-    // Navigation remains usable when the browser blocks preference storage.
+    // New visitors see labels even if storage is blocked. Keep same-page choices.
+    if (!window.__maximumNavigationGlobalBound) document.body.classList.add('navigation-expanded');
   }
   syncNavigation();
 
