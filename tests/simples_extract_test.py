@@ -24,11 +24,19 @@ def sample():
     ])
 
 
-def digital_pdf():
+def declaration_sample():
+    """Anonymized PGDAS-D declaration layout with the same synthetic revenues."""
+    return (sample().replace('Extrato do Simples Nacional',
+            'Programa Gerador do Documento de Arrecadação\ndo Simples Nacional - Declaratório\nDeclaração Original')
+            .replace('CNPJ Básico: 12.345.678', 'CNPJ Matriz: 12.345.678/0001-00')
+            .replace('Período de Apuração (PA): 08/2026', 'Período de Apuração: 01/08/2026 a 31/08/2026'))
+
+
+def digital_pdf(text=None):
     import fitz
     with fitz.open() as doc:
         page=doc.new_page()
-        for i,line in enumerate(sample().splitlines()):
+        for i,line in enumerate((sample() if text is None else text).splitlines()):
             page.insert_text((30,40+i*19),line,fontsize=9,fontname='helv')
         return doc.tobytes()
 
@@ -58,6 +66,96 @@ def paged_pdf(*texts, scanned_tail=True):
 
 
 class SimplesExtractTests(unittest.TestCase):
+    def test_pgdas_declaration_uses_date_range_and_matriz_with_same_22_basis(self):
+        result=parse_statement_text(declaration_sample())
+        self.assertEqual(result['documentType'],'PGDAS_D_DECLARACAO')
+        self.assertEqual(result['pa'],'08/2026')
+        self.assertEqual(result['cnpjBasico'],'12345678')
+        self.assertEqual(result['companyName'],'EMPRESA SINTETICA')
+        self.assertEqual(result['rbt12Cents'],16200000)
+        self.assertEqual(result['rbt12Basis'],parse_statement_text(sample())['rbt12Basis'])
+        self.assertEqual(result['parserVersion'],PARSER_VERSION)
+
+    def test_declaration_pdf_preserves_pages_after_complete_section(self):
+        def reject(*_):raise AssertionError('Native declaration and unrelated tail do not need OCR')
+        result,pdf,text=convert_statement_pdf(paged_pdf(declaration_sample()),section_only=True,ocr_engine=reject)
+        self.assertEqual(result['documentType'],'PGDAS_D_DECLARACAO')
+        self.assertEqual(result['rbt12Cents'],16200000)
+        self.assertFalse(result['ocrUsed'])
+        self.assertEqual(result['processedPages'],1)
+        self.assertEqual(result['preservedPages'],[2])
+        self.assertTrue(pdf.startswith(b'%PDF'))
+        self.assertIn('Programa Gerador',text)
+
+    def test_declaration_requires_explicit_title_full_matriz_and_valid_month_range(self):
+        base=declaration_sample()
+        invalid=[base.replace('do Simples Nacional - Declaratório','de outro programa'),
+                 base.replace('12.345.678/0001-00','12.345.678/0001'),
+                 base.replace('01/08/2026 a 31/08/2026','01/08/2026 a 31/09/2026'),
+                 base.replace('01/08/2026 a 31/08/2026','01/02/2026 a 30/02/2026'),
+                 base.replace('01/08/2026 a 31/08/2026','02/08/2026 a 31/08/2026'),
+                 base.replace('01/08/2026 a 31/08/2026','01/08/2026 a 30/08/2026'),
+                 base.replace('01/08/2026 a 31/08/2026','31/08/2026 a 01/08/2026')]
+        for text in invalid:
+            with self.subTest(text=text[:250]), self.assertRaises(ValueError):
+                parse_statement_text(text)
+
+    def test_declaration_checks_conflicts_between_both_metadata_formats(self):
+        for extra in ['Período de Apuração (PA): 07/2026',
+                      'Período de Apuração: 01/07/2026 a 31/07/2026',
+                      'CNPJ Básico: 87.654.321', 'CNPJ Matriz: 87.654.321/0001-00',
+                      'CNPJ Matriz: 12.345.678/0002-00']:
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                parse_statement_text(declaration_sample()+'\n'+extra)
+        same=declaration_sample()+'\nCNPJ Básico: 12.345.678\nPeríodo de Apuração (PA): 08/2026'
+        self.assertEqual(parse_statement_text(same)['rbt12Cents'],16200000)
+        self.assertEqual(parse_statement_text(declaration_sample().replace('12.345.678/0001-00','12345678000100'))['cnpjBasico'],'12345678')
+
+    def test_declaration_identity_on_preserved_pages_is_still_checked(self):
+        for extra in ['Período de Apuração (PA): 07/2026', 'CNPJ Básico: 87.654.321',
+                      'Período de Apuração: 01/07/2026 a 31/07/2026', 'CNPJ Matriz: 87.654.321/0001-00']:
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                convert_statement_pdf(paged_pdf(declaration_sample(),extra),section_only=True)
+
+    def test_declaration_ocr_metadata_confidence_is_required(self):
+        from reporting.pdf_ocr import group_rows
+        for critical in ['CNPJ Matriz:', 'Período de Apuração:']:
+            rows=group_rows([{'text':line,'box':[0,i*20,500,i*20+10],
+                             'confidence':.6 if line.startswith(critical) else .99}
+                            for i,line in enumerate(declaration_sample().splitlines())])
+            converted={'pdf':b'%PDF-fixture','text':declaration_sample(),'ocrPages':[1],'pageCount':1,
+                       'ocrConfidence':.98,'ocrEngine':'MOCK','pages':[{'page':1,'rows':rows}]}
+            with self.subTest(critical=critical), patch('reporting.pdf_ocr.searchable_pdf',return_value=converted):
+                with self.assertRaisesRegex(ValueError,'baixa confiança'):
+                    convert_statement_pdf(b'%PDF-fixture')
+
+    def test_wrapped_ocr_pa_and_identity_values_keep_confidence_gate(self):
+        from reporting.pdf_ocr import group_rows
+        cases=[(sample().replace('Período de Apuração (PA):', 'Período de Apuração\n( PA ):'), '( PA ):'),
+               (declaration_sample().replace('Período de Apuração: ', 'Período de Apuração:\n'), '01/08/2026'),
+               (declaration_sample().replace(' a 31/08/2026', ' a\n31/08/2026'), '31/08/2026'),
+               (sample().replace('CNPJ Básico: ', 'CNPJ Básico:\n'), '12.345.678'),
+               (declaration_sample().replace('CNPJ Matriz: ', 'CNPJ Matriz:\n'), '12.345.678/0001-00')]
+        for text, critical in cases:
+            rows=group_rows([{'text':line,'box':[0,i*20,500,i*20+10],'confidence':.99}
+                            for i,line in enumerate(text.splitlines())])
+            converted={'pdf':b'%PDF-fixture','text':text,'ocrPages':[1],'pageCount':1,
+                       'ocrConfidence':.98,'ocrEngine':'MOCK','pages':[{'page':1,'rows':rows}]}
+            with self.subTest(critical=critical), patch('reporting.pdf_ocr.searchable_pdf',return_value=converted):
+                self.assertEqual(convert_statement_pdf(b'%PDF-fixture')[0]['rbt12Cents'],16200000)
+                for row in rows:
+                    if row['text'].startswith(critical):
+                        row['items'][0]['confidence']=.6
+                with self.assertRaisesRegex(ValueError,'baixa confiança'):
+                    convert_statement_pdf(b'%PDF-fixture')
+
+    def test_fragmented_or_contaminated_money_never_uses_a_numeric_suffix(self):
+        for amount in ['8 000,00','8\n000,00','8O00,00','8.000,00x','8.000,00 5','R$ 8 000,00']:
+            with self.subTest(amount=amount), self.assertRaises(ValueError):
+                parse_statement_text(sample().replace('08/2025 8.000,00','08/2025 '+amount))
+        valid=sample().replace('08/2025 8.000,00','08/2025 R$ 8000,00')
+        self.assertEqual(parse_statement_text(valid)['rbt12Cents'],16200000)
+
     def test_only_section_22_even_when_21_disagrees(self):
         result=parse_statement_text(sample())
         self.assertEqual(result['rbt12Cents'],sum(i*100000 for i in range(8,20)))

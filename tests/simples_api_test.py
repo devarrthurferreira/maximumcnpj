@@ -15,7 +15,7 @@ from unittest.mock import patch
 from urllib.parse import urlencode
 from reporting.core import ReportError
 from reporting.core import utcnow
-from simples_extract_test import digital_pdf, paged_pdf, sample
+from simples_extract_test import digital_pdf, paged_pdf, sample, declaration_sample
 
 def signed_urls(original_path, searchable_path):
     signature = {'vercel-blob-delegation': 'synthetic-delegation', 'vercel-blob-signature': 'synthetic-signature'}
@@ -106,6 +106,21 @@ class SimplesApiTests(unittest.TestCase):
         self.assertEqual(self.call('GET',path.replace(self.client,self.other))[0],409)
         self.db.simplesExtractions.update_one({'_id':data['extractionId']},{'$set':{'workspaceId':'outside'}})
         self.assertEqual(self.call('GET',path)[0],409)
+    def test_pgdas_declaration_is_saved_and_rejects_another_company(self):
+        content=digital_pdf(declaration_sample())
+        status,data,_=self.call('POST',f'/api/simples?clientId={self.client}',content)
+        self.assertEqual(status,200,data)
+        self.assertEqual(data['documentType'],'PGDAS_D_DECLARACAO')
+        self.assertEqual(data['pa'],'08/2026')
+        self.assertEqual(data['rbt12Cents'],16200000)
+        stored=self.db.simplesExtractions.find_one({'_id':data['extractionId']})
+        self.assertEqual(stored['clientId'],self.client)
+        self.assertEqual(stored['result']['rbt12Window'],data['rbt12Window'])
+        status,error,_=self.call('POST',f'/api/simples?clientId={self.other}',content)
+        self.assertEqual(status,422)
+        self.assertEqual(error['error'],'RBT12_COMPANY')
+        self.assertEqual(self.db.simplesExtractions.count_documents({'clientId':self.other}),0)
+
     def test_missing_section_cannot_fall_back_and_unreadable_pdf_is_not_saved(self):
         before=self.db.simplesExtractions.count_documents({})
         with patch.object(self.module,'convert_statement_pdf',side_effect=ValueError('Seção 2.2 ausente')):
@@ -127,10 +142,14 @@ class SimplesApiTests(unittest.TestCase):
         record, payload = self.stored_document()
         path = f'/api/simples?clientId={self.client}'
         with patch.object(self.module, '_download_blob', return_value=digital_pdf()) as download, \
-             patch.object(self.module, '_upload_searchable') as upload:
+             patch.object(self.module, '_upload_searchable') as upload, \
+             patch.object(self.module, 'convert_statement_pdf', wraps=self.module.convert_statement_pdf) as convert:
             for attempt in (1, 2):
+                if attempt == 2:
+                    payload['forceOcr'] = False
                 status, data, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})
                 self.assertEqual(status, 200, data)
+                self.assertEqual(convert.call_args.kwargs, {'section_only': True, 'timeout_seconds': 180, 'force_ocr': False})
                 self.assertEqual(data['rbt12Cents'], 16200000)
                 self.assertEqual(data['documentId'], record['_id'])
                 self.assertTrue(data['searchableStored'])
@@ -145,18 +164,39 @@ class SimplesApiTests(unittest.TestCase):
     def test_failed_blob_ocr_can_retry_without_new_original(self):
         record, payload = self.stored_document()
         path = f'/api/simples?clientId={self.client}'
+        converted = self.module.convert_statement_pdf(digital_pdf(), section_only=True)
         with patch.object(self.module, '_download_blob', return_value=digital_pdf()), \
              patch.object(self.module, '_upload_searchable') as upload:
-            with patch.object(self.module, 'convert_statement_pdf', side_effect=ValueError('Seção 2.2 ilegível')):
+            with patch.object(self.module, 'convert_statement_pdf', side_effect=ValueError('Seção 2.2 ilegível')) as convert:
                 status, _, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})
+                self.assertIs(convert.call_args.kwargs['force_ocr'], False)
             self.assertEqual(status, 422)
             self.assertEqual(self.db.simplesDocuments.find_one({'_id': record['_id']})['status'], 'OCR_FAILED')
             upload.assert_not_called()
-            status, data, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})
+            payload['forceOcr'] = True
+            with patch.object(self.module, 'convert_statement_pdf', return_value=converted) as convert:
+                status, data, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})
+                self.assertEqual(convert.call_args.kwargs, {'section_only': True, 'timeout_seconds': 180, 'force_ocr': True})
             self.assertEqual(status, 200, data)
             saved = self.db.simplesDocuments.find_one({'_id': record['_id']})
             self.assertEqual(saved['status'], 'READY')
             self.assertNotIn('lastError', saved)
+
+    def test_force_ocr_requires_a_boolean_before_downloading_or_changing_document(self):
+        record, payload = self.stored_document()
+        before = self.db.simplesExtractions.count_documents({})
+        with patch.object(self.module, '_download_blob') as download, \
+             patch.object(self.module, 'convert_statement_pdf') as convert:
+            for invalid in ('true', 'false', 1, 0, None, [], {}):
+                with self.subTest(forceOcr=invalid):
+                    status, data, _ = self.call('POST', f'/api/simples?clientId={self.client}',
+                                              json.dumps({**payload, 'forceOcr': invalid}), {'Content-Type': 'application/json'})
+                    self.assertEqual(status, 400, data)
+                    self.assertEqual(data['error'], 'OCR_MODE')
+            download.assert_not_called()
+            convert.assert_not_called()
+        self.assertEqual(self.db.simplesDocuments.find_one({'_id': record['_id']})['status'], 'AWAITING_UPLOAD')
+        self.assertEqual(self.db.simplesExtractions.count_documents({}), before)
 
     def test_foreign_document_and_invalid_signed_path_do_not_reach_blob(self):
         record, payload = self.stored_document()

@@ -1,6 +1,13 @@
-# Maximum CNPJ · v0.20.2
+# Maximum CNPJ · v0.20.3
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Correção 16/10/2026 — leitura de declarações PGDAS-D
+
+- O leitor aceita também o modelo **Programa Gerador do Documento de Arrecadação do Simples Nacional — Declaratório**, com **CNPJ Matriz** e período de apuração por intervalo de datas do mesmo mês. O modelo anterior de Extrato do Simples permanece aceito.
+- A RBT12 continua calculada exclusivamente pelas 12 competências anteriores ao PA na seção 2.2, somando os mercados interno e externo. Identificações conflitantes, valores ilegíveis, meses ausentes e números monetários fragmentados bloqueiam a leitura.
+- **Reprocessar OCR** passa a reconhecer novamente a imagem, permitindo recuperar PDFs com camada de texto defeituosa. A leitura inicial continua usando o texto nativo quando legível.
+- O PDF de exemplo foi utilizado somente na validação local. Nenhum documento ou dado real de cliente integra os testes ou o repositório; os casos de regressão usam dados sintéticos.
 
 ## Entrega 14/10/2026 — navegação inspirada na referência visual
 
