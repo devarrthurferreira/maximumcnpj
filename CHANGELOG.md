@@ -1,5 +1,12 @@
 # Histórico de alterações
 
+## [0.20.3] — 2026-10-16
+
+- Suporte ao cabeçalho de declaração PGDAS-D, CNPJ Matriz e PA em intervalo de datas, com verificação de identificação única e período válido.
+- RBT12 preservada na seção 2.2, com regressões para os dois modelos de documento e bloqueio de valores monetários fragmentados/ambíguos.
+- Leitura e reprocessamento do modelo enviado aproveitam texto digital nativo; OCR de páginas em imagem, limite de execução, autenticação e vínculo com a empresa preservados.
+- Validação com o PDF fornecido e testes sintéticos, sem versionar documentos de clientes.
+
 ## [0.20.2] — 2026-10-14
 
 - Redesign da navegação compartilhada com superfícies claras, cabeçalho compacto, grupos de trabalho e seleção em bordô.

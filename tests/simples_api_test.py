@@ -15,7 +15,7 @@ from unittest.mock import patch
 from urllib.parse import urlencode
 from reporting.core import ReportError
 from reporting.core import utcnow
-from simples_extract_test import digital_pdf, paged_pdf, sample
+from simples_extract_test import digital_pdf, paged_pdf, sample, declaration_sample
 
 def signed_urls(original_path, searchable_path):
     signature = {'vercel-blob-delegation': 'synthetic-delegation', 'vercel-blob-signature': 'synthetic-signature'}
@@ -106,6 +106,21 @@ class SimplesApiTests(unittest.TestCase):
         self.assertEqual(self.call('GET',path.replace(self.client,self.other))[0],409)
         self.db.simplesExtractions.update_one({'_id':data['extractionId']},{'$set':{'workspaceId':'outside'}})
         self.assertEqual(self.call('GET',path)[0],409)
+    def test_pgdas_declaration_is_saved_and_rejects_another_company(self):
+        content=digital_pdf(declaration_sample())
+        status,data,_=self.call('POST',f'/api/simples?clientId={self.client}',content)
+        self.assertEqual(status,200,data)
+        self.assertEqual(data['documentType'],'PGDAS_D_DECLARACAO')
+        self.assertEqual(data['pa'],'08/2026')
+        self.assertEqual(data['rbt12Cents'],16200000)
+        stored=self.db.simplesExtractions.find_one({'_id':data['extractionId']})
+        self.assertEqual(stored['clientId'],self.client)
+        self.assertEqual(stored['result']['rbt12Window'],data['rbt12Window'])
+        status,error,_=self.call('POST',f'/api/simples?clientId={self.other}',content)
+        self.assertEqual(status,422)
+        self.assertEqual(error['error'],'RBT12_COMPANY')
+        self.assertEqual(self.db.simplesExtractions.count_documents({'clientId':self.other}),0)
+
     def test_missing_section_cannot_fall_back_and_unreadable_pdf_is_not_saved(self):
         before=self.db.simplesExtractions.count_documents({})
         with patch.object(self.module,'convert_statement_pdf',side_effect=ValueError('Seção 2.2 ausente')):
@@ -126,11 +141,13 @@ class SimplesApiTests(unittest.TestCase):
     def test_blob_urls_process_original_save_searchable_and_allow_reprocessing(self):
         record, payload = self.stored_document()
         path = f'/api/simples?clientId={self.client}'
-        with patch.object(self.module, '_download_blob', return_value=digital_pdf()) as download, \
+        with patch.object(self.module, '_download_blob', return_value=digital_pdf(declaration_sample())) as download, \
              patch.object(self.module, '_upload_searchable') as upload:
             for attempt in (1, 2):
                 status, data, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})
                 self.assertEqual(status, 200, data)
+                self.assertEqual(data['documentType'], 'PGDAS_D_DECLARACAO')
+                self.assertFalse(data['ocrUsed'])
                 self.assertEqual(data['rbt12Cents'], 16200000)
                 self.assertEqual(data['documentId'], record['_id'])
                 self.assertTrue(data['searchableStored'])
@@ -145,7 +162,7 @@ class SimplesApiTests(unittest.TestCase):
     def test_failed_blob_ocr_can_retry_without_new_original(self):
         record, payload = self.stored_document()
         path = f'/api/simples?clientId={self.client}'
-        with patch.object(self.module, '_download_blob', return_value=digital_pdf()), \
+        with patch.object(self.module, '_download_blob', return_value=digital_pdf(declaration_sample())), \
              patch.object(self.module, '_upload_searchable') as upload:
             with patch.object(self.module, 'convert_statement_pdf', side_effect=ValueError('Seção 2.2 ilegível')):
                 status, _, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})

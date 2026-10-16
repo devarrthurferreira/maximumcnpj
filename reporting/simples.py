@@ -1,17 +1,22 @@
 """Extrato PGDAS-D: RBT12 exclusivamente da seção 2.2, sem fallback para 2.1."""
 from __future__ import annotations
+from calendar import monthrange
+from datetime import date
 import re
 import unicodedata
 
 PARSER_VERSION = 'SIMPLES_SECTION_22_V2'
 MONTH_RE = re.compile(r'(?<!\d)(0[1-9]|1[0-2])\s*/\s*(20\d{2})(?!\d)')
-MONEY_RE = re.compile(r'(?<![\d.,])(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}(?![\d.,])')
+MONEY_RE = re.compile(r'(?<![\w.,])(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}(?![\w.,])')
 SECTION_RE = re.compile(r'^\s*2\s*\.\s*2\s*\)?\s*RECEITAS\s+BRUTAS\s+ANTERIORES', re.M)
 MARKET_RE = re.compile(r'^\s*2\s*\.\s*2\s*\.\s*([12])\s*\)?\s*MERCADO\s+(INTERNO|EXTERNO)', re.M)
 END_RE = re.compile(r'^\s*(?:2\s*\.\s*[3-9]\s*\)|[3-9]\s*\))', re.M)
-DOCUMENT_RE = re.compile(r'EXTRATO\s+DO\s+SIMPLES\s+NACIONAL')
+DECLARATION_DOCUMENT_RE = re.compile(r'PROGRAMA\s+GERADOR\s+DO\s+DOCUMENTO\s+DE\s+ARRECADACAO\s+DO\s+SIMPLES\s+NACIONAL\s*[-–—]\s*DECLARATORIO')
+DOCUMENT_RE = re.compile(r'EXTRATO\s+DO\s+SIMPLES\s+NACIONAL|' + DECLARATION_DOCUMENT_RE.pattern)
 PA_RE = re.compile(r'PERIODO\s+DE\s+APURACAO\s*\(\s*PA\s*\)\s*:\s*(0[1-9]|1[0-2])\s*/\s*(20\d{2})')
+PA_RANGE_RE = re.compile(r'PERIODO\s+DE\s+APURACAO\s*(?:\(\s*PA\s*\)\s*)?:\s*(\d{2})\s*/\s*(\d{2})\s*/\s*(20\d{2})\s+A\s+(\d{2})\s*/\s*(\d{2})\s*/\s*(20\d{2})(?!\d)')
 CNPJ_BASIC_RE = re.compile(r'CNPJ\s+BASICO\s*:\s*(\d{2}\.\d{3}\.\d{3}|\d{8})(?!\d)')
+CNPJ_MATRIZ_RE = re.compile(r'CNPJ\s+MATRIZ\s*:\s*(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{14})(?!\d)')
 
 
 def _plain(value: str) -> str:
@@ -35,6 +40,22 @@ def _previous_months(pa: str, count=12):
             for offset in range(count, 0, -1)]
 
 
+def _statement_period(plain: str):
+    pas = {f'{m[1]}/{m[2]}' for m in PA_RE.finditer(plain)}
+    for match in PA_RANGE_RE.finditer(plain):
+        try:
+            start = date(int(match[3]), int(match[2]), int(match[1]))
+            end = date(int(match[6]), int(match[5]), int(match[4]))
+        except ValueError as exc:
+            raise ValueError('RBT12: intervalo do período de apuração (PA) inválido.') from exc
+        if (start.year, start.month) != (end.year, end.month) or start.day != 1 or end.day != monthrange(end.year, end.month)[1]:
+            raise ValueError('RBT12: o intervalo do período de apuração (PA) deve representar um mês completo.')
+        pas.add(f'{start.month:02d}/{start.year:04d}')
+    if len(pas) != 1:
+        raise ValueError('RBT12: o período de apuração (PA) deve estar legível e ser único no extrato.')
+    return pas.pop()
+
+
 def _competence_matches(block: str):
     # Page footers can occur between table rows. A complete issue date such as
     # 02/10/2026 is not the revenue competence 10/2026.
@@ -53,6 +74,12 @@ def _read_market(block: str, revenues: dict, label: str):
         amounts = list(MONEY_RE.finditer(tail))
         if len(amounts) != 1:
             raise ValueError(f'Seção 2.2 · {label}: valor ausente ou ambíguo em {period}. Reenvie uma imagem legível.')
+        # A number such as "8 000,00" must never be read as the suffix "000,00".
+        # Do not repair OCR digits or separators without an unambiguous value.
+        prefix = tail[:amounts[0].start()]
+        line_suffix = tail[amounts[0].end():].split('\n', 1)[0]
+        if not re.fullmatch(r'\s*(?:R\$\s*)?', prefix) or line_suffix.strip():
+            raise ValueError(f'Seção 2.2 · {label}: valor monetário fragmentado ou ambíguo em {period}. Confira o extrato.')
         value = _cents(amounts[0].group())
         if period in revenues and revenues[period] != value:
             raise ValueError(f'Seção 2.2: valores conflitantes para {period} no {label}.')
@@ -64,14 +91,13 @@ def parse_statement_text(text: str, *, ocr_used=False, ocr_confidence=None):
         raise ValueError('RBT12: não foi possível ler texto do Extrato do Simples Nacional.')
     plain = _plain(text).replace('\r', '')
     if not DOCUMENT_RE.search(plain):
-        raise ValueError('RBT12: documento não identificado como Extrato do Simples Nacional.')
-    pas = {f'{m[1]}/{m[2]}' for m in PA_RE.finditer(plain)}
-    if len(pas) != 1:
-        raise ValueError('RBT12: o período de apuração (PA) deve estar legível e ser único no extrato.')
-    pa = pas.pop()
+        raise ValueError('RBT12: documento não identificado como Extrato do Simples Nacional ou declaração PGDAS-D.')
+    pa = _statement_period(plain)
     roots = {re.sub(r'\D', '', m[1]) for m in CNPJ_BASIC_RE.finditer(plain)}
-    if len(roots) != 1:
-        raise ValueError('RBT12: CNPJ básico ausente, ilegível ou mais de uma empresa no PDF.')
+    matrices = {re.sub(r'\D', '', m[1]) for m in CNPJ_MATRIZ_RE.finditer(plain)}
+    roots.update(cnpj[:8] for cnpj in matrices)
+    if len(roots) != 1 or len(matrices) > 1:
+        raise ValueError('RBT12: CNPJ básico/matriz ausente, ilegível ou mais de uma empresa no PDF.')
     name = re.search(r'NOME\s+EMPRESARIAL\s*:\s*([^\n|]+)', text, re.I)
     internal, external, section_blocks = {}, {}, []
     starts = list(SECTION_RE.finditer(plain))
@@ -115,7 +141,9 @@ def parse_statement_text(text: str, *, ocr_used=False, ocr_confidence=None):
     if rbt12 > 100_000_000_000_000:
         raise ValueError('RBT12 da seção 2.2 acima do limite da calculadora.')
     return {
-        'parserVersion': PARSER_VERSION, 'documentType': 'EXTRATO_SIMPLES_NACIONAL', 'sourceSection': '2.2',
+        'parserVersion': PARSER_VERSION,
+        'documentType': 'PGDAS_D_DECLARACAO' if DECLARATION_DOCUMENT_RE.search(plain) else 'EXTRATO_SIMPLES_NACIONAL',
+        'sourceSection': '2.2',
         'pa': pa, 'cnpjBasico': roots.pop(), 'companyName': ' '.join(name[1].split()) if name else None,
         'rbt12Cents': rbt12, 'rbt12CalculatedCents': rbt12, 'rbt12Reconciled': True,
         'rbt12Basis': {'section': '2.2', 'startMonth': selected[0]['month'], 'endMonth': selected[-1]['month'],
@@ -129,17 +157,25 @@ def parse_statement_text(text: str, *, ocr_used=False, ocr_confidence=None):
 
 def _validate_ocr_confidence(pages):
     # A low-confidence amount/date in 2.2 or its PA/identity metadata blocks confirmation.
+    rows = [(page['page'], row, _plain(row['text'])) for page in pages for row in page['rows']]
+    text = '\n'.join(line for _, _, line in rows)
+    # The label and its value can be on different lines (or pages). Use the same
+    # explicit metadata matches as the parser to cover every row of that value.
+    metadata_spans = [match.span() for pattern in (PA_RE, PA_RANGE_RE, CNPJ_BASIC_RE, CNPJ_MATRIZ_RE)
+                      for match in pattern.finditer(text)]
     inside = False
-    for page in pages:
-        for row in page['rows']:
-            line = _plain(row['text'])
-            if SECTION_RE.search(line) or MARKET_RE.search(line):
-                inside = True
-            elif END_RE.search(line):
-                inside = False
-            critical = (inside and (_competence_matches(line) or MONEY_RE.search(line))) or 'CNPJ BASICO' in line or '(PA)' in line
-            if critical and any(item['confidence'] is not None and item['confidence'] < .93 for item in row['items'] if re.search(r'\d', item['text'])):
-                raise ValueError(f'OCR com baixa confiança em dados da seção 2.2/identificação (página {page["page"]}). Confira o PDF; a RBT12 não foi liberada.')
+    position = 0
+    for page_number, row, line in rows:
+        row_end = position + len(line)
+        metadata_row = any(start < row_end and end > position for start, end in metadata_spans)
+        position = row_end + 1
+        if SECTION_RE.search(line) or MARKET_RE.search(line):
+            inside = True
+        elif END_RE.search(line):
+            inside = False
+        critical = (inside and (_competence_matches(line) or MONEY_RE.search(line))) or metadata_row or bool(re.search(r'CNPJ\s+(?:BASICO|MATRIZ)|PERIODO\s+DE\s+APURACAO|\(\s*PA\s*\)', line))
+        if critical and any(item['confidence'] is not None and item['confidence'] < .93 for item in row['items'] if re.search(r'\d', item['text'])):
+            raise ValueError(f'OCR com baixa confiança em dados da seção 2.2/identificação (página {page_number}). Confira o PDF; a RBT12 não foi liberada.')
 
 
 def convert_statement_pdf(content: bytes, *, force_ocr=False, ocr_engine=None, timeout_seconds=45, section_only=False):
@@ -169,7 +205,8 @@ def convert_statement_pdf(content: bytes, *, force_ocr=False, ocr_engine=None, t
                 return False
             # Metadata on a later page must first be included in the processed
             # text; native tail inspection is only a conflict check.
-            if not all(pattern.search(plain) for pattern in (DOCUMENT_RE, PA_RE, CNPJ_BASIC_RE)):
+            if not (DOCUMENT_RE.search(plain) and (PA_RE.search(plain) or PA_RANGE_RE.search(plain)) and
+                    (CNPJ_BASIC_RE.search(plain) or CNPJ_MATRIZ_RE.search(plain))):
                 return False
             tail = '\n'.join(native_pages[len(pages):])
             if SECTION_RE.search(_plain(tail)) or MARKET_RE.search(_plain(tail)):

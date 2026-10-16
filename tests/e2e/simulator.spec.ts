@@ -179,6 +179,8 @@ test('OCR indisponível preserva original e reprocessa sem novo upload no endpoi
  await page.route('https://vercel.com/api/blob/**',r=>{uploads++;return r.fulfill({status:200,body:''});});
  await page.route('**/api/simples?*',r=>{reads++;return r.fulfill({status:504,contentType:'text/html',body:'<html>Gateway timeout</html>'});});
  await page.goto(url);
+ await expect(page.getByLabel('Extrato ou declaração do Simples Nacional (PDF)',{exact:true})).toBeVisible();
+ await expect(page.locator('#rbt12-status')).toContainText('PGDAS-D');
  await page.locator('#rbt12-pdf').setInputFiles({name:'sintetico.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic')});
  await page.locator('#rbt12-read').click();
  await expect(page.locator('#rbt12-status')).toContainText('O servidor não conseguiu concluir');
