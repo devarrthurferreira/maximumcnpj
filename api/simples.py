@@ -111,7 +111,6 @@ class handler(BaseHTTPRequestHandler):
         self.request_id = str(uuid.uuid4())
         document_record = None
         db = None
-        force_ocr = False
         try:
             require(allowed_origin(self.headers), 403, 'ORIGIN', 'Origem da requisição não autorizada.')
             session_hash(self.headers)
@@ -132,8 +131,6 @@ class handler(BaseHTTPRequestHandler):
                 except Exception:
                     raise ReportError(400, 'INVALID_JSON', 'Dados de processamento inválidos.')
                 require(isinstance(payload, dict), 400, 'INVALID_JSON', 'Dados de processamento inválidos.')
-                force_ocr = payload.get('forceOcr', False)
-                require(isinstance(force_ocr, bool), 400, 'OCR_MODE', 'A opção de reprocessamento OCR deve ser verdadeira ou falsa.')
                 document_id = str(payload.get('documentId') or '')
                 require(UUID.fullmatch(document_id), 400, 'DOCUMENT_ID', 'Documento armazenado inválido.')
                 document_record = db.simplesDocuments.find_one({'_id': document_id, 'workspaceId': workspace, 'clientId': client_id})
@@ -159,7 +156,7 @@ class handler(BaseHTTPRequestHandler):
             else:
                 raise ReportError(415, 'CONTENT_TYPE', 'Envie o Extrato pelo armazenamento seguro ou em PDF.')
 
-            result, searchable, _ = convert_statement_pdf(content, section_only=True, timeout_seconds=180, force_ocr=force_ocr)
+            result, searchable, _ = convert_statement_pdf(content, section_only=True, timeout_seconds=180)
             registered = re.sub(r'[^A-Z0-9]', '', str(client.get('cnpj') or '').upper())
             if registered:
                 require(registered[:8] == result['cnpjBasico'], 422, 'RBT12_COMPANY', 'O CNPJ básico do extrato não corresponde à empresa selecionada. Nenhuma RBT12 foi vinculada.')

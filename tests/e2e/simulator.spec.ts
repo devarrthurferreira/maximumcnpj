@@ -175,9 +175,9 @@ test('Falha no upload não informa original armazenado nem oferece reprocessamen
  expect(uploads).toBe(1);expect(reads).toBe(0);
 });
 test('OCR indisponível preserva original e reprocessa sem novo upload no endpoint real do Blob',async({page})=>{
- await setup(page);let uploads=0,reads=0;const forceModes:boolean[]=[];
+ await setup(page);let uploads=0,reads=0;
  await page.route('https://vercel.com/api/blob/**',r=>{uploads++;return r.fulfill({status:200,body:''});});
- await page.route('**/api/simples?*',r=>{reads++;forceModes.push(r.request().postDataJSON().forceOcr);return r.fulfill({status:504,contentType:'text/html',body:'<html>Gateway timeout</html>'});});
+ await page.route('**/api/simples?*',r=>{reads++;return r.fulfill({status:504,contentType:'text/html',body:'<html>Gateway timeout</html>'});});
  await page.goto(url);
  await expect(page.getByLabel('Extrato ou declaração do Simples Nacional (PDF)',{exact:true})).toBeVisible();
  await expect(page.locator('#rbt12-status')).toContainText('PGDAS-D');
@@ -187,9 +187,8 @@ test('OCR indisponível preserva original e reprocessa sem novo upload no endpoi
  await expect(page.locator('#rbt12-status')).toContainText('ficou armazenado');
  await expect(page.locator('#rbt12-view-original')).toBeVisible();
  await expect(page.locator('#rbt12-reprocess')).toBeVisible();
- expect(forceModes).toEqual([false]);
  let release!:()=>void;const gate=new Promise<void>(resolve=>release=resolve);
- await page.route('**/api/simples?*',async r=>{reads++;forceModes.push(r.request().postDataJSON().forceOcr);await gate;return r.fulfill({json:{extractionId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',documentId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',searchableStored:true,...section22(15000000)}});});
+ await page.route('**/api/simples?*',async r=>{reads++;await gate;return r.fulfill({json:{extractionId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',documentId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',searchableStored:true,...section22(15000000)}});});
  await page.locator('#rbt12-reprocess').click();
  await expect(page.locator('#rbt12-pdf')).toBeDisabled();
  await expect(page.locator('#rbt12-read')).toBeDisabled();
@@ -199,7 +198,6 @@ test('OCR indisponível preserva original e reprocessa sem novo upload no endpoi
  await expect(page.locator('#rbt12-view-searchable')).toBeVisible();
  await expect(page.locator('#rbt12-pdf')).toBeEnabled();
  expect(uploads).toBe(1);expect(reads).toBe(2);
- expect(forceModes).toEqual([false,true]);
 });
 test('Leitura da seção 2.2 aguarda além de 55 segundos e informa as páginas preservadas',async({page})=>{
  await setup(page);await page.clock.install();

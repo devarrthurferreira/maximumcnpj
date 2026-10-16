@@ -141,15 +141,13 @@ class SimplesApiTests(unittest.TestCase):
     def test_blob_urls_process_original_save_searchable_and_allow_reprocessing(self):
         record, payload = self.stored_document()
         path = f'/api/simples?clientId={self.client}'
-        with patch.object(self.module, '_download_blob', return_value=digital_pdf()) as download, \
-             patch.object(self.module, '_upload_searchable') as upload, \
-             patch.object(self.module, 'convert_statement_pdf', wraps=self.module.convert_statement_pdf) as convert:
+        with patch.object(self.module, '_download_blob', return_value=digital_pdf(declaration_sample())) as download, \
+             patch.object(self.module, '_upload_searchable') as upload:
             for attempt in (1, 2):
-                if attempt == 2:
-                    payload['forceOcr'] = False
                 status, data, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})
                 self.assertEqual(status, 200, data)
-                self.assertEqual(convert.call_args.kwargs, {'section_only': True, 'timeout_seconds': 180, 'force_ocr': False})
+                self.assertEqual(data['documentType'], 'PGDAS_D_DECLARACAO')
+                self.assertFalse(data['ocrUsed'])
                 self.assertEqual(data['rbt12Cents'], 16200000)
                 self.assertEqual(data['documentId'], record['_id'])
                 self.assertTrue(data['searchableStored'])
@@ -164,39 +162,18 @@ class SimplesApiTests(unittest.TestCase):
     def test_failed_blob_ocr_can_retry_without_new_original(self):
         record, payload = self.stored_document()
         path = f'/api/simples?clientId={self.client}'
-        converted = self.module.convert_statement_pdf(digital_pdf(), section_only=True)
-        with patch.object(self.module, '_download_blob', return_value=digital_pdf()), \
+        with patch.object(self.module, '_download_blob', return_value=digital_pdf(declaration_sample())), \
              patch.object(self.module, '_upload_searchable') as upload:
-            with patch.object(self.module, 'convert_statement_pdf', side_effect=ValueError('Seção 2.2 ilegível')) as convert:
+            with patch.object(self.module, 'convert_statement_pdf', side_effect=ValueError('Seção 2.2 ilegível')):
                 status, _, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})
-                self.assertIs(convert.call_args.kwargs['force_ocr'], False)
             self.assertEqual(status, 422)
             self.assertEqual(self.db.simplesDocuments.find_one({'_id': record['_id']})['status'], 'OCR_FAILED')
             upload.assert_not_called()
-            payload['forceOcr'] = True
-            with patch.object(self.module, 'convert_statement_pdf', return_value=converted) as convert:
-                status, data, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})
-                self.assertEqual(convert.call_args.kwargs, {'section_only': True, 'timeout_seconds': 180, 'force_ocr': True})
+            status, data, _ = self.call('POST', path, json.dumps(payload), {'Content-Type': 'application/json'})
             self.assertEqual(status, 200, data)
             saved = self.db.simplesDocuments.find_one({'_id': record['_id']})
             self.assertEqual(saved['status'], 'READY')
             self.assertNotIn('lastError', saved)
-
-    def test_force_ocr_requires_a_boolean_before_downloading_or_changing_document(self):
-        record, payload = self.stored_document()
-        before = self.db.simplesExtractions.count_documents({})
-        with patch.object(self.module, '_download_blob') as download, \
-             patch.object(self.module, 'convert_statement_pdf') as convert:
-            for invalid in ('true', 'false', 1, 0, None, [], {}):
-                with self.subTest(forceOcr=invalid):
-                    status, data, _ = self.call('POST', f'/api/simples?clientId={self.client}',
-                                              json.dumps({**payload, 'forceOcr': invalid}), {'Content-Type': 'application/json'})
-                    self.assertEqual(status, 400, data)
-                    self.assertEqual(data['error'], 'OCR_MODE')
-            download.assert_not_called()
-            convert.assert_not_called()
-        self.assertEqual(self.db.simplesDocuments.find_one({'_id': record['_id']})['status'], 'AWAITING_UPLOAD')
-        self.assertEqual(self.db.simplesExtractions.count_documents({}), before)
 
     def test_foreign_document_and_invalid_signed_path_do_not_reach_blob(self):
         record, payload = self.stored_document()

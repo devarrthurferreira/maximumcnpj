@@ -282,10 +282,10 @@ async function restoreRbt12() {
     }
   }catch(error){if(S.rbt12ExtractionId===id){clearRbt12();$('#rbt12-status').textContent=error.message;}}
 }
-async function processStoredRbt12(urls, forceOcr=false) {
+async function processStoredRbt12(urls) {
   const data=await api('/api/simples?'+new URLSearchParams({clientId:S.source.clientId}),{
     method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({documentId:urls.documentId,originalGetUrl:urls.originalGetUrl,searchablePutUrl:urls.searchablePutUrl,forceOcr})
+    body:JSON.stringify({documentId:urls.documentId,originalGetUrl:urls.originalGetUrl,searchablePutUrl:urls.searchablePutUrl})
   });
   applyRbt12(data);invalidate();saveDraft();return data;
 }
@@ -299,9 +299,9 @@ async function reprocessRbt12() {
   const status=$('#rbt12-status');
   try{
     setReadingPdf(true);
-    status.textContent='Relendo a seção 2.2 pela imagem do PDF armazenado…';
+    status.textContent='Reprocessando a seção 2.2 do PDF armazenado…';
     const urls=await api('/api/v4/simples-documents/'+encodeURIComponent(S.rbt12DocumentId)+'/process-urls',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    await processStoredRbt12(urls,true);
+    await processStoredRbt12(urls);
   }catch(error){clearRbt12(true);$('#rbt12-reprocess').hidden=false;$('#rbt12-view-original').hidden=false;status.textContent=error.message||'Não foi possível reprocessar o OCR.';fail(error);}
   finally{setReadingPdf(false);}
 }
