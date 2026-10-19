@@ -24,7 +24,11 @@ O usuário confirma que os dois arquivos representam o mesmo período e selecion
 
 ## Formulário e modelo
 
-A soma dos três grupos de faturamento vira `salesRevenue`. Compras viram `simplePurchases` e `regularPurchases`. `serviceRevenue`, `salaries`, `benefits`, `adminExpenses`, `rent` e `cardExpenses` precisam ser preenchidos manualmente, com zero explícito se ausentes. Valores monetários em reais, não negativos e com duas casas; ano 2027/2028; vendas anexo I/II; serviços III/IV/V. Não repetir serviços já registrados no relatório de vendas.
+A soma dos três grupos de faturamento vira `salesRevenue`. Compras viram `simplePurchases` e `regularPurchases`. Até a v0.20.3, `serviceRevenue`, `salaries`, `benefits`, `adminExpenses`, `rent` e `cardExpenses` eram preenchidos manualmente, com zero explícito se ausentes. A orientação para serviços era: não repetir serviços já registrados no relatório de vendas. Portanto, o serviço manual legado é uma receita mensal adicional ao total importado.
+
+Desde a v0.21.0, serviços importados são separados das mercadorias e preenchem `serviceRevenue`, que passa a representar o total mensal de serviços do cenário e pode ser ajustado. A migração automática corrigida na v0.22.1 soma o serviço manual legado à média dos serviços importados, enquanto retira essa média dos grupos de mercadorias. Não divide nem multiplica novamente o valor manual mensal. O snapshot registra as três parcelas e mantém o original. Cenários já separados conservam seu ajuste em relação à base importada, sem aplicar novamente a regra legada.
+
+Valores monetários em reais, não negativos e com duas casas; ano 2027/2028; vendas anexo I/II; serviços III/IV/V. Despesas continuam exigindo preenchimento manual, inclusive zero quando ausentes.
 
 `calculateSimulation(draft)` recebe `{year,salesAnnex,serviceAnnex,values}` e retorna regimes, DRE anual, créditos, avisos e memória. O cadastro do cliente vem da geração, sem pedir novo cadastro. Grupos de compradores apenas discriminam as receitas; não alteram as alíquotas do motor original.
 

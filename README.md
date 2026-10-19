@@ -1,4 +1,10 @@
-# Maximum CNPJ · v0.22.0
+# Maximum CNPJ · v0.22.1
+
+## Correção 19/10/2026 — simulações antigas com serviços manuais
+
+- Na tela antiga, serviços manuais eram informados por mês, sem repetir os valores já incluídos nas vendas importadas. O recálculo respeita esse contrato: separa os serviços do relatório das mercadorias e soma a eles o serviço manual já salvo, sem alterar seu valor mensal.
+- A nova versão registra a base importada, o adicional manual e o total de serviços. A receita combinada é preservada, ressalvadas correções de classificação/saldo e o rateio em centavos já registrado na memória.
+- Pendências antigas por `SERVICE_REVENUE_AMBIGUOUS` são retomadas automaticamente uma única vez. Versões já concluídas, cenários originais e demais pendências permanecem preservados.
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
 
@@ -8,7 +14,7 @@ Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples e
 - Ao abrir **Simulações** com acesso de administrador ou operador, o sistema inicia ou retoma automaticamente a revisão das simulações salvas até o início do lote no workspace. O painel informa quantos registros estão na fila, em processamento, OK, pendentes ou com falha; usuários de visualização acompanham sem iniciar alterações.
 - Cada simulação antiga com dados verificáveis recebe uma nova versão vinculada, incluindo a separação de serviços e o DIFAL na DRE. O registro original permanece disponível. Pedidos repetidos e acessos simultâneos não criam versões duplicadas.
 - O recálculo usa os relatórios originais armazenados e preserva despesas, anexos, RBT12 comprovada e diferenças dos ajustes manuais em relação à base anterior. As operações são reclassificadas pelas regras atuais sobre as linhas congeladas; alterações no saldo, como devoluções antigas, ficam registradas na origem da nova versão. Não dispara novas consultas CNPJ nem OCR.
-- Quando faltam fontes, dados de DIFAL ou RBT12 verificável, ou quando serviços manuais antigos podem duplicar serviços importados, o item fica **Pendente**, com o motivo para revisão. Nenhum desses casos recebe um OK automático.
+- Quando faltam fontes, dados de DIFAL ou RBT12 verificável, ou quando os valores armazenados não conciliam, o item fica **Pendente**, com o motivo para revisão. Nenhum desses casos recebe um OK automático.
 
 ## Entrega 19/10/2026 — serviços 9000 e DIFAL na DRE
 

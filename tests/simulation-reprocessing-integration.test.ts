@@ -9,7 +9,7 @@ import {importCatalog} from '../src/lookup-catalog.ts';
 import {createGeneration, attachGenerationPurchase, attachGenerationSale} from '../src/generation-store.ts';
 import {uploadLookup, finalizeLookup} from '../src/lookup-jobs.ts';
 import {createSimulation, getSimulation, deleteSimulation} from '../src/simulation-history.ts';
-import {reprocessSimulations, simulationReprocessingStatus, reprocessedSimulationId} from '../src/simulation-reprocessing.ts';
+import {reprocessSimulations, simulationReprocessingStatus, reprocessedSimulationId, SERVICE_REVENUE_MIGRATION_REVISION} from '../src/simulation-reprocessing.ts';
 import {annualizeReports, projectScenario} from '../public/simulator-projection.js';
 import {calculateSimulation, draftToInput} from '../public/simulator-engine.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
@@ -75,7 +75,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
  try{
   await t.test('lote limitado preserva originais, deltas e RBT12 congelada; distingue atual e pendências',async()=>{
    switchWorkspace('batch');const input=await fixture();
-   const safe=await save(input,1),ambiguous=await save(input,2,true,o=>{o.draft.values.serviceRevenue=25;});
+   const safe=await save(input,1),additional=await save(input,2,true,o=>{o.draft.values.serviceRevenue=25;});
    const current=await save(input,3,false),inconsistent=await save(input,4,true,o=>{o.baselineMonthlyGroups.salesCpfCents=149;});
    const extractionId=randomUUID();
    await (await collection('simplesExtractions')).insertOne({...scope(),_id:extractionId,clientId:input.clientId,
@@ -84,16 +84,17 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const pdf=await save({...pdfInput,rbt12ExtractionId:extractionId},5);
    // The extraction can disappear; the authenticated frozen reference remains the source of truth.
    await (await collection('simplesExtractions')).deleteOne(scope({_id:extractionId}));
-   const originals=[safe,ambiguous,current,inconsistent,pdf];
+   const originals=[safe,additional,current,inconsistent,pdf];
    const first=await reprocessSimulations(actor,{});
    assert.equal(first.total,5);assert.equal(first.counts.queued,2);assert.equal(first.hasMore,true);
    assert.equal(first.counts.ok+first.counts.pending+first.counts.failed,3);
    const done=await finish();
-   assert.deepEqual(done.counts,{queued:0,processing:0,ok:3,pending:2,failed:0});
+   assert.deepEqual(done.counts,{queued:0,processing:0,ok:4,pending:1,failed:0});
    const outcomes=new Map(done.items.map((item:any)=>[item.originalId,item]));
    assert.equal(outcomes.get(safe._id)!.code,'UPDATED');assert.equal(outcomes.get(current._id)!.code,'ALREADY_CURRENT');
    assert.equal(outcomes.get(current._id)!.childId,null);
-   assert.equal(outcomes.get(ambiguous._id)!.code,'SERVICE_REVENUE_AMBIGUOUS');
+   assert.equal(outcomes.get(additional._id)!.code,'UPDATED');
+   assert.match(outcomes.get(additional._id)!.message,/receita mensal adicional/);
    assert.equal(outcomes.get(inconsistent._id)!.code,'REPROCESS_BASELINE');
    for(const original of originals)assert.deepEqual(await (await collection('simulations')).findOne(scope({_id:original._id})),original);
    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,safe._id));
@@ -104,12 +105,66 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.deepEqual(child.result,calculateSimulation(child.draft,child.difalProjection));
    assert.deepEqual(child.engineInput,draftToInput(child.draft,child.difalProjection));
    assert.equal(child.source.sales.difal.amountCents,1000);assert.equal(child.monthlyDre.months.length,12);
+   const additionalChild=await getSimulation(reprocessedSimulationId(scope().workspaceId,additional._id));
+   assert.equal(additionalChild.draft.values.serviceRevenue,75);assert.equal(additionalChild.draft.values.salesRevenue,110);
+   assert.equal(additionalChild.result.annualRevenue,(additional.draft.values.salesRevenue+additional.draft.values.serviceRevenue)*12);
+   assert.equal(additionalChild.reprocessing.serviceRevenueMigration.priorMonthlyServiceCents,2500);
+   assert.equal(additionalChild.reprocessing.serviceRevenueMigration.reportMonthlyServiceCents,5000);
+   assert.equal(additionalChild.reprocessing.serviceRevenueMigration.appliedMonthlyServiceCents,7500);
    const pdfChild=await getSimulation(reprocessedSimulationId(scope().workspaceId,pdf._id));
    assert.deepEqual(pdfChild.rbt12Extraction,pdf.rbt12Extraction);assert.equal(pdfChild.rbt12Manual,undefined);
    assert.equal(pdfChild.draft.rbt12,100000);assert.notEqual(pdfChild.draft.rbt12,pdfChild.result.annualRevenue);
-   assert.equal(await (await collection('simulations')).countDocuments(scope({reprocessing:{$exists:true}})),2);
+   assert.equal(await (await collection('simulations')).countDocuments(scope({reprocessing:{$exists:true}})),3);
    const again=await reprocessSimulations(operator,{});assert.deepEqual(again.counts,done.counts);
    assert.equal(await (await collection('simulationReprocessItems')).countDocuments(scope()),5,'Filhos não entram no inventário.');
+  });
+
+  await t.test('revisão retoma somente a antiga pendência de serviços uma vez, preserva OK e não ressuscita exclusões',async()=>{
+   switchWorkspace('service-policy');const input=await fixture();
+   const safe=await save(input,50),removedChildOriginal=await save(input,51);
+   assert.equal((await reprocessSimulations(actor,{})).counts.ok,2);
+   const items=await collection('simulationReprocessItems'),simulations=await collection('simulations');
+   const safeChildId=reprocessedSimulationId(scope().workspaceId,safe._id);
+   const safeChild=await simulations.findOne(scope({_id:safeChildId}));
+   const safeItem=(await items.findOne(scope({originalId:safe._id})))!;
+   const removedChildId=reprocessedSimulationId(scope().workspaceId,removedChildOriginal._id);
+   await deleteSimulation(actor,removedChildId);
+   const pending=await save(input,52,true,o=>{o.draft.values.serviceRevenue=25;});
+   const reviewed=await save(input,53,true,o=>{o.draft.values.serviceRevenue=25;});
+   const other=await save(input,54),removedOriginal=await save(input,55);
+   // Reproduce the completed v0.22.0 inventory without rerunning its successful children.
+   for(const original of [pending,reviewed,other,removedOriginal])await items.insertOne({...scope(),
+    _id:safeItem.batchId+':'+original._id,batchId:safeItem.batchId,originalId:original._id,childId:null,status:'PENDING',
+    code:original._id===other._id?'REPROCESS_BASELINE':'SERVICE_REVENUE_AMBIGUOUS',message:'Pendência sintética anterior.',
+    company:original.company,title:original.title,updatedAt:new Date(),attempts:1,
+    ...(original._id===reviewed._id?{serviceRevenueMigrationRevision:SERVICE_REVENUE_MIGRATION_REVISION}:{})});
+   await deleteSimulation(actor,removedOriginal._id);
+   const before=await simulationReprocessingStatus();assert.equal(before.hasMore,false);assert.equal(before.counts.pending,4);
+   const done=await reprocessSimulations(operator,{});
+   assert.deepEqual(done.counts,{queued:0,processing:0,ok:2,pending:3,failed:0});assert.equal(done.total,5);
+   const migrated=(await items.findOne(scope({originalId:pending._id})))!;
+   assert.equal(migrated.status,'OK');assert.equal(migrated.attempts,2);
+   assert.equal(migrated.serviceRevenueMigrationRevision,SERVICE_REVENUE_MIGRATION_REVISION);
+   const child=await getSimulation(migrated.childId);assert.equal(child.createdBy.id,operator._id);
+   assert.equal(child.draft.values.serviceRevenue,75);assert.equal(child.reprocessing.serviceRevenueMigration.policy,'ADDITIONAL_TO_REPORT');
+   assert.deepEqual(await simulations.findOne(scope({_id:safe._id})),safe);
+   assert.deepEqual(await simulations.findOne(scope({_id:pending._id})),pending);
+   assert.deepEqual(await simulations.findOne(scope({_id:safeChildId})),safeChild);
+   assert.deepEqual(await items.findOne(scope({originalId:safe._id})),safeItem);
+   assert.equal((await items.findOne(scope({originalId:reviewed._id})))!.attempts,1);
+   assert.equal((await items.findOne(scope({originalId:other._id})))!.attempts,1);
+   assert.equal(await simulations.countDocuments(scope({_id:removedChildId})),0);
+   assert.equal(await items.countDocuments(scope({originalId:removedOriginal._id})),0);
+   assert.equal((await items.findOne(scope({originalId:removedChildOriginal._id})))!.code,'REPROCESS_CHILD_DELETED');
+   assert.equal(await (await collection('audit')).countDocuments(scope({action:'simulation.create',target:migrated.childId})),1);
+   const repeat=await reprocessSimulations(actor,{});assert.deepEqual(repeat.counts,done.counts);
+   assert.deepEqual(await items.findOne(scope({originalId:pending._id})),migrated);
+   // A stale status write cannot reopen an item whose revision was already applied.
+   await items.updateOne(scope({originalId:pending._id}),{$set:{status:'PENDING',code:'SERVICE_REVENUE_AMBIGUOUS'}});
+   await reprocessSimulations(operator,{});
+   const stale=(await items.findOne(scope({originalId:pending._id})))!;
+   assert.equal(stale.status,'PENDING');assert.equal(stale.attempts,2);
+   assert.equal(await simulations.countDocuments(scope({parentSimulationId:pending._id})),1);
   });
 
   await t.test('dois operadores concorrentes geram um único filho e preservam o autor da RBT12',async t=>{
@@ -183,7 +238,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
 
   await t.test('tenant, payload, sessão, origem e permissão são verificados no endpoint real',async()=>{
    switchWorkspace('http');const input=await fixture(),original=await save(input,40);
-   for(const bad of [[],false,{source:{}},{simulationId:original._id},{retryFailed:false},{retryFailed:'true'},{result:{}}])
+   for(const bad of [[],false,{source:{}},{simulationId:original._id},{retryFailed:false},{retryFailed:'true'},{result:{}},{serviceRevenueMigrationRevision:SERVICE_REVENUE_MIGRATION_REVISION}])
     await assert.rejects(reprocessSimulations(actor,bad),code('VALIDATION'));
    await assert.rejects(reprocessSimulations(viewer,{}),code('FORBIDDEN'));
    assert.equal((await simulationReprocessingStatus()).total,0);

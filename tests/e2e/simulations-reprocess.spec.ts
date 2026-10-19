@@ -70,6 +70,60 @@ test('Perfil de leitura acompanha o lote com GET e pagina detalhes sem iniciar p
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
 });
 
+test('Pendência antiga de serviços em lote encerrado é atualizada automaticamente uma vez e preserva as versões já OK', async({page}) => {
+  await mockHistory(page);
+  await page.clock.install();
+  const pendingId='00000000-0000-4000-8000-000000000003', migratedChildId='00000000-0000-4000-8000-000000000005';
+  const pendingOriginal={...original,_id:pendingId,title:'Serviços adicionais informados no cenário antigo',company:{code:'937',name:'EMPRESA SINTÉTICA COM SERVIÇOS'}};
+  const unchangedChild={...original,_id:childId,title:'Versão já atualizada'};
+  const pendingItem={originalId:pendingId,childId:null,status:'PENDING',code:'SERVICE_REVENUE_AMBIGUOUS',message:'Receita de serviços informada manualmente. Conferência pendente.',company:pendingOriginal.company,title:pendingOriginal.title};
+  const priorBatch={...completed,total:2,counts:{queued:0,processing:0,ok:1,pending:1,failed:0},retryableFailed:0,hasMore:false,
+    items:[completed.items[0],pendingItem]};
+  const migratedBatch={...priorBatch,counts:{queued:0,processing:0,ok:2,pending:0,failed:0},
+    items:[completed.items[0],{...pendingItem,childId:migratedChildId,status:'OK',code:'UPDATED',message:'Nova versão criada com serviços importados e serviços adicionais do cenário original.'}]};
+  let migrated=false,created=0,posts=0,release!:()=>void;
+  const methods:string[]=[],bodies:unknown[]=[],gate=new Promise<void>(resolve=>release=resolve);
+  await page.route('**/api/v4/simulations?*',route=>{
+    const items=[original,unchangedChild,pendingOriginal,...(migrated?[{...pendingOriginal,_id:migratedChildId,title:'Serviços atualizados'}]:[])];
+    return route.fulfill({json:{items,total:items.length,page:1,pageSize:20}});
+  });
+  await page.route('**/api/v4/simulations/reprocess',async route=>{
+    methods.push(route.request().method());
+    if(route.request().method()==='GET')return route.fulfill({json:migrated?migratedBatch:priorBatch});
+    bodies.push(route.request().postDataJSON());posts++;
+    if(posts===1)await gate;
+    if(!migrated){migrated=true;created++;}
+    return route.fulfill({json:migratedBatch});
+  });
+  await page.goto('/simulations.html');
+  const panel=page.locator('#history-reprocess');
+  try {
+    await expect.poll(()=>posts).toBe(1);
+    await expect(panel.locator('[data-reprocess-count="pending"] dd')).toHaveText('1');
+    await expect(page.locator('#simulations-app details[open]')).toHaveCount(0);
+    expect(methods).toEqual(['GET','POST']);expect(bodies).toEqual([{}]);
+  } finally {release();}
+  await expect(panel.getByRole('heading',{name:'Verificação concluída'})).toBeVisible();
+  await expect(panel.locator('[data-reprocess-count="ok"] dd')).toHaveText('2');
+  await expect(panel.locator('[data-reprocess-count="pending"] dd')).toHaveText('0');
+  await expect(page.locator('#simulations-app details[open]')).toHaveCount(0);
+  await expect(page.locator(`[data-simulation-id="${pendingId}"]`)).toHaveCount(1);
+  await expect(page.locator(`[data-simulation-id="${migratedChildId}"]`)).toHaveCount(1);
+  await expect(page.locator(`[data-simulation-id="${childId}"]`)).toHaveCount(1);
+  await panel.getByText('Conferir pendências e versões',{exact:true}).click();
+  await expect(panel.locator(`a[href="/simulator.html?simulation=${migratedChildId}"]`)).toBeVisible();
+  await expect(panel.locator(`a[href="/simulator.html?simulation=${childId}"]`)).toBeVisible();
+  await page.clock.fastForward(10000);expect(posts).toBe(1);expect(created).toBe(1);
+
+  await page.reload();
+  await expect(panel.getByRole('heading',{name:'Verificação concluída'})).toBeVisible();
+  await expect(page.locator('#simulations-app details[open]')).toHaveCount(0);
+  await expect(page.locator(`[data-simulation-id="${migratedChildId}"]`)).toHaveCount(1);
+  await expect(page.locator(`[data-simulation-id="${childId}"]`)).toHaveCount(1);
+  await page.clock.fastForward(10000);
+  expect(methods).toEqual(['GET','POST','GET','POST']);expect(bodies).toEqual([{},{}]);expect(created).toBe(1);
+});
+
 test('Falha de rede interrompe o lote e tentativa explícita retoma sem enviar dados de simulação', async({page}) => {
   await mockHistory(page);const methods:string[]=[],bodies:unknown[]=[];let posts=0;
   await page.route('**/api/v4/simulations/reprocess', route => {
