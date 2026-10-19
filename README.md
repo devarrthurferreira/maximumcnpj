@@ -1,5 +1,11 @@
 # Maximum CNPJ · v0.24.0
 
+## Verificação integrada da entrega
+
+A regressão em `tests/e2e/dre-complete.spec.ts` confere serviços e DIFAL em todos os regimes, na DRE anual, nos 12 meses e no CSV. Repete a conferência após recarregar o histórico e verifica que a exportação JSON preserva os resultados e que a navegação não grava pela API. Os dados são sintéticos.
+
+Este complemento de testes parte da v0.24.0, que já reúne as entregas dos PRs #27–#31 e a classificação de serviços 9000. Não altera fórmulas nem reprocessa dados de produção.
+
 ## Leitura do extrato 19/10/2026
 
 - A seção 2.2 reconhece valores que o OCR juntou à competência seguinte, somente quando a separação entre centavos e mês/ano é inequívoca. Os dígitos originais são preservados.
