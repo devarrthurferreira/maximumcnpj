@@ -23,6 +23,7 @@ async function financialGroups(name: string, id: string, job: Doc) {
     {$match: scope({jobId: id})}, {$sort: {index: 1}},
     {$group: {_id: documentIdentity(), valid: {$first: '$valid'}, name: {$first: '$name'}, documentKind: {$first: '$documentKind'},
       lines: {$sum: 1}, invalidAmounts: {$sum: {$cond: [valid, 0, 1]}}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}},
+      ...(job.mode === SALES_MODE ? {servicesTotalCents: {$sum: {$cond: [{$eq: ['$operation', 'SERVICO']}, '$totalCents', 0]}}} : {}),
       ...(net ? Object.fromEntries(COMPONENT_FIELDS.map(field => [field, {$sum: '$' + field}])) : {})}}
   ], {allowDiskUse: true, maxTimeMS: 20000}).toArray();
   need(groups.every(group => group.invalidAmounts === 0), 'Componentes ausentes, inválidos ou divergentes de Q - Y + AA - AB. Emissão bloqueada.', 409, 'PURCHASE_TOTAL');
@@ -183,7 +184,20 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
   const operationTotals = mode === SALES_MODE ? await (await collection('purchaseLines')).aggregate([
     {$match: scope({jobId: id})}, {$group: {_id: {$ifNull: ['$operation', 'OUTRAS']}, lines: {$sum: 1}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}}}}, {$sort: {_id: 1}}
   ], {maxTimeMS: 20000}).toArray() : [];
-  return {job, ...(mode === SALES_MODE ? {difal} : {}), calculationVersion: version, formula, components, period, operationTotals: operationTotals.map(row => ({operation: row._id, lines: row.lines, totalCents: exactCents(row.totalCents), balanceCents: exactSignedCents(row.balanceCents)})),
+  // Use the already reconciled provider snapshots to keep services separate even
+  // when one document contains both goods and services. Legacy lines without an
+  // operation remain in their original group; never infer a new historical value.
+  const serviceGroups = ['OPTANTE', 'NAO_OPTANTE', 'CPF'].map(status => ({status, totalCents: 0}));
+  if (mode === SALES_MODE) for (const line of grouped) {
+    const status = line.valid && indexed.get(line._id)?.status === 'OPTANTE' ? 'OPTANTE' :
+      !line.valid && line.documentKind === 'CPF' ? 'CPF' : 'NAO_OPTANTE';
+    const group = serviceGroups.find(group => group.status === status)!;
+    group.totalCents = exactCents(group.totalCents + exactCents(line.servicesTotalCents));
+  }
+  const servicesTotalCents = exactCents(serviceGroups.reduce((sum, group) => sum + group.totalCents, 0));
+  if (mode === SALES_MODE) need(servicesTotalCents === exactCents(operationTotals.find(row => row._id === 'SERVICO')?.totalCents ?? 0),
+    'Receita de serviços divergente das operações do relatório. Emissão bloqueada.', 409, 'PURCHASE_TOTAL');
+  return {job, ...(mode === SALES_MODE ? {difal, serviceGroups, servicesTotalCents} : {}), calculationVersion: version, formula, components, period, operationTotals: operationTotals.map(row => ({operation: row._id, lines: row.lines, totalCents: exactCents(row.totalCents), balanceCents: exactSignedCents(row.balanceCents)})),
     reportingGroups: reportingGroups(groups, uniqueDocuments, totalCents, {count: nonCnpjDocumentCount, lines: lines - cnpjLines, totalCents: nonCnpjCents}, excludedByKind.get('CPF') || {count: 0, lines: 0, totalCents: 0}, mode),
     totals: {lines, uniqueCnpjs: valid.length, uniqueDocuments, nonCnpjDocumentCount, cnpjLines, nonCnpjLines: lines - cnpjLines, totalCents, cnpjCents, nonCnpjCents}, groups, excluded,
     denominators: {count: 'Documentos distintos do relatório, incluindo CPF, CNO e inválidos. Cada linha sem documento conta separadamente.', value: `Soma de ${formula} de todas as linhas do relatório. Apenas optantes confirmados entram em Simples; ${mode === SALES_MODE ? 'CPF tem grupo próprio nas vendas; os demais, incluindo não confirmados e outros documentos, integram Não optantes.' : 'todo o restante integra Não optantes no agrupamento gerencial.'}`},

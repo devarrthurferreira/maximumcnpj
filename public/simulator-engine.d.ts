@@ -24,5 +24,5 @@ export type SimulationResult = {
   memory: Array<{id: string; section: string; label: string; formula: string; value: number | string; unit: string}>;
   bestRegimeId: string | null; difference: number;
 };
-export function draftToInput(draft: SimulationDraft): Record<string, unknown> | null;
-export function calculateSimulation(draft: SimulationDraft): SimulationResult;
+export function draftToInput(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null): Record<string, unknown> | null;
+export function calculateSimulation(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null): SimulationResult;

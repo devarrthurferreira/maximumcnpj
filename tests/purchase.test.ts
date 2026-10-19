@@ -74,6 +74,18 @@ test('Vendas: comprador CLIENTE, natureza com 4 dígitos, quantidade opcional e 
   assert(returnCsv.includes('"10,50";"\'-10,50";"Q - Y + AA - AB"'));
 });
 
+test('Naturezas 9000 classificam vendas de serviços pelos quatro primeiros dígitos, sem depender da descrição', () => {
+  for (const natureCode of ['9000', '900000', '900001', '90001234', '9.000.01']) {
+    for (const description of ['', 'Venda de mercadoria', 'Devolução', 'Remessa']) {
+      const service = compactPurchaseLine({...row, natureCode, description, operation: 'VENDA', balanceCents: -row.totalCents}, 'NET_V2', SALES_MODE,
+        {issuerUf: 'MG', difalVersion: DIFAL_VERSION});
+      assert.equal(service.natureCode, '9000'); assert.equal(service.operation, 'SERVICO');
+      assert.equal(service.balanceCents, row.totalCents);
+      assert.equal(service.difal?.reason, 'NOT_SALE'); assert.equal(service.difal?.amountCents, 0);
+    }
+  }
+});
+
 test('Classificação gerencial: somente CNPJ com OPTANTE explícito é Simples; demais valores preservam a fonte', () => {
   const cnpj = compactPurchaseLine(row);
   assert.equal(financialReportingStatus({...cnpj,status:'OPTANTE'}),'OPTANTE');

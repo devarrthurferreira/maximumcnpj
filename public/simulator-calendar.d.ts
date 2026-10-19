@@ -1,6 +1,7 @@
-export const CALENDAR_VERSION: 'DRE_CALENDAR_V1';
+export const CALENDAR_VERSION: 'DRE_CALENDAR_V2';
 export const MONTH_NAMES: readonly string[];
 export const DRE_ROWS: readonly (readonly string[])[];
+export function dreRows(result: any): readonly (readonly string[])[];
 export type MonthlyDre = {
   version: string; year: number; unit: string; method: string; reportPeriod: unknown;
   rbt12Reference: any; months: Array<{number:number;label:string;period:string}>; rounding:string;

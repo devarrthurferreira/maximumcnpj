@@ -99,8 +99,8 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.equal(saved.title, 'Empresa A · 2027');
       assert.deepEqual(saved.createdBy, {id: actor._id, name: actor.name});
       assert.deepEqual(saved.company, {name: 'Empresa A', code: '936'});
-      assert.deepEqual(saved.result, calculateSimulation(draft));
-      assert.deepEqual(saved.engineInput, draftToInput(draft));
+      assert.deepEqual(saved.result, calculateSimulation(draft, saved.difalProjection));
+      assert.deepEqual(saved.engineInput, draftToInput(draft, saved.difalProjection));
       assert.deepEqual(saved.taxSources, TAX_SOURCES);
       assert.deepEqual(saved.draft, draft);
       assert.deepEqual(saved.monthlyGroups, monthlyGroups);
@@ -108,8 +108,8 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.equal(saved.monthlyGroupsUnit, 'BRL');
       assert.equal(saved.modelVersion, MODEL_VERSION);
       assert.equal(saved.calculatorSourceCommit, CALCULATOR_SOURCE_COMMIT);
-      assert.equal(saved.manuallyAdjusted, false);
-      assert.deepEqual(saved.adjustments, []);
+      assert.equal(saved.manuallyAdjusted, true);
+      assert.deepEqual(saved.adjustments, [{field:'serviceRevenue', reportMonthlyValue:0, simulatedMonthlyValue:5000}]);
       assert.equal(saved.source.sales.totalCents, 60003);
       assert.equal(saved.source.purchases.totalCents, 60003);
       assert.equal(saved.source.sales.jobId, jobs[1]._id);
@@ -162,7 +162,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
         draft: {...draft, year: 2028, values: {...draft.values, salesRevenue: 250.01, rent: 15}}});
       assert.equal(revised.parentSimulationId, saved._id);
       assert.equal(revised.manuallyAdjusted, true);
-      assert.deepEqual(revised.adjustments, [{field: 'salesCpfCents', reportMonthlyValue: 100, simulatedMonthlyValue: 150}]);
+      assert.deepEqual(revised.adjustments, [{field: 'salesCpfCents', reportMonthlyValue: 100, simulatedMonthlyValue: 150}, {field:'serviceRevenue', reportMonthlyValue:0, simulatedMonthlyValue:5000}]);
       assert.equal(revised.createdBy.id, operator._id);
       assert.deepEqual(await getSimulation(saved._id), saved);
       await assert.rejects(createSimulation(actor, {...input, simulationId: randomUUID(), parentSimulationId: randomUUID()}), code('NOT_FOUND'));
@@ -381,7 +381,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.equal(manual.rbt12Source,'MANUAL'); assert.equal(manual.rbt12Extraction,null);
       assert.deepEqual(manual.rbt12Manual,{source:'MANUAL',confirmed:true,rbt12Cents:12345629,
         confirmedAt:manual.createdAt,confirmedBy:{id:operator._id,name:operator.name}});
-      assert.deepEqual(manual.result,calculateSimulation(manualInput.draft));
+      assert.deepEqual(manual.result,calculateSimulation(manualInput.draft,manual.difalProjection));
       assert.equal(manual.engineInput.rbt12,123456.29);
       assert.notEqual(manual.engineInput.rbt12,manual.result.annualRevenue,'A RBT12 não é substituída pela projeção.');
       assert.deepEqual(manual.monthlyDre.rbt12Reference,{source:'MANUAL',rbt12Cents:12345629});
@@ -396,7 +396,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       } finally {process.env.WORKSPACE_ID='simulation_history_test';}
       const zero=await createSimulation(actor,{...manualInput,simulationId:randomUUID(),draft:{...draft,rbt12:0}});
       assert.equal(zero.engineInput.rbt12,0);assert.equal(zero.rbt12Manual.rbt12Cents,0);
-      assert.deepEqual(zero.result,calculateSimulation({...draft,rbt12:0}),'Zero explícito conserva avisos e restrições do motor.');
+      assert.deepEqual(zero.result,calculateSimulation({...draft,rbt12:0},zero.difalProjection),'Zero explícito conserva avisos e restrições do motor.');
       assert.equal(providerCalls,4,'A entrada manual não dispara consultas externas.');
       assert.deepEqual(await getSimulation(saved._id),saved,'O histórico OCR anterior permanece imutável.');
     });

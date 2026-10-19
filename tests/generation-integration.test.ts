@@ -171,7 +171,7 @@ test('MongoDB simulador: cinco campos vÃªm de snapshots conciliados, com CPF prÃ
     assert.equal(snapshot.generationId,id); assert.equal(snapshot.clientId,clientId);
     assert.deepEqual(snapshot.company,{name:'Empresa A',code:'936'});
     assert.equal(snapshot.periodBasis,'COLUMN_H'); assert.equal(snapshot.reportMonths,1);
-    assert.deepEqual(snapshot.fields,{salesOptantCents:10010,salesNonOptantCents:35190,salesCpfCents:4000,purchasesOptantCents:10010,purchasesNonOptantCents:39190});
+    assert.deepEqual(snapshot.fields,{salesOptantCents:10010,salesNonOptantCents:35190,salesCpfCents:4000,serviceRevenueCents:0,purchasesOptantCents:10010,purchasesNonOptantCents:39190});
     assert.equal(snapshot.purchases.totalCents,49200); assert.equal(snapshot.sales.totalCents,49200);
     assert.equal(snapshot.sales.jobId,sales.job._id); assert.equal(snapshot.sales.formula,'Q - Y + AA - AB');
     assert.equal(snapshot.sales.calculationVersion,'NET_V2'); assert(snapshot.sales.completedAt);

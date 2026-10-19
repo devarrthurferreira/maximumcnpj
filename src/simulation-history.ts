@@ -4,7 +4,7 @@ import { need, text, digest, escapeRegex, integer } from './security.ts';
 import { write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { VERSION } from './domain.ts';
-import { annualizeReports, projectScenario } from '../public/simulator-projection.js';
+import { annualizeReports, projectScenario, projectDifal } from '../public/simulator-projection.js';
 import {readRbt12Reference, rbt12InputSource} from './simulation-extrato.ts';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import { generationSimulator } from './simulator-store.ts';
@@ -177,9 +177,10 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
   const rbt12Manual = rbt12Source === 'MANUAL' ? {source: 'MANUAL' as const, confirmed: true,
     rbt12Cents: Math.round(draft.rbt12! * 100), confirmedAt: createdAt,
     confirmedBy: {id: actor._id, name: actor.name}} : null;
-  const engineInput = draftToInput(draft);
+  const difalProjection = projectDifal(source.sales.difal, reportMonths, source.sales.jobId);
+  const engineInput = draftToInput(draft, difalProjection);
   need(engineInput, 'Os valores ultrapassam os limites da calculadora. Confira as receitas mensais e a estimativa anual.');
-  const result = calculateSimulation(draft);
+  const result = calculateSimulation(draft, difalProjection);
   const projection = {...annualizeReports(source.fields, reportMonths), scenario: projectScenario(monthlyGroups, draft.values)};
   need(Math.abs(result.annualRevenue - projection.scenario.annual.revenueCents / 100) < 0.01,
     'A receita anual deve corresponder à receita mensal multiplicada por 12.', 409, 'SIMULATION_PROJECTION');
@@ -187,14 +188,20 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
   const adjustments = GROUPS.filter(key => monthlyGroups[key] !== baselineMonthlyGroups[key]).map(field => ({
     field, reportMonthlyValue: baselineMonthlyGroups[field], simulatedMonthlyValue: monthlyGroups[field]
   }));
+  const baselineServiceRevenue = projection.monthlyGroupsCents.serviceRevenueCents === undefined ? null : projection.monthlyGroupsCents.serviceRevenueCents / 100;
+  const serviceAdjustments = baselineServiceRevenue !== null && draft.values.serviceRevenue !== baselineServiceRevenue ? [{
+    field: 'serviceRevenue', reportMonthlyValue: baselineServiceRevenue, simulatedMonthlyValue: draft.values.serviceRevenue
+  }] : [];
+  const allAdjustments = [...adjustments, ...serviceAdjustments];
   const best = result.regimes.find(regime => regime.id === result.bestRegimeId);
   const snapshot = {_id: simulationId, ...scope(), requestHash, generationId, clientId,
     title: validated.title || `${source.company.name} · ${draft.year}`, company: source.company,
     createdAt, createdBy: {id: actor._id, name: actor.name}, appVersion: VERSION,
     modelVersion: MODEL_VERSION, calculatorSourceCommit: CALCULATOR_SOURCE_COMMIT, taxSources: TAX_SOURCES,
-    source, projection, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
+    source, projection, difalProjection, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
     monthlyGroups, monthlyGroupsUnit: 'BRL', baselineMonthlyGroups,
-    manuallyAdjusted: adjustments.length > 0, adjustments, draft, engineInput, result, parentSimulationId,
+    ...(baselineServiceRevenue === null ? {} : {baselineServiceRevenue}),
+    manuallyAdjusted: allAdjustments.length > 0, adjustments: allAdjustments, draft, engineInput, result, parentSimulationId,
     rbt12Source, rbt12Extraction, ...(rbt12Manual ? {rbt12Manual} : {}),
     monthlyDre: buildMonthlyDre(result, draft.year, rbt12Extraction || rbt12Manual, source.period || null),
     year: draft.year, annualRevenue: result.annualRevenue, bestRegimeId: result.bestRegimeId,

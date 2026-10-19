@@ -80,7 +80,8 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
   await expect(page.locator('#guided-rbt12-stage')).toBeVisible();await expect(page.locator('#simulator-form')).toBeHidden();
   await page.locator('#guided-rbt12-skip').click();await expect(page.locator('#simulator-form')).toBeVisible();
   await expect(page.locator('#rbt12')).toBeEditable();await expect(page.locator('#rbt12')).toHaveValue('');
-  for(const field of manualFields)await expect(page.locator('#'+field)).toHaveValue('');
+  await expect(page.locator('#serviceRevenue')).toHaveValue('0.00');
+  for(const field of manualFields.filter(field=>field!=='serviceRevenue'))await expect(page.locator('#'+field)).toHaveValue('');
   await expect(page.locator('#salesCpfCents')).toHaveValue('12000.00');await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('4500.00');
   await screenshots(page,info,'guided-manual-inputs');
   let saves=0;page.on('request',r=>{if(r.method()==='POST'&&new URL(r.url()).pathname==='/api/v4/simulations')saves++;});
@@ -91,7 +92,7 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
   await page.locator('#rbt12').fill('150000');await page.locator('#rbt12-manual-confirm').check();
   const saving=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/v4/simulations'&&r.request().method()==='POST');
   await page.locator('#generate-simulation').click();const response=await saving;expect(response.ok(),await response.text()).toBe(true);const snapshot=await response.json();
-  expect(snapshot).toMatchObject({generationId:generation._id,clientId:realClient,rbt12Source:'MANUAL',reportMonths:1,periodBasis:'COLUMN_H',draft:{rbt12:150000,values:{salesRevenue:12000,regularPurchases:4500}},source:{purchases:{totalCents:450000},sales:{totalCents:1200000}}});
+  expect(snapshot).toMatchObject({generationId:generation._id,clientId:realClient,rbt12Source:'MANUAL',reportMonths:1,periodBasis:'COLUMN_H',draft:{rbt12:150000,values:{salesRevenue:12000,serviceRevenue:0,regularPurchases:4500}},source:{revenueSplit:{version:'SALES_SERVICES_V1'},fields:{serviceRevenueCents:0},purchases:{totalCents:450000},sales:{totalCents:1200000}}});
   expect(snapshot.rbt12Extraction).toBeFalsy();expect(snapshot.rbt12ExtractionId).toBeFalsy();expect(snapshot.result.annualRevenue).toBe(144000);
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');await screenshots(page,info,'guided-result');
   const mongo=new MongoClient(process.env.MONGODB_URI!);

@@ -131,3 +131,12 @@
   .simulator-clean .content { max-width: none; }
   .simulator-clean .sim-kpis { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* Financial context stays available in printed comparisons. */
+#simulation-print-context { display: none; }
+@media print {
+  #simulation-print-context, .simulator-clean .sim-source, .simulator-clean .sim-memory { display: block !important; }
+  .simulator-clean .sim-source a { display: none; }
+  .simulator-clean .sim-memory-section { break-inside: avoid; }
+  #simulation-print-context .sim-projection { break-inside: auto; }
+}

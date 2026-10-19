@@ -18,7 +18,7 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
-export const MODEL_VERSION = '1.1.0-rbt12-2027-2028';
+export const MODEL_VERSION = '1.2.0-services-difal';
 export const MONTHS = 12;
 export const SUBLIMIT = 3_600_000;
 export const SIMPLES_LIMIT = 4_800_000;
@@ -334,7 +334,9 @@ function checkChoices(input) {
   }
 }
 function parseTaxInput(input) {
-  strictObject(input, [...TAX_AMOUNT_FIELDS, 'year', 'salesAnnex', 'serviceAnnex', 'icmsOutside', 'rates', 'credits']);
+  const hasDifal = input != null && Object.hasOwn(input, 'difalMonthly');
+  strictObject(input, [...TAX_AMOUNT_FIELDS, 'year', 'salesAnnex', 'serviceAnnex', 'icmsOutside', 'rates', 'credits', ...(hasDifal ? ['difalMonthly'] : [])]);
+  if (hasDifal) checkNumber(input.difalMonthly, VALUE_LIMIT, ['difalMonthly']);
   checkChoices(input);
   if (typeof input.icmsOutside !== 'boolean') failInput(['icmsOutside'], 'Informe uma opção válida.');
   for (const key of TAX_AMOUNT_FIELDS) checkNumber(input[key], VALUE_LIMIT, [key]);
@@ -389,6 +391,7 @@ const DRE_LABELS = {
     ibsDebit: 'Débito de IBS',
     icmsNet: 'ICMS líquido fora do DAS',
     iss: 'ISS fora do DAS',
+    difal: 'DIFAL estimado (10%)',
     netRevenue: 'Receita líquida',
     cmvSimple: 'Compras/CMV de optantes',
     cmvRegular: 'Compras/CMV de não optantes',
@@ -412,6 +415,8 @@ const DRE_LABELS = {
 };
 export function calculateTax(rawInput) {
     const input = taxInputSchema.parse(rawInput);
+    const hasDifal = Object.hasOwn(input, 'difalMonthly');
+    const annualDifal = (input.difalMonthly ?? 0) * MONTHS;
     const memory = [];
     const warnings = [];
     const add = (id, section, label, formula, value, unit = 'currency')=>{
@@ -466,6 +471,7 @@ export function calculateTax(rawInput) {
     add('annual.revenue', 'Valores anuais', 'Receita total anual', 'Receita anual de serviços + receita anual de vendas', revenue);
     add('annual.cmv', 'Valores anuais', 'CMV total anual', 'CMV de optantes + CMV de não optantes; a parcela SN regular não é somada outra vez.', cmv);
     add('annual.operational', 'Valores anuais', 'Resultado antes de tributos e encargos', 'Receita − CMV − salários − benefícios − administração − aluguel − cartões', operational);
+    if (hasDifal) add('difal.annual', 'Tributos e encargos', 'DIFAL estimado anual (10%)', 'Estimativa mensal vinculada às operações importadas × 12. Deduzida uma única vez na receita líquida.', annualDifal);
     const groupNames = {
         simple: 'Simples com CBS/IBS no DAS',
         simpleRegular: 'Simples com CBS/IBS no regime regular',
@@ -669,7 +675,7 @@ export function calculateTax(rawInput) {
     const presumedAdditionalIr = positive(irTotalBase - IRPJ_ADDITIONAL_BASE) * IRPJ_ADDITIONAL_RATE;
     const presumedIr = presumedBasicIr + presumedAdditionalIr;
     const presumedCs = csTotalBase * CSLL_RATE;
-    const actualPreTax = operational - credits.cbs.due - credits.ibs.due - credits.icms.due - iss - regularPayroll;
+    const actualPreTax = operational - credits.cbs.due - credits.ibs.due - credits.icms.due - iss - annualDifal - regularPayroll;
     const actualBase = positive(actualPreTax);
     const actualBasicIr = actualBase * IRPJ_RATE;
     const actualAdditionalIr = positive(actualBase - IRPJ_ADDITIONAL_BASE) * IRPJ_ADDITIONAL_RATE;
@@ -749,7 +755,7 @@ export function calculateTax(rawInput) {
         [
             'preTax',
             'Resultado antes de IRPJ/CSLL',
-            'Resultado operacional − CBS líquido − IBS líquido − ICMS líquido − ISS − encargos LP/LR',
+            'Resultado operacional − CBS líquido − IBS líquido − ICMS líquido − ISS − DIFAL estimado − encargos LP/LR',
             actualPreTax
         ],
         [
@@ -811,6 +817,7 @@ export function calculateTax(rawInput) {
             ibsDebit: isPure ? 0 : -credits.ibs.debit,
             icmsNet: outside ? -credits.icms.due : 0,
             iss: outside ? -iss : 0,
+            ...(hasDifal ? {difal: -annualDifal} : {}),
             netRevenue: 0,
             cmvSimple: -annual.cmvSimple,
             cmvRegular: -annual.cmvRegular,
@@ -832,12 +839,12 @@ export function calculateTax(rawInput) {
             icmsUsed: outside ? credits.icms.used : 0,
             icmsBalance: outside ? credits.icms.balance : 0
         };
-        dre.netRevenue = dre.revenue + dre.das + dre.cbsDebit + dre.ibsDebit + dre.icmsNet + dre.iss;
+        dre.netRevenue = dre.revenue + dre.das + dre.cbsDebit + dre.ibsDebit + dre.icmsNet + dre.iss + (dre.difal ?? 0);
         dre.grossProfit = dre.netRevenue + dre.cmv + dre.cbsUsed + dre.ibsUsed;
         dre.personnel = dre.salaries + dre.benefits + dre.payroll;
         dre.preTax = dre.grossProfit + dre.personnel + dre.administrative + dre.rent + dre.cards;
         dre.netProfit = dre.preTax + dre.irpj + dre.csll;
-        const taxes = -dre.das - dre.cbsDebit - dre.ibsDebit - dre.icmsNet - dre.iss - dre.payroll - dre.irpj - dre.csll - dre.cbsUsed - dre.ibsUsed;
+        const taxes = -dre.das - dre.cbsDebit - dre.ibsDebit - dre.icmsNet - dre.iss - (dre.difal ?? 0) - dre.payroll - dre.irpj - dre.csll - dre.cbsUsed - dre.ibsUsed;
         const formulas = {
             services: 'Serviços mensais × 12',
             sales: 'Vendas mensais × 12',
@@ -847,7 +854,8 @@ export function calculateTax(rawInput) {
             ibsDebit: isPure ? 'Zero: IBS incluído no DAS' : '−Débito anual de IBS',
             icmsNet: outside ? '−(débito ICMS − crédito ICMS utilizado)' : 'Zero: ICMS incluído no DAS; sem crédito externo',
             iss: outside ? '−Serviços anuais × alíquota de ISS' : 'Zero: ISS incluído no DAS',
-            netRevenue: 'Receita bruta + linhas negativas de DAS, CBS, IBS, ICMS e ISS',
+            difal: '−DIFAL mensal estimado das operações importadas × 12; hipótese gerencial de 10%, sem novo abatimento no ICMS',
+            netRevenue: 'Receita bruta + linhas negativas de DAS, CBS, IBS, ICMS, ISS e DIFAL estimado',
             cmvSimple: '−Compras/CMV de optantes × 12',
             cmvRegular: '−Compras/CMV de não optantes × 12',
             cmv: 'CMV optantes + CMV não optantes (subtotal negativo)',
@@ -875,7 +883,7 @@ export function calculateTax(rawInput) {
         const margin = available && revenue > 0 ? dre.netProfit / revenue : null;
         const totalTaxes = available ? cleanZero(taxes) : 0;
         const taxBurden = available && revenue > 0 ? totalTaxes / revenue : null;
-        add(`summary.${id}.taxes`, `DRE · ${name}`, 'Tributos e encargos totais', 'DAS + débitos CBS/IBS + ICMS líquido + ISS + encargos + IRPJ + CSLL − créditos CBS/IBS utilizados; sem segunda dedução do crédito ICMS.', totalTaxes);
+        add(`summary.${id}.taxes`, `DRE · ${name}`, 'Tributos e encargos totais', 'DAS + débitos CBS/IBS + ICMS líquido + ISS + DIFAL estimado + encargos + IRPJ + CSLL − créditos CBS/IBS utilizados; sem segunda dedução do crédito ICMS.', totalTaxes);
         add(`summary.${id}.monthly`, `DRE · ${name}`, 'Resultado médio mensal', 'Resultado líquido anual ÷ 12', dre.netProfit / MONTHS);
         add(`summary.${id}.margin`, `DRE · ${name}`, 'Margem líquida', 'Resultado líquido ÷ receita; não aplicável sem receita ou em regime indisponível.', margin ?? 'Não aplicável', margin === null ? 'text' : 'percent');
         add(`summary.${id}.burden`, `DRE · ${name}`, 'Carga sobre receita', 'Tributos e encargos totais ÷ receita; não aplicável sem receita ou em regime indisponível.', taxBurden ?? 'Não aplicável', taxBurden === null ? 'text' : 'percent');
@@ -926,6 +934,7 @@ export function calculateTax(rawInput) {
     if (input.serviceAnnex === 4 && input.serviceRevenue > 0 && input.extraPayroll === 0) warn('annex-iv-payroll', 'warning', 'Anexo IV com encargos fora do DAS zerados', 'O Anexo IV exige revisar a CPP fora do DAS. Informe os encargos efetivos, considerando eventual atividade mista; o modelo mantém o zero que foi explicitamente informado.');
     if (excessRevenue > 0) warn('presumption-increase', 'warning', 'Acréscimo dos coeficientes de presunção', 'A parcela projetada acima de R$ 5 milhões recebe acréscimo relativo de 10% nos coeficientes, ponderado pela receita das atividades. A projeção pressupõe composição uniforme e não substitui a verificação por período.');
     if (revenue === 0) warn('zero-revenue', 'info', 'Receita zero aceita', 'A DRE continua calculando custos e despesas. Margem, carga sobre receita e ranking não são apresentados, pois não há receita para comparação.');
+    if (hasDifal) warn('difal-estimate', 'info', 'DIFAL estimado incluído na DRE', 'Hipótese gerencial de 10% aplicada às operações elegíveis importadas e projetada pelo período do relatório. A mesma referência compõe os cenários uma única vez; não comprova incidência ou alíquota legal em cada regime.');
     return {
         version: MODEL_VERSION,
         annualRevenue: revenue,
@@ -946,7 +955,7 @@ export function createEmptyDraft() {
 }
 
 /** Same assumptions and default credit bases as calculadora/src/lib/simulation.ts. */
-export function draftToInput(draft) {
+export function draftToInput(draft, difalProjection = null) {
   try {
     const explicitRbt12 = Object.hasOwn(draft, 'rbt12');
     strictObject(draft, explicitRbt12 ? ['year', 'salesAnnex', 'serviceAnnex', 'values', 'rbt12'] : ['year', 'salesAnnex', 'serviceAnnex', 'values']);
@@ -956,8 +965,14 @@ export function draftToInput(draft) {
     const values = draft.values;
     const rbt12 = explicitRbt12 ? draft.rbt12 : (values.serviceRevenue + values.salesRevenue) * 12;
     checkNumber(rbt12, VALUE_LIMIT, ['rbt12']);
+    if (difalProjection !== null && (difalProjection.version !== 'DIFAL_DRE_V1' ||
+        !Number.isSafeInteger(difalProjection.monthlyCents) || difalProjection.monthlyCents < 0 ||
+        !Number.isSafeInteger(difalProjection.annualCents) || difalProjection.annualCents !== difalProjection.monthlyCents * MONTHS)) {
+      throw new TypeError('Projeção do DIFAL inválida.');
+    }
     return taxInputSchema.parse({
       ...values, year: draft.year, salesAnnex: draft.salesAnnex, serviceAnnex: draft.serviceAnnex,
+      ...(difalProjection === null ? {} : {difalMonthly: difalProjection.monthlyCents / 100}),
       simpleRegularPurchases: 0, extraPayroll: 0, icmsOutside: false,
       rbt12,
       rates: { ...DEFAULT_RATES },
@@ -971,11 +986,18 @@ export function draftToInput(draft) {
 }
 
 /** Display-ready projection. Novas simulações usam a RBT12 informada/extraída; snapshots antigos mantêm a estimativa histórica. */
-export function calculateSimulation(draft) {
+export function calculateSimulation(draft, difalProjection = null) {
   const explicitRbt12 = Object.hasOwn(draft, 'rbt12');
-  const input = draftToInput(draft);
+  const input = draftToInput(draft, difalProjection);
   if (!input) throw new TypeError('Preencha todos os campos com valores válidos. Informe 0 quando não houver valor.');
   const result = calculateTax(input);
+  if (difalProjection !== null) {
+    result.memory.push(
+      {id: 'difal.source', section: 'DIFAL estimado', label: 'DIFAL do período importado', formula: 'Soma das estimativas por operação no relatório de origem; ajustes manuais de receita não alteram esta referência.', value: difalProjection.sourceAmountCents / 100, unit: 'currency'},
+      {id: 'difal.monthly', section: 'DIFAL estimado', label: 'DIFAL médio mensal', formula: `Total importado ÷ ${difalProjection.reportMonths} competências, arredondado em centavos.`, value: difalProjection.monthlyCents / 100, unit: 'currency'}
+    );
+    if (difalProjection.pendingLines > 0) result.warnings.push({code: 'difal-partial', severity: 'warning', title: 'DIFAL parcial na DRE', detail: `${difalProjection.pendingLines} linhas aguardam UF do emitente ou destinatário. O cenário inclui apenas a estimativa confirmada; corrija a origem e reimporte para completar a base.`});
+  }
   const rbt12 = result.memory.find(row => row.id === 'rbt12');
   if (explicitRbt12) {
     rbt12.label = 'RBT12 do Simples Nacional';

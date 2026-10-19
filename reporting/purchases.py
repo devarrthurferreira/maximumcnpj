@@ -423,7 +423,7 @@ def purchase_story(meta, width, styles):
     if sales:
         story += difal_story(meta.get('difal'), width, styles)
     if sales and meta.get('operationTotals'):
-        operation_labels = {'VENDA':'Vendas','SERVICO':'Serviços','DEVOLUCAO':'Devoluções','OUTRAS':'Outras'}
+        operation_labels = {'VENDA':'Vendas','SERVICO':'Vendas de serviços','DEVOLUCAO':'Devoluções','OUTRAS':'Outras'}
         operation_rows = [['Operação','Linhas','Valor antes do sinal','Impacto no saldo']]
         for item in meta['operationTotals']:
             operation_rows.append([operation_labels.get(item['operation'], item['operation']), number(item['lines']), money(item['totalCents']), money(item['balanceCents'])])
@@ -487,7 +487,9 @@ def difal_story(difal, width, styles):
     story.append(p('Alíquota média estimada de 10%, sem equivalência automática à alíquota legal. '
                    'Aplica-se somente a vendas de mercadoria elegíveis para CPF de outra UF; '
                    'base = total registrado da venda. Valores arredondados por linha e somados uma única vez. '
-                   'A estimativa é informativa e não altera o total de vendas nem os demais impostos.', 'small'))
+                   'Este relatório mostra o total do período importado, sem alterar o total de vendas. '
+                   'Nas novas simulações, a média mensal (total dividido pelas competências) e a projeção anual '
+                   '(média mensal multiplicada por 12) entram como DIFAL estimado na DRE.', 'small'))
     return story
 
 

@@ -13,9 +13,16 @@ function valueFor(summary: FinancialSummary, status: string) {
   return summary.job.mode === SALES_MODE ? exactSignedCents(group.totalCents) : exactCents(group.totalCents);
 }
 
+function goodsValueFor(summary: FinancialSummary, status: string) {
+  const services = summary.serviceGroups?.find(group => group.status === status);
+  need(services, 'Separação de vendas e serviços incompleta. Reimporte o relatório.', 409, 'SIMULATOR_INCONSISTENT');
+  return exactSignedCents(valueFor(summary, status) - exactCents(services.totalCents));
+}
+
 function sourceMetadata(summary: FinancialSummary) {
   return {jobId: summary.job._id, fileName: summary.job.fileName, totalCents: summary.totals.totalCents,
     formula: summary.formula, calculationVersion: summary.calculationVersion, completedAt: summary.job.completedAt, period: summary.period || null,
+    ...(summary.job.mode === SALES_MODE ? {servicesTotalCents: summary.servicesTotalCents, operationTotals: summary.operationTotals} : {}),
     ...(summary.job.mode === SALES_MODE && summary.difal ? {difal: summary.difal} : {})};
 }
 
@@ -39,13 +46,14 @@ export async function generationSimulator(id: string, clientId: string) {
     'Os relatórios não correspondem à empresa e à geração selecionadas.', 409, 'SIMULATOR_INCONSISTENT');
   }
   const fields = {
-    salesOptantCents: valueFor(sales, 'OPTANTE'), salesNonOptantCents: valueFor(sales, 'NAO_OPTANTE'), salesCpfCents: valueFor(sales, 'CPF'),
+    salesOptantCents: goodsValueFor(sales, 'OPTANTE'), salesNonOptantCents: goodsValueFor(sales, 'NAO_OPTANTE'), salesCpfCents: goodsValueFor(sales, 'CPF'),
+    serviceRevenueCents: exactCents(sales.servicesTotalCents),
     purchasesOptantCents: valueFor(purchases, 'OPTANTE'), purchasesNonOptantCents: valueFor(purchases, 'NAO_OPTANTE')
   };
   const salesNetCents = exactSignedCents(fields.salesOptantCents + fields.salesNonOptantCents + fields.salesCpfCents);
   need(salesNetCents >= 0,
-    'As devoluções superam o total de vendas no período. Revise o relatório antes de projetar o simulador.', 409, 'SIMULATOR_NEGATIVE_SALES');
-  need(salesNetCents === sales.totals.totalCents &&
+    'As devoluções superam as vendas de mercadorias no período, após separar os serviços. Revise o relatório antes de projetar o simulador.', 409, 'SIMULATOR_NEGATIVE_SALES');
+  need(exactCents(salesNetCents + fields.serviceRevenueCents) === sales.totals.totalCents &&
     exactCents(fields.purchasesOptantCents + fields.purchasesNonOptantCents) === purchases.totals.totalCents,
   'Os campos do simulador divergem dos relatórios. Revise os arquivos.', 409, 'SIMULATOR_INCONSISTENT');
   const purchaseOther = purchases.reportingGroups.find(group => group.status === 'NAO_OPTANTE')!;
@@ -75,7 +83,8 @@ export async function generationSimulator(id: string, clientId: string) {
   if (classification.purchases.nonCnpjCount) warnings.push('As compras de CPF e outros documentos não consultáveis estão em Compras de empresas fora do Simples, com subtotal disponível para conferência.');
   if (classification.sales.otherDocumentsCount) warnings.push('As vendas com CNO, documentos inválidos ou ausentes estão em Vendas Não Optantes SN. Vendas identificadas como CPF têm campo próprio.');
   if (sales.operationTotals?.some((item: any) => item.operation === 'DEVOLUCAO' && item.lines > 0)) warnings.push('Devoluções foram identificadas na aba de vendas e abatidas do saldo líquido antes do preenchimento dos campos do simulador.');
+  if (fields.serviceRevenueCents > 0) warnings.push('Vendas de serviços foram separadas das mercadorias e preenchem a receita de serviços pela média mensal, sem duplicar o faturamento. Naturezas iniciadas por 9000 são serviços, independentemente do sufixo.');
   const projection = reportMonths ? annualizeReports(fields, reportMonths) : null;
-  return {projection, generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
+  return {projection, revenueSplit: {version: 'SALES_SERVICES_V1'}, generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
     purchases: sourceMetadata(purchases), sales: sourceMetadata(sales), fields, classification, warnings};
 }
