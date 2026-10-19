@@ -5,6 +5,7 @@
 - Todos os valores, composições e indicadores ficam na mesma tabela contínua, junto das respectivas linhas, sem separar a DRE em blocos ou painéis recolhidos.
 - A visão mensal mantém os 12 meses e o total anual no mesmo demonstrativo; a exportação CSV segue a mesma ordem.
 - O botão de impressão gera somente a DRE e sua identificação. O calendário não é separado em semestres; a paginação natural repete o cabeçalho para manter a leitura.
+- A impressão usa A4 horizontal na comparação anual e A3 horizontal no calendário completo. O ano aparece abaixo do mês em cada cabeçalho; empresa, regime e referência da RBT12 acompanham o demonstrativo.
 - Os valores, as fórmulas e as simulações salvas permanecem preservados.
 
 ## Entrega 19/10/2026 — DRE detalhada
