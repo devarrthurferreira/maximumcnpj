@@ -12,9 +12,11 @@
 .dre-calendar-controls label{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:600}
 .dre-calendar-controls select{min-width:160px}
 .dre-selected-regime{font-weight:650;color:#750207;font-size:13px;margin:9px 0 0}
-.simulator-clean .dre-complete .dre-section-row th{background:#efe6e9;color:#6b3546;padding:11px 14px;text-align:left;font-size:11px;letter-spacing:.04em;white-space:normal;position:sticky;left:0;z-index:1}
-.dre-section-row th>span{font-variant-numeric:tabular-nums;font-size:10px;opacity:.65;margin-right:7px}
-.simulator-clean .dre-complete .dre-row th{font-weight:500;color:#61505a;font-size:12px}
+.simulator-clean .dre-complete .dre-row th{font-weight:500;color:#61505a;font-size:12px;text-transform:none;letter-spacing:normal}
+.simulator-clean .dre-complete .dre-detail th{padding-left:28px;color:#88717e}
+.simulator-clean .dre-complete .dre-detail td{color:#77646e}
+.simulator-clean .dre-complete .dre-indicator th,.simulator-clean .dre-complete .dre-indicator td{background:#faf7f8}
+.dre-legend,.dre-method-note,.dre-footnotes{font-size:11px;color:#7c6873;line-height:1.65;margin:12px 0}
 .simulator-clean .dre-complete .dre-row th small{display:block;font-size:10px;line-height:1.5;font-weight:400;color:#87717d;margin-top:5px}
 .simulator-clean .dre-complete tr.dre-subtotal td,.simulator-clean .dre-complete tr.dre-subtotal th{background:#faf7f8;font-weight:650;border-top:1px solid #e8dce1}
 .simulator-clean .dre-complete tr.total td,.simulator-clean .dre-complete tr.total th{background:#f4e9ed;color:#750207;font-weight:700}
@@ -22,17 +24,10 @@
 .dre-amount{display:block;font-variant-numeric:tabular-nums;overflow-wrap:normal}
 .dre-percent{display:block;font-size:10px;color:#8b7080;margin-top:4px;font-weight:400;font-variant-numeric:tabular-nums}
 tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
-.dre-details{display:grid;gap:10px;margin-top:22px;min-width:0}
-.dre-breakdown{min-width:0;border:1px solid #e6dce0;border-radius:10px;background:#fff}
-.dre-breakdown>summary{display:flex;justify-content:space-between;gap:15px;align-items:center;list-style:none;cursor:pointer;font-size:12px;font-weight:600;padding:15px 17px;color:#684654}
-.dre-breakdown>summary::-webkit-details-marker{display:none}
-.dre-breakdown[open]>summary>span{transform:rotate(180deg)}
-.dre-breakdown>summary:focus-visible,.dre-table-wrap:focus-visible{outline:2px solid #750207;outline-offset:2px}
-.dre-breakdown-content{padding:0 16px 8px;min-width:0}
-.dre-breakdown-content .dre-table-wrap{margin-top:0}
-.sim-calendar .dre-breakdown table{min-width:500px}
-.sim-calendar .dre-single-month table,.sim-calendar.dre-single-month .dre-calendar-screen table{min-width:500px}
-.dre-print-calendar{display:none}
+.dre-footnotes p{margin:5px 0;line-height:1.55}
+.dre-table-wrap:focus-visible{outline:2px solid #750207;outline-offset:2px}
+.sim-calendar.dre-single-month .dre-calendar-screen table{min-width:500px}
+.dre-print-calendar,.dre-print-document{display:none}
 @media(max-width:640px){
   .dre-toolbar{align-items:flex-start;gap:12px}
   .dre-export-actions{width:100%}
@@ -44,8 +39,6 @@ tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
   .dre-calendar-controls select{flex:1;max-width:240px}
   .simulator-clean .dre-complete .dre-row th{min-width:130px;width:130px;max-width:150px;font-size:11px}
   .simulator-clean .dre-complete th,.simulator-clean .dre-complete td{padding:11px 9px;font-size:11px}
-  .dre-breakdown-content{padding:0 9px 5px}
-  .sim-calendar .dre-breakdown table{min-width:420px}
   .simulator-clean .sim-calendar.dre-single-month .dre-calendar-screen table{min-width:0;table-layout:fixed}
   .simulator-clean .sim-calendar.dre-single-month .dre-calendar-screen th:first-child{min-width:0;width:40%;max-width:none}
   .simulator-clean .sim-calendar.dre-single-month .dre-calendar-screen th{white-space:normal;overflow-wrap:anywhere}
@@ -57,17 +50,26 @@ tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
   .dre-toolbar,.dre-calendar-controls,.dre-complete .sim-table-hint,.dre-complete .sim-calendar-heading>label{display:none!important}
   .dre-complete .dre-calendar-screen{display:none!important}
   .dre-print-calendar{display:block}
-  .dre-print-semester{break-before:page;page-break-before:always}
-  .dre-print-semester h3{font-size:12px;color:#481825;margin:0 0 12px}
-  .simulator-clean .dre-complete .dre-print-semester table{min-width:0;width:100%;table-layout:fixed}
-  .simulator-clean .dre-complete .dre-print-semester th,.simulator-clean .dre-complete .dre-print-semester td{font-size:9px!important;padding:5px 3px!important;white-space:normal;overflow-wrap:anywhere}
-  .simulator-clean .dre-complete .dre-print-semester th:first-child{position:static;min-width:0;width:19%;max-width:none}
-  .simulator-clean .dre-complete .dre-print-semester thead th:first-child{width:19%}
-  .simulator-clean .dre-complete .dre-section-row th{position:static!important}
-  .dre-complete .dre-percent{font-size:7px}
-  .dre-complete .dre-breakdown{break-inside:avoid;margin:10px 0}
-  .dre-complete .dre-breakdown table{min-width:0}
-  .dre-complete .dre-row{break-inside:avoid}
+  .dre-print-calendar h3{font-size:12px;color:#481825;margin:0 0 12px}
+  .simulator-clean .dre-complete .dre-table-wrap{overflow:visible;border-radius:0}
+  .simulator-clean .dre-complete table{min-width:0;width:100%;table-layout:fixed}
+  .simulator-clean .dre-complete th,.simulator-clean .dre-complete td{font-size:11px!important;padding:5px 6px!important;white-space:normal;overflow-wrap:normal}
+  .simulator-clean .dre-complete th:first-child{position:static!important;min-width:0;width:28%;max-width:none}
+  .simulator-clean .dre-complete .dre-detail th{padding-left:14px!important}
+  .simulator-clean .dre-complete .dre-row th small{font-size:8px;margin-top:2px}
+  .simulator-clean .dre-complete .dre-print-calendar th,.simulator-clean .dre-complete .dre-print-calendar td,
+  .simulator-clean .dre-print-monthly th,.simulator-clean .dre-print-monthly td{font-size:9px!important;padding:4px 3px!important}
+  .simulator-clean .dre-complete .dre-print-calendar th:first-child,.simulator-clean .dre-print-monthly th:first-child{width:18%}
+  .dre-complete .dre-percent{font-size:8px}
+  .dre-complete .dre-row{break-inside:avoid;page-break-inside:avoid}
   .dre-complete thead{display:table-header-group}
   .dre-complete .sim-year-total{font-weight:700}
+  body.dre-print-only{background:#fff;overflow:visible}
+  body.dre-print-only > :not(#dre-print-document){display:none!important}
+  body.dre-print-only > #dre-print-document{display:block!important;margin:0;padding:0;border:0;border-radius:0;box-shadow:none;width:100%;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  .dre-print-identification{margin-bottom:14px}
+  .dre-print-identification h1{font-size:22px;margin:6px 0}
+  .dre-print-identification h2{font-size:16px;margin:4px 0}
+  .dre-print-identification p{font-size:11px;line-height:1.5;margin:3px 0}
+  .dre-print-document .dre-legend,.dre-print-document .dre-method-note,.dre-print-document .dre-denominator,.dre-print-document .dre-footnotes{font-size:9px;margin:9px 0}
 }

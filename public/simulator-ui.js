@@ -3,7 +3,7 @@ import {renderSection22,renderMonthlyDre,isSection22} from './simulator-extrato-
 import {annualizeReports, projectScenario, projectDifal} from './simulator-projection.js';
 import {renderProjectionCard} from './simulator-projection-view.js';
 import {buildDrePresentation} from './simulator-dre.js';
-import {renderAnnualDre,renderDrePrintCalendar} from './simulator-dre-view.js';
+import {renderAnnualDre,renderDrePrintCalendar,renderDrePrintDocument} from './simulator-dre-view.js';
 import {buildDreCsv,buildDreExportPayload} from './simulator-dre-export.js';
 import {mountNavigation} from './navigation.js';
 import {renderSimulationCharts} from './simulation-charts.js';
@@ -349,6 +349,8 @@ window.addEventListener('pagehide',()=>{if(S.pdfUrl)URL.revokeObjectURL(S.pdfUrl
 // Print every financial disclosure, preserving the reader’s choices after printing.
 const printDetails=[];
 window.addEventListener('beforeprint',()=>{
+  if(document.body.classList.contains('dre-print-only'))return;
+  if(S.result)setDrePrintPage(S.viewPeriod);
   if(S.result && $('#simulator-form')) {
     const context=document.createElement('section');context.id='simulation-print-context';
     for(const selector of ['#simulator-projection','.sim-period-details','#simulator-difal','#rbt12-details']) {
@@ -367,7 +369,26 @@ window.addEventListener('beforeprint',()=>{
     printDetails.push(detail);detail.open=true;
   });
 });
-window.addEventListener('afterprint',()=>{for(const detail of printDetails.splice(0))detail.open=false;$('#simulation-print-context')?.remove();$('.dre-print-calendar')?.remove();});
+window.addEventListener('afterprint',()=>{for(const detail of printDetails.splice(0))detail.open=false;$('#simulation-print-context')?.remove();$('.dre-print-calendar')?.remove();clearDrePrint();});
+
+let drePrintFocus=null;
+function setDrePrintPage(period){
+  $('#dre-print-page-style')?.remove();
+  const style=document.createElement('style');style.id='dre-print-page-style';
+  style.textContent=`@page { size: ${period==='monthly'?'A3':'A4'} landscape; margin: 12mm; }`;
+  document.head.append(style);
+}
+function clearDrePrint(){
+  $('#dre-print-document')?.remove();$('#dre-print-page-style')?.remove();document.body.classList.remove('dre-print-only');
+  if(drePrintFocus?.isConnected)drePrintFocus.focus({preventScroll:true});drePrintFocus=null;
+}
+function printDre(){
+  if(!S.result||!S.dreContext)return;
+  clearDrePrint();drePrintFocus=document.activeElement;
+  document.body.insertAdjacentHTML('beforeend',renderDrePrintDocument({...S.dreContext,company:S.source.company,regimeId:S.calendarRegime,showPercent:S.dreShowPercent,period:S.viewPeriod}));
+  document.body.classList.add('dre-print-only');setDrePrintPage(S.viewPeriod);
+  try{window.print();}catch(error){clearDrePrint();fail(error);}
+}
 
 function classificationDetails() {
   if(!S.source.classification)return '';
@@ -462,7 +483,7 @@ function renderResult() {
   document.querySelectorAll('#simulation-result details').forEach(el=>{const key=el.dataset.stateKey||el.className;if(S.detailStates.has(key))el.open=S.detailStates.get(key);});
   $('#export-simulation').onclick=exportSimulation;
   $('#export-dre-csv').onclick=exportDre;
-  $('#print-dre').onclick=()=>window.print();
+  $('#print-dre').onclick=printDre;
   $('#dre-show-percent').onchange=event=>{S.dreShowPercent=event.target.checked;renderResult();$('#dre-show-percent').focus({preventScroll:true});};
   document.querySelectorAll('[data-dre-month-view]').forEach(button=>button.onclick=()=>{S.dreMonthView=button.dataset.dreMonthView==='single';renderResult();document.querySelector(`[data-dre-month-view="${S.dreMonthView?'single':'all'}"]`).focus({preventScroll:true});});
   const monthSelect=$('#dre-month');if(monthSelect)monthSelect.onchange=()=>{S.dreMonth=Number(monthSelect.value);renderResult();$('#dre-month').focus({preventScroll:true});};

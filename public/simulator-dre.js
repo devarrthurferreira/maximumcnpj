@@ -12,6 +12,27 @@ const unique = (rows,key,value) => {const matches=Array.isArray(rows)?rows.filte
 const SUBTOTALS = new Set(['revenue','netRevenue','cmv','grossProfit','personnel','preTax','netProfit']);
 const GROUPS = ['salesOptantCents','salesNonOptantCents','salesCpfCents'];
 
+/** One continuous display/export order, retaining the original row objects and values. */
+export function unifiedDreRows(presentation) {
+  const base=(presentation?.sections||[]).flatMap(section=>section.rows||[]);
+  const details=(presentation?.details||[]).flatMap(group=>(group.rows||[]).map(row=>({row,parentKey:row.parentKey||group.parentKey})));
+  const children=new Map(),rows=[],seen=new Set();
+  for(const {row,parentKey} of details){
+    if(!children.has(parentKey))children.set(parentKey,[]);
+    children.get(parentKey).push(row);
+  }
+  const append=row=>{
+    if(!row||typeof row.key!=='string'||seen.has(row.key))return;
+    seen.add(row.key);rows.push(row);
+    for(const child of children.get(row.key)||[])append(child);
+  };
+  for(const row of base)append(row);
+  // Retain any extension whose parent is absent instead of hiding an available detail.
+  for(const {row} of details)append(row);
+  for(const row of presentation?.indicators||[])append(row);
+  return rows;
+}
+
 export function buildDrePresentation({result,monthlyGroups,projection,source,reportMonths,engineInput,reprocessing,calendar}={}) {
   const originals = Array.isArray(result?.regimes) ? result.regimes : [];
   const regimes = originals.map(r=>({id:r.id,name:r.name,available:r.available===true}));

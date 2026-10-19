@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildDreCsv, buildDreExportPayload} from '../public/simulator-dre-export.js';
-import {buildDrePresentation} from '../public/simulator-dre.js';
+import {buildDrePresentation, unifiedDreRows} from '../public/simulator-dre.js';
 import {buildMonthlyDre, DRE_ROWS} from '../public/simulator-calendar.js';
 
 // A small independent CSV reader checks quoted separators/newlines and exact cell counts.
@@ -27,7 +27,7 @@ function fixture() {
     regimes:[{id:'a',name:'Regime A',available:true},{id:'b',name:'Regime B',available:false}],
     sections:[{key:'revenue',label:'Receitas',rows:[row('revenue','Receita bruta total',1200)]},
       {key:'taxes',label:'Tributos',rows:[row('das','DAS',-120)]}],
-    details:[{key:'salesBreakdown',label:'Composição das vendas',rows:[row('salesCpf','Vendas; "CPFs"\nClientes',600,{informative:true})]}],
+    details:[{key:'salesBreakdown',label:'Composição das vendas',parentKey:'revenue',rows:[row('salesCpf','Vendas; "CPFs"\nClientes',600,{kind:'detail',parentKey:'revenue',informative:true})]}],
     indicators:[row('netMargin','Margem líquida',0.3,{kind:'indicator',unit:'percent',monthlyValues:{a:Array(12).fill(0.3)},calendarAnnualValues:{a:0.3}})]};
 }
 
@@ -45,25 +45,29 @@ test('CSV anual inclui DRE, detalhes e indicadores, BOM e números com sinais se
   const indicator = rows.find(row => row[2] === 'Margem líquida');
   assert.equal(indicator[4], '%');assert.equal(indicator[5], '30,00');assert.equal(indicator[6], '');
   assert.equal(rows.filter(row => ['DRE','Detalhamento informativo','Indicadores'].includes(row[0])).length, 4);
+  assert.deepEqual(rows.filter(row => ['DRE','Detalhamento informativo','Indicadores'].includes(row[0])).map(row => row[2]), ['Receita bruta total','Vendas; "CPFs"\nClientes','DAS','Margem líquida']);
   assert.deepEqual(data, before);
 });
 
-test('CSV mensal exporta doze meses e total de todos os regimes usando valores congelados, sem dividir o anual novamente', () => {
+test('CSV mensal mantém uma tabela e um cabeçalho com doze meses, total e todos os regimes na ordem unificada', () => {
   const data = fixture();
   data.sections[1].rows[0].monthlyValues.a[0] = -99.75;
   data.sections[1].rows[0].calendarAnnualValues.a = -999;
   const rows = readCsv(buildDreCsv({presentation:data,period:'monthly',showPercent:false}));
-  assert.deepEqual(rows.filter(row => row[0] === 'Regime tributário').map(row => row[1]), ['Regime A','Regime B']);
-  const headers = rows.filter(row => row[0] === 'Escopo');
-  assert.equal(headers.length, 2);assert.equal(headers[0].length, 20);
-  assert.equal(headers[0][5], 'Janeiro');assert.equal(headers[0][16], 'Dezembro');assert.equal(headers[0][17], 'Total anual / indicador anual');
-  const taxes = rows.filter(row => row[2] === 'DAS');
-  assert.equal(taxes[0][5], '-99,75');assert.equal(taxes[0][6], '-10,00');assert.equal(taxes[0][17], '-999,00');
-  assert(taxes[1].slice(5,18).every(value => value === 'Não disponível'));
-  assert.match(taxes[1][18], /Calendário não disponível/);
-  const indicators = rows.filter(row => row[2] === 'Margem líquida');
-  assert(indicators[0].slice(5,18).every(value => value === '30,00'));
-  assert.equal(rows.filter(row => ['DRE','Detalhamento informativo','Indicadores'].includes(row[0])).length, 8);
+  const headers = rows.filter(row => row[0] === 'Regime');
+  assert.equal(headers.length, 1);assert.equal(headers[0].length, 21);
+  assert.equal(headers[0][6], 'Janeiro');assert.equal(headers[0][17], 'Dezembro');assert.equal(headers[0][18], 'Total anual / indicador anual');
+  const taxes = rows.filter(row => row[3] === 'DAS');
+  assert.equal(taxes[0][6], '-99,75');assert.equal(taxes[0][7], '-10,00');assert.equal(taxes[0][18], '-999,00');
+  assert(taxes[1].slice(6,19).every(value => value === 'Não disponível'));
+  assert.match(taxes[1][19], /Calendário não disponível/);
+  const indicators = rows.filter(row => row[3] === 'Margem líquida');
+  assert(indicators[0].slice(6,19).every(value => value === '30,00'));
+  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores'].includes(row[1]));
+  assert.equal(dataRows.length, 8);
+  assert.deepEqual([...new Set(dataRows.map(row => row[0]))], ['Regime A','Regime B']);
+  for (const name of ['Regime A','Regime B']) assert.deepEqual(dataRows.filter(row => row[0] === name).map(row => row[3]), ['Receita bruta total','Vendas; "CPFs"\nClientes','DAS','Margem líquida']);
+  assert(dataRows.every(row => row.length === headers[0].length));
 });
 
 test('CSV neutraliza fórmulas em nomes, rótulos e notas e mantém aspas, separadores e quebras de linha', () => {
@@ -80,8 +84,8 @@ test('Legado sem detalhe e sem DIFAL conserva ausência, valores não disponíve
   const data = fixture();delete data.sections[0].rows[0].monthlyValues;data.details = [];
   const csv = buildDreCsv({presentation:data,period:'monthly'});
   assert(!csv.includes('DIFAL'));assert(!csv.includes('NaN'));assert(!csv.includes('undefined'));
-  const revenue = readCsv(csv).find(row => row[2] === 'Receita bruta total');
-  assert(revenue.slice(5,17).every(value => value === 'Não disponível'));
+  const revenue = readCsv(csv).find(row => row[3] === 'Receita bruta total');
+  assert(revenue.slice(6,18).every(value => value === 'Não disponível'));
   const snapshot = Object.freeze({_id:'synthetic',modelVersion:'legacy',result:Object.freeze({captured:123}),monthlyDre:Object.freeze({version:'DRE_CALENDAR_V1'}),extra:{untouched:true}});
   const before = JSON.stringify(snapshot), exported = buildDreExportPayload(snapshot,data);
   assert.notEqual(exported,snapshot);assert.equal(exported.result,snapshot.result);assert.equal(exported.monthlyDre,snapshot.monthlyDre);
@@ -99,12 +103,13 @@ test('Integração com a apresentação compartilhada preserva calendário diver
   const before = structuredClone({result,calendar});
   const presentation = buildDrePresentation({result,calendar});
   const rows = readCsv(buildDreCsv({presentation,period:'monthly',showPercent:true}));
-  const header = rows.find(row => row[0] === 'Escopo');assert.equal(header.length,33);
-  const revenue = rows.find(row => row[2] === 'Receita bruta total');
-  assert.equal(revenue[5],'300,00');assert.equal(revenue[6],'100,00');assert.equal(revenue[29],'2400,00');assert.equal(revenue[30],'100,00');
-  const sales = rows.find(row => row[2] === 'Receita de vendas');
-  assert.equal(sales[5],'83,33');assert.equal(sales[6],'27,777778');
-  const expectedRows = presentation.sections.reduce((n,section) => n+section.rows.length,0) + presentation.details.reduce((n,section) => n+section.rows.length,0) + presentation.indicators.length;
-  assert.equal(rows.filter(row => ['DRE','Detalhamento informativo','Indicadores'].includes(row[0])).length,expectedRows);
+  const header = rows.find(row => row[0] === 'Regime');assert.equal(header.length,34);
+  const revenue = rows.find(row => row[3] === 'Receita bruta total');
+  assert.equal(revenue[6],'300,00');assert.equal(revenue[7],'100,00');assert.equal(revenue[30],'2400,00');assert.equal(revenue[31],'100,00');
+  const sales = rows.find(row => row[3] === 'Receita de vendas');
+  assert.equal(sales[6],'83,33');assert.equal(sales[7],'27,777778');
+  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores'].includes(row[1]));
+  // Spreadsheet text escaping changes only the protective prefix, never row order.
+  assert.deepEqual(dataRows.map(row => row[3].replace(/^'/,'')), unifiedDreRows(presentation).map(row => row.label));
   assert.deepEqual({result,calendar},before);
 });
