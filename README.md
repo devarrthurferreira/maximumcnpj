@@ -1,4 +1,12 @@
-# Maximum CNPJ · v0.22.1
+# Maximum CNPJ · v0.23.0
+
+## Entrega 19/10/2026 — DRE detalhada
+
+- DRE organizada em receitas, deduções, custos e créditos, despesas operacionais e resultado, com subtotais de deduções tributárias, custos líquidos dos créditos, despesas operacionais e IRPJ/CSLL.
+- Composição das receitas de vendas e serviços, créditos e IRPJ disponível em detalhes recolhidos. Os valores são apresentados somente quando conciliam com a simulação; dados ausentes não viram zero. Créditos informativos e saldos credores não são somados novamente ao resultado.
+- Análise opcional de cada linha como percentual da receita bruta do mesmo regime e período, além de indicadores de margem e carga sobre a receita. Sem receita positiva ou regime disponível, percentuais não são calculados.
+- Visões anual e mensal usam os resultados já salvos. O calendário histórico permanece a fonte dos meses; a nova apresentação não altera o motor fiscal nem grava outra simulação.
+- Exportação da DRE em CSV e da simulação em JSON com a apresentação detalhada. Impressão inclui identificação do regime e, no calendário mensal, separa os meses em dois semestres para facilitar a leitura.
 
 ## Correção 19/10/2026 — simulações antigas com serviços manuais
 

@@ -49,7 +49,7 @@ test('Verified report values populate five categories and require monthly inputs
   await expect(page.locator('#rbt12')).toHaveValue('150000.00');await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   expect(await page.locator('.sim-dre tbody th').first().evaluate(el=>getComputedStyle(el).position)).toBe('sticky');
-  await page.locator('.sim-table-wrap').evaluate(el=>el.scrollLeft=350);await expect(page.locator('.sim-dre th').first()).toBeVisible();
+  await page.locator('.sim-dre > .sim-table-wrap').evaluate(el=>el.scrollLeft=350);await expect(page.locator('.sim-dre th').first()).toBeVisible();
   const mobile=info.outputPath('simulador-mobile.png');await page.screenshot({path:mobile,fullPage:true});await info.attach('Simulador mobile',{path:mobile,contentType:'image/png'});expect(errors).toEqual([]);
 });
 test('Multi-month normalization balances cents, restores reports, and isolates drafts by company',async({page})=>{
@@ -82,7 +82,7 @@ test('Dashboard shows five charts, scales every monetary view and expands every 
   await expect(page.locator('.sim-chart-revenue .sim-chart-composition-summary strong')).toContainText('11.000,01');
   await expect(page.locator('.sim-chart-purchases .sim-chart-composition-summary strong')).toContainText('4.500,01');
   await expect(page.locator('.sim-chart-expense-total strong')).toContainText('15.700,00');
-  const cells=await page.locator('.sim-dre tr').filter({hasText:'Receita bruta total'}).locator('td').allTextContents();expect(cells).toHaveLength(13);expect(cells.slice(0,12).every(t=>t.includes('11.000,01'))).toBe(true);expect(cells[12]).toContain('132.000,12');await expect(page.locator('.sim-calendar thead th')).toHaveCount(14);
+  const cells=await page.locator('.sim-dre tr').filter({hasText:'Receita bruta total'}).locator('td').allTextContents();expect(cells).toHaveLength(13);expect(cells.slice(0,12).every(t=>t.includes('11.000,01'))).toBe(true);expect(cells[12]).toContain('132.000,12');await expect(page.locator('.sim-calendar .dre-calendar-screen thead th')).toHaveCount(14);
   const parse=(v:string)=>Number(v.replace(/[^0-9,-]/g,'').replace(',','.'));
   const monthly=await page.locator('.sim-chart-profit .sim-chart-row-head strong').allTextContents();monthly.forEach((v,i)=>expect(parse(v)).toBeCloseTo(parse(annual[i])/12,2));
   expect(await page.locator('#simulation-result').innerText()).not.toMatch(/NaN|Infinity/);
@@ -240,8 +240,8 @@ test('DRE mensal mostra 12 meses, muda regime e conserva a RBT12 do extrato',asy
  await setup(page);await page.setViewportSize({width:1440,height:1100});await page.goto(url);await complete(page,{serviceRevenue:1000,salaries:3000,rent:700});
  await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
  await page.getByRole('button',{name:'Mensal',exact:true}).click();
- await expect(page.locator('.sim-calendar thead th')).toHaveCount(14);
- await expect(page.locator('.sim-calendar thead')).toContainText('Janeiro');await expect(page.locator('.sim-calendar thead')).toContainText('Dezembro');
+ await expect(page.locator('.sim-calendar .dre-calendar-screen thead th')).toHaveCount(14);
+ await expect(page.locator('.sim-calendar .dre-calendar-screen thead')).toContainText('Janeiro');await expect(page.locator('.sim-calendar .dre-calendar-screen thead')).toContainText('Dezembro');
  await expect(page.locator('.sim-extrato-reference')).toContainText('150.000,00');await expect(page.locator('.sim-extrato-reference')).toContainText('08/2026');
  const options=await page.locator('#dre-regime option').evaluateAll(options=>options.map(o=>(o as HTMLOptionElement).value));
  const parse=(text:string)=>Number(text.replace(/[^0-9,-]/g,'').replace(',','.'));
@@ -251,8 +251,8 @@ test('DRE mensal mostra 12 meses, muda regime e conserva a RBT12 do extrato',asy
  }
  const desktop=info.outputPath('dre-janeiro-dezembro-desktop.png');await page.locator('.sim-calendar').screenshot({path:desktop});await info.attach('DRE mensal desktop',{path:desktop,contentType:'image/png'});
  await page.setViewportSize({width:390,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
- await page.locator('.sim-calendar .sim-table-wrap').evaluate(el=>el.scrollLeft=el.scrollWidth);
- const heading=page.locator('.sim-calendar thead th').first();expect(await heading.evaluate(el=>getComputedStyle(el).position)).toBe('sticky');
+ await page.locator('.sim-calendar > .sim-table-wrap').evaluate(el=>el.scrollLeft=el.scrollWidth);
+ const heading=page.locator('.sim-calendar .dre-calendar-screen thead th').first();expect(await heading.evaluate(el=>getComputedStyle(el).position)).toBe('sticky');
  const mobile=info.outputPath('dre-janeiro-dezembro-mobile.png');await page.locator('.sim-calendar').screenshot({path:mobile});await info.attach('DRE mensal mobile',{path:mobile,contentType:'image/png'});
- await page.getByRole('button',{name:'Anual',exact:true}).click();await expect(page.locator('.sim-dre thead th')).toHaveCount(5);
+ await page.getByRole('button',{name:'Anual',exact:true}).click();await expect(page.locator('.sim-dre > .dre-table-wrap thead th')).toHaveCount(5);
 });

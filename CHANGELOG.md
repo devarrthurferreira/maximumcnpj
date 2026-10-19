@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.23.0] — 2026-10-19
+
+- DRE anual e mensal organizada em blocos, com subtotais e análise percentual opcional sobre a receita bruta.
+- Composição de receitas, créditos e IRPJ, com indicadores gerenciais e conciliação contra os valores salvos; detalhes permanecem recolhidos por padrão.
+- Apresentação compartilhada por tela, CSV e JSON, preservando resultados, calendário histórico e ausência de dados sem recalcular cenários.
+- Impressão do calendário em dois semestres, com regime identificado e restauração do estado da tela após imprimir.
+- Regressões de históricos, percentuais, indisponibilidade, conciliação, exportação, calendário, celular e impressão.
+
 ## [0.22.1] — 2026-10-19
 
 - Corrigido bloqueio indevido de simulações antigas que possuem serviços manuais e importados: a migração conserva o serviço manual como adicional mensal, conforme a orientação da tela antiga, e reclassifica os serviços importados sem duplicar mercadorias.
