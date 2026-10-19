@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {planReprocessing,reprocessedSimulationId} from '../src/simulation-reprocessing.ts';
+import {planReprocessing,reprocessedSimulationId,SERVICE_REVENUE_MIGRATION_REVISION} from '../src/simulation-reprocessing.ts';
 import {annualizeReports,projectDifal,projectScenario} from '../public/simulator-projection.js';
 import {calculateSimulation,draftToInput,MODEL_VERSION} from '../public/simulator-engine.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
@@ -25,11 +25,56 @@ test('migração preserva deltas e despesas em centavos, separa serviço e não 
  assert.equal(p.input.parentSimulationId,original._id);assert.equal(p.alreadyCurrent,false);assert.deepEqual(original,before);
  assert.equal(p.input.simulationId,reprocessedSimulationId('ws',original._id));assert.notEqual(p.input.simulationId,reprocessedSimulationId('other',original._id));
 });
-test('ambiguidades, totais/baseline divergentes, período trocado e DIFAL parcial não recebemOK',()=>{
+test('serviços manuais legados complementam a base importada uma única vez, sem alterar a unidade mensal',()=>{
+ for(const months of [1,12])for(const manual of [0,0.03,25,2500.37,30004.44]){
+  const {original,source}=fixture(),oldProjection=annualizeReports(original.source.fields,months);
+  original.reportMonths=months;original.projection=oldProjection;
+  original.baselineMonthlyGroups=Object.fromEntries(Object.entries(oldProjection.monthlyGroupsCents).map(([field,cents])=>[field,Number(cents)/100]));
+  original.monthlyGroups={...original.baselineMonthlyGroups,
+   salesCpfCents:(oldProjection.monthlyGroupsCents.salesCpfCents+1000)/100,
+   purchasesNonOptantCents:(oldProjection.monthlyGroupsCents.purchasesNonOptantCents+200)/100};
+  original.draft.values={...original.draft.values,serviceRevenue:manual,salesRevenue:original.monthlyGroups.salesCpfCents,
+   regularPurchases:original.monthlyGroups.purchasesNonOptantCents};
+  const before=structuredClone(original),p=planReprocessing(original,source,'ws');
+  const expected=annualizeReports(source.fields,months),manualCents=Math.round(manual*100);
+  assert.equal(Math.round(p.input.draft.values.serviceRevenue*100),expected.monthlyGroupsCents.serviceRevenueCents!+manualCents);
+  assert.equal(Math.round(p.input.draft.values.salesRevenue*100),expected.monthlyGroupsCents.salesCpfCents+1000);
+  assert.equal(Math.round(p.input.draft.values.serviceRevenue*100)+Math.round(p.input.draft.values.salesRevenue*100),
+   Math.round(original.draft.values.serviceRevenue*100)+Math.round(original.draft.values.salesRevenue*100),'A reclassificação preserva a receita combinada, inclusive quando o manual é menor que a base importada.');
+  assert.deepEqual(p.context.serviceRevenueMigration,{revision:SERVICE_REVENUE_MIGRATION_REVISION,policy:'ADDITIONAL_TO_REPORT',unit:'CENTS',
+   sourceJobId:source.sales.jobId,reportMonths:months,sourceServiceTotalCents:5000,reportMonthlyServiceCents:expected.monthlyGroupsCents.serviceRevenueCents,
+   priorMonthlyServiceCents:manualCents,appliedMonthlyServiceCents:expected.monthlyGroupsCents.serviceRevenueCents!+manualCents,
+   warning:'Os serviços manuais antigos foram preservados como receita mensal adicional aos serviços do relatório, conforme a orientação do formulário original.'});
+  assert.deepEqual(original,before);
+ }
+});
+test('cenário já separado mantém o delta de serviços, inclusive ajuste abaixo da base importada',()=>{
+ const {original,source}=fixture();original.source=structuredClone(source);
+ original.projection=annualizeReports(source.fields,1);original.baselineServiceRevenue=50;
+ original.baselineMonthlyGroups.salesCpfCents=100;original.monthlyGroups.salesCpfCents=110;
+ original.draft.values.salesRevenue=110;original.draft.values.serviceRevenue=25;
+ const p=planReprocessing(original,source,'ws');assert.equal(p.input.draft.values.serviceRevenue,25);
+ assert.equal(p.context.serviceRevenueMigration,null);
+ original.baselineServiceRevenue=49;
+ assert.throws(()=>planReprocessing(original,source,'ws'),(e:any)=>e.code==='REPROCESS_BASELINE');
+});
+test('contrato de serviços parcial ou desconhecido não é tratado como receita adicional legada',()=>{
+ for(const change of [
+  (o:any)=>{o.source.revenueSplit={version:'UNKNOWN'};},
+  (o:any)=>{o.source.revenueSplit=null;},
+  (o:any)=>{o.source.fields.serviceRevenueCents=5000;},
+  (o:any)=>{o.source.fields.serviceRevenueCents=0;},
+  (o:any)=>{o.baselineServiceRevenue=0;},
+  (o:any)=>{o.projection.monthlyGroupsCents.serviceRevenueCents=0;},
+ ]){const {original,source}=fixture();change(original);assert.throws(()=>planReprocessing(original,source,'ws'),(e:any)=>e.code==='REPROCESS_SERVICES');}
+ const {original,source}=fixture();original.baselineServiceRevenue=null;original.draft.values.serviceRevenue=25;
+ assert.equal(planReprocessing(original,source,'ws').input.draft.values.serviceRevenue,75,'Base de serviços nula equivale à ausência no contrato legado.');
+});
+test('totais/baseline divergentes, ajustes negativos, período trocado e DIFAL parcial não recebem OK',()=>{
  for(const [code,change]of[
-  ['SERVICE_REVENUE_AMBIGUOUS',(o:any,s:any)=>o.draft.values.serviceRevenue=50],
   ['REPROCESS_INPUT_TOTAL',(o:any,s:any)=>o.draft.values.salesRevenue=159],
   ['REPROCESS_BASELINE',(o:any,s:any)=>o.baselineMonthlyGroups.salesCpfCents=149],
+  ['REPROCESS_ADJUSTMENT',(o:any,s:any)=>{o.monthlyGroups.salesCpfCents=0;o.draft.values.salesRevenue=0;}],
   ['REPROCESS_PERIOD',(o:any,s:any)=>{o.reportPeriod={startMonth:'2026-01',endMonth:'2026-01',months:1};s.period={startMonth:'2026-02',endMonth:'2026-02',months:1};}],
   ['DIFAL_UF_PENDING',(o:any,s:any)=>s.sales.difal.pendingLines=1],
   ['DIFAL_SOURCE_MISSING',(o:any,s:any)=>delete s.sales.difal],

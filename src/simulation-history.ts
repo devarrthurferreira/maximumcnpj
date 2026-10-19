@@ -150,6 +150,8 @@ export async function deleteSimulation(actor: LookupActor, id: string) {
 /** Append only. Repeated network requests with the same ID never create a second result. */
 type ReprocessingContext = {
   version: string; originalId: string; source: Source; rbt12Extraction: any; rbt12Manual: any;
+  serviceRevenueMigration?: {revision:string;policy:'ADDITIONAL_TO_REPORT';unit:'CENTS';sourceJobId:string;reportMonths:number;
+    sourceServiceTotalCents:number;reportMonthlyServiceCents:number;priorMonthlyServiceCents:number;appliedMonthlyServiceCents:number;warning:string} | null;
 };
 
 export async function createSimulation(actor: LookupActor, input: unknown) {
@@ -217,7 +219,8 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   const snapshot = {_id: simulationId, ...scope(), requestHash, generationId, clientId,
     title: validated.title || `${source.company.name} · ${draft.year}`, company: source.company,
     createdAt, createdBy: {id: actor._id, name: actor.name}, appVersion: VERSION,
-    ...(reprocessing ? {reprocessing: {version: reprocessing.version, originalId: reprocessing.originalId, completedAt: createdAt}} : {}),
+    ...(reprocessing ? {reprocessing: {version: reprocessing.version, originalId: reprocessing.originalId, completedAt: createdAt,
+      ...(reprocessing.serviceRevenueMigration ? {serviceRevenueMigration:reprocessing.serviceRevenueMigration} : {})}} : {}),
     modelVersion: MODEL_VERSION, calculatorSourceCommit: CALCULATOR_SOURCE_COMMIT, taxSources: TAX_SOURCES,
     source, projection, difalProjection, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
     monthlyGroups, monthlyGroupsUnit: 'BRL', baselineMonthlyGroups,

@@ -15,6 +15,7 @@ import {calculateSimulation, draftToInput, MODEL_VERSION} from '../public/simula
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 
 export const REPROCESS_VERSION = 'SERVICES_DIFAL_2026_10_V1';
+export const SERVICE_REVENUE_MIGRATION_REVISION = 'LEGACY_ADDITIONAL_SERVICES_V1';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const PAGE_SIZE = 100;
 const key = () => 'simulation-reprocessing:' + digest(JSON.stringify([scope().workspaceId, REPROCESS_VERSION]));
@@ -70,7 +71,12 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   })) as Record<ReportGroup,number>;
   const draft = structuredClone(original.draft), priorService = moneyCents(draft.values.serviceRevenue);
   const oldSplit = original.source?.revenueSplit?.version === 'SALES_SERVICES_V1';
+  if(!oldSplit)pending(!Object.hasOwn(original.source,'revenueSplit') &&
+    !Object.hasOwn(original.source.fields || {},'serviceRevenueCents') && original.baselineServiceRevenue == null &&
+    !Object.hasOwn(original.projection?.monthlyGroupsCents || {},'serviceRevenueCents'),
+    'REPROCESS_SERVICES','O histórico possui indicadores de serviços separados sem uma versão de contrato reconhecida.');
   const newService = p.monthlyGroupsCents.serviceRevenueCents;
+  let serviceRevenueMigration = null;
   if (oldSplit) {
     const baselineService = original.baselineServiceRevenue ?? (original.projection?.monthlyGroupsCents?.serviceRevenueCents === undefined ? undefined : original.projection.monthlyGroupsCents.serviceRevenueCents/100);
     pending(baselineService !== undefined, 'REPROCESS_BASELINE', 'O histórico não conserva a base original de serviços.');
@@ -79,9 +85,16 @@ export function planReprocessing(original: any, source: any, workspaceId: string
       'REPROCESS_BASELINE','A base original de serviços diverge da projeção congelada no histórico.');
     draft.values.serviceRevenue = (newService + priorService - moneyCents(baselineService)) / 100;
   } else {
-    pending(!(priorService > 0 && source.fields.serviceRevenueCents > 0), 'SERVICE_REVENUE_AMBIGUOUS',
-      'Há serviços informados manualmente e serviços no relatório antigo. É necessário distinguir receita adicional de possível duplicação antes de concluir.');
-    draft.values.serviceRevenue = priorService > 0 ? priorService / 100 : newService / 100;
+    // The old form explicitly instructed users not to repeat services already in sales.
+    // Its monthly service input therefore supplements the imported revenue. Move the
+    // imported service baseline out of goods, preserving that additional amount once.
+    const appliedService = newService + priorService;
+    pending(Number.isSafeInteger(appliedService), 'REPROCESS_ADJUSTMENT', 'A receita de serviços ultrapassa o limite de cálculo.');
+    draft.values.serviceRevenue = appliedService / 100;
+    serviceRevenueMigration = {revision:SERVICE_REVENUE_MIGRATION_REVISION,policy:'ADDITIONAL_TO_REPORT' as const,unit:'CENTS' as const,
+      sourceJobId:source.sales.jobId,reportMonths:original.reportMonths,sourceServiceTotalCents:source.fields.serviceRevenueCents,
+      reportMonthlyServiceCents:newService,priorMonthlyServiceCents:priorService,appliedMonthlyServiceCents:appliedService,
+      warning:'Os serviços manuais antigos foram preservados como receita mensal adicional aos serviços do relatório, conforme a orientação do formulário original.'};
   }
   draft.values.salesRevenue = REPORT_GROUPS.slice(0,3).reduce((sum, field) => sum + moneyCents(monthlyGroups[field], true), 0) / 100;
   draft.values.simplePurchases = monthlyGroups.purchasesOptantCents;
@@ -123,7 +136,7 @@ export function planReprocessing(original: any, source: any, workspaceId: string
     clientId: original.clientId, parentSimulationId: original._id, title: String(original.title || source.company.name).slice(0,140) + ' · Atualizada',
     reportMonths: original.reportMonths, periodConfirmed: true, monthlyGroups, draft,
     ...(rbt12Source === 'MANUAL' ? {rbt12Source, rbt12ManualConfirmed: true} : {rbt12ExtractionId: rbt12Extraction!.id})};
-  return {alreadyCurrent, input, context: {version: REPROCESS_VERSION, originalId: original._id, source, rbt12Extraction, rbt12Manual}};
+  return {alreadyCurrent, input, context: {version: REPROCESS_VERSION, originalId: original._id, source, rbt12Extraction, rbt12Manual, serviceRevenueMigration}};
 }
 
 async function status(page = 1, retryAfterMs = 0) {
@@ -187,7 +200,9 @@ async function reprocessItem(actor: LookupActor, item: Doc) {
   }
   if (plan.alreadyCurrent) return {childId:null,status:'OK',code:'ALREADY_CURRENT',message:'Simulação conferida: cálculos e fontes já correspondem às regras atuais.'};
   const child = await createReprocessedSimulation(actor, plan.input, plan.context);
-  return {childId:child._id,status:'OK',code:'UPDATED',message:'Simulação refeita com serviços separados e DIFAL na DRE. Original preservado.'};
+  const migration = plan.context.serviceRevenueMigration;
+  return {childId:child._id,status:'OK',code:'UPDATED',message:'Simulação refeita com serviços separados e DIFAL na DRE. Original preservado.' +
+    (migration && migration.priorMonthlyServiceCents > 0 ? ' ' + migration.warning : '')};
 }
 
 export async function reprocessSimulations(actor: LookupActor, input: unknown) {
@@ -206,6 +221,12 @@ export async function reprocessSimulations(actor: LookupActor, input: unknown) {
     await items.createIndex({workspaceId:1,batchId:1,status:1,originalId:1});
     // Only the workspace lease owner can claim work. Recover interrupted requests after lease expiry.
     await items.updateMany(scope({batchId:key(),status:'PROCESSING'}),{$set:{status:'QUEUED',code:'QUEUED',message:'Retomando recálculo interrompido.',updatedAt:new Date()}});
+    // Revisit only the obsolete ambiguity gate, once for this documented policy.
+    // Keep batch/child IDs stable; completed, deleted and other pending items stay untouched.
+    await items.updateMany(scope({batchId:key(),status:'PENDING',code:'SERVICE_REVENUE_AMBIGUOUS',
+      serviceRevenueMigrationRevision:{$ne:SERVICE_REVENUE_MIGRATION_REVISION}}),{$set:{status:'QUEUED',code:'QUEUED',
+      serviceRevenueMigrationRevision:SERVICE_REVENUE_MIGRATION_REVISION,
+      message:'Retomando a separação dos serviços com a regra documentada do formulário original.',updatedAt:new Date()}});
     if((input as any)?.retryFailed === true)await items.updateMany(scope({batchId:key(),status:'FAILED',attempts:{$lt:3}}),{$set:{status:'QUEUED',code:'QUEUED',message:'Nova tentativa solicitada para falha de processamento.',updatedAt:new Date()}});
     if(!batch.inventoryComplete)await inventory(batch);
     for(let count=0;count<3 && Date.now()-start<22000;count++) {

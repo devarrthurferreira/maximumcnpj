@@ -1,5 +1,12 @@
 # Histórico de alterações
 
+## [0.22.1] — 2026-10-19
+
+- Corrigido bloqueio indevido de simulações antigas que possuem serviços manuais e importados: a migração conserva o serviço manual como adicional mensal, conforme a orientação da tela antiga, e reclassifica os serviços importados sem duplicar mercadorias.
+- Memória da migração com valores importado, manual e total; originais, despesas, RBT12 e ajustes reconciliáveis preservados.
+- Retomada única das pendências antigas desse motivo, no mesmo lote e com os mesmos identificadores; versões já atualizadas não são duplicadas.
+- Regressões de receita combinada, retomada, isolamento e acompanhamento automático no navegador.
+
 ## [0.22.0] — 2026-10-19
 
 - Detalhes financeiros recolhidos por padrão, com escolha preservada ao alternar abas/períodos e expansão temporária na impressão.
