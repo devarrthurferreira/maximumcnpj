@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.24.0] — 2026-10-19
+
+- Leitura da seção 2.2 com separação determinística de valor e competência colados pelo OCR, identificação com espaços e cabeçalhos de continuação.
+- Validação de confiança cobre dados críticos e cabeçalhos divididos em linhas; períodos malformados e valores ambíguos continuam bloqueados.
+- Ordem de leitura de texto nativo rotacionado e duplicatas exatas corrigidas, preservando as páginas originais; telemetria do runtime OCR desativada antes da inicialização.
+- Recuperação do PDF do rascunho após recarga, invalidação durante releitura e mensagens específicas para interrupções de upload/processamento.
+- Ciclo de processamento protege resultados concluídos contra falhas de transporte, reprocessamentos inválidos e tentativas concorrentes; escrita restrita aos perfis autorizados.
+- Regressões com PDFs sintéticos, API, armazenamento e navegador; histórico e apresentação da DRE preservados.
+
 ## [0.23.1] — 2026-10-19
 
 - DRE única com composição de receitas, créditos, IRPJ e indicadores integrados à tabela principal.

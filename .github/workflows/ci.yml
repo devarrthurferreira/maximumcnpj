@@ -16,6 +16,7 @@ jobs:
           --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
           --health-interval 10s --health-timeout 5s --health-retries 5
     env:
+      ORT_DISABLE_TELEMETRY: '1'
       MONGODB_URI: mongodb://127.0.0.1:27017
       MONGODB_DB: maximum_e2e
       WORKSPACE_ID: ci

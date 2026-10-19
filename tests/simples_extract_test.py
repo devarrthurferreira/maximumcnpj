@@ -66,6 +66,82 @@ def paged_pdf(*texts, scanned_tail=True):
 
 
 class SimplesExtractTests(unittest.TestCase):
+    def test_cnpj_punctuation_can_be_separate_tokens_without_changing_digits(self):
+        for text in [sample().replace('12.345.678', '12 . 345 . 678'),
+                     declaration_sample().replace('12.345.678/0001-00', '12 . 345 . 678 / 0001 - 00'),
+                     declaration_sample().replace('12.345.678/0001-00', '12.345.678 /\n0001 - 00')]:
+            with self.subTest(text=text[:180]):
+                result = parse_statement_text(text)
+                self.assertEqual(result['cnpjBasico'], '12345678')
+                self.assertEqual(result['rbt12Cents'], 16200000)
+        for invalid in ['12 . 345 . 67', '12 . 345 . 6789', '12 . 34S . 678', '12 . 345 . 67 8']:
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'CNPJ'):
+                parse_statement_text(sample().replace('12.345.678', invalid))
+        for invalid in ['12 . 345 . 678 / 0001 - 0', '12 . 345 . 678 / 0001 - 000', '12 . 345 . 678 / 0001 - O0']:
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'CNPJ'):
+                parse_statement_text(declaration_sample().replace('12.345.678/0001-00', invalid))
+        with self.assertRaisesRegex(ValueError, 'CNPJ'):
+            parse_statement_text(sample() + '\nCNPJ Básico: 87 . 654 . 321')
+
+    def test_pa_rejects_truncated_year_and_extra_date_components(self):
+        for invalid in ['08/202600', '08/2026/01', '08/2026 / 01', '08/2026X']:
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'PA'):
+                parse_statement_text(sample().replace('(PA): 08/2026', '(PA): ' + invalid))
+        for invalid in ['31/08/202600', '31/08/2026/01', '31/08/2026 / 01']:
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'PA'):
+                parse_statement_text(declaration_sample().replace('31/08/2026', invalid))
+
+    def test_continuation_metadata_is_not_a_revenue_competence(self):
+        base = sample()
+        cut = base.index('09/2025')
+        header = ('Extrato do Simples Nacional\nCNPJ Básico: 12 . 345 . 678\n'
+                  'Período de Apuração (PA): 08/2026\n'
+                  '2.2) Receitas Brutas Anteriores (R$)\n2.2.1) Mercado Interno\n')
+        for text in [base[:cut] + '\n' + header + base[cut:],
+                     base[:cut] + '\n' + header.replace('Período de Apuração (PA): 08/2026',
+                         'Período de Apuração: 01/08/2026 a 31/08/2026') + base[cut:]]:
+            result = parse_statement_text(text)
+            self.assertEqual(result['rbt12Cents'], 16200000)
+            self.assertEqual(len(result['priorRevenues']), 19)
+        result, _, _ = convert_statement_pdf(paged_pdf(base[:cut], header + base[cut:], scanned_tail=False),
+            section_only=True, ocr_engine=lambda _: self.fail('Native continuation does not need OCR'))
+        self.assertEqual(result['processedPages'], 2)
+        self.assertEqual(result['rbt12Cents'], 16200000)
+        for conflict in [header.replace('08/2026', '07/2026'), header.replace('12 . 345 . 678', '87 . 654 . 321')]:
+            with self.assertRaises(ValueError):
+                parse_statement_text(base[:cut] + '\n' + conflict + base[cut:])
+
+    def test_next_section_without_parenthesis_stops_before_payroll_but_not_money(self):
+        for heading in ['2.3 Folha', '2.3\nFolha', '2 . 3 Folha']:
+            with self.subTest(heading=heading):
+                self.assertEqual(parse_statement_text(sample().replace('2.3) Folha', heading))['rbt12Cents'], 16200000)
+        # A monetary token at the start of a wrapped line is not a section label.
+        text = sample().replace('08/2025 8.000,00', '08/2025\n2.300,00')
+        self.assertEqual(parse_statement_text(text)['rbt12Cents'], 15630000)
+
+    def test_wrapped_sections_and_competences_keep_ocr_confidence_gate(self):
+        from reporting.pdf_ocr import group_rows
+        cases = [
+            (sample().replace('2.2) Receitas', '2.2)\nReceitas')
+                .replace('2.2.1) Mercado', '2.2.1)\nMercado')
+                .replace('2.2.2) Mercado', '2.2.2)\nMercado'), '05/2025'),
+            (sample().replace('08/2025 8.000,00', '08/\n2025\n8.000,00'), '2025'),
+            (sample().replace('12.345.678', '12 . 345 .\n678'), '678'),
+        ]
+        for text, critical in cases:
+            rows = group_rows([{'text': line, 'box': [0, i * 20, 500, i * 20 + 10], 'confidence': .99}
+                               for i, line in enumerate(text.splitlines())])
+            converted = {'pdf': b'%PDF-fixture', 'text': text, 'ocrPages': [1], 'pageCount': 1,
+                         'ocrConfidence': .98, 'ocrEngine': 'MOCK', 'pages': [{'page': 1, 'rows': rows}]}
+            with self.subTest(critical=critical), patch('reporting.pdf_ocr.searchable_pdf', return_value=converted):
+                self.assertEqual(convert_statement_pdf(b'%PDF-fixture')[0]['rbt12Cents'], 16200000)
+                matched = [row for row in rows if row['text'].startswith(critical)]
+                self.assertTrue(matched)
+                for row in matched:
+                    row['items'][0]['confidence'] = .4
+                with self.assertRaisesRegex(ValueError, 'baixa confiança'):
+                    convert_statement_pdf(b'%PDF-fixture')
+
     def test_pgdas_declaration_uses_date_range_and_matriz_with_same_22_basis(self):
         result=parse_statement_text(declaration_sample())
         self.assertEqual(result['documentType'],'PGDAS_D_DECLARACAO')
@@ -150,11 +226,59 @@ class SimplesExtractTests(unittest.TestCase):
                     convert_statement_pdf(b'%PDF-fixture')
 
     def test_fragmented_or_contaminated_money_never_uses_a_numeric_suffix(self):
-        for amount in ['8 000,00','8\n000,00','8O00,00','8.000,00x','8.000,00 5','R$ 8 000,00']:
+        for amount in ['8 000,00','8\n000,00','8O00,00','8.000,00x','8.000,00 5','R$ 8 000,00',
+                       '8.000,00\n5', '8.000,00\n,50', '8.000,00\n1']:
             with self.subTest(amount=amount), self.assertRaises(ValueError):
                 parse_statement_text(sample().replace('08/2025 8.000,00','08/2025 '+amount))
         valid=sample().replace('08/2025 8.000,00','08/2025 R$ 8000,00')
         self.assertEqual(parse_statement_text(valid)['rbt12Cents'],16200000)
+
+    def test_joined_amount_and_next_competence_only_adds_a_cell_separator(self):
+        import re
+        expected = parse_statement_text(sample())
+        joined = re.sub(r'(\d,\d{2}) (?=(?:0[1-9]|1[0-2])/20\d{2})', r'\1', sample())
+        result = parse_statement_text(joined)
+        self.assertEqual(result['priorRevenues'], expected['priorRevenues'])
+        self.assertEqual(result['rbt12Window'], expected['rbt12Window'])
+        self.assertEqual(result['rbt12Cents'], 16200000)
+        # Unsupported dates or extra decimal digits must not be guessed/repaired.
+        for invalid in ['7.000,0013/2025', '7.000,00008/2025', '7.000,0008/202500',
+                        '7.000,0008/2025/01', '7.000,0008/2025X']:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                parse_statement_text(sample().replace('7.000,00 08/2025', invalid))
+
+    def test_joined_cell_confidence_covers_value_and_wrapped_competence(self):
+        from reporting.pdf_ocr import group_rows
+        for text, critical in [
+            (sample().replace('7.000,00 08/2025', '7.000,0008/2025'), '05/2025'),
+            (sample().replace('7.000,00 08/2025', '7.000,0008/\n2025'), '2025'),
+        ]:
+            rows = group_rows([{'text': line, 'box': [0, i * 20, 500, i * 20 + 10], 'confidence': .99}
+                               for i, line in enumerate(text.splitlines())])
+            converted = {'pdf': b'%PDF-fixture', 'text': text, 'ocrPages': [1], 'pageCount': 1,
+                         'ocrConfidence': .98, 'ocrEngine': 'MOCK', 'pages': [{'page': 1, 'rows': rows}]}
+            with self.subTest(critical=critical), patch('reporting.pdf_ocr.searchable_pdf', return_value=converted):
+                self.assertEqual(convert_statement_pdf(b'%PDF-fixture')[0]['rbt12Cents'], 16200000)
+                matched = [row for row in rows if row['text'].startswith(critical)]
+                self.assertTrue(matched)
+                for row in matched:
+                    row['items'][0]['confidence'] = .4
+                with self.assertRaisesRegex(ValueError, 'baixa confiança'):
+                    convert_statement_pdf(b'%PDF-fixture')
+
+    def test_known_page_footers_are_tolerated_but_cannot_hide_numeric_fragments(self):
+        footers = [
+            'Emitido em 02/10/2026 às 08:20', 'Página 1 de 3',
+            'Número da Declaração: 12345678202608001 Número do Recibo: 01.02.34567.8901234-5',
+            'Autenticação: 12345.67890.12345.67890 Página 1',
+        ]
+        for footer in footers:
+            text = sample().replace('2.2.2) Mercado Externo', footer + '\n2.2.2) Mercado Externo')
+            with self.subTest(footer=footer):
+                self.assertEqual(parse_statement_text(text)['rbt12Cents'], 16200000)
+                for extra in [' 5', '\n,50']:
+                    with self.assertRaises(ValueError):
+                        parse_statement_text(text.replace(footer, footer + extra))
 
     def test_only_section_22_even_when_21_disagrees(self):
         result=parse_statement_text(sample())

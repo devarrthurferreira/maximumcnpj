@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { MockAgent, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
-import { MAX_SIMPLES_PDF_BYTES, signedUrl } from '../src/blob-documents.ts';
+import { MAX_SIMPLES_PDF_BYTES, signedUrl, processingUrls, processingTicket, documentStatus } from '../src/blob-documents.ts';
 
 test('Blob SDK signs private reads and constrained control-plane uploads, including OCR retries', async () => {
   const dispatcher = getGlobalDispatcher(), mock = new MockAgent();
@@ -19,7 +19,7 @@ test('Blob SDK signs private reads and constrained control-plane uploads, includ
       issued.push(payload);
       return { delegationToken: Buffer.from(JSON.stringify({ ...payload, storeId: 'store_teststore' })).toString('base64url') + '.synthetic',
         clientSigningToken: 'synthetic-signing-key', validUntil: payload.validUntil };
-    }).times(3);
+    }).times(7);
     const path = 'simples/test/company/document/original.pdf';
     const read = new URL(await signedUrl(path, 'get'));
     assert.equal(read.origin, 'https://teststore.private.blob.vercel-storage.com');
@@ -41,6 +41,23 @@ test('Blob SDK signs private reads and constrained control-plane uploads, includ
     assert.deepEqual(issued.map(value => value.operations), [['get'], ['put'], ['put']]);
     assert.ok(issued.every(value => value.pathname !== '*'));
     assert.ok(issued.slice(1).every(value => value.maximumSizeInBytes === MAX_SIMPLES_PDF_BYTES && value.allowedContentTypes[0] === 'application/pdf'));
+    const ready = { _id: 'document', originalPath: path, status: 'READY', extractionId: 'previous', searchableStored: true };
+    const before = structuredClone(ready);
+    const first = await processingUrls(ready), second = await processingUrls(ready);
+    assert.deepEqual(ready, before, 'issuing URLs must not downgrade or mutate a valid document');
+    assert.notEqual(first.attemptId, second.attemptId);
+    for (const urls of [first, second]) {
+      const put = new URL(urls.searchablePutUrl);
+      assert.equal(put.searchParams.get('pathname'), `simples/test/company/document/attempts/${urls.attemptId}.pdf`);
+      assert.equal(put.searchParams.get('vercel-blob-allow-overwrite'), 'false');
+      const ticket = processingTicket(urls);
+      assert.equal(ticket.attemptId, urls.attemptId);
+      assert.match(ticket.originalUrlHash, /^[a-f0-9]{64}$/);
+      assert.match(ticket.searchableUrlHash, /^[a-f0-9]{64}$/);
+      assert.ok(!JSON.stringify(ticket).includes('synthetic-signing-key'));
+      assert.ok(!JSON.stringify(ticket).includes('vercel-blob-signature'));
+      assert.ok(ticket.expiresAt.getTime() > Date.now());
+    }
     mock.assertNoPendingInterceptors();
   } finally {
     setGlobalDispatcher(dispatcher);
@@ -49,6 +66,35 @@ test('Blob SDK signs private reads and constrained control-plane uploads, includ
     }
     await mock.close();
   }
+});
+
+test('Document recovery distinguishes the current attempt from the last successful extraction', () => {
+  const now = Date.parse('2026-10-01T12:00:00Z');
+  const base = { _id: 'document', clientId: 'company', fileName: 'synthetic.pdf', status: 'READY',
+    extractionId: 'previous', searchableStored: true, processingAttemptId: 'attempt' };
+  const ready = documentStatus(base, now);
+  assert.equal(ready.clientId, 'company');
+  assert.equal(ready.hasReadyExtraction, true);
+  assert.equal(ready.originalStored, true);
+  const failed = documentStatus({ ...base, status: 'OCR_FAILED', lastError: { code: 'SIMPLES_PDF', message: 'Ilegível' } }, now);
+  assert.equal(failed.status, 'OCR_FAILED');
+  assert.equal(failed.extractionId, 'previous');
+  assert.equal(failed.hasReadyExtraction, true);
+  assert.equal(failed.error.code, 'SIMPLES_PDF');
+  const processing = { ...base, status: 'PROCESSING', processingLeaseUntil: new Date(now + 330_000) };
+  assert.equal(documentStatus(processing, now).retryable, false);
+  const timedOut = documentStatus(processing, now + 330_001);
+  assert.equal(timedOut.status, 'OCR_FAILED');
+  assert.equal(timedOut.retryable, true);
+  assert.equal(timedOut.error.code, 'PROCESSING_TIMEOUT');
+  assert.equal(timedOut.extractionId, 'previous');
+  assert.equal(processing.status, 'PROCESSING', 'reading recovery status does not rewrite history');
+  assert.equal(documentStatus({ ...base, status: 'PROCESSING' }, now).error.code, 'PROCESSING_TIMEOUT');
+  const awaiting = documentStatus({ _id: 'new', clientId: 'company', status: 'AWAITING_UPLOAD' }, now);
+  assert.equal(awaiting.retryable, true);
+  assert.equal(awaiting.originalStored, false);
+  assert.equal(awaiting.hasReadyExtraction, false);
+  assert.equal(awaiting.extractionId, null);
 });
 
 test('Static and Node CSP allow the actual signed upload endpoint with a path restriction', () => {
