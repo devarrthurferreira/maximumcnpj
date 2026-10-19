@@ -1,4 +1,6 @@
 /** Exports the presentation already prepared for the screen; never runs the calculator. */
+import {unifiedDreRows} from './simulator-dre.js';
+
 const BOM = '\uFEFF';
 const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
@@ -17,12 +19,12 @@ function numberCell(value, percent = false) {
   return number.toLocaleString('pt-BR', {useGrouping:false, minimumFractionDigits:2, maximumFractionDigits:percent ? 6 : 2});
 }
 
-function groups(presentation) {
-  return [
-    ...(presentation.sections || []).map(section => ({...section, scope:'DRE'})),
-    ...(presentation.details || []).map(section => ({...section, scope:'Detalhamento informativo'})),
-    {key:'indicators', label:'Indicadores', scope:'Indicadores', rows:presentation.indicators || []}
-  ].filter(section => Array.isArray(section.rows) && section.rows.length);
+function rowContexts(presentation) {
+  const contexts = new Map();
+  for (const section of presentation.sections || []) for (const row of section.rows || []) contexts.set(row, ['DRE',section.label]);
+  for (const detail of presentation.details || []) for (const row of detail.rows || []) contexts.set(row, ['Detalhamento informativo',detail.label]);
+  for (const row of presentation.indicators || []) contexts.set(row, ['Indicadores','Indicadores']);
+  return contexts;
 }
 
 function valueFor(row, regime, frame, month) {
@@ -58,8 +60,9 @@ export function buildDreExportPayload(payload, presentation) {
 
 /**
  * Semicolon-separated CSV with a UTF-8 BOM for Brazilian Excel.
- * Annual view compares all regimes. Monthly view includes a complete twelve-month
- * table per regime, using captured calendar values supplied by the presentation.
+ * One continuous table follows the same base/detail/indicator order as the screen.
+ * Annual view compares regimes in columns. Monthly view identifies each regime in
+ * a column and retains all twelve captured months plus the captured annual total.
  */
 export function buildDreCsv({presentation, period = 'annual', company = {}, year, showPercent = false}) {
   if (!presentation || !Array.isArray(presentation.regimes) || !Array.isArray(presentation.sections)) {
@@ -70,7 +73,8 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   const textLine = cells => lines.push(cells.map(textCell).join(';'));
   const monthly = period === 'monthly';
   const regimes = presentation.regimes;
-  const sections = groups(presentation);
+  const rows = unifiedDreRows(presentation);
+  const contexts = rowContexts(presentation);
   textLine(['DRE completa', monthly ? 'Mensal · janeiro a dezembro · todos os regimes' : 'Anual · comparação de todos os regimes']);
   textLine(['Empresa', company.name || '', 'Código', company.code || '', 'CNPJ', company.cnpj || '']);
   textLine(['Ano do cenário', year ?? presentation.year ?? presentation.calendarYear ?? '', 'Versão da apresentação', presentation.version || '']);
@@ -80,11 +84,11 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   if (showPercent) textLine(['Análise vertical', presentation.percentBasis || 'Receita bruta total do cenário']);
   lines.push('');
 
-  const prefix = (section, row) => [section.scope, section.label, row.label, row.kind || 'line', row.unit === 'percent' ? '%' : 'BRL'];
+  const prefix = row => [...(contexts.get(row) || ['DRE','']), row.label, row.kind || 'line', row.unit === 'percent' ? '%' : 'BRL'];
   if (!monthly) {
     textLine(['Escopo','Seção','Indicador','Tipo','Unidade', ...regimes.flatMap(regime => showPercent ? [regime.name, `${regime.name} · % da receita`] : [regime.name]), 'Observações','Referências']);
-    for (const section of sections) for (const row of section.rows) {
-      const cells = prefix(section, row).map(textCell);
+    for (const row of rows) {
+      const cells = prefix(row).map(textCell);
       for (const regime of regimes) {
         cells.push(numberCell(valueFor(row, regime, 'annual'), row.unit === 'percent'));
         if (showPercent) cells.push(row.unit === 'currency' ? numberCell(percentFor(row, regime, 'annual'), true) : textCell(''));
@@ -94,12 +98,11 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
     }
   } else {
     const months = Array.from({length:12}, (_, index) => presentation.months?.[index]?.label || MONTHS[index]);
+    const columns = [...months, 'Total anual / indicador anual'];
+    textLine(['Regime','Escopo','Seção','Indicador','Tipo','Unidade', ...columns.flatMap(label => showPercent ? [label, `${label} · % da receita`] : [label]), 'Observações','Referências']);
     for (const regime of regimes) {
-      textLine(['Regime tributário', regime.name, regime.available ? 'Disponível' : 'Indisponível']);
-      const columns = [...months, 'Total anual / indicador anual'];
-      textLine(['Escopo','Seção','Indicador','Tipo','Unidade', ...columns.flatMap(label => showPercent ? [label, `${label} · % da receita`] : [label]), 'Observações','Referências']);
-      for (const section of sections) for (const row of section.rows) {
-        const cells = prefix(section, row).map(textCell);
+      for (const row of rows) {
+        const cells = [regime.name,...prefix(row)].map(textCell);
         for (let index = 0; index < 13; index++) {
           const frame = index === 12 ? 'calendarAnnual' : 'monthly';
           cells.push(numberCell(valueFor(row, regime, frame, index), row.unit === 'percent'));
@@ -108,7 +111,6 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
         cells.push(textCell(rowNotes(row, [regime], true)), textCell((row.sourceRefs || []).join(' | ')));
         lines.push(cells.join(';'));
       }
-      lines.push('');
     }
   }
   return BOM + lines.join('\r\n') + '\r\n';

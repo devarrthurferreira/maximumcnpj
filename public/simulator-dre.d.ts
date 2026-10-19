@@ -12,3 +12,4 @@ export type DrePresentation = {
   months:Array<{number:number;label:string;period:string|null}>;calendarYear:number|null;calendarReference:any;calendarRounding:string;percentBasis:string;
 };
 export function buildDrePresentation(input:{result:any;monthlyGroups?:any;projection?:any;source?:any;reportMonths?:number;engineInput?:any;reprocessing?:any;calendar?:any}):DrePresentation;
+export function unifiedDreRows(presentation:DrePresentation):DrePresentationRow[];

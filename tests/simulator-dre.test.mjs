@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildDrePresentation,DRE_PRESENTATION_VERSION} from '../public/simulator-dre.js';
+import {buildDrePresentation,unifiedDreRows,DRE_PRESENTATION_VERSION} from '../public/simulator-dre.js';
 import {calculateSimulation,calculateTax,draftToInput} from '../public/simulator-engine.js';
 import {annualizeReports,projectDifal} from '../public/simulator-projection.js';
 import {buildMonthlyDre,DRE_ROWS} from '../public/simulator-calendar.js';
@@ -150,4 +150,28 @@ test('avaliação vertical preserva sinais e percentuais já fracionários sem d
  near(find(p,'cards').percentValues.actual,find(p,'cards').monthlyPercentValues.actual[0]);
  near(find(p,'netMargin').values.actual,find(p,'netMargin').monthlyValues.actual[0]);
  assert.equal(find(p,'netMargin').percentValues.actual,find(p,'netMargin').values.actual);
+});
+
+test('DRE única inclui cada linha uma vez, composição junto ao total e indicadores após o resultado',()=>{
+ const input=fixture(),p=buildDrePresentation({...input,calendar:buildMonthlyDre(input.result,2027)}),before=structuredClone(p);
+ freeze(p);const rows=unifiedDreRows(p),keys=rows.map(row=>row.key);
+ assert.equal(rows.length,allRows(p).length);assert.equal(new Set(keys).size,rows.length);
+ assert.deepEqual(rows.filter(row=>row.kind!=='detail'&&row.kind!=='indicator').map(row=>row.key),p.sections.flatMap(section=>section.rows.map(row=>row.key)));
+ for(const group of p.details){const parent=keys.indexOf(group.parentKey);assert(parent>=0);assert.deepEqual(keys.slice(parent+1,parent+1+group.rows.length),group.rows.map(row=>row.key));}
+ assert.deepEqual(rows.slice(-p.indicators.length),p.indicators);
+ assert.equal(keys[keys.length-p.indicators.length-1],'netProfit');
+ for(const row of rows)assert.equal(row,find(p,row.key),'A ordenação não copia nem transforma os valores anuais ou mensais.');
+ assert.deepEqual(p,before);
+});
+
+test('DRE única mantém legado, detalhes indisponíveis e extensões sem repetir chaves',()=>{
+ const {draft}=fixture(),p=buildDrePresentation({result:calculateSimulation(draft)});
+ p.details.push(p.details[0]);
+ const extension={...p.details[0].rows[0],key:'extraDetail',parentKey:'missingParent'};
+ p.details.push({key:'extension',label:'Extensão',parentKey:'missingParent',rows:[extension]});
+ const rows=unifiedDreRows(p),keys=rows.map(row=>row.key);
+ assert.equal(keys.includes('difal'),false);assert.equal(keys.filter(key=>key==='salesCpfCents').length,1);
+ assert.equal(rows.find(row=>row.key==='serviceReport').values.actual,null);
+ assert.equal(rows.find(row=>row.key==='extraDetail'),extension);
+ assert.equal(new Set(keys).size,keys.length);assert.deepEqual(rows.slice(-p.indicators.length),p.indicators);
 });

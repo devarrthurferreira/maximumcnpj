@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.23.1] — 2026-10-19
+
+- DRE única com composição de receitas, créditos, IRPJ e indicadores integrados à tabela principal.
+- Removidas as divisões visuais em blocos, os painéis de detalhamento da DRE e a separação da impressão em semestres.
+- CSV acompanha a ordem contínua; botão de impressão inclui apenas o demonstrativo e sua identificação, com cabeçalhos repetidos na paginação.
+- Impressão anual em A4 horizontal e mensal em A3 horizontal, com ano abaixo do mês e referência da RBT12 preservada.
+- Resultados, calendário, cálculos e histórico preservados, com regressões de apresentação e exportação.
+
 ## [0.23.0] — 2026-10-19
 
 - DRE anual e mensal organizada em blocos, com subtotais e análise percentual opcional sobre a receita bruta.
