@@ -1,5 +1,11 @@
 """PDF pesquisável integral, sem serviço externo, uma passagem OCR por página de imagem."""
 from __future__ import annotations
+import os
+
+# ONNX Runtime 1DS must be disabled before importing or initializing the runtime.
+# The reader processes private documents locally; telemetry is never permitted.
+os.environ['ORT_DISABLE_TELEMETRY'] = '1'
+
 from functools import lru_cache
 from statistics import mean, median
 import math
@@ -14,6 +20,8 @@ MAX_BYTES = 8 * 1024 * 1024
 
 @lru_cache(maxsize=1)
 def _rapid_engine():
+    import onnxruntime
+    onnxruntime.disable_telemetry_events()
     from rapidocr import RapidOCR
     return RapidOCR(params={
         'Global.log_level': 'error', 'Global.max_side_len': 3508,
@@ -23,7 +31,23 @@ def _rapid_engine():
     })
 
 
+def _deduplicate_items(items):
+    """Collapse only identical text at exactly the same coordinates."""
+    unique = {}
+    for item in items:
+        key = (item['text'], *item['box'])
+        if key not in unique:
+            unique[key] = dict(item)
+        else:
+            # A duplicate with lower OCR confidence must still block confirmation.
+            scores = [record.get('confidence') for record in (unique[key], item)
+                      if record.get('confidence') is not None]
+            unique[key]['confidence'] = min(scores) if scores else None
+    return list(unique.values())
+
+
 def group_rows(items):
+    items = _deduplicate_items(items)
     if not items:
         return []
     ordered = sorted(items, key=lambda item: ((item['box'][1] + item['box'][3]) / 2, item['box'][0]))
@@ -40,6 +64,36 @@ def group_rows(items):
         row['items'].sort(key=lambda item: item['box'][0])
         row['text'] = ' '.join(item['text'] for item in row['items'])
     return rows
+
+
+def _native_items(page, words):
+    """Normalize a uniformly rotated native text layout without touching its text."""
+    import fitz
+    directions = set()
+    layout = page.get_text('dict', flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES)
+    for block in layout.get('blocks', []):
+        for line in block.get('lines', []):
+            if not any(span.get('text', '').strip() for span in line.get('spans', [])):
+                continue
+            x, y = line.get('dir', (1, 0))
+            angle = math.degrees(math.atan2(y, x))
+            cardinal = round(angle / 90) * 90
+            if abs(angle - cardinal) > .01:
+                directions.add(None)
+            else:
+                directions.add(cardinal % 360)
+    # Mixed orientations and non-cardinal skew are not guessed. PDF page rotation
+    # metadata is already excluded from native coordinates by PyMuPDF.
+    angle = next(iter(directions)) if len(directions) == 1 else None
+    matrix = fitz.Matrix(1, 1).prerotate(-angle) if angle else None
+    return _deduplicate_items([{'text': word[4],
+        'box': list(fitz.Rect(word[:4]) * matrix) if matrix else list(word[:4]),
+        'confidence': None} for word in words])
+
+
+def native_page_text(page):
+    """Use the same native reading order for conversion and preserved-page checks."""
+    return '\n'.join(row['text'] for row in group_rows(_native_items(page, page.get_text('words', sort=True))))
 
 
 def _ocr_page(pix, engine):
@@ -105,7 +159,7 @@ def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seco
             words = original.get_text('words', sort=True)
             readable = _native_text_is_complete(original, words)
             if readable and not force_ocr:
-                items = [{'text': w[4], 'box': list(w[:4]), 'confidence': None} for w in words]
+                items = _native_items(original, words)
                 output.insert_pdf(document, from_page=index, to_page=index)
             else:
                 # Blank pages are preserved, never silently removed.

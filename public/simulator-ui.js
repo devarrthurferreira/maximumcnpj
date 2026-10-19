@@ -15,13 +15,17 @@ const pct = value => value == null ? '—' : (value * 100).toLocaleString('pt-BR
 const date = value => value ? new Date(value).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}) : '—';
 const IMPORTED = ['salesOptantCents','salesNonOptantCents','salesCpfCents','purchasesOptantCents','purchasesNonOptantCents'];
 const MANUAL = ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'];
-const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales',guided:false,guidedStage:false,guidedResume:false,rbt12Mode:'PDF',serviceMigration:null,draftMigrationNotice:null,dreShowPercent:false,dreMonthView:false,dreMonth:0,dreContext:null,detailStates:new Map()};
+const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,rbt12DocumentConfirmed:false,rbt12DocumentRetryable:false,rbt12Sequence:0,pdfOperation:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales',guided:false,guidedStage:false,guidedResume:false,rbt12Mode:'PDF',serviceMigration:null,draftMigrationNotice:null,dreShowPercent:false,dreMonthView:false,dreMonth:0,dreContext:null,detailStates:new Map()};
 const hasImportedServices = () => S.source?.revenueSplit?.version === 'SALES_SERVICES_V1' && Number.isSafeInteger(S.source.fields?.serviceRevenueCents);
 const isImportedField = key => IMPORTED.includes(key) || (key === 'serviceRevenue' && hasImportedServices());
 const difalProjection = () => S.readonly ? S.snapshot?.difalProjection || null : projectDifal(S.source.sales.difal, S.months, S.source.sales.jobId);
 const servicesMigration = snapshot => !!snapshot && hasImportedServices() && snapshot.source?.revenueSplit?.version !== 'SALES_SERVICES_V1';
 const canSave = () => ['admin','operator'].includes(S.user?.role);
 const sourceUrl = () => '/simulator.html?'+new URLSearchParams({generation:S.source.generationId,client:S.source.clientId,...(S.parentId?{parent:S.parentId}:{})});
+const documentUuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
+const rbt12SourceKey=()=>JSON.stringify([S.source.generationId,S.source.clientId,S.source.company.code||'',S.source.company.name||'',S.source.company.cnpj||'']);
+const rbt12Context=()=>({sequence:S.rbt12Sequence,sourceKey:rbt12SourceKey(),clientId:S.source.clientId,documentId:S.rbt12DocumentId});
+const currentRbt12=context=>context.sequence===S.rbt12Sequence&&context.sourceKey===rbt12SourceKey()&&context.documentId===S.rbt12DocumentId&&S.rbt12Mode==='PDF';
 const fail = error => { $('#simulator-error').textContent = error.message || String(error); };
 async function api(path, options={}) {
   const processingPdf=options.method?.toUpperCase()==='POST'&&path.split('?')[0]==='/api/simples';
@@ -32,7 +36,12 @@ async function api(path, options={}) {
     if (!response.ok) throw new Error((data?.message || 'O servidor não conseguiu concluir a operação. Tente novamente.')+(data?.requestId?' Código: '+data.requestId+'.':''));
     if(!data)throw new Error('O servidor retornou uma resposta incompleta. Tente novamente.');
     return data;
-  } catch(error) { if(error.name === 'AbortError') throw new Error(path.startsWith('/api/simples')?'O OCR demorou a responder. Nenhuma RBT12 foi confirmada nesta tela; tente novamente.':'O servidor demorou a responder. Tente salvar novamente para confirmar o mesmo registro.'); throw error; }
+  } catch(error) { if(error.name === 'AbortError') {
+    if(processingPdf)throw new Error('A leitura do PDF demorou a responder. Nenhuma RBT12 foi confirmada nesta tela. Verifique a leitura armazenada antes de reprocessar.');
+    if(path.startsWith('/api/v4/simples-documents'))throw new Error(path.endsWith('/status')?'Não foi possível verificar a leitura armazenada a tempo. Tente verificar novamente.':path.endsWith('/process-urls')?'A preparação da leitura demorou a responder. O PDF original permanece armazenado; tente novamente.':'A preparação do envio do PDF demorou a responder. Tente enviar novamente.');
+    if(path.startsWith('/api/simples'))throw new Error('Não foi possível recuperar a leitura do extrato a tempo. Tente novamente.');
+    throw new Error('O servidor demorou a responder. Tente salvar novamente para confirmar o mesmo registro.');
+  } throw error; }
   finally { clearTimeout(timer); }
 }
 function moneyField(id, label, help, imported=false, readonly=false, signed=false) {
@@ -49,7 +58,7 @@ function display(prefill=null) {
     `<section class="card sim-source sim-period-manual"><h2>Confirme o período dos relatórios</h2><p class="sim-help">Informe quantos meses estão incluídos nos dois arquivos.</p><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1} ${i?'meses':'mês'}</option>`).join('')}</select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" required>Compras e vendas correspondem ao mesmo período.</label></div><p id="period-explanation" class="sim-help"></p></section>`;
   $('#simulator-app').innerHTML = `<div id="simulator-intro">${hero(false)}</div><div class="sim-context">${sourceCard()}<div id="simulation-notices"></div></div>
     <form id="simulator-form"><fieldset id="simulation-fields"><p class="sim-form-guidance">Valores em reais (R$). Campos com * são obrigatórios; informe 0 quando não houver valor.</p><div id="simulator-projection"></div>${periodText}
-    ${section('01','Extrato e cenário','Leia o PDF para preencher a RBT12.',`<div class="sim-pdf-grid"><div class="sim-field sim-pdf-upload"><label for="rbt12-pdf">Extrato ou declaração do Simples Nacional (PDF)</label><div class="sim-upload-controls"><input id="rbt12-pdf" type="file" accept="application/pdf,.pdf"><button type="button" id="rbt12-read">Ler RBT12</button></div><small id="rbt12-status" role="status" aria-live="polite">Selecione o extrato ou a declaração PGDAS-D em PDF para conferir a seção 2.2. Até 8 MiB.</small><div class="sim-pdf-actions"><button type="button" id="rbt12-view-original" hidden>Ver PDF original</button><button type="button" id="rbt12-view-searchable" hidden>Ver PDF pesquisável</button><button type="button" id="rbt12-reprocess" hidden>Reprocessar OCR</button><a id="rbt12-download" hidden>Baixar PDF pesquisável</a></div></div>${moneyField('rbt12','RBT12 · seção 2.2','Soma das 12 competências anteriores ao PA.',false,true)}</div><div id="rbt12-details"></div><div class="sim-rbt12-mode"><button type="button" id="rbt12-manual">Informar RBT12 sem o extrato</button><button type="button" id="rbt12-use-pdf" hidden>Usar extrato em PDF</button><div id="rbt12-manual-notice" hidden><p class="sim-help">Informe a receita bruta efetiva dos 12 meses anteriores ao período de apuração. O valor ficará identificado como manual; não é a projeção das vendas.</p><label class="sim-confirm" for="rbt12-manual-confirm"><input id="rbt12-manual-confirm" type="checkbox">Confirmo que informei a receita bruta dos 12 meses anteriores ao período de apuração.</label></div></div><div class="sim-fields sim-scenario-fields"><div class="sim-field"><label for="simulation-year">Ano da simulação</label><select id="simulation-year"><option>2027</option><option>2028</option></select></div><div class="sim-field"><label for="sales-annex">Atividade das vendas</label><select id="sales-annex"><option value="1">Comércio · Anexo I</option><option value="2">Indústria · Anexo II</option></select></div><div class="sim-field"><label for="service-annex">Categoria dos serviços</label><select id="service-annex"><option value="3">Anexo III</option><option value="4">Anexo IV</option><option value="5">Anexo V</option></select></div></div>`,'sim-section-extrato')}
+    ${section('01','Extrato e cenário','Leia o PDF para preencher a RBT12.',`<div class="sim-pdf-grid"><div class="sim-field sim-pdf-upload"><label for="rbt12-pdf">Extrato ou declaração do Simples Nacional (PDF)</label><div class="sim-upload-controls"><input id="rbt12-pdf" type="file" accept="application/pdf,.pdf"><button type="button" id="rbt12-read">Ler RBT12</button></div><small id="rbt12-status" role="status" aria-live="polite">Selecione o extrato ou a declaração PGDAS-D em PDF para conferir a seção 2.2. Até 8 MiB.</small><div class="sim-pdf-actions"><button type="button" id="rbt12-view-original" hidden>Ver PDF original</button><button type="button" id="rbt12-view-searchable" hidden>Ver PDF pesquisável</button><button type="button" id="rbt12-reprocess" hidden>Ler novamente</button><button type="button" id="rbt12-check-status" hidden>Verificar leitura</button><a id="rbt12-download" hidden>Baixar PDF pesquisável</a></div></div>${moneyField('rbt12','RBT12 · seção 2.2','Soma das 12 competências anteriores ao PA.',false,true)}</div><div id="rbt12-details"></div><div class="sim-rbt12-mode"><button type="button" id="rbt12-manual">Informar RBT12 sem o extrato</button><button type="button" id="rbt12-use-pdf" hidden>Usar extrato em PDF</button><div id="rbt12-manual-notice" hidden><p class="sim-help">Informe a receita bruta efetiva dos 12 meses anteriores ao período de apuração. O valor ficará identificado como manual; não é a projeção das vendas.</p><label class="sim-confirm" for="rbt12-manual-confirm"><input id="rbt12-manual-confirm" type="checkbox">Confirmo que informei a receita bruta dos 12 meses anteriores ao período de apuração.</label></div></div><div class="sim-fields sim-scenario-fields"><div class="sim-field"><label for="simulation-year">Ano da simulação</label><select id="simulation-year"><option>2027</option><option>2028</option></select></div><div class="sim-field"><label for="sales-annex">Atividade das vendas</label><select id="sales-annex"><option value="1">Comércio · Anexo I</option><option value="2">Indústria · Anexo II</option></select></div><div class="sim-field"><label for="service-annex">Categoria dos serviços</label><select id="service-annex"><option value="3">Anexo III</option><option value="4">Anexo IV</option><option value="5">Anexo V</option></select></div></div>`,'sim-section-extrato')}
     ${section('02','Quanto a empresa fatura?','Valores mensais · confira as vendas e os serviços dos relatórios.',`<div class="sim-fields">${moneyField('serviceRevenue','Vendas de serviços',hasImportedServices()?'Média mensal dos serviços do relatório. Natureza 9000 e seus complementos entram aqui, sem repetir nos grupos de mercadorias.':'Informe o valor mensal. Use 0 se não houver.',hasImportedServices())}${moneyField('salesRevenue','Receita de vendas','Soma dos três grupos abaixo.',false,true)}</div><div class="sim-fields sales">${moneyField('salesOptantCents','Vendas a optantes SN','Opção pelo Simples confirmada. Devoluções podem reduzir este grupo abaixo de zero.',true,false,true)}${moneyField('salesNonOptantCents','Vendas a não optantes SN','Inclui não confirmados; exclui CPFs. Devoluções podem reduzir este grupo abaixo de zero.',true,false,true)}${moneyField('salesCpfCents','Vendas a CPFs','Clientes identificados por CPF. Devoluções podem reduzir este grupo abaixo de zero.',true,false,true)}</div><div id="simulator-difal"></div>${S.serviceMigration?`<div class="sim-note" id="sim-service-migration"><h3>Confira a separação de serviços nesta nova versão</h3><p>Os valores importados foram restaurados pela classificação atual. A receita de serviços agora fica separada das mercadorias. O valor mensal de serviços informado na versão anterior era <strong>${money(S.serviceMigration.previousServices)}</strong>; ele pode já estar incluído nas vendas antigas. Confira o campo Vendas de serviços antes de simular.</p>${S.serviceMigration.previousServices>0?'<label class="sim-confirm"><input id="service-migration-confirm" type="checkbox" required>Revisei os serviços importados e o valor anterior, sem duplicar receitas.</label>':''}</div>`:''}<div class="sim-totals"><article><span>Faturamento mensal</span><strong id="monthly-revenue">Preencha as receitas</strong></article><article><span>Projeção anual</span><strong id="annual-revenue">Calculada automaticamente</strong></article></div><details class="sim-inline-help"><summary>Sobre os valores de faturamento</summary><p>As receitas usam a média mensal dos relatórios e podem ser ajustadas. Serviços identificados ficam separados das vendas de mercadorias; naturezas iniciadas por 9000 são serviços. Confira serviços adicionais sem repetir valores já importados. A projeção é (vendas + serviços) × 12 e não substitui a RBT12 do extrato.</p></details>`,'sim-section-revenue')}
     ${section('03','Quanto a empresa compra?','Valores mensais · preenchidos pelos relatórios e editáveis.',`<div class="sim-fields">${moneyField('purchasesOptantCents','Compras de empresas do Simples','Fornecedores optantes pelo Simples.',true)}${moneyField('purchasesNonOptantCents','Compras de empresas fora do Simples','Inclui não confirmados e outros documentos.',true)}</div>`,'sim-section-purchases')}
     ${section('04','Quais são as despesas?','Informe os valores por mês. Use 0 quando não houver.',`<div class="sim-fields sim-expense-fields">${moneyField('salaries','Salários e pró-labore','Pagamentos à equipe e aos sócios.')}${moneyField('benefits','Benefícios da equipe','Transporte, alimentação e outros.')}${moneyField('adminExpenses','Outras despesas da empresa','Água, energia, internet e similares.')}${moneyField('rent','Aluguel','Valor mensal do imóvel.')}${moneyField('cardExpenses','Taxas de cartão','Total das taxas em reais.')}</div><p class="sim-help">Não repita uma mesma despesa em mais de um campo.</p>`,'sim-section-expenses')}
@@ -73,6 +82,7 @@ function display(prefill=null) {
   $('#rbt12-view-original').onclick = () => void viewStoredPdf('original');
   $('#rbt12-view-searchable').onclick = () => void viewStoredPdf('searchable');
   $('#rbt12-reprocess').onclick = () => void reprocessRbt12();
+  $('#rbt12-check-status').onclick=()=>void restoreStoredRbt12();
   $('#rbt12-pdf').onchange = () => {clearRbt12();invalidate();saveDraft();if(S.guidedStage)void readRbt12Pdf();};
   $('#rbt12-manual').onclick=()=>{setRbt12Mode('MANUAL');invalidate();saveDraft();$('#rbt12').focus();};
   $('#rbt12-use-pdf').onclick=()=>{setRbt12Mode('PDF');invalidate();saveDraft();$('#rbt12-pdf').focus();};
@@ -80,7 +90,8 @@ function display(prefill=null) {
   if(prefill) fillSnapshot(prefill);
   restoreDraft();
   updateRevenue(); renderNotices();
-  if(S.rbt12ExtractionId&&!S.rbt12Data)void restoreRbt12();
+  if(S.rbt12DocumentId&&!S.rbt12Data)void restoreStoredRbt12();
+  else if(S.rbt12ExtractionId&&!S.rbt12Data)void restoreRbt12();
   else if(!S.rbt12Data&&S.rbt12Mode!=='MANUAL')clearRbt12();
   else if(S.rbt12Data&&S.rbt12ExtractionId===(S.rbt12Data.extractionId||S.rbt12Data.id))applyRbt12(S.rbt12Data);
   else if(S.rbt12Mode!=='MANUAL')void restoreRbt12();
@@ -151,7 +162,7 @@ function draft() {
   return d;
 }
 function saveDraft() {
-  const data={projectionVersion:hasImportedServices()?'AVERAGE_X12_V2':'AVERAGE_X12_V1',revenueSplitVersion:S.source.revenueSplit?.version||null,serviceMigrationConfirmed:$('#service-migration-confirm')?.checked===true,months:S.months,edited:S.edited,confirmed:$('#period-confirm').checked,rbt12ExtractionId:S.rbt12ExtractionId,rbt12Mode:S.rbt12Mode,rbt12ManualConfirmed:S.rbt12Mode==='MANUAL'&&$('#rbt12-manual-confirm').checked,fields:Object.fromEntries([...IMPORTED,...MANUAL,'rbt12'].map(key=>{const field=$('#'+key);return [key,field.value!==''&&field.validity.valid?Number(field.value).toFixed(2):field.value];})),year:$('#simulation-year').value,salesAnnex:$('#sales-annex').value,serviceAnnex:$('#service-annex').value};
+  const data={projectionVersion:hasImportedServices()?'AVERAGE_X12_V2':'AVERAGE_X12_V1',revenueSplitVersion:S.source.revenueSplit?.version||null,serviceMigrationConfirmed:$('#service-migration-confirm')?.checked===true,months:S.months,edited:S.edited,confirmed:$('#period-confirm').checked,rbt12ExtractionId:S.rbt12ExtractionId,rbt12Document:S.rbt12DocumentId?{documentId:S.rbt12DocumentId,sourceKey:rbt12SourceKey()}:null,rbt12Mode:S.rbt12Mode,rbt12ManualConfirmed:S.rbt12Mode==='MANUAL'&&$('#rbt12-manual-confirm').checked,fields:Object.fromEntries([...IMPORTED,...MANUAL,'rbt12'].map(key=>{const field=$('#'+key);return [key,field.value!==''&&field.validity.valid?Number(field.value).toFixed(2):field.value];})),year:$('#simulation-year').value,salesAnnex:$('#sales-annex').value,serviceAnnex:$('#service-annex').value};
   try { sessionStorage.setItem(S.key,JSON.stringify(data)); $('#draft-status').textContent='Rascunho salvo nesta aba. Após alterar valores, gere a simulação novamente.'; }
   catch { $('#draft-status').textContent='Não foi possível guardar o rascunho nesta aba. Mantenha a página aberta até concluir.'; }
 }
@@ -167,7 +178,10 @@ function restoreDraft() {
     if(data.rbt12Mode==='MANUAL'&&!data.rbt12ExtractionId){setRbt12Mode('MANUAL',{preserveValue:true});$('#rbt12-manual-confirm').checked=data.rbt12ManualConfirmed===true;}
     else {
       setRbt12Mode('PDF',{preserveValue:true});
-      if(typeof data.rbt12ExtractionId==='string'&&/^[a-f0-9-]{36}$/.test(data.rbt12ExtractionId))S.rbt12ExtractionId=data.rbt12ExtractionId;
+      clearRbt12();
+      const matchingDocument=data.rbt12Document?.sourceKey===rbt12SourceKey()&&documentUuid(data.rbt12Document?.documentId);
+      if((!data.rbt12Document||matchingDocument)&&documentUuid(data.rbt12ExtractionId))S.rbt12ExtractionId=data.rbt12ExtractionId;
+      if(matchingDocument)S.rbt12DocumentId=data.rbt12Document.documentId;
     }
     for(const [key,id,choices] of [['year','simulation-year',['2027','2028']],['salesAnnex','sales-annex',['1','2']],['serviceAnnex','service-annex',['3','4','5']]]) if(choices.includes(data[key])) $('#'+id).value=data[key];
     S.edited=matchingMonths&&matchingRevenueSplit&&data.edited===true;$('#period-confirm').checked=S.source.periodBasis==='COLUMN_H'||data.confirmed===true;$('#draft-status').textContent='Rascunho desta empresa restaurado. Confira os campos antes de gerar.';
@@ -247,24 +261,24 @@ function rbt12Reference() {
   return S.rbt12Data;
 }
 function clearRbt12(keepDocument=false) {
-  S.rbt12ExtractionId=null;S.rbt12Data=null;if(!keepDocument)S.rbt12DocumentId=null;
+  S.rbt12Sequence++;S.rbt12ExtractionId=null;S.rbt12Data=null;if(!keepDocument){S.rbt12DocumentId=null;S.rbt12DocumentConfirmed=false;S.rbt12DocumentRetryable=false;}
   if(S.pdfUrl)URL.revokeObjectURL(S.pdfUrl);S.pdfUrl=null;
   if($('#rbt12'))$('#rbt12').value='';
   if($('#rbt12-download'))$('#rbt12-download').hidden=true;
-  for(const id of ['rbt12-view-original','rbt12-view-searchable','rbt12-reprocess'])if($('#'+id))$('#'+id).hidden=true;
+  for(const id of ['rbt12-view-original','rbt12-view-searchable','rbt12-reprocess','rbt12-check-status'])if($('#'+id))$('#'+id).hidden=true;
   if($('#rbt12-details'))$('#rbt12-details').innerHTML='';
   if($('#rbt12-status'))$('#rbt12-status').textContent='Selecione o extrato ou a declaração PGDAS-D em PDF para conferir a seção 2.2. Até 8 MiB.';
   updateGuidedRbt12();
 }
 function setReadingPdf(reading) {
   S.readingPdf=reading;
-  for(const id of ['rbt12-pdf','rbt12-read','rbt12-reprocess','generate-simulation'])if($('#'+id))$('#'+id).disabled=reading;
+  for(const id of ['rbt12-pdf','rbt12-read','rbt12-reprocess','rbt12-check-status','generate-simulation'])if($('#'+id))$('#'+id).disabled=reading;
   for(const id of ['rbt12-manual','rbt12-use-pdf'])if($('#'+id))$('#'+id).disabled=reading;
   updateGuidedRbt12();
 }
 function applyRbt12(data) {
   if(!isSection22(data)||!(data.extractionId||data.id))throw new Error('Leitura incompleta da seção 2.2. Leia novamente o extrato.');
-  S.rbt12ExtractionId=data.extractionId||data.id;S.rbt12Data=data;S.rbt12DocumentId=data.documentId||S.rbt12DocumentId;
+  S.rbt12ExtractionId=data.extractionId||data.id;S.rbt12Data=data;S.rbt12DocumentId=data.documentId||null;S.rbt12DocumentConfirmed=!!S.rbt12DocumentId;S.rbt12DocumentRetryable=!!S.rbt12DocumentId;
   $('#rbt12').value=(data.rbt12Cents/100).toFixed(2);
   $('#rbt12-details').innerHTML=renderSection22(data);
   $('#rbt12-status').textContent=`Seção 2.2 conferida · PA ${data.pa}. Confira as 12 competências nos detalhes abaixo.`;
@@ -278,6 +292,7 @@ function applyRbt12(data) {
     const link=$('#rbt12-download');link.href=S.pdfUrl;link.download='extrato-simples-pesquisavel.pdf';link.hidden=false;
     delete S.rbt12Data.searchablePdfBase64;
   }
+  for(const id of ['rbt12-view-original','rbt12-view-searchable','rbt12-reprocess','rbt12-check-status'])$('#'+id).hidden=true;
   if(S.rbt12DocumentId){
     $('#rbt12-view-original').hidden=false;
     $('#rbt12-view-searchable').hidden=data.searchableStored===false;
@@ -286,64 +301,112 @@ function applyRbt12(data) {
   if(data.downloadNotice)$('#rbt12-status').textContent+=' '+data.downloadNotice;
   updateGuidedRbt12();
 }
+function validateRestoredRbt12(data,context,extractionId){
+  if(data.clientId!==context.clientId||(data.extractionId||data.id)!==extractionId||(context.documentId&&data.documentId!==context.documentId))throw new Error('A leitura recuperada não corresponde ao PDF e à empresa selecionados. Nenhuma RBT12 foi aplicada.');
+  const registered=String(S.source.company.cnpj||'').replace(/[^A-Z0-9]/gi,'').toUpperCase();
+  if(registered&&registered.slice(0,8)!==data.cnpjBasico)throw new Error('O CNPJ básico do extrato não corresponde à empresa selecionada. Nenhuma RBT12 foi aplicada.');
+}
+function storedRbt12Actions(){
+  $('#rbt12-check-status').hidden=!S.rbt12DocumentId;
+  $('#rbt12-view-original').hidden=!S.rbt12DocumentConfirmed;
+  $('#rbt12-reprocess').hidden=!S.rbt12DocumentRetryable;
+}
 async function restoreRbt12() {
-  const id=S.rbt12ExtractionId,client=S.source.clientId;
+  const id=S.rbt12ExtractionId,context=rbt12Context();
   S.rbt12Data=null;$('#rbt12').value='';
   try {
-    const data=await api('/api/simples?'+new URLSearchParams({extractionId:id,clientId:client}));
-    if(S.rbt12ExtractionId===id&&S.source.clientId===client){
-      applyRbt12(data);
-      if(S.guidedResume&&S.guidedStage)finishGuidedRbt12(false);
-    }
-  }catch(error){if(S.rbt12ExtractionId===id){clearRbt12();$('#rbt12-status').textContent=error.message;}}
+    const data=await api('/api/simples?'+new URLSearchParams({extractionId:id,clientId:context.clientId}));
+    if(!currentRbt12(context)||S.rbt12ExtractionId!==id)return;
+    validateRestoredRbt12(data,context,id);applyRbt12(data);saveDraft();
+    if(S.guidedResume&&S.guidedStage)finishGuidedRbt12(false);
+  }catch(error){if(currentRbt12(context)&&S.rbt12ExtractionId===id){clearRbt12(!!context.documentId);saveDraft();storedRbt12Actions();$('#rbt12-status').textContent=error.message;}}
 }
-async function processStoredRbt12(urls) {
-  const data=await api('/api/simples?'+new URLSearchParams({clientId:S.source.clientId}),{
+async function restoreStoredRbt12(){
+  if(!S.rbt12DocumentId||S.readingPdf)return;
+  clearRbt12(true);invalidate();saveDraft();
+  const context=rbt12Context(),status=$('#rbt12-status');
+  $('#rbt12-check-status').hidden=false;$('#rbt12-check-status').disabled=true;status.textContent='Verificando o PDF armazenado desta empresa…';
+  try{
+    const document=await api('/api/v4/simples-documents/'+encodeURIComponent(context.documentId)+'/status');
+    if(!currentRbt12(context))return;
+    if(document.documentId!==context.documentId||document.clientId!==context.clientId){
+      S.rbt12DocumentConfirmed=false;S.rbt12DocumentRetryable=false;storedRbt12Actions();
+      throw new Error('O documento armazenado não corresponde à empresa selecionada. Nenhuma RBT12 foi aplicada.');
+    }
+    S.rbt12DocumentConfirmed=document.originalStored===true;
+    S.rbt12DocumentRetryable=document.retryable===true;
+    if(document.status==='READY'&&!document.error&&!document.lastError&&documentUuid(document.extractionId)){
+      const data=await api('/api/simples?'+new URLSearchParams({extractionId:document.extractionId,clientId:context.clientId}));
+      if(!currentRbt12(context))return;
+      validateRestoredRbt12(data,context,document.extractionId);applyRbt12(data);invalidate();saveDraft();
+      status.textContent+=' Leitura recuperada sem reenviar o PDF.';
+      if(S.guidedResume&&S.guidedStage)finishGuidedRbt12(false);
+      return;
+    }
+    storedRbt12Actions();
+    if(document.status==='PROCESSING')status.textContent='A leitura do PDF armazenado ainda está em andamento. Use Verificar leitura para consultar novamente; nenhum novo OCR foi iniciado.';
+    else if(S.rbt12DocumentConfirmed)status.textContent='O PDF original está armazenado. '+((document.error||document.lastError)?.message? (document.error||document.lastError).message+' ':'')+(document.hasReadyExtraction?'A tentativa mais recente não confirmou uma nova leitura; a leitura anterior foi preservada no servidor e não foi aplicada nesta tela. ':'')+'Use Ler novamente para tentar a leitura sem reenviar o arquivo.';
+    else if(S.rbt12DocumentRetryable)status.textContent='O envio anterior foi registrado, mas o servidor ainda não confirmou o arquivo. Use Ler novamente para tentar a leitura do mesmo PDF sem reenviar.';
+    else status.textContent='O envio do PDF ainda não foi confirmado no servidor. Verifique novamente ou selecione o arquivo para reenviar.';
+    saveDraft();
+  }catch(error){
+    if(!currentRbt12(context))return;
+    storedRbt12Actions();status.textContent=error.message||'Não foi possível verificar o PDF armazenado. Tente novamente.';
+  }finally{if(currentRbt12(context))$('#rbt12-check-status').disabled=false;}
+}
+async function processStoredRbt12(urls,context) {
+  if(urls.documentId!==context.documentId)throw new Error('A preparação da leitura não corresponde ao PDF selecionado.');
+  const data=await api('/api/simples?'+new URLSearchParams({clientId:context.clientId}),{
     method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({documentId:urls.documentId,originalGetUrl:urls.originalGetUrl,searchablePutUrl:urls.searchablePutUrl})
+    body:JSON.stringify({documentId:urls.documentId,attemptId:urls.attemptId,originalGetUrl:urls.originalGetUrl,searchablePutUrl:urls.searchablePutUrl})
   });
+  if(!currentRbt12(context))return null;
+  if(data.documentId!==context.documentId||(data.clientId&&data.clientId!==context.clientId))throw new Error('A leitura não corresponde ao PDF e à empresa selecionados.');
   applyRbt12(data);invalidate();saveDraft();return data;
 }
 async function viewStoredPdf(kind) {
-  if(!S.rbt12DocumentId)return;
+  if(!S.rbt12DocumentId||!S.rbt12DocumentConfirmed)return;
   const url='/api/v4/simples-documents/'+encodeURIComponent(S.rbt12DocumentId)+'/file?'+new URLSearchParams({kind});
   window.open(url,'_blank','noopener,noreferrer');
 }
 async function reprocessRbt12() {
-  if(!S.rbt12DocumentId||S.readingPdf||S.saving)return;
-  const status=$('#rbt12-status');
+  if(!S.rbt12DocumentId||!S.rbt12DocumentRetryable||S.readingPdf||S.saving)return;
+  clearRbt12(true);invalidate();saveDraft();
+  const context=rbt12Context(),status=$('#rbt12-status'),operation={};S.pdfOperation=operation;
   try{
-    setReadingPdf(true);
-    status.textContent='Reprocessando a seção 2.2 do PDF armazenado…';
-    const urls=await api('/api/v4/simples-documents/'+encodeURIComponent(S.rbt12DocumentId)+'/process-urls',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    await processStoredRbt12(urls);
-  }catch(error){clearRbt12(true);$('#rbt12-reprocess').hidden=false;$('#rbt12-view-original').hidden=false;status.textContent=error.message||'Não foi possível reprocessar o OCR.';fail(error);}
-  finally{setReadingPdf(false);}
+    setReadingPdf(true);status.textContent='Lendo novamente a seção 2.2 do PDF armazenado…';
+    const urls=await api('/api/v4/simples-documents/'+encodeURIComponent(context.documentId)+'/process-urls',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    if(!currentRbt12(context))return;
+    await processStoredRbt12(urls,context);
+  }catch(error){if(currentRbt12(context)){clearRbt12(true);saveDraft();storedRbt12Actions();status.textContent=error.message||'Não foi possível reprocessar a leitura.';fail(error);}}
+  finally{if(S.pdfOperation===operation){S.pdfOperation=null;setReadingPdf(false);}}
 }
 async function readRbt12Pdf() {
   if(S.readingPdf||S.saving)return;
   const file=$('#rbt12-pdf')?.files?.[0],status=$('#rbt12-status');
   clearRbt12();invalidate();saveDraft();
+  const context=rbt12Context();
   if(!file){status.textContent='Selecione o extrato ou a declaração PGDAS-D em PDF.';return;}
   if(file.size>8*1024*1024){status.textContent='O extrato pode ter até 8 MiB neste fluxo.';return;}
+  const operation={};S.pdfOperation=operation;
   try{
-    setReadingPdf(true);
-    status.textContent='Preparando o envio do PDF…';
+    setReadingPdf(true);status.textContent='Preparando o envio do PDF…';
     const started=await api('/api/v4/simples-documents',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({clientId:S.source.clientId,fileName:file.name,sizeBytes:file.size})});
+      body:JSON.stringify({clientId:context.clientId,fileName:file.name,sizeBytes:file.size})});
+    if(!currentRbt12(context))return;
     status.textContent='Armazenando o PDF original com segurança…';
     const uploaded=await fetch(started.originalPutUrl,{method:'PUT',headers:{'Content-Type':'application/pdf'},body:file,signal:AbortSignal.timeout(55000)});
     if(!uploaded.ok)throw new Error('Não foi possível armazenar o PDF original. Tente novamente.');
-    if($('#rbt12-pdf')?.files?.[0]!==file)return;
-    S.rbt12DocumentId=started.documentId;
+    if(!currentRbt12(context)||$('#rbt12-pdf')?.files?.[0]!==file)return;
+    S.rbt12DocumentId=started.documentId;S.rbt12DocumentConfirmed=true;S.rbt12DocumentRetryable=true;context.documentId=started.documentId;saveDraft();
     status.textContent='PDF armazenado. Lendo a seção 2.2…';
-    await processStoredRbt12(started);
+    await processStoredRbt12(started,context);
   }catch(error){
-    clearRbt12(Boolean(S.rbt12DocumentId));
-    if(S.rbt12DocumentId){$('#rbt12-reprocess').hidden=false;$('#rbt12-view-original').hidden=false;}
-    status.textContent=(error.name==='TimeoutError'?'O envio do PDF demorou a responder. Tente enviar novamente.':error.message||'Não foi possível confirmar a seção 2.2.')+(S.rbt12DocumentId?' O arquivo original ficou armazenado; você pode reprocessar sem reenviar.':'');
+    if(!currentRbt12(context))return;
+    clearRbt12(Boolean(S.rbt12DocumentId));saveDraft();storedRbt12Actions();
+    status.textContent=(error.name==='TimeoutError'?'O envio do PDF demorou a responder. Tente enviar novamente.':error.message||'Não foi possível confirmar a seção 2.2.')+(S.rbt12DocumentId?' O arquivo original ficou armazenado; você pode verificar a leitura ou usar Ler novamente sem reenviar.':'');
     fail(error);
-  }finally{setReadingPdf(false);}
+  }finally{if(S.pdfOperation===operation){S.pdfOperation=null;setReadingPdf(false);}}
 }
 window.addEventListener('pagehide',()=>{if(S.pdfUrl)URL.revokeObjectURL(S.pdfUrl);});
 // Print every financial disclosure, preserving the reader’s choices after printing.

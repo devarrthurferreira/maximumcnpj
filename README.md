@@ -1,4 +1,15 @@
-# Maximum CNPJ · v0.23.1
+# Maximum CNPJ · v0.24.0
+
+## Leitura do extrato 19/10/2026
+
+- A seção 2.2 reconhece valores que o OCR juntou à competência seguinte, somente quando a separação entre centavos e mês/ano é inequívoca. Os dígitos originais são preservados.
+- Cabeçalhos repetidos em páginas de continuação, identificação quebrada em linhas e espaços na pontuação do CNPJ são tratados sem confundir o PA com uma receita mensal. Os mercados interno e externo e as 12 competências continuam obrigatórios.
+- Dados críticos com baixa confiança ou valores fragmentados bloqueiam a confirmação; a ausência de mês nunca é preenchida automaticamente com zero.
+- Texto nativo com rotação cardinal uniforme tem a ordem corrigida para leitura; tokens idênticos na mesma posição não são contados duas vezes. As páginas visuais originais são preservadas.
+- A telemetria do runtime OCR é desativada antes da sua inicialização, inclusive na CI. O reconhecimento usa os modelos locais.
+- A releitura invalida o resultado do rascunho enquanto está em andamento. O arquivo armazenado pode ser recuperado após recarregar a tela, com conferência da empresa e do documento no servidor.
+- Interrupções de conexão e falhas em novas tentativas preservam a última leitura concluída no servidor, sem apresentar uma tentativa com falha como sucesso. O original continua disponível para conferência.
+- A validação usa PDFs sintéticos e comparação privada do PDF fornecido; nenhum arquivo real de cliente integra o repositório. DRE e simulações salvas permanecem preservadas.
 
 ## Ajuste 19/10/2026 — DRE única
 

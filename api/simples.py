@@ -1,6 +1,7 @@
 """Leitura autenticada da identificação e seção 2.2, preservando o PDF completo."""
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlsplit, parse_qs, unquote
+from datetime import timedelta
 import base64
 import hashlib
 import json
@@ -17,6 +18,8 @@ from reporting.simples import convert_statement_pdf, PARSER_VERSION
 MAX_DIRECT_PDF_BYTES = 4 * 1024 * 1024
 MAX_BLOB_PDF_BYTES = 8 * 1024 * 1024
 MAX_RETURN_PDF_BYTES = 2_500_000
+# Longer than the 300 s function budget; expired claims remain recoverable after a hard timeout.
+PROCESSING_LEASE_SECONDS = 330
 UUID = re.compile(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
 
 def _blob_signed_url(value, expected_path, operation='get'):
@@ -47,7 +50,10 @@ def _blob_signed_url(value, expected_path, operation='get'):
 
 
 def _download_blob(url):
-    response = requests.get(url, timeout=(5, 25), allow_redirects=False)
+    try:
+        response = requests.get(url, timeout=(5, 25), allow_redirects=False)
+    except requests.RequestException:
+        raise ReportError(503, 'BLOB_READ', 'Não foi possível recuperar o PDF original armazenado. Tente reprocessar.') from None
     require(response.status_code == 200, 422, 'BLOB_READ', 'Não foi possível recuperar o PDF original armazenado. Reenvie ou tente reprocessar.')
     require(response.headers.get('content-type', '').split(';')[0].lower() == 'application/pdf',
             422, 'BLOB_PDF', 'O arquivo armazenado não foi identificado como PDF.')
@@ -56,8 +62,32 @@ def _download_blob(url):
 
 
 def _upload_searchable(url, content):
-    response = requests.put(url, data=content, headers={'Content-Type': 'application/pdf'}, timeout=(5, 30), allow_redirects=False)
+    try:
+        response = requests.put(url, data=content, headers={'Content-Type': 'application/pdf'}, timeout=(5, 30), allow_redirects=False)
+    except requests.RequestException:
+        raise ReportError(503, 'BLOB_WRITE', 'A leitura terminou, mas o PDF pesquisável não pôde ser armazenado. Tente reprocessar.') from None
     require(200 <= response.status_code < 300, 503, 'BLOB_WRITE', 'O OCR foi concluído, mas não foi possível armazenar o PDF pesquisável.')
+
+
+def _error_details(error):
+    if isinstance(error, ReportError):
+        return error.status, error.code, str(error)
+    if isinstance(error, ValueError):
+        return 422, 'SIMPLES_PDF', str(error)
+    return 503, 'SIMPLES_UNAVAILABLE', 'Não foi possível concluir a leitura do PDF. Tente novamente; se persistir, informe o código da requisição. A RBT12 não será estimada.'
+
+
+def _attempt_scope(document, attempt_id, live=True):
+    query = {'_id': document['_id'], 'workspaceId': document['workspaceId'], 'clientId': document['clientId'],
+             'processingAttemptId': attempt_id, 'status': 'PROCESSING'}
+    if live:
+        query['processingLeaseUntil'] = {'$gt': utcnow()}
+    return query
+
+
+def _require_attempt(db, document, attempt_id):
+    require(db.simplesDocuments.find_one(_attempt_scope(document, attempt_id), {'_id': 1}), 409,
+            'DOCUMENT_ATTEMPT_EXPIRED', 'Esta tentativa de leitura expirou ou foi substituída. Consulte o estado do documento antes de tentar novamente.')
 
 
 class handler(BaseHTTPRequestHandler):
@@ -84,16 +114,14 @@ class handler(BaseHTTPRequestHandler):
         return db, workspace, actor, query, client_id
 
     def error(self, error):
-        if isinstance(error, ReportError):
-            status, code, message = error.status, error.code, str(error)
-        elif isinstance(error, ValueError):
-            status, code, message = 422, 'SIMPLES_PDF', str(error)
-        else:
-            status, code, message = 503, 'SIMPLES_UNAVAILABLE', 'O servidor não conseguiu iniciar o OCR do PDF. Tente novamente; se persistir, informe o código da requisição. A RBT12 não será estimada.'
-        detail = str(error).replace('\n', ' ')[:500] if not isinstance(error, ReportError) else None
+        status, code, message = _error_details(error)
+        # Requests exceptions may contain delegated Blob URLs. Never log credentials or PDF contents.
         print(json.dumps({'requestId': self.request_id, 'code': code, 'status': status,
-                          'errorType': type(error).__name__, **({'detail': detail} if detail else {})}))
-        self.send_json(status, {'error': code, 'message': message, 'requestId': self.request_id})
+                          'errorType': type(error).__name__}))
+        try:
+            self.send_json(status, {'error': code, 'message': message, 'requestId': self.request_id})
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def do_GET(self):
         self.request_id = str(uuid.uuid4())
@@ -111,11 +139,13 @@ class handler(BaseHTTPRequestHandler):
         self.request_id = str(uuid.uuid4())
         document_record = None
         db = None
+        attempt_id = None
         try:
             require(allowed_origin(self.headers), 403, 'ORIGIN', 'Origem da requisição não autorizada.')
             session_hash(self.headers)
             content_type = self.headers.get('Content-Type', '').split(';')[0].lower()
             db, workspace, actor, query, client_id = self.context()
+            require(actor.get('role') in ('admin', 'operator'), 403, 'FORBIDDEN', 'Seu perfil não pode processar documentos.')
             rate_limit(db, actor['_id'], workspace, False)
             client = db.clients.find_one({'_id': client_id, 'workspaceId': workspace, 'active': True}, {'_id': 1, 'name': 1, 'code': 1, 'cnpj': 1})
             require(client, 404, 'CLIENT', 'Empresa não encontrada neste ambiente.')
@@ -135,13 +165,45 @@ class handler(BaseHTTPRequestHandler):
                 require(UUID.fullmatch(document_id), 400, 'DOCUMENT_ID', 'Documento armazenado inválido.')
                 document_record = db.simplesDocuments.find_one({'_id': document_id, 'workspaceId': workspace, 'clientId': client_id})
                 require(document_record, 404, 'DOCUMENT_ID', 'Documento armazenado não encontrado nesta empresa.')
+                requested_attempt = payload.get('attemptId')
+                require(isinstance(requested_attempt, str) and UUID.fullmatch(requested_attempt), 400, 'DOCUMENT_ATTEMPT',
+                        'Atualize as URLs temporárias para iniciar uma nova tentativa de leitura.')
+                searchable_path = document_record['originalPath'].removesuffix('/original.pdf') + '/attempts/' + requested_attempt + '.pdf'
                 original_url = _blob_signed_url(payload.get('originalGetUrl'), document_record['originalPath'], 'get')
-                searchable_url = _blob_signed_url(payload.get('searchablePutUrl'), document_record['searchablePath'], 'put')
+                require(document_record.get('originalBlobHost') and urlsplit(original_url).hostname == document_record['originalBlobHost'],
+                        400, 'BLOB_URL', 'Atualize as URLs temporárias do documento armazenado.')
+                searchable_url = _blob_signed_url(payload.get('searchablePutUrl'), searchable_path, 'put')
+                now = utcnow()
+                ticket = next((item for item in document_record.get('processingTickets', [])
+                               if item.get('attemptId') == requested_attempt), None)
+                require(ticket and ticket.get('expiresAt') and ticket['expiresAt'] > now
+                        and ticket.get('originalUrlHash') == hashlib.sha256(original_url.encode()).hexdigest()
+                        and ticket.get('searchableUrlHash') == hashlib.sha256(searchable_url.encode()).hexdigest(),
+                        400, 'DOCUMENT_ATTEMPT', 'As URLs desta tentativa expiraram ou não correspondem ao documento. Solicite uma nova leitura.')
+                claimed = db.simplesDocuments.update_one(
+                    {'_id': document_id, 'workspaceId': workspace, 'clientId': client_id,
+                     'processingAttemptId': {'$ne': requested_attempt},
+                     'processingTickets': {'$elemMatch': {'attemptId': requested_attempt,
+                         'originalUrlHash': ticket['originalUrlHash'], 'searchableUrlHash': ticket['searchableUrlHash'],
+                         'expiresAt': {'$gt': now}}},
+                     '$or': [{'status': {'$ne': 'PROCESSING'}}, {'processingLeaseUntil': {'$lte': now}},
+                             {'processingLeaseUntil': {'$exists': False}}]},
+                    {'$set': {'status': 'PROCESSING', 'updatedAt': now, 'processingAttemptId': requested_attempt,
+                              'processingLeaseUntil': now + timedelta(seconds=PROCESSING_LEASE_SECONDS)},
+                     '$inc': {'attempts': 1}, '$unset': {'lastError': ''},
+                     '$pull': {'processingTickets': {'attemptId': requested_attempt}}})
+                require(claimed.matched_count == 1, 409, 'DOCUMENT_PROCESSING',
+                        'Já existe uma tentativa para este documento. Consulte o estado antes de iniciar outra leitura.')
+                attempt_id = requested_attempt
                 content = _download_blob(original_url)
+                content_hash = hashlib.sha256(content).hexdigest()
+                previous_hash = document_record.get('originalSha256') or document_record.get('fileSha256')
+                require(not previous_hash or previous_hash == content_hash, 409,
+                        'DOCUMENT_CHANGED', 'O PDF original armazenado não corresponde à leitura anterior. Anexe o documento novamente.')
+                _require_attempt(db, document_record, attempt_id)
+                db.simplesDocuments.update_one(_attempt_scope(document_record, attempt_id),
+                                               {'$set': {'originalStored': True, 'originalSha256': content_hash}})
                 file_name = document_record['fileName']
-                db.simplesDocuments.update_one({'_id': document_id, 'workspaceId': workspace},
-                                               {'$set': {'status': 'PROCESSING', 'updatedAt': utcnow()},
-                                                '$inc': {'attempts': 1}, '$unset': {'lastError': ''}})
             elif content_type == 'application/pdf':
                 # Compatibilidade com uploads antigos. O fluxo atual grava primeiro no Blob privado.
                 try:
@@ -165,19 +227,24 @@ class handler(BaseHTTPRequestHandler):
             extraction_id = str(uuid.uuid4())
             document_id = document_record['_id'] if document_record else None
             if document_record:
+                _require_attempt(db, document_record, attempt_id)
                 _upload_searchable(searchable_url, searchable)
+                _require_attempt(db, document_record, attempt_id)
             record = {'_id': extraction_id, 'workspaceId': workspace, 'clientId': client_id,
                       'createdBy': actor['_id'], 'createdAt': utcnow(), 'parserVersion': PARSER_VERSION,
                       'fileName': file_name, 'fileSha256': hashlib.sha256(content).hexdigest(), 'result': result,
                       **({'documentId': document_id, 'originalPath': document_record['originalPath'],
-                          'searchablePath': document_record['searchablePath']} if document_record else {})}
+                          'searchablePath': searchable_path, 'attemptId': attempt_id} if document_record else {})}
             db.simplesExtractions.insert_one(record)
             if document_record:
-                db.simplesDocuments.update_one({'_id': document_id, 'workspaceId': workspace},
+                saved = db.simplesDocuments.update_one(_attempt_scope(document_record, attempt_id),
                     {'$set': {'status': 'READY', 'updatedAt': utcnow(), 'extractionId': extraction_id,
-                              'fileSha256': record['fileSha256'], 'searchableStored': True,
+                              'fileSha256': record['fileSha256'], 'searchableStored': True, 'searchablePath': searchable_path,
                               'resultSummary': {'pa': result['pa'], 'rbt12Cents': result['rbt12Cents'],
-                                                'processedPages': result.get('processedPages')}}})
+                                                'processedPages': result.get('processedPages')}},
+                     '$unset': {'processingLeaseUntil': '', 'lastError': ''}})
+                require(saved.matched_count == 1, 409, 'DOCUMENT_ATTEMPT_EXPIRED',
+                        'Esta tentativa expirou ou foi substituída. Consulte o estado atual do documento.')
             response = {'extractionId': extraction_id, 'clientId': client_id, 'fileName': file_name,
                         'company': {'code': client.get('code'), 'name': client.get('name')},
                         **({'documentId': document_id, 'originalStored': True, 'searchableStored': True} if document_record else {}),
@@ -187,11 +254,21 @@ class handler(BaseHTTPRequestHandler):
                     response['searchablePdfBase64'] = base64.b64encode(searchable).decode('ascii')
                 else:
                     response['downloadNotice'] = 'A conversão foi concluída, mas o PDF pesquisável ultrapassa o limite de retorno web.'
-            self.send_json(200, response)
         except Exception as error:
-            if document_record and db is not None:
-                db.simplesDocuments.update_one({'_id': document_record['_id'], 'workspaceId': document_record['workspaceId']},
-                    {'$set': {'status': 'OCR_FAILED', 'updatedAt': utcnow(),
-                              'lastError': {'code': getattr(error, 'code', type(error).__name__),
-                                            'message': str(error)[:300]}}})
+            if attempt_id and db is not None:
+                _, code, message = _error_details(error)
+                try:
+                    db.simplesDocuments.update_one(_attempt_scope(document_record, attempt_id),
+                        {'$set': {'status': 'OCR_FAILED', 'updatedAt': utcnow(),
+                                  'lastError': {'code': code, 'message': message[:300], 'requestId': self.request_id}},
+                         '$unset': {'processingLeaseUntil': ''}})
+                except Exception:
+                    # A database outage leaves a lease that /status exposes as retryable on expiry.
+                    pass
             self.error(error)
+            return
+        # The result is committed. A lost HTTP connection must never undo successful work.
+        try:
+            self.send_json(200, response)
+        except (BrokenPipeError, ConnectionResetError):
+            pass

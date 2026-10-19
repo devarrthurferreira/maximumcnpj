@@ -8,15 +8,23 @@ import unicodedata
 PARSER_VERSION = 'SIMPLES_SECTION_22_V2'
 MONTH_RE = re.compile(r'(?<!\d)(0[1-9]|1[0-2])\s*/\s*(20\d{2})(?!\d)')
 MONEY_RE = re.compile(r'(?<![\w.,])(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}(?![\w.,])')
+JOINED_AMOUNT_MONTH_RE = re.compile(r'(?<![\w.,])((?:\d{1,3}(?:\.\d{3})+|\d+),\d{2})((?:0[1-9]|1[0-2])\s*/\s*20\d{2})(?![\w/]|\s*/\s*\d)')
 SECTION_RE = re.compile(r'^\s*2\s*\.\s*2\s*\)?\s*RECEITAS\s+BRUTAS\s+ANTERIORES', re.M)
 MARKET_RE = re.compile(r'^\s*2\s*\.\s*2\s*\.\s*([12])\s*\)?\s*MERCADO\s+(INTERNO|EXTERNO)', re.M)
-END_RE = re.compile(r'^\s*(?:2\s*\.\s*[3-9]\s*\)|[3-9]\s*\))', re.M)
+END_RE = re.compile(r'^\s*(?:2\s*\.\s*[3-9](?:\s*\)|(?=\s+[A-Z]))|[3-9]\s*\))', re.M)
 DECLARATION_DOCUMENT_RE = re.compile(r'PROGRAMA\s+GERADOR\s+DO\s+DOCUMENTO\s+DE\s+ARRECADACAO\s+DO\s+SIMPLES\s+NACIONAL\s*[-–—]\s*DECLARATORIO')
 DOCUMENT_RE = re.compile(r'EXTRATO\s+DO\s+SIMPLES\s+NACIONAL|' + DECLARATION_DOCUMENT_RE.pattern)
-PA_RE = re.compile(r'PERIODO\s+DE\s+APURACAO\s*\(\s*PA\s*\)\s*:\s*(0[1-9]|1[0-2])\s*/\s*(20\d{2})')
-PA_RANGE_RE = re.compile(r'PERIODO\s+DE\s+APURACAO\s*(?:\(\s*PA\s*\)\s*)?:\s*(\d{2})\s*/\s*(\d{2})\s*/\s*(20\d{2})\s+A\s+(\d{2})\s*/\s*(\d{2})\s*/\s*(20\d{2})(?!\d)')
-CNPJ_BASIC_RE = re.compile(r'CNPJ\s+BASICO\s*:\s*(\d{2}\.\d{3}\.\d{3}|\d{8})(?!\d)')
-CNPJ_MATRIZ_RE = re.compile(r'CNPJ\s+MATRIZ\s*:\s*(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{14})(?!\d)')
+PA_RE = re.compile(r'PERIODO\s+DE\s+APURACAO\s*\(\s*PA\s*\)\s*:\s*(0[1-9]|1[0-2])\s*/\s*(20\d{2})(?![\w/]|\s*/\s*\d)')
+PA_RANGE_RE = re.compile(r'PERIODO\s+DE\s+APURACAO\s*(?:\(\s*PA\s*\)\s*)?:\s*(\d{2})\s*/\s*(\d{2})\s*/\s*(20\d{2})\s+A\s+(\d{2})\s*/\s*(\d{2})\s*/\s*(20\d{2})(?![\w/]|\s*/\s*\d)')
+CNPJ_BASIC_RE = re.compile(r'CNPJ\s+BASICO\s*:\s*(\d{2}\s*\.\s*\d{3}\s*\.\s*\d{3}|\d{8})(?![\w./-]|\s*[./-]\s*\d)')
+CNPJ_MATRIZ_RE = re.compile(r'CNPJ\s+MATRIZ\s*:\s*(\d{2}\s*\.\s*\d{3}\s*\.\s*\d{3}\s*/\s*\d{4}\s*-\s*\d{2}|\d{14})(?![\w./-]|\s*[./-]\s*\d)')
+METADATA_PATTERNS = (PA_RE, PA_RANGE_RE, CNPJ_BASIC_RE, CNPJ_MATRIZ_RE)
+PAGE_FOOTER_RE = re.compile(
+    r'(?:EMITIDO\s+EM\s+\d{1,2}\s*/\s*\d{1,2}\s*/\s*20\d{2}(?:\s+AS\s+\d{2}:\d{2}(?::\d{2})?)?'
+    r'|NUMERO\s+DA\s+DECLARACAO:\s*\d{17}(?:\s+NUMERO\s+DO\s+RECIBO:\s*\d{2}\.\d{2}\.\d{5}\.\d{7}-\d)?'
+    r'|NUMERO\s+DO\s+RECIBO:\s*\d{2}\.\d{2}\.\d{5}\.\d{7}-\d'
+    r'|AUTENTICACAO:\s*\d{5}(?:\.\d{5}){3}\s+PAGINA\s+\d+'
+    r'|PAGINA\s+\d+(?:\s+DE\s+\d+)?)')
 
 
 def _plain(value: str) -> str:
@@ -63,7 +71,33 @@ def _competence_matches(block: str):
             if not re.search(r'\b\d{1,2}\s*/\s*$', block[:match.start()])]
 
 
+def _section_spans(plain: str):
+    starts = list(SECTION_RE.finditer(plain))
+    spans = []
+    for i, start in enumerate(starts):
+        end = starts[i + 1].start() if i + 1 < len(starts) else len(plain)
+        stop = END_RE.search(plain, start.end(), end)
+        spans.append((start.end(), stop.start() if stop else end))
+    return spans
+
+
+def _without_metadata(block: str):
+    # Continuation-page identification is validated globally. Its PA/dates must
+    # never become revenue competences when a table continues on the next page.
+    for pattern in METADATA_PATTERNS:
+        block = pattern.sub(lambda match: re.sub(r'[^\n]', ' ', match[0]), block)
+    return block
+
+
 def _read_market(block: str, revenues: dict, label: str):
+    # Recognized complete footer lines are non-financial. In particular, the
+    # receipt check digit after '-' is not a negative table value.
+    block = '\n'.join(' ' * len(line) if PAGE_FOOTER_RE.fullmatch(line.strip()) else line
+                      for line in block.split('\n'))
+    # OCR may merge adjacent cells into "1.234,5608/2025". The supported
+    # boundary has exactly two decimal places followed by an explicit MM/YYYY;
+    # insert only whitespace, never infer or replace a digit or separator.
+    block = JOINED_AMOUNT_MONTH_RE.sub(r'\1 \2', block)
     matches = _competence_matches(block)
     for index, match in enumerate(matches):
         period = f'{match[1]}/{match[2]}'
@@ -77,9 +111,14 @@ def _read_market(block: str, revenues: dict, label: str):
         # A number such as "8 000,00" must never be read as the suffix "000,00".
         # Do not repair OCR digits or separators without an unambiguous value.
         prefix = tail[:amounts[0].start()]
-        line_suffix = tail[amounts[0].end():].split('\n', 1)[0]
+        suffix_lines = tail[amounts[0].end():].split('\n')
+        line_suffix = suffix_lines[0]
         if not re.fullmatch(r'\s*(?:R\$\s*)?', prefix) or line_suffix.strip():
             raise ValueError(f'Seção 2.2 · {label}: valor monetário fragmentado ou ambíguo em {period}. Confira o extrato.')
+        for line in suffix_lines[1:]:
+            line = line.strip()
+            if re.search(r'\d', line) and not PAGE_FOOTER_RE.fullmatch(line) and not re.fullmatch(r'NOME\s+EMPRESARIAL\s*:\s*[^|]+', line):
+                raise ValueError(f'Seção 2.2 · {label}: fragmento numérico sem vínculo em {period}. Confira o extrato.')
         value = _cents(amounts[0].group())
         if period in revenues and revenues[period] != value:
             raise ValueError(f'Seção 2.2: valores conflitantes para {period} no {label}.')
@@ -100,14 +139,11 @@ def parse_statement_text(text: str, *, ocr_used=False, ocr_confidence=None):
         raise ValueError('RBT12: CNPJ básico/matriz ausente, ilegível ou mais de uma empresa no PDF.')
     name = re.search(r'NOME\s+EMPRESARIAL\s*:\s*([^\n|]+)', text, re.I)
     internal, external, section_blocks = {}, {}, []
-    starts = list(SECTION_RE.finditer(plain))
-    if not starts:
+    spans = _section_spans(plain)
+    if not spans:
         raise ValueError('RBT12: seção 2.2) Receitas Brutas Anteriores não encontrada. A seção 2.1 não será utilizada.')
-    for i, start in enumerate(starts):
-        end = starts[i + 1].start() if i + 1 < len(starts) else len(plain)
-        stop = END_RE.search(plain, start.end(), end)
-        block = plain[start.end():stop.start() if stop else end]
-        section_blocks.append(block)
+    for start, end in spans:
+        section_blocks.append(_without_metadata(plain[start:end]))
     # Repeated 2.2 headers on continuation pages do not reset the current market.
     block = '\n'.join(section_blocks)
     markets = list(MARKET_RE.finditer(block))
@@ -161,25 +197,30 @@ def _validate_ocr_confidence(pages):
     text = '\n'.join(line for _, _, line in rows)
     # The label and its value can be on different lines (or pages). Use the same
     # explicit metadata matches as the parser to cover every row of that value.
-    metadata_spans = [match.span() for pattern in (PA_RE, PA_RANGE_RE, CNPJ_BASIC_RE, CNPJ_MATRIZ_RE)
+    critical_spans = [match.span() for pattern in METADATA_PATTERNS + (SECTION_RE, MARKET_RE)
                       for match in pattern.finditer(text)]
-    inside = False
+    for start, end in _section_spans(text):
+        block = _without_metadata(text[start:end])
+        critical_spans.extend((start + match.start(), start + match.end())
+                              for match in _competence_matches(block))
+        critical_spans.extend((start + match.start(), start + match.end())
+                              for match in MONEY_RE.finditer(block))
+        # Keep original offsets: normalization happens only inside _read_market.
+        # This span covers both the amount and every wrapped part of the date.
+        critical_spans.extend((start + match.start(), start + match.end())
+                              for match in JOINED_AMOUNT_MONTH_RE.finditer(block))
     position = 0
     for page_number, row, line in rows:
         row_end = position + len(line)
-        metadata_row = any(start < row_end and end > position for start, end in metadata_spans)
+        critical_row = any(start < row_end and end > position for start, end in critical_spans)
         position = row_end + 1
-        if SECTION_RE.search(line) or MARKET_RE.search(line):
-            inside = True
-        elif END_RE.search(line):
-            inside = False
-        critical = (inside and (_competence_matches(line) or MONEY_RE.search(line))) or metadata_row or bool(re.search(r'CNPJ\s+(?:BASICO|MATRIZ)|PERIODO\s+DE\s+APURACAO|\(\s*PA\s*\)', line))
+        critical = critical_row or bool(re.search(r'CNPJ\s+(?:BASICO|MATRIZ)|PERIODO\s+DE\s+APURACAO|\(\s*PA\s*\)', line))
         if critical and any(item['confidence'] is not None and item['confidence'] < .93 for item in row['items'] if re.search(r'\d', item['text'])):
             raise ValueError(f'OCR com baixa confiança em dados da seção 2.2/identificação (página {page_number}). Confira o PDF; a RBT12 não foi liberada.')
 
 
 def convert_statement_pdf(content: bytes, *, force_ocr=False, ocr_engine=None, timeout_seconds=45, section_only=False):
-    from reporting.pdf_ocr import searchable_pdf, MAX_BYTES, MAX_PAGES
+    from reporting.pdf_ocr import searchable_pdf, native_page_text, MAX_BYTES, MAX_PAGES
     stop_when = None
     if section_only:
         import fitz
@@ -192,7 +233,7 @@ def convert_statement_pdf(content: bytes, *, force_ocr=False, ocr_engine=None, t
                 raise ValueError('O PDF está protegido por senha. Envie uma cópia desbloqueada.')
             if not 1 <= len(document) <= MAX_PAGES:
                 raise ValueError(f'O extrato deve ter entre 1 e {MAX_PAGES} páginas.')
-            native_pages = [page.get_text(sort=True) for page in document]
+            native_pages = [native_page_text(page) for page in document]
 
         def stop_when(pages):
             text = '\n\n'.join('\n'.join(row['text'] for row in page['rows']) for page in pages)
