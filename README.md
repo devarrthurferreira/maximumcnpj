@@ -1,6 +1,17 @@
-# Maximum CNPJ · v0.20.3
+# Maximum CNPJ · v0.21.0
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Entrega 19/10/2026 — serviços 9000 e DIFAL na DRE
+
+- Naturezas são lidas pelos quatro primeiros dígitos: `900000`, `900001`, `90001234` e `9.000.01` são **9000 — Vendas de serviços**, mesmo com descrição ausente ou conflitante. O resumo guiado e o PDF mostram essa operação, e as tabelas de vendas exibem natureza e descrição.
+- O servidor separa serviços em cada grupo gerencial, retira esses valores dos grupos de mercadorias e preenche **Receita de serviços**. Mercadorias + serviços conciliam com o saldo do relatório; a média mensal é rateada em centavos entre os quatro grupos de receita, sem duplicação. Ajustes manuais ficam registrados.
+- Novas simulações incluem uma linha **DIFAL estimado (10%)** na DRE. O total elegível do relatório é dividido pelas competências importadas e arredondado em centavos; o anual é a média mensal × 12. A dedução entra uma única vez na receita líquida, no total de tributos e no resultado antes de IRPJ/CSLL, incluindo a base do Lucro Real.
+- É a mesma estimativa gerencial nos regimes comparados, não uma determinação da alíquota legal de cada operação. Serviços continuam fora da elegibilidade do DIFAL. Alterações manuais no faturamento não alteram a base elegível importada; pendências de UF continuam explícitas.
+- A origem, o total importado, as médias, a base elegível e a memória ficam visíveis. Seções financeiras começam abertas e podem ser recolhidas; a impressão expande todas elas.
+- Modelo `1.2.0-services-difal`, projeção de receitas `AVERAGE_X12_V2` e referência `DIFAL_DRE_V1`. Simulações antigas são reproduzidas pelos valores salvos, sem recálculo e sem inventar DIFAL zero quando a referência não existe. Criar uma nova versão busca a base atual; na migração, valores importados são separados novamente e o serviço manual anterior fica visível para revisão, preservando despesas e RBT12.
+
+Validação com dados sintéticos: prefixos 9000, separação por grupo, arredondamento, conciliação de receitas, DIFAL na DRE, persistência/isolamento, relatórios PDF e fluxo no navegador.
 
 ## Correção 16/10/2026 — leitura de declarações PGDAS-D
 
@@ -35,9 +46,9 @@ Diagnóstico, arquivos alterados e validação: [`docs/CNPJ-RECOVERY-V0.20.1.md`
 - **DIFAL = total da venda × 10%**, em centavos inteiros com arredondamento de meio centavo para cima. O percentual é uma média estimada solicitada para uso gerencial, não uma alíquota legal universal.
 - A regra exige venda de mercadoria, CPF, UF brasileira do emitente diferente da UF do destinatário e natureza explicitamente habilitada. A configuração inicial contempla **6101, 6102, 6103, 6104, 6105, 6106, 6107 e 6108**. Outros CFOPs dependem de inclusão explícita após validação; o prefixo 6, sozinho, nunca habilita o cálculo. Serviços, devoluções, remessas, transferências e CNPJs ficam fora.
 - Selecione a **UF do estabelecimento emitente** na importação; a UF cadastrada é reaproveitada quando disponível. A coluna **J — Estado** fornece a UF do destinatário. UF ausente/ inválida é indicada como pendência para operações candidatas, sem estimar localização pelo CPF.
-- A base é o total já registrado pela fórmula **Q − Y + AA − AB**, preservando frete, descontos, abatimentos, a despesa Z informativa e os demais tributos. O DIFAL aparece separado e não é somado novamente ao total da venda ou aos impostos do simulador.
+- A base é o total já registrado pela fórmula **Q − Y + AA − AB**, preservando frete, descontos, abatimentos, a despesa Z informativa e os demais tributos. O DIFAL aparece separado e não altera o total da venda. A partir da v0.21.0, sua projeção mensal/anual integra os tributos e a DRE de novas simulações.
 - Prévia, resumo guiado, relatório detalhado, CSV e PDF apresentam o DIFAL estimado. Alterar a UF na prévia recalcula o resultado; trocar o arquivo recalcula valores, destinatários e naturezas. Como os relatórios concluídos são snapshots imutáveis, correções posteriores exigem nova importação. Reenvios da mesma parte não duplicam valores.
-- O servidor recalcula cada linha e reconcilia o total antes da emissão. Relatórios anteriores à regra permanecem legíveis e indicam DIFAL indisponível; não recebem cálculo retroativo. O simulador apresenta a estimativa do relatório de origem separadamente dos ajustes do cenário.
+- O servidor recalcula cada linha e reconcilia o total antes da emissão. Relatórios anteriores à regra permanecem legíveis e indicam DIFAL indisponível; não recebem cálculo retroativo. O simulador conserva a estimativa do relatório de origem separadamente dos ajustes manuais do cenário e projeta sua dedução na DRE de novas simulações.
 
 Detalhes da regra, arquivos e validação: [`docs/DIFAL-V0.20.md`](docs/DIFAL-V0.20.md).
 
@@ -93,7 +104,7 @@ A verificação usa somente dados sintéticos: tipos/build, regras, integraçõe
 - [x] **Continuar** leva ao próximo relatório escolhido da mesma empresa. Compras e vendas concluídas abrem a etapa do extrato antes dos outros campos do simulador. Um relatório isolado pode ser concluído sem exigir o tipo não escolhido; o simulador requer os dois.
 - [x] Selecionar o PDF inicia a leitura da seção 2.2 automaticamente. A RBT12 fica preenchida após validar a extração. Originais armazenados, reprocessamento, conferência dos 12 meses e mensagens de erro permanecem disponíveis.
 - [x] **Não tenho o extrato agora** permite informar a RBT12 efetiva manualmente, com valor obrigatório e confirmação explícita. A origem manual fica indicada na tela, no histórico, no JSON e na DRE. Não há substituição automática por vendas × 12 nem fallback silencioso de um OCR que falhou.
-- [x] Após essa etapa, o simulador traz os cinco grupos de compras/vendas e a RBT12. Serviços e despesas continuam exigindo informação, inclusive zero explícito quando não existem. **Gerar simulação** calcula e salva após a validação; avançar ou restaurar um rascunho não cria outra simulação.
+- [x] Após essa etapa, o simulador traz os cinco grupos de compras/vendas e a RBT12. A partir da v0.21.0, serviços são preenchidos pelo relatório, separados das mercadorias. Despesas continuam exigindo informação, inclusive zero explícito quando não existem. **Gerar simulação** calcula e salva após a validação; avançar ou restaurar um rascunho não cria outra simulação.
 - [x] Históricos, exclusão definitiva, permissões, relatórios completos e reenvios idempotentes permanecem disponíveis. Nenhuma fórmula fiscal foi alterada.
 
 A verificação desta entrega cobre o percurso sintético da seleção à persistência no MongoDB, modelos de arquivo, erros e retomada, PDF automático e alternativa manual, além de navegação no computador/celular. Execute os gates indicados abaixo; os resultados finais ficam na CI da versão.
@@ -219,7 +230,7 @@ Regressões sintéticas: seções 2.1/2.3 com valores concorrentes, mercados int
 | Vendas | R$ 400.000,00 | R$ 100.000,00 | R$ 1.200.000,00 |
 | Compras | R$ 240.000,00 | R$ 60.000,00 | R$ 720.000,00 |
 
-A regra aplica-se a todos os cinco grupos: vendas optantes, vendas não optantes/não confirmadas, vendas CPF, compras do Simples e compras fora do Simples. Vale para qualquer intervalo de **1 a 12 competências**. O simulador usa os totais conciliados pelo servidor; resultados financeiros enviados pelo navegador não substituem a origem.
+A partir da v0.21.0, a regra inclui serviços importados separadamente e os cinco grupos: vendas optantes, vendas não optantes/não confirmadas, vendas CPF, compras do Simples e compras fora do Simples. Vale para qualquer intervalo de **1 a 12 competências**. O simulador usa os totais conciliados pelo servidor; resultados financeiros enviados pelo navegador não substituem a origem.
 
 ### Competências, não dias com movimento
 
@@ -229,13 +240,13 @@ Cada relatório mantém suas datas originais. Sua conferência individual contra
 
 ### Precisão e memória da projeção
 
-A regra compartilhada `public/simulator-projection.js` é usada pelo navegador e pelo Node. Calcula em centavos inteiros com BigInt e valida limites seguros. A média total de cada lado é arredondada em centavos; os centavos residuais são distribuídos entre seus grupos pelo maior resto, com desempate determinístico. Assim, os grupos fecham o total mensal. A projeção anual repete **essa média arredondada** 12 vezes, podendo diferir alguns centavos da divisão sem arredondamento intermediário.
+A regra compartilhada `public/simulator-projection.js` é usada pelo navegador e pelo Node. Calcula em centavos inteiros com BigInt e valida limites seguros. A média total de cada lado é arredondada em centavos; os centavos residuais são distribuídos pelo maior resto, com desempate determinístico. Na projeção V2, o rateio ocorre primeiro entre mercadorias e serviços, depois entre os três grupos de mercadorias, preservando a receita líquida de cada atividade sem criar saldo negativo por arredondamento. Assim, os grupos fecham o total mensal. A projeção anual repete **essa média arredondada** 12 vezes, podendo diferir alguns centavos da divisão sem arredondamento intermediário.
 
-A API do pré-preenchimento retorna `projection` quando há período automático. Cada nova simulação salva a versão `AVERAGE_X12_V1`, os totais importados, o divisor, as cinco médias, os valores anualizados e 12 meses projetados iguais. O servidor gera essa memória; o cliente não pode fornecer uma projeção arbitrária.
+A API do pré-preenchimento retorna `projection` quando há período automático. Cada nova simulação com serviços separados salva a versão `AVERAGE_X12_V2` (históricos conservam `AVERAGE_X12_V1`), os totais importados, o divisor, as seis médias, os valores anualizados e 12 meses projetados iguais. O servidor gera essa memória; o cliente não pode fornecer uma projeção arbitrária.
 
 **A base importada e o cenário editado são separados.** Os cinco campos continuam editáveis. A conferência superior mantém a média original, sinaliza a edição e os resultados usam os valores mensais efetivamente informados. O histórico guarda `projection.scenario`, os ajustes e a base original. Reabrir um cenário não consulta novamente os CNPJs nem recalcula os resultados fiscais. Nos históricos sem a nova memória, a interface apresenta uma conferência derivada dos totais salvos, identificada como tal.
 
-Serviços, salários, benefícios, despesas administrativas, aluguel e taxas de cartão são informados **por mês**, portanto não são divididos pelo número de meses dos arquivos e entram no cenário anual multiplicados por 12 uma única vez. As fórmulas tributárias existentes não foram alteradas nesta entrega.
+Serviços importados são divididos pelas competências junto às mercadorias. A receita de serviços pode ser ajustada **por mês**, com registro da alteração. Salários, benefícios, despesas administrativas, aluguel e taxas de cartão são informados **por mês**, sem divisão pelo período importado. Todos entram no cenário anual multiplicados por 12 uma única vez.
 
 **RBT12 não é a projeção anual.** Na v0.12.1, o valor vem obrigatoriamente da seção 2.2 do extrato para novas simulações. Valores manuais anteriores ficam somente no histórico, com sua proveniência original. Não é dividido pelo período importado nem multiplicado por 12. A distribuição uniforme é uma premissa de projeção, não um histórico mensal real ou uma previsão de sazonalidade.
 

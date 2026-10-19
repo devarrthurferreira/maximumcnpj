@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {annualizeReports, projectScenario, REPORT_GROUPS} from '../public/simulator-projection.js';
+import {annualizeReports, projectScenario, projectDifal, REPORT_GROUPS} from '../public/simulator-projection.js';
 import {calculateSimulation, draftToInput} from '../public/simulator-engine.js';
 import {renderProjectionCard} from '../public/simulator-projection-view.js';
 const fields={salesOptantCents:10000000,salesNonOptantCents:20000000,salesCpfCents:10000000,purchasesOptantCents:8000000,purchasesNonOptantCents:16000000};
@@ -80,4 +80,41 @@ test('Apresentação preserva 12 colunas iguais, cinco grupos, confirmação e v
  assert(html.includes('RBT12'));assert(html.includes('não é dividida nem multiplicada'));assert(html.includes('Não são 4 + 12 meses'));
  const zero=renderProjectionCard({projection:annualizeReports(Object.fromEntries(REPORT_GROUPS.map(k=>[k,0])),4)});
  assert.equal((zero.match(/projection-month is-zero/g)||[]).length,12);
+});
+
+test('Serviços importados formam sexto grupo sem duplicar receita; rateio preserva as duas atividades',()=>{
+ const imported={salesOptantCents:10000,salesNonOptantCents:20500,salesCpfCents:39000,serviceRevenueCents:210021,purchasesOptantCents:0,purchasesNonOptantCents:4500};
+ const p=annualizeReports(imported,3);
+ assert.equal(p.version,'AVERAGE_X12_V2');assert.equal(p.groups.length,6);
+ assert.deepEqual(p.totals.sales,{totalCents:279521,monthlyCents:93174,annualCents:1118088});
+ assert.equal(p.monthlyGroupsCents.serviceRevenueCents,70007);
+ const groups=Object.fromEntries(REPORT_GROUPS.map(key=>[key,p.monthlyGroupsCents[key]/100]));
+ const values={...manual,serviceRevenue:700.07};
+ assert.equal(projectScenario(groups,values).annual.revenueCents,p.totals.sales.annualCents);
+ const edge=annualizeReports({...imported,salesOptantCents:4,salesNonOptantCents:4,salesCpfCents:-8,serviceRevenueCents:5},12);
+ assert.equal(edge.totals.sales.monthlyCents,0);assert.equal(edge.monthlyGroupsCents.serviceRevenueCents,0);
+ assert.equal(REPORT_GROUPS.slice(0,3).reduce((sum,key)=>sum+edge.monthlyGroupsCents[key],0),0);
+ for(let months=1;months<=12;months++)for(let services=0;services<15;services++) {
+  const sample=annualizeReports({...imported,salesOptantCents:4,salesNonOptantCents:4,salesCpfCents:-8,serviceRevenueCents:services},months);
+  const goods=REPORT_GROUPS.slice(0,3).reduce((sum,key)=>sum+sample.monthlyGroupsCents[key],0);
+  assert(goods>=0);assert(sample.monthlyGroupsCents.serviceRevenueCents>=0);
+  assert.equal(goods+sample.monthlyGroupsCents.serviceRevenueCents,sample.totals.sales.monthlyCents);
+ }
+ assert.throws(()=>annualizeReports({...imported,serviceRevenueCents:-1},3));
+ assert.throws(()=>annualizeReports({...imported,salesCpfCents:-40000},3),/mercadorias/);
+ assert.equal(annualizeReports(fields,3).version,'AVERAGE_X12_V1');
+ assert.equal(Object.hasOwn(annualizeReports(fields,3).monthlyGroupsCents,'serviceRevenueCents'),false);
+});
+
+test('DIFAL usa total importado já arredondado por linha, média mensal e doze meses sem recalcular a base',()=>{
+ const summary={version:'DIFAL_ESTIMATE_V1',ratePercent:10,issuerUf:'MG',eligibleLines:2,baseCents:10005,amountCents:1001,pendingLines:1};
+ const p=projectDifal(summary,3,'source-job');
+ assert.equal(p.version,'DIFAL_DRE_V1');assert.equal(p.sourceAmountCents,1001);assert.equal(p.sourceBaseCents,10005);
+ assert.equal(p.monthlyCents,334);assert.equal(p.annualCents,4008);assert.equal(p.pendingLines,1);
+ assert.equal(p.sourceJobId,'source-job');assert.equal(summary.amountCents,1001);
+ assert.equal(projectDifal(null,3,'source-job'),null);
+ assert.equal(projectDifal({...summary,amountCents:0,baseCents:0,eligibleLines:0},3,'source-job').annualCents,0);
+ for(const months of[0,13,1.5])assert.throws(()=>projectDifal(summary,months,'source-job'));
+ for(const amountCents of[-1,1.2,'1',null,Infinity,Number.MAX_SAFE_INTEGER])assert.throws(()=>projectDifal({...summary,amountCents},1,'source-job'));
+ assert.throws(()=>projectDifal({...summary,ratePercent:18},1,'source-job'));
 });

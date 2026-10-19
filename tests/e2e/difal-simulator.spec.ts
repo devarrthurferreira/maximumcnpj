@@ -1,5 +1,6 @@
+import {buildMonthlyDre} from '../../public/simulator-calendar.js';
 import {test,expect,type Page} from '@playwright/test';
-import {annualizeReports} from '../../public/simulator-projection.js';
+import {annualizeReports,projectDifal} from '../../public/simulator-projection.js';
 import {calculateSimulation,createEmptyDraft,draftToInput,MODEL_VERSION,TAX_SOURCES,CALCULATOR_SOURCE_COMMIT} from '../../public/simulator-engine.js';
 
 const generation='61080000-0000-4000-8000-000000000001',client='61080000-0000-4000-8000-000000000002';
@@ -28,12 +29,13 @@ function savedSnapshot(report=source()):any {
 test('DIFAL conserva o total elegível importado ao ajustar período, despesas e vendas mensais',async({page},info)=>{
   await setup(page);await page.goto(url);
   const card=page.locator('#simulator-difal');
-  await expect(card).toContainText('DIFAL estimado · total importado');
+  await expect(card).toContainText('DIFAL estimado · relatório e DRE');
   await expect(card.locator('[data-difal-amount]')).toContainText('15,00');
   await expect(card).toContainText('150,00');await expect(page.locator('#salesCpfCents')).toHaveValue('1000.00');
   await expect(card.locator('[data-difal-adjusted]')).toHaveCount(0);
   await page.locator('#period-months').selectOption('2');
   await expect(page.locator('#salesCpfCents')).toHaveValue('500.00');await expect(card.locator('[data-difal-amount]')).toContainText('15,00');
+  await expect(card.locator('[data-difal-monthly]')).toContainText('7,50');await expect(card.locator('[data-difal-annual]')).toContainText('90,00');
   await page.locator('#purchasesOptantCents').fill('200');await page.locator('#serviceRevenue').fill('100');
   await expect(card.locator('[data-difal-adjusted]')).toHaveCount(0);
   await page.locator('#salesCpfCents').fill('1000');
@@ -67,10 +69,42 @@ test('histórico conserva o DIFAL capturado e resultados sem reler relatórios o
   await page.goto('/simulator.html?simulation='+snapshot._id);
   await expect(page.locator('[data-difal-amount]')).toContainText('15,00');
   await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');
-  await expect(page.locator('.sim-dre')).not.toContainText('DIFAL');
+  await expect(page.locator('.sim-dre')).not.toContainText('DIFAL');await expect(page.locator('#simulator-difal')).toContainText('versão histórica');await expect(page.locator('[data-difal-monthly]')).toHaveCount(0);
   await page.getByRole('button',{name:'Mensal',exact:true}).click();await expect(page.locator('[data-difal-amount]')).toContainText('15,00');
   expect(sourceReads).toBe(0);
   delete snapshot.source.sales.difal;await page.reload();
   await expect(page.locator('#simulator-difal')).toBeEmpty();await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');
   expect(sourceReads).toBe(0);
+});
+
+
+test('DIFAL projetado entra na DRE anual e mensal sem alterar a receita importada',async({page})=>{
+  const report=source();await setup(page,report);
+  let posted:any;
+  await page.route('**/api/v4/simulations',route=>{
+    posted=route.request().postDataJSON();const difal=projectDifal(report.sales.difal,posted.reportMonths,report.sales.jobId);
+    return route.fulfill({status:201,json:{...savedSnapshot(report),_id:posted.simulationId,draft:posted.draft,reportMonths:posted.reportMonths,monthlyGroups:posted.monthlyGroups,difalProjection:difal,result:calculateSimulation(posted.draft,difal),engineInput:draftToInput(posted.draft,difal),projection:annualizeReports(report.fields,posted.reportMonths)}});
+  });
+  await page.goto(url);await page.locator('#period-months').selectOption('2');await page.locator('#period-confirm').check();
+  await page.locator('#rbt12-manual').click();await page.locator('#rbt12').fill('15600');await page.locator('#rbt12-manual-confirm').check();
+  for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill('0');
+  await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
+  const annual=page.locator('.sim-dre tbody tr').filter({hasText:'DIFAL estimado'});
+  await expect(annual).toHaveCount(1);for(const cell of await annual.locator('td').allTextContents())expect(cell).toContain('90,00');
+  await expect(page.locator('#annual-revenue')).toContainText('7.800,00');expect(posted.draft.values.salesRevenue).toBe(650);
+  await page.getByRole('button',{name:'Mensal',exact:true}).click();const monthly=page.locator('[data-dre-row="difal"]');
+  await expect(monthly.locator('td')).toHaveCount(13);await expect(monthly.locator('td').first()).toContainText('7,50');await expect(monthly.locator('td').last()).toContainText('90,00');
+});
+
+test('histórico novo conserva a projeção DIFAL salva em vez de recalcular a estimativa',async({page})=>{
+  const report=source(),saved=savedSnapshot(report),difal=projectDifal(report.sales.difal,1,report.sales.jobId)!;
+  saved.difalProjection=difal;saved.result=calculateSimulation(saved.draft,difal);saved.engineInput=draftToInput(saved.draft,difal);
+  saved.result.regimes[0].annualProfit=123456.78;
+  saved.monthlyDre=buildMonthlyDre(saved.result,saved.draft.year);expect(saved.monthlyDre.version).toBe('DRE_CALENDAR_V2');
+  const capturedDifal=saved.monthlyDre.regimes[0].rows.find((row:any)=>row.key==='difal');capturedDifal.months[0]=-999;capturedDifal.annual=-999;
+  await setup(page);await page.route('**/api/v4/simulations/'+saved._id,r=>r.fulfill({json:saved}));
+  await page.goto('/simulator.html?simulation='+saved._id);
+  await expect(page.locator('[data-difal-monthly]')).toContainText('15,00');await expect(page.locator('[data-difal-annual]')).toContainText('180,00');
+  await expect(page.locator('.sim-dre')).toContainText('DIFAL estimado');await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');
+  await page.getByRole('button',{name:'Mensal',exact:true}).click();await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('999,00');
 });

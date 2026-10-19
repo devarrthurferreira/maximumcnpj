@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateTax, DEFAULT_RATES, EXAMPLE_INPUT, TAX_BANDS, taxInputSchema, createEmptyDraft, draftToInput, calculateSimulation } from '../public/simulator-engine.js';
+import {projectDifal} from '../public/simulator-projection.js';
 
 test('wizard keeps absent revenue and expense fields blank until explicitly completed', () => {
   const draft = createEmptyDraft();
@@ -379,6 +380,41 @@ test('all DRE subtotals reconcile without duplicated CMV, personnel or ICMS cred
     }
     close(memory(result, 'actual.preTax'), result.regimes[3].dre.preTax);
   }
+});
+
+test('DIFAL enters revenue deductions and tax burden once, before Lucro Real IRPJ and CSLL', () => {
+  const input=example(), baseline=calculateTax(input), result=calculateTax({...input,difalMonthly:100});
+  close(result.annualRevenue,baseline.annualRevenue);assert.deepEqual(result.credits,baseline.credits);
+  for(const regime of result.regimes){
+    const old=baseline.regimes.find(item=>item.id===regime.id),d=regime.dre;
+    close(d.difal,-1200);close(d.netRevenue,old.dre.netRevenue-1200);close(d.preTax,old.dre.preTax-1200);
+    close(d.netRevenue,d.revenue+d.das+d.cbsDebit+d.ibsDebit+d.icmsNet+d.iss+d.difal);
+    close(regime.totalTaxes,-d.das-d.cbsDebit-d.ibsDebit-d.icmsNet-d.iss-d.difal-d.payroll-d.irpj-d.csll-d.cbsUsed-d.ibsUsed);
+    close(regime.annualProfit,result.annualRevenue+d.cmv+d.salaries+d.benefits+d.administrative+d.rent+d.cards-regime.totalTaxes);
+    close(regime.monthlyProfit,regime.annualProfit/12);
+    if(regime.id!=='actual'){close(d.irpj,old.dre.irpj);close(d.csll,old.dre.csll);close(regime.totalTaxes,old.totalTaxes+1200);}
+  }
+  close(memory(result,'actual.preTax'),result.regimes[3].dre.preTax);
+  close(memory(result,'actual.base'),Math.max(0,result.regimes[3].dre.preTax));
+  close(result.regimes[3].dre.csll,-Math.max(0,result.regimes[3].dre.preTax)*.09);
+  assert(result.regimes[3].dre.irpj>baseline.regimes[3].dre.irpj);
+  const loss=calculateTax({...input,difalMonthly:1000000});
+  assert.equal(loss.regimes[3].dre.irpj,0);assert.equal(loss.regimes[3].dre.csll,0);
+  assert.equal(Object.hasOwn(baseline.regimes[0].dre,'difal'),false);
+  assert.equal(calculateTax({...input,difalMonthly:0}).regimes[0].dre.difal,0);
+});
+
+test('DIFAL context is distinct from editable draft, retains missing-source state and identifies partial estimates',()=>{
+ const draft=createEmptyDraft();for(const key of Object.keys(draft.values))draft.values[key]=EXAMPLE_INPUT[key];
+ const difal=projectDifal({version:'DIFAL_ESTIMATE_V1',ratePercent:10,issuerUf:'MG',eligibleLines:1,baseCents:10000,amountCents:1000,pendingLines:2},3,'source-job');
+ const before=structuredClone(draft), result=calculateSimulation(draft,difal);
+ assert.equal(draftToInput(draft,difal).difalMonthly,3.33);
+ close(result.regimes[0].dre.difal,-39.96);assert(result.warnings.some(warning=>warning.code==='difal-partial'));
+ assert.equal(result.memory.find(row=>row.id==='difal.source').value,10);assert.deepEqual(draft,before);
+ assert.equal(draftToInput({...draft,difalMonthly:999}),null);
+ assert.equal(draftToInput(draft,{...difal,annualCents:1}),null);
+ assert.equal(draftToInput(draft,{...difal,monthlyCents:-1}),null);
+ for(const value of[-1,'0',null,Infinity])assert.equal(taxInputSchema.safeParse({...EXAMPLE_INPUT,difalMonthly:value}).success,false);
 });
 
 test('unsupported years, annexes, extra keys and out-of-range rates are rejected', () => {

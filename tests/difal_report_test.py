@@ -96,6 +96,21 @@ class DifalReportTests(unittest.TestCase):
         self.assertEqual(sales_operation('6999', 'Camiseta'), 'OUTRAS')
         self.assertEqual(sales_operation('6108', 'Venda de kit para conserto'), 'VENDA')
 
+    def test_service_nature_prefix_is_prioritized_and_reported(self):
+        for nature in ('9000', '900000', '900001', '90001234', '9.000.01'):
+            for description in ('', 'Venda', 'Devolução'):
+                with self.subTest(nature=nature, description=description):
+                    self.assertEqual(sales_operation(nature, description), 'SERVICO')
+                    job, rows, items = difal_fixture(nature='9000', description=description,
+                                                     operation='SERVICO', reason='NOT_SALE')
+                    meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+                    text = story_text(meta)
+                    self.assertIn('Vendas de serviços', text)
+                    self.assertIn('DIFAL estimado na DRE', text)
+                    self.assertEqual(meta['difal']['amountCents'], 0)
+                    service = next(item for item in meta['operationTotals'] if item['operation'] == 'SERVICO')
+                    self.assertEqual(service['balanceCents'], 15000)
+
     def test_snapshot_reconciliation_blocks_tampered_or_missing_difal(self):
         mutations = [
             lambda j, r: r['difal'].update(amountCents=1499),

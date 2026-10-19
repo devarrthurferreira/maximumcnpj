@@ -107,6 +107,20 @@ test('vendas reduz natureza aos 4 primeiros dígitos e devolução sempre abate 
   assert.equal(otherReport.rows[0].balanceCents,1000);
 });
 
+test('vendas importadas reconhecem todos os sufixos de 9000 como serviços e mantêm os totais', () => {
+  const services = ['9000', '900000', '900001', '90001234', '9.000.01'].map((nature, index) => {
+    const value = row('12345678900', 'Pessoa sintética', '', '100,01');
+    value[9] = 'SP'; value[11] = nature; value[14] = index ? 'Venda de mercadoria' : '';
+    return value;
+  });
+  const parsed = parsePurchaseMatrix([header, ...services], 0, {type: 'SALES', issuerUf: 'MG'});
+  assert.deepEqual(parsed.errors, []);
+  assert(parsed.rows.every(value => value.natureCode === '9000' && value.operation === 'SERVICO'));
+  assert.equal(parsed.operations.SERVICO.lines, 5); assert.equal(parsed.operations.SERVICO.totalCents, 50005);
+  assert.equal(parsed.balanceCents, 50005); assert.equal(parsed.totalCents, 50005);
+  assert.equal(parsed.difal.eligibleLines, 0); assert.equal(parsed.difal.amountCents, 0);
+});
+
 test('vendas rejeita colunas deslocadas mesmo com mesma largura do cabeçalho', () => {
   const salesHeader = [...header,'Código','Chave',''];
   const normal = [...row('11222333000181','Comprador','1','100,00'),'936','chave',''];

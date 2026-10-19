@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.21.0] — 2026-10-19
+
+- Vendas de serviços 9000 visíveis no resumo guiado e relatório, com natureza de quatro dígitos e descrição para conferência.
+- Serviços separados por grupo gerencial no servidor e preenchidos automaticamente no simulador, sem duplicar mercadorias; projeção em centavos reconcilia a receita combinada.
+- DIFAL estimado da origem projetado pelo período importado e incluído uma única vez na DRE, tributos e resultado antes de IRPJ/CSLL; memória mensal/anual e pendências explícitas.
+- Seções financeiras abertas por padrão e expandidas na impressão; origem, cálculo e parâmetros salvos disponíveis sem abrir informações recolhidas.
+- Modelo e projeções versionados, ajustes de serviços auditados e históricos preservados sem recálculo.
+- Regressões sintéticas de classificação, integração com MongoDB, motor/DRE, arredondamento, PDF e navegador.
+
 ## [0.20.3] — 2026-10-16
 
 - Suporte ao cabeçalho de declaração PGDAS-D, CNPJ Matriz e PA em intervalo de datas, com verificação de identificação única e período válido.

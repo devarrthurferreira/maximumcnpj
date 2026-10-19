@@ -10,6 +10,7 @@ import { purchaseSummary, purchaseRows, purchaseExport } from '../src/purchase-s
 import { DIFAL_VERSION } from '../src/difal.ts';
 import { createGeneration, attachGenerationSale, attachGenerationPurchase, getGeneration } from '../src/generation-store.ts';
 import { generationSimulator } from '../src/simulator-store.ts';
+import { digits } from '../src/domain.ts';
 
 test('DIFAL MongoDB: origem imutável, CPF, reconciliação, reimportação, legado e geração idempotente', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
   const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
@@ -104,6 +105,70 @@ test('DIFAL MongoDB: origem imutável, CPF, reconciliação, reimportação, leg
     assert.deepEqual(simulator.sales.difal, (await purchaseSummary(attached.job._id, true, SALES_MODE)).difal);
     assert.equal(simulator.purchases.difal, undefined);
     process.env.WORKSPACE_ID = 'different_workspace'; await assert.rejects(purchaseSummary(job._id, true, SALES_MODE)); process.env.WORKSPACE_ID = 'difal_test';
+  } finally {
+    await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
+    if (oldDb === undefined) delete process.env.MONGODB_DB; else process.env.MONGODB_DB = oldDb;
+    if (oldWs === undefined) delete process.env.WORKSPACE_ID; else process.env.WORKSPACE_ID = oldWs;
+  }
+});
+
+test('Serviços 9000: totais por enquadramento, separação de mercadorias e prefill conciliado sem duplicação', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
+  const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
+  process.env.MONGODB_DB = 'maximum_services_test_' + randomUUID().replaceAll('-', '');
+  process.env.WORKSPACE_ID = 'services_test'; resetLookupIndexes();
+  const actor = {_id: 'tester', role: 'admin', name: 'Teste', email: 'test@example.test'};
+  const cnpjs = ['000000000001', '111111110001', '222222220001'].map(base => base + digits(base));
+  let providerCalls = 0;
+  const transport = (async (url: string | URL | Request) => {
+    providerCalls++;
+    const cnpj = String(url).split('/').pop();
+    if (cnpj === cnpjs[2]) return new Response('', {status: 404});
+    return Response.json({cnpj, razao_social: 'Empresa sintética', opcao_pelo_simples: cnpj === cnpjs[0], opcao_pelo_mei: false});
+  }) as typeof fetch;
+  const row = (document: string, natureCode: string, totalCents: number, serviceDate = '2026-06-15') => ({
+    document, natureCode, totalCents, name: 'Parceiro sintético', description: 'Venda de mercadoria', serviceDate, quantity: '1', recipientUf: 'SP',
+    grossCents: totalCents, discountCents: 0, accessoryCents: 99, freightCents: 0, abatementCents: 0
+  });
+  try {
+    const clientId = (await importCatalog(actor, [{code: '955', name: 'Empresa sintética de serviços', uf: 'MG'}])).items[0].id;
+    const generation = await createGeneration(actor, {generationId: randomUUID(), clientIds: [clientId]});
+    const salesRows = [
+      row(cnpjs[0], '6108', 10000), row(cnpjs[0], '900000', 10001),
+      row(cnpjs[1], '6108', 20000), row(cnpjs[1], '900001', 20002),
+      row(cnpjs[2], '6108', 500), row(cnpjs[2], '90001234', 30003),
+      row('12345678900', '6108', 40000), row('12345678900', '9.000.01', 40004),
+      row('12345678900', '6202', 1000), row('ABC', '9000', 50005), row('', '900000', 60006, '2026-08-15')
+    ];
+    const sales = await attachGenerationSale(actor, generation._id, {clientId, importId: randomUUID(), fileName: 'servicos-sinteticos.csv', expectedRows: salesRows.length, issuerUf: 'MG'});
+    await uploadLookup(actor, sales.job._id, {offset: 0, rows: salesRows}); await finalizeLookup(actor, sales.job._id);
+    await (await collection('providerControl')).deleteMany({}); await processLookup(actor, sales.job._id, transport);
+    assert.equal(providerCalls, 3);
+    const purchaseRows = [row('12345678900', '', 2000, '2026-06-30'), row('12345678900', '', 2500, '2026-08-01')];
+    const purchases = await attachGenerationPurchase(actor, generation._id, {clientId, importId: randomUUID(), fileName: 'compras-sinteticas.csv', expectedRows: purchaseRows.length});
+    await uploadLookup(actor, purchases.job._id, {offset: 0, rows: purchaseRows}); await finalizeLookup(actor, purchases.job._id);
+
+    const summary = await purchaseSummary(sales.job._id, true, SALES_MODE);
+    assert.deepEqual(summary.serviceGroups, [{status: 'OPTANTE', totalCents: 10001}, {status: 'NAO_OPTANTE', totalCents: 160016}, {status: 'CPF', totalCents: 40004}]);
+    assert.equal(summary.servicesTotalCents, 210021); assert.equal(summary.totals.totalCents, 279521);
+    assert.equal(summary.operationTotals.find(value => value.operation === 'SERVICO')?.lines, 6);
+    assert.equal(summary.difal?.baseCents, 40000, 'Serviços e devoluções permanecem fora da base DIFAL.');
+    const source = await generationSimulator(generation._id, clientId);
+    assert.deepEqual(source.revenueSplit, {version: 'SALES_SERVICES_V1'});
+    assert.deepEqual(source.fields, {salesOptantCents: 10000, salesNonOptantCents: 20500, salesCpfCents: 39000, serviceRevenueCents: 210021,
+      purchasesOptantCents: 0, purchasesNonOptantCents: 4500});
+    assert.equal(source.sales.servicesTotalCents, 210021); assert.deepEqual(source.sales.operationTotals, summary.operationTotals);
+    assert.equal(source.sales.totalCents, 279521); assert.equal(source.projection?.totals.sales.totalCents, 279521);
+    assert.equal(source.projection?.totals.sales.monthlyCents, 93174);
+    assert.equal(source.projection?.groups.reduce((sum, group) => sum + (group.key.startsWith('sales') || group.key === 'serviceRevenueCents' ? group.monthlyCents : 0), 0), 93174);
+    assert.equal(providerCalls, 3, 'Resumo e simulador leem o snapshot sem consultar novamente.');
+
+    const negative = await createGeneration(actor, {generationId: randomUUID(), clientIds: [clientId]});
+    const negativeSales = await attachGenerationSale(actor, negative._id, {clientId, importId: randomUUID(), fileName: 'devolucoes-sinteticas.csv', expectedRows: 2, issuerUf: 'MG'});
+    await uploadLookup(actor, negativeSales.job._id, {offset: 0, rows: [row('12345678900', '900001', 5000), row('12345678900', '6202', 1000)]});
+    await finalizeLookup(actor, negativeSales.job._id);
+    const negativePurchases = await attachGenerationPurchase(actor, negative._id, {clientId, importId: randomUUID(), fileName: 'compras-sinteticas.csv', expectedRows: 1});
+    await uploadLookup(actor, negativePurchases.job._id, {offset: 0, rows: [row('12345678900', '', 0)]}); await finalizeLookup(actor, negativePurchases.job._id);
+    await assert.rejects(generationSimulator(negative._id, clientId), (error: any) => error.code === 'SIMULATOR_NEGATIVE_SALES' && /mercadorias.*serviços/.test(error.message));
   } finally {
     await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
     if (oldDb === undefined) delete process.env.MONGODB_DB; else process.env.MONGODB_DB = oldDb;
