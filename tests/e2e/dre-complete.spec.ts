@@ -76,6 +76,55 @@ test('Calendário único conserva meses distintos, modo móvel e impressão mens
   await expect(page.locator('#dre-print-document,#dre-print-page-style')).toHaveCount(0);await expect(page.locator('body')).not.toHaveClass(/dre-print-only/);await expect(page.locator('#dre-month')).toHaveValue('11');await expect(page.locator('#simulation-result details[open]')).toHaveCount(0);
 
 });
+test('serviços e DIFAL conciliam entre tela e CSV após reabrir histórico sem gravações',async({page})=>{
+  const saved=fixture();
+  const writes:string[]=[];
+  page.on('request',request=>{
+    if(request.url().includes('/api/') && !['GET','HEAD'].includes(request.method())) writes.push(request.method()+' '+request.url());
+  });
+  await open(page,saved);
+  for(let visit=0;visit<2;visit++){
+    if(visit) await page.reload();
+    await expect(page.locator('.dre-complete table')).toHaveCount(1);
+    await expect(page.locator('#simulation-result details[open],dialog[open]')).toHaveCount(0);
+    for(const [key,amount] of [['services','30.000,00'],['difal','3.600,00']]){
+      const cells=page.locator(`.dre-complete [data-dre-row="${key}"] td`);
+      await expect(cells).toHaveCount(4);
+      for(const cell of await cells.allTextContents()) expect(cell).toContain(amount);
+    }
+    const annual=(await downloadText(page,'#export-dre-csv')).text;
+    const annualDifal=annual.split('\r\n').filter(line=>line.includes('DIFAL estimado (10%)'));
+    expect(annualDifal).toHaveLength(1);
+    expect(annualDifal[0].split(';').slice(5,9)).toEqual(Array(4).fill('-3600,00'));
+    const annualServices=annual.split('\r\n').filter(line=>line.includes('"Receita de serviços"'));
+    expect(annualServices).toHaveLength(1);
+    expect(annualServices[0].split(';').slice(5,9)).toEqual(Array(4).fill('30000,00'));
+    await page.getByRole('button',{name:'Mensal',exact:true}).click();
+    const monthly=(await downloadText(page,'#export-dre-csv')).text;
+    const monthlyDifal=monthly.split('\r\n').filter(line=>line.includes('DIFAL estimado (10%)'));
+    expect(monthlyDifal).toHaveLength(4);
+    const monthlyServices=monthly.split('\r\n').filter(line=>line.includes('"Receita de serviços"'));
+    expect(monthlyServices).toHaveLength(4);
+    for(const line of monthlyServices) expect(line.split(';').slice(6,19)).toEqual([...Array(12).fill('2500,00'),'30000,00']);
+    for(const line of monthlyDifal) expect(line.split(';').slice(6,19)).toEqual([...Array(12).fill('-300,00'),'-3600,00']);
+    for(const regime of saved.result.regimes){
+      await page.locator('#dre-regime').selectOption(regime.id);
+      await expect(page.locator('.dre-complete table')).toHaveCount(1);
+      for(const [key,amount,total] of [['services','2.500,00','30.000,00'],['difal','300,00','3.600,00']]){
+        const cells=page.locator(`.dre-complete [data-dre-row="${key}"] td`);
+        await expect(cells).toHaveCount(13);
+        for(const cell of (await cells.allTextContents()).slice(0,12)) expect(cell).toContain(amount);
+        await expect(cells.last()).toContainText(total);
+      }
+    }
+    const exported=JSON.parse((await downloadText(page,'#export-simulation')).text);
+    expect(exported.result).toEqual(saved.result);
+    expect(exported.monthlyDre).toEqual(saved.monthlyDre);
+    await page.getByRole('button',{name:'Anual',exact:true}).click();
+  }
+  expect(writes).toEqual([]);
+});
+
 test('DRE legada sem DIFAL não inventa valores e receita zero não recebe percentuais',async({page})=>{
   const saved=fixture();saved.draft.values={serviceRevenue:0,salesRevenue:0,simplePurchases:0,regularPurchases:0,salaries:100,benefits:0,adminExpenses:0,rent:0,cardExpenses:0};saved.result=calculateSimulation(saved.draft);saved.monthlyDre=buildMonthlyDre(saved.result,2027);saved.result.regimes[1].available=false;saved.monthlyDre.regimes[1].available=false;
   await open(page,saved);await page.locator('#dre-show-percent').check();

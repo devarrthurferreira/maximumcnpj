@@ -1,5 +1,10 @@
 # Histórico de alterações
 
+## [Não lançado] — 2026-10-19
+
+- Regressão de serviços e DIFAL em todos os regimes na DRE única, tela e CSV, com 12 meses e total anual.
+- Reabertura do histórico conferida sem gravações pela API; exportação JSON preserva resultados e calendário. Complemento de testes da v0.24.0, sem alteração funcional.
+
 ## [0.24.0] — 2026-10-19
 
 - Leitura da seção 2.2 com separação determinística de valor e competência colados pelo OCR, identificação com espaços e cabeçalhos de continuação.
