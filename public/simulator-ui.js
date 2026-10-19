@@ -1,7 +1,10 @@
-import {dreRows,buildMonthlyDre} from './simulator-calendar.js';
+import {buildMonthlyDre} from './simulator-calendar.js';
 import {renderSection22,renderMonthlyDre,isSection22} from './simulator-extrato-view.js';
 import {annualizeReports, projectScenario, projectDifal} from './simulator-projection.js';
 import {renderProjectionCard} from './simulator-projection-view.js';
+import {buildDrePresentation} from './simulator-dre.js';
+import {renderAnnualDre,renderDrePrintCalendar} from './simulator-dre-view.js';
+import {buildDreCsv,buildDreExportPayload} from './simulator-dre-export.js';
 import {mountNavigation} from './navigation.js';
 import {renderSimulationCharts} from './simulation-charts.js';
 import {createEmptyDraft, calculateSimulation, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES} from './simulator-engine.js';
@@ -12,7 +15,7 @@ const pct = value => value == null ? '—' : (value * 100).toLocaleString('pt-BR
 const date = value => value ? new Date(value).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}) : '—';
 const IMPORTED = ['salesOptantCents','salesNonOptantCents','salesCpfCents','purchasesOptantCents','purchasesNonOptantCents'];
 const MANUAL = ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'];
-const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales',guided:false,guidedStage:false,guidedResume:false,rbt12Mode:'PDF',serviceMigration:null,draftMigrationNotice:null};
+const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales',guided:false,guidedStage:false,guidedResume:false,rbt12Mode:'PDF',serviceMigration:null,draftMigrationNotice:null,dreShowPercent:false,dreMonthView:false,dreMonth:0,dreContext:null,detailStates:new Map()};
 const hasImportedServices = () => S.source?.revenueSplit?.version === 'SALES_SERVICES_V1' && Number.isSafeInteger(S.source.fields?.serviceRevenueCents);
 const isImportedField = key => IMPORTED.includes(key) || (key === 'serviceRevenue' && hasImportedServices());
 const difalProjection = () => S.readonly ? S.snapshot?.difalProjection || null : projectDifal(S.source.sales.difal, S.months, S.source.sales.jobId);
@@ -358,11 +361,13 @@ window.addEventListener('beforeprint',()=>{
     }
     $('#simulation-result').before(context);
   }
+  const calendarHost=$('.sim-calendar');
+  if(calendarHost&&S.dreContext&&!calendarHost.querySelector('.dre-print-calendar'))calendarHost.querySelector('.dre-calendar-screen').insertAdjacentHTML('afterend',renderDrePrintCalendar({...S.dreContext,regimeId:S.calendarRegime,showPercent:S.dreShowPercent}));
   document.querySelectorAll('#simulator-app details:not([open])').forEach(detail=>{
     printDetails.push(detail);detail.open=true;
   });
 });
-window.addEventListener('afterprint',()=>{for(const detail of printDetails.splice(0))detail.open=false;$('#simulation-print-context')?.remove();});
+window.addEventListener('afterprint',()=>{for(const detail of printDetails.splice(0))detail.open=false;$('#simulation-print-context')?.remove();$('.dre-print-calendar')?.remove();});
 
 function classificationDetails() {
   if(!S.source.classification)return '';
@@ -435,9 +440,16 @@ function renderSaveStatus() {
   else if(!canSave())host.innerHTML='<span>Prévia local. Seu perfil permite consultar o histórico; salvar versões exige acesso de operador.</span>';
   else if(S.pending) {host.innerHTML=`<span>O salvamento não foi confirmado. ${esc(S.saveError||'Tente novamente.')}</span><button type="button" id="retry-save">Tentar salvar novamente</button>`;$('#retry-save').onclick=()=>void persist();}
 }
+function dreContext() {
+  const result=S.result.result,year=S.result.input.year;
+  const calendar=['DRE_CALENDAR_V1','DRE_CALENDAR_V2'].includes(S.snapshot?.monthlyDre?.version)?S.snapshot.monthlyDre:buildMonthlyDre(result,year,rbt12Reference(),S.source.period);
+  const presentation=buildDrePresentation({result,calendar,monthlyGroups:S.result.monthlyGroups,projection:S.result.projection,source:S.source,reportMonths:S.months,engineInput:S.snapshot?.engineInput,reprocessing:S.snapshot?.reprocessing});
+  return {presentation,calendar,year};
+}
 function renderResult() {
   if(!S.result)return;
-  const detailStates=new Map([...document.querySelectorAll('#simulation-result details')].map(el=>[el.className,el.open]));
+  document.querySelectorAll('#simulation-result details').forEach(el=>S.detailStates.set(el.dataset.stateKey||el.className,el.open));
+  S.dreContext=dreContext();
   const {input,result,monthlyGroups}=S.result,monthly=S.viewPeriod==='monthly',divisor=monthly?12:1,periodLabel=monthly?'MENSAL':'ANUAL';
   const best=result.regimes.find(r=>r.id===result.bestRegimeId);
   $('#simulation-result').innerHTML=`<section class="sim-result" id="results-top"><div class="sim-result-head"><div><div class="eyebrow">PAINEL DA SIMULAÇÃO · ${input.year}</div><h2>Compare os regimes</h2><p class="sim-help">Valores ${monthly?'mensais':'anuais'} de ${input.year} · ${S.edited?'cenário com ajustes manuais':'média dos relatórios'}.</p></div><div class="sim-result-actions"><div class="sim-period-toggle" role="group" aria-label="Período dos resultados"><button type="button" data-period="monthly" aria-pressed="${monthly}">Mensal</button><button type="button" data-period="annual" aria-pressed="${!monthly}">Anual</button></div><button id="export-simulation" type="button">Exportar simulação</button></div></div>
@@ -446,9 +458,14 @@ function renderResult() {
     <div class="sim-subheading"><h3>Comparação por regime</h3><span>${monthly?'Por mês':'Por ano'} · ${input.year}</span></div><div class="sim-regimes">${result.regimes.map(r=>`<article class="sim-regime ${r.id===result.bestRegimeId?'best':''}"><span class="sim-badge">${r.id===result.bestRegimeId?'MAIOR RESULTADO ESTIMADO':r.available?'CENÁRIO COMPARATIVO':'REVISÃO NECESSÁRIA'}</span><h3>${esc(r.name)}</h3><strong class="${r.annualProfit<0&&r.available?'sim-negative':''}">${r.available?money(r.annualProfit/divisor):'Indisponível'}</strong><p>Resultado líquido ${monthly?'por mês':'por ano'}</p>${r.available?`<dl class="sim-regime-metrics"><div><dt>Tributos e encargos</dt><dd>${money(r.totalTaxes/divisor)}</dd></div><div><dt>Margem líquida</dt><dd>${pct(r.margin)}</dd></div><div><dt>Carga sobre receita</dt><dd>${pct(r.taxBurden)}</dd></div></dl>`:`<p>${esc(r.status)}</p>`}</article>`).join('')}</div>
     <details class="card sim-charts-details"><summary>Gráficos<span>Resultados, tributos, receitas e despesas</span></summary>${renderSimulationCharts({input,result,monthlyGroups,period:S.viewPeriod})}</details>
     ${memoryDetails()}
-    ${monthly?renderMonthlyDre({result,year:input.year,reference:rbt12Reference(),period:S.source.period,regimeId:S.calendarRegime,calendar:S.snapshot?.monthlyDre}):`<section class="card sim-dre"><div class="eyebrow">DRE · PROJEÇÃO ${periodLabel}</div><h2>DRE comparativa</h2><p class="sim-help">Para ver a DRE completa, arraste para o lado ou deite o celular. A coluna Indicador permanece fixa.</p><div class="sim-table-wrap" tabindex="0" role="region" aria-label="DRE comparativa com rolagem horizontal"><table><thead><tr><th scope="col">Indicador</th>${result.regimes.map(r=>`<th scope="col">${esc(r.name)}</th>`).join('')}</tr></thead><tbody>${dreRows(result).map(([key,label])=>`<tr class="${['revenue','netRevenue','grossProfit','preTax','netProfit'].includes(key)?'total':''}"><th scope="row">${label}</th>${result.regimes.map(r=>`<td>${r.available?money(r.dre[key]/divisor):'—'}</td>`).join('')}</tr>`).join('')}</tbody></table></div></section>`}</section>`;
-  document.querySelectorAll('#simulation-result details').forEach(el=>{if(detailStates.has(el.className))el.open=detailStates.get(el.className);});
+    ${monthly?renderMonthlyDre({...S.dreContext,result,reference:rbt12Reference(),period:S.source.period,regimeId:S.calendarRegime,showPercent:S.dreShowPercent,monthView:S.dreMonthView,month:S.dreMonth}):renderAnnualDre({...S.dreContext,showPercent:S.dreShowPercent})}</section>`;
+  document.querySelectorAll('#simulation-result details').forEach(el=>{const key=el.dataset.stateKey||el.className;if(S.detailStates.has(key))el.open=S.detailStates.get(key);});
   $('#export-simulation').onclick=exportSimulation;
+  $('#export-dre-csv').onclick=exportDre;
+  $('#print-dre').onclick=()=>window.print();
+  $('#dre-show-percent').onchange=event=>{S.dreShowPercent=event.target.checked;renderResult();$('#dre-show-percent').focus({preventScroll:true});};
+  document.querySelectorAll('[data-dre-month-view]').forEach(button=>button.onclick=()=>{S.dreMonthView=button.dataset.dreMonthView==='single';renderResult();document.querySelector(`[data-dre-month-view="${S.dreMonthView?'single':'all'}"]`).focus({preventScroll:true});});
+  const monthSelect=$('#dre-month');if(monthSelect)monthSelect.onchange=()=>{S.dreMonth=Number(monthSelect.value);renderResult();$('#dre-month').focus({preventScroll:true});};
   document.querySelectorAll('[data-period]').forEach(button=>button.onclick=()=>{S.viewPeriod=button.dataset.period;renderResult();document.querySelector(`[data-period="${S.viewPeriod}"]`)?.focus({preventScroll:true});});
   const regimeSelect=$('#dre-regime');if(regimeSelect)regimeSelect.onchange=()=>{S.calendarRegime=regimeSelect.value;renderResult();$('#dre-regime').focus({preventScroll:true});};
   renderSaveStatus();
@@ -495,8 +512,14 @@ async function openSnapshotVersion(snapshot) {
 function exportSimulation() {
   if(!S.result)return;
   const payload=S.snapshot||{saved:false,generatedAt:new Date().toISOString(),calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,source:S.source,reportMonths:S.months,manuallyAdjusted:S.edited,monthlyGroups:S.result.monthlyGroups,monthlyGroupsUnit:'BRL',projection:S.result.projection,difalProjection:S.result.difalProjection,rbt12Source:S.rbt12Mode==='MANUAL'?'MANUAL':'SIMPLES_SECTION_22',rbt12Extraction:S.rbt12Data,...(S.rbt12Mode==='MANUAL'?{rbt12Manual:{source:'MANUAL',confirmed:$('#rbt12-manual-confirm').checked,rbt12Cents:Math.round(value('rbt12')*100)}}:{}),monthlyDre:buildMonthlyDre(S.result.result,S.result.input.year,rbt12Reference(),S.source.period),draft:S.result.input,result:S.result.result};
-  const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json;charset=utf-8'}));
+  const url=URL.createObjectURL(new Blob([JSON.stringify(buildDreExportPayload(payload,S.dreContext.presentation),null,2)],{type:'application/json;charset=utf-8'}));
   const anchor=document.createElement('a');anchor.href=url;anchor.download=`simulacao-${String(S.source.company.code||'empresa').replace(/[^\w-]/g,'_')}-${S.result.input.year}.json`;document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);
+}
+function exportDre() {
+  if(!S.result||!S.dreContext)return;
+  const csv=buildDreCsv({...S.dreContext,company:S.source.company,period:S.viewPeriod,showPercent:S.dreShowPercent});
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  const anchor=document.createElement('a');anchor.href=url;anchor.download=`dre-${String(S.source.company.code||'empresa').replace(/[^\w-]/g,'_')}-${S.result.input.year}-${S.viewPeriod==='monthly'?'mensal':'anual'}.csv`;document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);
 }
 async function boot() {
   try {
