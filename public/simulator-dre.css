@@ -60,6 +60,7 @@ tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
   .simulator-clean .dre-complete .dre-print-calendar th,.simulator-clean .dre-complete .dre-print-calendar td,
   .simulator-clean .dre-print-monthly th,.simulator-clean .dre-print-monthly td{font-size:9px!important;padding:4px 3px!important}
   .simulator-clean .dre-complete .dre-print-calendar th:first-child,.simulator-clean .dre-print-monthly th:first-child{width:18%}
+  .dre-print-document thead th small,.dre-print-calendar thead th small{display:block;font-size:8px;font-weight:400;margin-top:3px}
   .dre-complete .dre-percent{font-size:8px}
   .dre-complete .dre-row{break-inside:avoid;page-break-inside:avoid}
   .dre-complete thead{display:table-header-group}
