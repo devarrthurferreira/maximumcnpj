@@ -12,7 +12,7 @@ export function statementProcessingSummary(data) {
 }
 export function renderSection22(data) {
   if(!isSection22(data))return '';
-  return `<div class="sim-extrato-review"><details class="sim-extrato-details" open><summary><span>Conferir seção 2.2<small>12 competências · PA ${esc(data.pa)}</small></span><strong>${money(data.rbt12Cents/100)}</strong></summary>
+  return `<div class="sim-extrato-review"><details class="sim-extrato-details"><summary><span>Conferir seção 2.2<small>12 competências · PA ${esc(data.pa)}</small></span><strong>${money(data.rbt12Cents/100)}</strong></summary>
     <div class="sim-extrato-content"><p class="sim-extrato-company"><strong>${esc(data.companyName||'Empresa do extrato')}</strong><small>CNPJ básico ${esc(data.cnpjBasico)}</small></p>
     <p class="sim-help">Soma dos mercados interno e externo nas 12 competências anteriores ao PA. O mês do PA, a seção 2.1, o DAS e a projeção anual não entram neste valor.</p>
     <div class="sim-extrato-table-wrap" tabindex="0" role="region" aria-label="Doze receitas da seção 2.2 que compõem a RBT12"><table><thead><tr><th>Competência</th><th>Mercado interno</th><th>Mercado externo</th><th>Total</th></tr></thead><tbody>
@@ -30,7 +30,7 @@ export function renderMonthlyDre({result,year,reference,period,regimeId,calendar
     <p class="sim-help sim-table-hint">Arraste para o lado ou deite o celular. Indicador permanece fixo.</p>
     <div class="sim-table-wrap" tabindex="0" role="region" aria-label="DRE de janeiro a dezembro com coluna Indicador fixa"><table><thead><tr><th scope="col">Indicador</th>${data.months.map(m=>`<th scope="col">${esc(m.label)}<small>${data.year}</small></th>`).join('')}<th scope="col">Total anual</th></tr></thead><tbody>
     ${regime.rows.map(row=>`<tr class="${['revenue','netRevenue','grossProfit','preTax','netProfit'].includes(row.key)?'total':''}" data-dre-row="${esc(row.key)}"><th scope="row">${esc(row.label)}</th>${row.months.map(v=>`<td>${money(v)}</td>`).join('')}<td class="sim-year-total">${money(row.annual)}</td></tr>`).join('')}</tbody></table></div>
-    <details class="sim-dre-method" open><summary>Como esta projeção foi calculada</summary><div>
+    <details class="sim-dre-method"><summary>Como esta projeção foi calculada</summary><div>
     <p class="sim-help">Base dos relatórios: ${period?esc(period.startMonth)+' a '+esc(period.endMonth):'período confirmado no formulário'}. A média mensal é repetida nos 12 meses; não são lançamentos históricos. Serviços, despesas e ajustes seguem os valores mensais do cenário.</p>
     ${source?`<p class="sim-help">A RBT12 ${source.source==='MANUAL'?'informada manualmente':'do extrato'} é a mesma referência em todo o cenário. Não é uma nova RBT12 apurada para cada mês.</p>`:''}
     <p class="sim-help sim-rounding-note">${esc(data.rounding)}</p></div></details></section>`;

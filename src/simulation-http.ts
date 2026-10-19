@@ -2,10 +2,13 @@ import { createSimulation, deleteSimulation, getSimulation, simulationHistory } 
 import { need, integer } from './security.ts';
 import { rateLimit, workspace } from './store.ts';
 import type { LookupActor } from './lookup-db.ts';
+import {reprocessSimulations, simulationReprocessingStatus} from './simulation-reprocessing.ts';
 
 export async function routeSimulations(actor: LookupActor, method: string, url: URL, input: unknown) {
   const path = url.pathname.replace('/api/v4/simulations', '');
   if (method === 'GET') await rateLimit(`simulation-read:${workspace()}:${actor._id}`, 120, 1);
+  if (path === '/reprocess' && method === 'GET') return simulationReprocessingStatus(integer(url.searchParams.get('page') || 1,1,100000));
+  if (path === '/reprocess' && method === 'POST') return reprocessSimulations(actor,input);
   if (!path && method === 'GET') return simulationHistory(integer(url.searchParams.get('page') || 1, 1, 100000), {
     clientId: url.searchParams.get('clientId') || undefined,
     search: url.searchParams.get('search') || undefined,

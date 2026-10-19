@@ -8,7 +8,7 @@ import { annualizeReports, projectScenario, projectDifal } from '../public/simul
 import {readRbt12Reference, rbt12InputSource} from './simulation-extrato.ts';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import { generationSimulator } from './simulator-store.ts';
-import { assertGenerationNotDeleted } from './generation-deletion.ts';
+import { assertGenerationNotDeleted, assertLookupNotDeleted } from './generation-deletion.ts';
 import { calculateSimulation, draftToInput, MODEL_VERSION, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
   SIMULATION_VALUE_FIELDS } from '../public/simulator-engine.js';
 import type { SimulationDraft } from '../public/simulator-engine.js';
@@ -129,9 +129,9 @@ export async function deleteSimulation(actor: LookupActor, id: string) {
   const simulationId = uuid(id), c = await simulations();
   const claimed = await c.findOneAndUpdate(scope({_id: simulationId, deletedAt: {$exists: false}}), {
     $set: {deletedAt: new Date(), deletedBy: {id: actor._id, name: actor.name}}
-  }, {returnDocument: 'after', projection: {_id: 1, workspaceId: 1, deletedAt: 1, deletedBy: 1}});
+  }, {returnDocument: 'after', projection: {_id: 1, workspaceId: 1, deletedAt: 1, deletedBy: 1, reprocessing: 1}});
   const deleted = claimed || await c.findOne(scope({_id: simulationId, deletedAt: {$exists: true}}), {
-    projection: {_id: 1, workspaceId: 1, deletedAt: 1, deletedBy: 1}
+    projection: {_id: 1, workspaceId: 1, deletedAt: 1, deletedBy: 1, reprocessing: 1}
   });
   if (deleted) {
     // Save the receipt before removal, so retries can finish an interrupted deletion without retaining fiscal data.
@@ -140,11 +140,28 @@ export async function deleteSimulation(actor: LookupActor, id: string) {
     }}, {upsert: true});
   } else need(await deletionReceipt(simulationId), 'Simulação não encontrada.', 404, 'NOT_FOUND');
   await c.deleteOne(scope({_id: simulationId}));
+  const reprocessingItems = await collection('simulationReprocessItems');
+  await reprocessingItems.deleteMany(scope({originalId: simulationId}));
+  await reprocessingItems.updateMany(scope({$or:[{childId:simulationId},...(deleted?.reprocessing?.originalId ? [{originalId:deleted.reprocessing.originalId}] : [])]}),
+    {$set:{childId:null,status:'PENDING',code:'REPROCESS_CHILD_DELETED',message:'A versão corrigida foi excluída e não será recriada automaticamente.',updatedAt:new Date()}});
   return {deleted: true, id: simulationId};
 }
 
 /** Append only. Repeated network requests with the same ID never create a second result. */
+type ReprocessingContext = {
+  version: string; originalId: string; source: Source; rbt12Extraction: any; rbt12Manual: any;
+};
+
 export async function createSimulation(actor: LookupActor, input: unknown) {
+  return createSimulationSnapshot(actor, input);
+}
+
+/** Server-only path. HTTP request validation never accepts source or migration context. */
+export async function createReprocessedSimulation(actor: LookupActor, input: unknown, context: ReprocessingContext) {
+  return createSimulationSnapshot(actor, input, context);
+}
+
+async function createSimulationSnapshot(actor: LookupActor, input: unknown, reprocessing?: ReprocessingContext) {
   write(actor);
   const validated = request(input), {simulationId, generationId, clientId, draft, reportMonths, monthlyGroups, parentSimulationId, rbt12ExtractionId} = validated;
   const requestHash = digest(JSON.stringify(validated));
@@ -153,7 +170,8 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
     await requireUnremovedId(simulationId);
     need(!Object.hasOwn(record, 'deletedAt'), 'Esta simulação foi excluída. Use um novo identificador para salvar outra simulação.',
       409, 'SIMULATION_DELETED');
-    need(record.createdBy.id === actor._id && record.requestHash === requestHash,
+    const sameReprocessing = reprocessing && record.reprocessing?.version === reprocessing.version && record.reprocessing?.originalId === reprocessing.originalId;
+    need((record.createdBy.id === actor._id || sameReprocessing) && record.requestHash === requestHash,
       'Este identificador já pertence a outra simulação. Gere uma nova versão para guardar alterações.', 409, 'SIMULATION_EXISTS');
     return visible(record);
   };
@@ -166,15 +184,17 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
     need(parent.clientId === clientId && parent.generationId === generationId,
       'A simulação original precisa pertencer à mesma empresa e geração.', 409, 'SIMULATION_PARENT');
   }
-  const source = await generationSimulator(generationId, clientId);
+  const source = reprocessing?.source || await generationSimulator(generationId, clientId);
+  if (reprocessing) need(parentSimulationId === reprocessing.originalId && source.generationId === generationId && source.clientId === clientId,
+    'A origem do recálculo não corresponde ao histórico.', 409, 'REPROCESS_SOURCE');
   if (source.periodBasis === 'COLUMN_H') {
     need(source.reportMonths === reportMonths && source.period && reportMonths === source.period.months,
       'O período da simulação deve corresponder ao intervalo identificado na coluna H dos relatórios.', 409, 'SIMULATION_PERIOD');
   }
   const rbt12Source = validated.rbt12Source || 'SIMPLES_SECTION_22';
-  const rbt12Extraction = rbt12Source === 'MANUAL' ? null : await readRbt12Reference(rbt12ExtractionId, clientId, draft.rbt12);
+  const rbt12Extraction = rbt12Source === 'MANUAL' ? null : reprocessing?.rbt12Extraction || await readRbt12Reference(rbt12ExtractionId, clientId, draft.rbt12);
   const createdAt = new Date();
-  const rbt12Manual = rbt12Source === 'MANUAL' ? {source: 'MANUAL' as const, confirmed: true,
+  const rbt12Manual = rbt12Source === 'MANUAL' ? reprocessing?.rbt12Manual || {source: 'MANUAL' as const, confirmed: true,
     rbt12Cents: Math.round(draft.rbt12! * 100), confirmedAt: createdAt,
     confirmedBy: {id: actor._id, name: actor.name}} : null;
   const difalProjection = projectDifal(source.sales.difal, reportMonths, source.sales.jobId);
@@ -197,6 +217,7 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
   const snapshot = {_id: simulationId, ...scope(), requestHash, generationId, clientId,
     title: validated.title || `${source.company.name} · ${draft.year}`, company: source.company,
     createdAt, createdBy: {id: actor._id, name: actor.name}, appVersion: VERSION,
+    ...(reprocessing ? {reprocessing: {version: reprocessing.version, originalId: reprocessing.originalId, completedAt: createdAt}} : {}),
     modelVersion: MODEL_VERSION, calculatorSourceCommit: CALCULATOR_SOURCE_COMMIT, taxSources: TAX_SOURCES,
     source, projection, difalProjection, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
     monthlyGroups, monthlyGroupsUnit: 'BRL', baselineMonthlyGroups,
@@ -209,6 +230,7 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
   const requireSources = async () => {
     await requireUnremovedId(simulationId);
     await assertGenerationNotDeleted(generationId);
+    if (reprocessing) await Promise.all([assertLookupNotDeleted(source.purchases.jobId), assertLookupNotDeleted(source.sales.jobId)]);
     if (parentSimulationId) await getSimulation(parentSimulationId);
   };
   await requireSources();
@@ -224,7 +246,7 @@ export async function createSimulation(actor: LookupActor, input: unknown) {
   // Discard a late insert before returning or auditing it as a new simulation.
   try { await requireSources(); }
   catch (error: any) {
-    if (['SIMULATION_DELETED', 'GENERATION_DELETED', 'NOT_FOUND'].includes(error.code)) {
+    if (['SIMULATION_DELETED', 'GENERATION_DELETED', 'LOOKUP_DELETED', 'NOT_FOUND'].includes(error.code)) {
       await c.deleteOne(scope({_id: simulationId}));
     }
     throw error;

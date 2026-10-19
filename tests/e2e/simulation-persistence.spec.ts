@@ -138,7 +138,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     await reopened.locator('#simulation-search').fill(code);
     await reopened.locator('#history-filters').getByRole('button', { name: 'Buscar', exact: true }).click();
     const permalink = `/simulator.html?simulation=${first._id}`;
-    const historyLink = reopened.locator(`a[href="${permalink}"]`).first();
+    const historyLink = reopened.locator(`#history-results a[href="${permalink}"]`);
     await expect(historyLink).toBeVisible();
     await historyLink.click();
     await expect(reopened).toHaveURL(new RegExp(`simulation=${first._id}$`));
@@ -192,7 +192,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     const deleted=await deletion;expect(deleted.ok(),await deleted.text()).toBe(true);
     expect(await deleted.json()).toEqual({deleted:true,id:second._id});
     await expect(reopened.locator(`[data-delete-simulation="${second._id}"]`)).toHaveCount(0);
-    await expect(reopened.locator(`a[href="${permalink}"]`)).toBeVisible();
+    await expect(reopened.locator(`#history-results a[href="${permalink}"]`)).toBeVisible();
     expect((await fresh.request.get(`/api/v4/simulations/${second._id}`)).status()).toBe(404);
     expect(await get(fresh.request,`/api/v4/simulations/${first._id}`)).toEqual(original);
     const afterDelete=await get(fresh.request,`/api/v4/simulations?clientId=${clientId}`);
@@ -204,7 +204,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
       expect(await db.collection('simulations').countDocuments({_id:first._id,workspaceId})).toBe(1);
       expect(await db.collection('simplesExtractions').countDocuments({_id:extractionId as any,workspaceId})).toBe(1);
     }finally{await deletionDb.close();}
-    await reopened.locator(`a[href="${permalink}"]`).click();await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
+    await reopened.locator(`#history-results a[href="${permalink}"]`).click();await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
 
     const generationDb=new MongoClient(process.env.MONGODB_URI!);
     try{

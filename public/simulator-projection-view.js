@@ -23,7 +23,7 @@ export function renderProjectionCard({projection, kind = 'sales', period = null,
     </div>
     ${edited ? '<p class="projection-adjusted" role="status">Cenário com ajustes manuais. A base mantém a média original.</p>' : ''}
     ${!confirmed ? '<p class="projection-pending">Prévia: confirme o período antes de simular.</p>' : ''}
-    <details class="projection-memory" open><summary>Como calculamos <span>Total ÷ meses × 12 <span class="projection-chevron" aria-hidden="true">⌄</span></span></summary>
+    <details class="projection-memory"><summary>Como calculamos <span>Total ÷ meses × 12 <span class="projection-chevron" aria-hidden="true">⌄</span></span></summary>
     <div class="projection-method">
     <p class="projection-explanation">Somamos as ${label.toLowerCase()} dos arquivos, dividimos por <strong>${n} ${n === 1 ? 'mês' : 'meses'}</strong> e repetimos a média por <strong>12 meses</strong>. ${confirmed ? 'Período confirmado.' : 'Confirme quantos meses os arquivos representam para concluir a simulação.'} Esta é a projeção-base dos relatórios, sem ajustes manuais.${edited ? ' Os campos editados e o resultado do cenário ficam identificados separadamente.' : ''}</p>
     <figure class="projection-timeline"><figcaption><span><strong>12 meses, a mesma média</strong><small>Não são ${n} + 12 meses. O horizonte total é de 12 meses.</small></span><span>${money(amounts.monthlyCents)} <small>/ mês</small></span></figcaption>
