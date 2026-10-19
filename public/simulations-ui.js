@@ -1,10 +1,11 @@
 import {mountNavigation,icon} from './navigation.js';
+import {mountSimulationReprocess} from './simulation-reprocess-ui.js';
 const $=selector=>document.querySelector(selector);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=value=>value==null?'—':Number(value).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const date=value=>new Date(value).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'});
 const params=new URLSearchParams(location.search);
-const state={page:Math.max(1,Math.min(100000,Number(params.get('page'))||1)),clientId:params.get('clientId')||'',user:null,controller:null,sequence:0,items:[],deleteTarget:null,deleteTrigger:null,deleting:false,search:params.get('search')||'',year:['2027','2028'].includes(params.get('year'))?params.get('year'):''};
+const state={page:Math.max(1,Math.min(100000,Number(params.get('page'))||1)),clientId:params.get('clientId')||'',user:null,controller:null,sequence:0,items:[],deleteTarget:null,deleteTrigger:null,deleting:false,reprocessRefreshPending:false,search:params.get('search')||'',year:['2027','2028'].includes(params.get('year'))?params.get('year'):''};
 async function api(path,signal,options={}){
  const response=await fetch(path,{credentials:'same-origin',...options,signal});
  const data=await response.json().catch(()=>null);
@@ -27,9 +28,11 @@ function layout(){
  $('#delete-simulation-cancel').onclick=()=>{if(!state.deleting)dialog.close();};
  $('#delete-simulation-confirm').onclick=()=>void confirmDelete();
  dialog.addEventListener('cancel',event=>{if(state.deleting)event.preventDefault();});
- dialog.addEventListener('close',()=>{state.deleteTarget=null;if(state.deleteTrigger?.isConnected)state.deleteTrigger.focus({preventScroll:true});state.deleteTrigger=null;});
+ dialog.addEventListener('close',()=>{state.deleteTarget=null;if(state.deleteTrigger?.isConnected)state.deleteTrigger.focus({preventScroll:true});state.deleteTrigger=null;if(state.reprocessRefreshPending){state.reprocessRefreshPending=false;void load();}});
  $('#history-filters').onsubmit=event=>{event.preventDefault();state.search=$('#simulation-search').value.trim();state.year=$('#simulation-year-filter').value;state.page=1;load();};
  $('#simulation-year-filter').onchange=()=>$('#history-filters').requestSubmit();
+ const reprocess=document.createElement('div');reprocess.id='history-reprocess';$('#history-filters').before(reprocess);
+ mountSimulationReprocess(reprocess,state.user,async()=>{if(state.deleting||dialog.open){state.reprocessRefreshPending=true;return;}await load();});
 }
 function card(item){return `<article class="history-item" data-simulation-id="${esc(item._id)}"><div class="history-company"><span class="history-company-symbol">${icon('companies')}</span><div><small>EMPRESA ${esc(item.company.code||'SEM CÓDIGO')}</small><h3>${esc(item.company.name)}</h3></div></div><p class="history-title">${esc(item.title||'Simulação tributária')}</p><div class="history-tags"><span class="history-tag">CENÁRIO ${esc(item.year)}</span><span class="history-tag">${esc(item.reportMonths)} ${item.reportMonths===1?'MÊS':'MESES'} NOS RELATÓRIOS</span>${item.manuallyAdjusted?'<span class="history-tag adjusted">VALORES AJUSTADOS</span>':''}</div><div class="history-financials"><div><span>Receita anual estimada</span><strong>${money(item.annualRevenue)}</strong><small>Referência mensal × 12</small></div><div class="best"><span>Maior resultado anual</span><strong>${money(item.bestAnnualProfit)}</strong><small>${esc(item.bestRegimeName||'Sem ranking neste cenário')}</small></div></div><div class="history-item-footer"><p>Salva em ${date(item.createdAt)}<br>Por ${esc(item.createdBy?.name||'Equipe Maximum')}</p><div class="history-item-actions"><a href="/simulator.html?${new URLSearchParams({simulation:item._id})}">Rever simulação →</a>${canDelete()?`<button type="button" class="history-delete" data-delete-simulation="${esc(item._id)}" aria-label="Excluir simulação de ${esc(item.company.name)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg>Excluir</button>`:''}</div></div></article>`;}
 function openDelete(id,trigger){
@@ -58,7 +61,7 @@ async function confirmDelete(){
   $('#delete-simulation-error').textContent=error.name==='AbortError'?'O servidor demorou a confirmar a exclusão. Tente novamente para conferir o mesmo registro.':error.message;
   $('#delete-simulation-status').textContent='';return;
  }finally{clearTimeout(timer);setDeleting(false);}
- $('#delete-simulation-dialog').close();
+ state.reprocessRefreshPending=false;$('#delete-simulation-dialog').close();
  $('#history-feedback').textContent='Simulação excluída definitivamente.';
  await load(true);
 }

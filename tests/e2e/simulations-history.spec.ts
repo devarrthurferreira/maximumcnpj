@@ -1,6 +1,9 @@
 import {test,expect} from '@playwright/test';
 const item={_id:'00000000-0000-4000-8000-000000000001',title:'Cenário com novas despesas',company:{code:'936',name:'EMPRESA DE TESTE'},year:2027,createdAt:'2026-09-30T16:00:00Z',createdBy:{id:'operator',name:'Equipe Teste'},annualRevenue:120000,bestRegimeId:'pure',bestRegimeName:'Simples Puro',bestAnnualProfit:50000,manuallyAdjusted:true,reportMonths:1};
-async function session(page:any,user:any={_id:'operator',role:'operator',name:'Teste'}){await page.route('**/api/auth/session',(r:any)=>r.fulfill({json:{user}}));}
+async function session(page:any,user:any={_id:'operator',role:'operator',name:'Teste'}){
+ await page.route('**/api/auth/session',(r:any)=>r.fulfill({json:{user}}));
+ await page.route(/\/api\/v4\/simulations\/reprocess(?:\?.*)?$/,(r:any)=>r.fulfill({json:{version:'SERVICES_DIFAL_2026_10_V1',total:0,counts:{queued:0,processing:0,ok:0,pending:0,failed:0},retryableFailed:0,inventoryComplete:true,hasMore:false,retryAfterMs:0,items:[],page:1,totalPages:1}}));
+}
 test('Simulation history searches, filters, paginates and exposes direct detail links on desktop/mobile',async({page},info)=>{
  await session(page);const queries:URLSearchParams[]=[];const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/api/v4/simulations?*',r=>{const params=new URL(r.request().url()).searchParams;queries.push(params);const filtered=!!params.get('search');return r.fulfill({json:{items:[{...item,year:Number(params.get('year')||2027)}],total:filtered?1:21,page:Number(params.get('page')),pageSize:20}});});
@@ -22,7 +25,7 @@ test('History handles empty data, escaped titles, server failure and session gat
 test('Cancelar exclusão não envia DELETE e devolve foco no desktop e celular',async({page},info)=>{
  await session(page);let deletes=0;
  await page.route('**/api/v4/simulations?*',r=>r.fulfill({json:{items:[item],total:1,page:1,pageSize:20}}));
- await page.route('**/api/v4/simulations/*',r=>{if(r.request().method()==='DELETE')deletes++;return r.fulfill({json:{deleted:true,id:item._id}});});
+ await page.route(/\/api\/v4\/simulations\/[a-f0-9-]{36}$/,r=>{if(r.request().method()==='DELETE')deletes++;return r.fulfill({json:{deleted:true,id:item._id}});});
  await page.goto('/simulations.html');
  const remove=page.locator(`button[data-delete-simulation="${item._id}"]`),dialog=page.getByRole('dialog',{name:/Excluir simulação/});
  for(const width of [1440,390]){
@@ -44,7 +47,7 @@ test('Exclusão confirma somente o item escolhido, impede duplicação e permite
  const other={...item,_id:'00000000-0000-4000-8000-000000000002',title:'Cenário preservado',company:{code:'937',name:'OUTRA EMPRESA'}};
  let items=[other,item];const deletions:string[]=[];let release!:()=>void;const gate=new Promise<void>(resolve=>release=resolve);
  await page.route('**/api/v4/simulations?*',r=>r.fulfill({json:{items,total:items.length,page:1,pageSize:20}}));
- await page.route('**/api/v4/simulations/*',async r=>{
+ await page.route(/\/api\/v4\/simulations\/[a-f0-9-]{36}$/,async r=>{
   expect(r.request().method()).toBe('DELETE');deletions.push(new URL(r.request().url()).pathname);
   if(deletions.length===1){await gate;return r.fulfill({status:503,json:{message:'Falha temporária na exclusão. Tente novamente.'}});}
   items=[other];return r.fulfill({json:{deleted:true,id:item._id}});
@@ -71,7 +74,7 @@ test('Excluir último item da página volta à página válida e conserva empres
   const params=new URL(r.request().url()).searchParams;queries.push(params);const pageNumber=Number(params.get('page'));
   return r.fulfill({json:{items:pageNumber===2?(deleted?[]:[{...item,year:2028}]):remaining,total:deleted?20:21,page:pageNumber,pageSize:20}});
  });
- await page.route('**/api/v4/simulations/*',r=>{expect(r.request().method()).toBe('DELETE');expect(new URL(r.request().url()).pathname).toBe(`/api/v4/simulations/${item._id}`);deleted=true;return r.fulfill({json:{deleted:true,id:item._id}});});
+ await page.route(/\/api\/v4\/simulations\/[a-f0-9-]{36}$/,r=>{expect(r.request().method()).toBe('DELETE');expect(new URL(r.request().url()).pathname).toBe(`/api/v4/simulations/${item._id}`);deleted=true;return r.fulfill({json:{deleted:true,id:item._id}});});
  await page.goto(`/simulations.html?page=2&clientId=${clientId}&search=936&year=2028`);
  await expect(page.locator('.history-pager')).toContainText('Página 2 de 2');
  await page.locator(`[data-delete-simulation="${item._id}"]`).click();await page.locator('#delete-simulation-confirm').click();
@@ -85,7 +88,7 @@ test('Excluir último item da página volta à página válida e conserva empres
 test('Perfil de leitura pode rever simulações sem receber controles de exclusão',async({page})=>{
  await session(page,{_id:'viewer',role:'viewer',name:'Leitura'});let deletes=0;
  await page.route('**/api/v4/simulations?*',r=>r.fulfill({json:{items:[item],total:1,page:1,pageSize:20}}));
- await page.route('**/api/v4/simulations/*',r=>{if(r.request().method()==='DELETE')deletes++;return r.fulfill({status:403,json:{message:'Sem permissão'}});});
+ await page.route(/\/api\/v4\/simulations\/[a-f0-9-]{36}$/,r=>{if(r.request().method()==='DELETE')deletes++;return r.fulfill({status:403,json:{message:'Sem permissão'}});});
  await page.goto('/simulations.html');await expect(page.getByRole('link',{name:'Rever simulação'})).toBeVisible();
  await expect(page.locator('[data-delete-simulation]')).toHaveCount(0);await expect(page.getByRole('dialog')).toHaveCount(0);expect(deletes).toBe(0);
 });

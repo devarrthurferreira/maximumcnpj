@@ -1,6 +1,14 @@
-# Maximum CNPJ · v0.21.0
+# Maximum CNPJ · v0.22.0
 
 Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples em Python. Identidade Maximum, autenticação, permissões e isolamento por workspace preservados. Sem Google Cloud.
+
+## Entrega 19/10/2026 — detalhes recolhidos e recálculo do histórico
+
+- Detalhes financeiros começam recolhidos e conservam a escolha do usuário ao alternar abas ou períodos. A impressão expande as informações e depois restaura o estado anterior; modais continuam abrindo apenas pela ação correspondente.
+- Ao abrir **Simulações** com acesso de administrador ou operador, o sistema inicia ou retoma automaticamente a revisão das simulações salvas até o início do lote no workspace. O painel informa quantos registros estão na fila, em processamento, OK, pendentes ou com falha; usuários de visualização acompanham sem iniciar alterações.
+- Cada simulação antiga com dados verificáveis recebe uma nova versão vinculada, incluindo a separação de serviços e o DIFAL na DRE. O registro original permanece disponível. Pedidos repetidos e acessos simultâneos não criam versões duplicadas.
+- O recálculo usa os relatórios originais armazenados e preserva despesas, anexos, RBT12 comprovada e diferenças dos ajustes manuais em relação à base anterior. As operações são reclassificadas pelas regras atuais sobre as linhas congeladas; alterações no saldo, como devoluções antigas, ficam registradas na origem da nova versão. Não dispara novas consultas CNPJ nem OCR.
+- Quando faltam fontes, dados de DIFAL ou RBT12 verificável, ou quando serviços manuais antigos podem duplicar serviços importados, o item fica **Pendente**, com o motivo para revisão. Nenhum desses casos recebe um OK automático.
 
 ## Entrega 19/10/2026 — serviços 9000 e DIFAL na DRE
 
@@ -8,8 +16,8 @@ Node.js 22 + TypeScript + MongoDB. Relatórios e leitura do Extrato do Simples e
 - O servidor separa serviços em cada grupo gerencial, retira esses valores dos grupos de mercadorias e preenche **Receita de serviços**. Mercadorias + serviços conciliam com o saldo do relatório; a média mensal é rateada em centavos entre os quatro grupos de receita, sem duplicação. Ajustes manuais ficam registrados.
 - Novas simulações incluem uma linha **DIFAL estimado (10%)** na DRE. O total elegível do relatório é dividido pelas competências importadas e arredondado em centavos; o anual é a média mensal × 12. A dedução entra uma única vez na receita líquida, no total de tributos e no resultado antes de IRPJ/CSLL, incluindo a base do Lucro Real.
 - É a mesma estimativa gerencial nos regimes comparados, não uma determinação da alíquota legal de cada operação. Serviços continuam fora da elegibilidade do DIFAL. Alterações manuais no faturamento não alteram a base elegível importada; pendências de UF continuam explícitas.
-- A origem, o total importado, as médias, a base elegível e a memória ficam visíveis. Seções financeiras começam abertas e podem ser recolhidas; a impressão expande todas elas.
-- Modelo `1.2.0-services-difal`, projeção de receitas `AVERAGE_X12_V2` e referência `DIFAL_DRE_V1`. Simulações antigas são reproduzidas pelos valores salvos, sem recálculo e sem inventar DIFAL zero quando a referência não existe. Criar uma nova versão busca a base atual; na migração, valores importados são separados novamente e o serviço manual anterior fica visível para revisão, preservando despesas e RBT12.
+- A origem, o total importado, as médias, a base elegível e a memória ficam visíveis. Desde a v0.22.0, seções financeiras começam recolhidas; a impressão continua expandindo todas elas.
+- Modelo `1.2.0-services-difal`, projeção de receitas `AVERAGE_X12_V2` e referência `DIFAL_DRE_V1`. Os registros originais são reproduzidos pelos valores salvos, sem alterar sua versão nem inventar DIFAL zero quando a referência não existe. A v0.22.0 adiciona a revisão automática com novas versões vinculadas e pendências explícitas. Criar uma nova versão busca a base atual; na migração, valores importados são separados novamente e o serviço manual anterior fica visível para revisão, preservando despesas e RBT12.
 
 Validação com dados sintéticos: prefixos 9000, separação por grupo, arredondamento, conciliação de receitas, DIFAL na DRE, persistência/isolamento, relatórios PDF e fluxo no navegador.
 

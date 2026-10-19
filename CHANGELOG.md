@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.22.0] — 2026-10-19
+
+- Detalhes financeiros recolhidos por padrão, com escolha preservada ao alternar abas/períodos e expansão temporária na impressão.
+- Revisão automática do histórico por workspace ao abrir Simulações com acesso de escrita; acompanhamento disponível também para visualização.
+- Recálculo retomável e idempotente em novas versões vinculadas, conservando originais, fontes armazenadas, RBT12 comprovada, despesas e ajustes manuais reconciliáveis.
+- Estados OK, Pendente e Falhou por simulação; ausência de fonte ou ambiguidade de serviços impede confirmação automática.
+- Regressões de concorrência, isolamento, exclusão, proveniência, impressão e fluxo no navegador.
+
 ## [0.21.0] — 2026-10-19
 
 - Vendas de serviços 9000 visíveis no resumo guiado e relatório, com natureza de quatro dígitos e descrição para conferência.

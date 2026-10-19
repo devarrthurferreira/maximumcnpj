@@ -38,7 +38,9 @@ test('Verified report values populate five categories and require monthly inputs
   await expect(page.locator('.sim-dre')).not.toContainText('NaN');
   const cells=await page.locator('.sim-dre tr').filter({hasText:'Receita bruta total'}).locator('td').allTextContents();expect(cells.every(t=>t.includes('120.000,12'))).toBe(true);
   const shot=info.outputPath('simulador-desktop.png');await page.screenshot({path:shot,fullPage:true});await info.attach('Simulador completo',{path:shot,contentType:'image/png'});
-  await expect(page.locator('.sim-charts')).toBeVisible();
+  await expect(page.locator('#simulation-result details[open]')).toHaveCount(0);
+  await expect(page.locator('.sim-charts')).toBeHidden();
+  await page.locator('.sim-charts-details summary').focus();await page.keyboard.press('Enter');
   const charts=info.outputPath('simulador-graficos-desktop.png');await page.locator('.sim-charts').screenshot({path:charts});await info.attach('Gráficos do simulador',{path:charts,contentType:'image/png'});
   await page.locator('.sim-charts-details summary').focus();await page.keyboard.press('Enter');await expect(page.locator('.sim-charts')).toBeHidden();
   const download=page.waitForEvent('download');await page.getByRole('button',{name:'Exportar simulação',exact:true}).click();expect((await download).suggestedFilename()).toBe('simulacao-001-2027.json');
@@ -65,9 +67,12 @@ test('Incomplete source or expired session never produces a simulator with fabri
 
 test('Dashboard shows five charts, scales every monetary view and expands every notice in one summary',async({page})=>{
   await setup(page);await page.goto(url);await complete(page,{serviceRevenue:1000,salaries:15000,rent:700});await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
-  await expect(page.locator('.sim-charts')).toBeVisible();await expect(page.locator('.sim-dre')).toBeVisible();
+  await expect(page.locator('.sim-charts')).toBeHidden();await expect(page.locator('.sim-dre')).toBeVisible();
+  await expect(page.locator('.sim-period-toggle [aria-pressed=true]')).toHaveCount(1);
+  await page.locator('.sim-charts-details summary').focus();await page.keyboard.press('Enter');await expect(page.locator('.sim-charts')).toBeVisible();
   await expect(page.locator('.sim-chart-card')).toHaveCount(5);await expect(page.locator('.sim-chart-profit .is-negative')).toHaveCount(4);
-  await expect(page.locator('#simulation-notices details')).toHaveCount(1);await expect(page.locator('#simulation-notices details')).toHaveAttribute('open','');
+  await expect(page.locator('#simulation-notices details')).toHaveCount(1);await expect(page.locator('#simulation-notices details')).not.toHaveAttribute('open','');
+  await page.locator('#simulation-notices summary').click();
   await expect(page.locator('.sim-notices-content')).toContainText('RBT12 informada');await expect(page.locator('.sim-notices-content')).toContainText('Não confirmados incluídos');
   await expect(page.locator('.sim-notices-content article')).toHaveCount(9);
   const annual=await page.locator('.sim-chart-profit .sim-chart-row-head strong').allTextContents();
@@ -91,22 +96,26 @@ test('Saved detail only reads captured snapshot and opens an independent editabl
   await page.route('**/api/v4/simulations/'+saved._id,r=>r.fulfill({json:saved}));
   let sourceReads=0;await page.route('**/api/v4/generations/*/simulator?*',r=>{sourceReads++;return r.fulfill({status:500,json:{message:'Must not read current source'}});});
   await page.goto('/simulator.html?simulation='+saved._id);await expect(page.locator('#simulation-snapshot')).toContainText('2.700,00');await expect(page.locator('#simulator-form')).toHaveCount(0);expect(sourceReads).toBe(0);
-  await expect(page.locator('#simulation-snapshot .sim-detail-grid')).toBeVisible();await expect(page.locator('#create-version')).toBeVisible();
+  await expect(page.locator('#simulator-app details[open]')).toHaveCount(0);
+  await expect(page.locator('#simulation-snapshot .sim-detail-grid')).toBeHidden();await expect(page.locator('#create-version')).toBeVisible();
+  await page.locator('.sim-captured-details summary').first().focus();await page.keyboard.press('Enter');
   await expect(page.locator('#simulation-snapshot .sim-detail-grid')).toBeVisible();
   await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');await expect(page.locator('#simulation-snapshot .sim-detail-grid strong')).toHaveCount(13);
   await page.locator('.sim-captured-details summary').first().focus();await page.keyboard.press('Enter');
-  await page.locator('.sim-charts-details summary').focus();await page.keyboard.press('Enter');
+  await expect(page.locator('.sim-charts')).toBeHidden();
   await page.evaluate(()=>{
     (window as any).__printEvidence=[];
     window.addEventListener('beforeprint',()=>{(window as any).__printEvidence.push({
       charts:document.querySelector('.sim-charts')!.getBoundingClientRect().height>0,
       captured:document.querySelector('#simulation-snapshot .sim-detail-grid')!.getBoundingClientRect().height>0,
+      source:document.querySelector('.sim-source-grid')!.getBoundingClientRect().height>0,
+      memory:document.querySelector('.sim-memory-section')!.getBoundingClientRect().height>0,
       values:document.querySelector('#simulation-snapshot .sim-detail-grid')!.textContent?.includes('2.700,00')});});
   });
   const printed=info.outputPath('simulacao-sintetica-impressao.pdf');
   await page.pdf({path:printed,format:'A4',printBackground:true});
   await info.attach('Impressão da versão salva',{path:printed,contentType:'application/pdf'});
-  expect(await page.evaluate(()=>(window as any).__printEvidence)).toEqual([{charts:true,captured:true,values:true}]);
+  expect(await page.evaluate(()=>(window as any).__printEvidence)).toEqual([{charts:true,captured:true,source:true,memory:true,values:true}]);
   await expect(page.locator('.sim-charts')).toBeHidden();await expect(page.locator('#simulation-snapshot .sim-detail-grid')).toBeHidden();
   const downloadEvent=page.waitForEvent('download');await page.locator('#export-simulation').click();const download=await downloadEvent;const stream=await download.createReadStream();let text='';for await(const chunk of stream!)text+=chunk;const exported=JSON.parse(text);expect(exported._id).toBe(saved._id);expect(exported.draft).toEqual(saved.draft);expect(exported.result).toEqual(saved.result);expect(exported.source).toEqual(source);
   await page.route('**/api/v4/generations/*/simulator?*',r=>{sourceReads++;return r.fulfill({json:source});});
@@ -130,7 +139,7 @@ test('Unavailable regimes and zero revenue never become misleading zero-valued c
 test('RBT12 vem somente da seção 2.2 e falha em PDF novo apaga a leitura anterior',async({page})=>{
  await setup(page);await page.goto(url);await complete(page);
  await expect(page.locator('#rbt12')).toHaveAttribute('readonly','');
- await expect(page.locator('#rbt12-details table')).toBeVisible();await expect(page.locator('#rbt12-details tbody tr')).toHaveCount(12);
+ await expect(page.locator('#rbt12-details table')).toBeHidden();await page.locator('#rbt12-details summary').click();await expect(page.locator('#rbt12-details tbody tr')).toHaveCount(12);
  await expect(page.locator('#rbt12-details')).toContainText('08/2025');await expect(page.locator('#rbt12-details')).toContainText('07/2026');
  await page.route('**/api/simples?*',r=>r.fulfill({status:422,json:{message:'Seção 2.2 incompleta: competência ilegível.'}}));
  await page.locator('#rbt12-pdf').setInputFiles({name:'ilegivel.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-unreadable')});
@@ -150,7 +159,8 @@ test('Conferência do PDF abre pelo teclado e mantém avisos visíveis no celula
  for(const id of ['rbt12-pdf','serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await expect(page.locator('#'+id)).toBeVisible();
  await page.locator('#rbt12-pdf').setInputFiles({name:'sintetico.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic')});
  await page.locator('#rbt12-read').click();await expect(page.locator('#rbt12')).toHaveValue('150000.00');
- await expect(page.getByText(warning,{exact:true})).toBeVisible();await expect(page.locator('#rbt12-details table')).toBeVisible();
+ await expect(page.getByText(warning,{exact:true})).toBeVisible();await expect(page.locator('#rbt12-details table')).toBeHidden();
+ await page.locator('#rbt12-details summary').focus();await page.keyboard.press('Enter');
  await expect(page.locator('#rbt12-details tbody tr')).toHaveCount(12);await expect(page.locator('#rbt12-details table')).toBeVisible();
  for(const width of [390,320]){await page.setViewportSize({width,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);}
  await page.locator('#rbt12-details summary').focus();await page.keyboard.press('Enter');
@@ -215,14 +225,14 @@ test('Leitura da seção 2.2 aguarda além de 55 segundos e informa as páginas 
  } finally {release();}
  await expect(page.locator('#rbt12')).toHaveValue('150000.00');
  await expect(page.locator('#rbt12-status')).toContainText('Seção 2.2 conferida');
- await expect(page.locator('#rbt12-details table')).toBeVisible();
+ await expect(page.locator('#rbt12-details table')).toBeHidden();await page.locator('#rbt12-details summary').click();
  await expect(page.locator('#rbt12-details')).toContainText('2 de 8 páginas analisadas (páginas 1, 2)');
  await expect(page.locator('#rbt12-details')).toContainText('demais foram preservadas sem OCR adicional');
  await expect(page.locator('#rbt12-view-searchable')).toHaveText('Ver PDF com seção 2.2 pesquisável');
  await expect(page.locator('#rbt12-download')).toHaveText('Baixar PDF com seção 2.2 pesquisável');
  await readStatement(page);
  await expect(page.locator('#rbt12-status')).toContainText('Seção 2.2 conferida');
- await expect(page.locator('#rbt12-details table')).toBeVisible();
+ await expect(page.locator('#rbt12-details table')).toBeHidden();await page.locator('#rbt12-details summary').click();
  await expect(page.locator('#rbt12-details')).toContainText('3 página(s) processada(s)');
  await expect(page.locator('#rbt12-view-searchable')).toHaveText('Ver PDF pesquisável');
 });

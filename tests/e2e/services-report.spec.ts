@@ -24,5 +24,8 @@ test('Resumo guiado mostra serviços9000, composição e DIFAL; relatório compl
  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
  const shot=info.outputPath('servicos-resumo-guiado.png');await page.screenshot({path:shot,fullPage:true});await info.attach('Resumo com vendas de serviços',{path:shot,contentType:'image/png'});
  await page.getByRole('link',{name:'Ver relatório completo e baixar arquivos'}).click();await page.locator('#purchase-view-filter').selectOption('lines');
- await expect(page.locator('#purchase-result-list')).toContainText('Natureza / CFOP');await expect(page.locator('#purchase-result-list')).toContainText('9000');await expect(page.locator('#purchase-result-list')).toContainText('PRESTAÇÃO DE SERVIÇO');await expect(page.locator('.purchase-source-details')).toHaveAttribute('open','');
+ await expect(page.locator('#purchase-result-list')).toContainText('Natureza / CFOP');await expect(page.locator('#purchase-result-list')).toContainText('9000');await expect(page.locator('#purchase-result-list')).toContainText('PRESTAÇÃO DE SERVIÇO');await expect(page.locator('.purchase-source-details')).not.toHaveAttribute('open','');
+ await page.locator('.purchase-source-details summary').focus();await page.keyboard.press('Enter');await expect(page.locator('.purchase-source-details')).toHaveAttribute('open','');
+ await page.locator('.purchase-source-details summary').focus();await page.keyboard.press('Enter');
+ const printed=info.outputPath('servicos-detalhes-impressos.pdf');await page.pdf({path:printed,format:'A4'});await info.attach('Detalhes de classificação impressos',{path:printed,contentType:'application/pdf'});await expect(page.locator('.purchase-source-details')).not.toHaveAttribute('open','');
 });
