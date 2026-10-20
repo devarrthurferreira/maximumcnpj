@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.26.0] — 2026-10-20
+
+- DRE como apresentação principal do resultado, com comparação de regimes recolhida e evidências de origem abaixo no histórico.
+- Resumo visual de receita, deduções, resultado e margem por regime/período; gráfico conciliado com as células da tabela, sem recalcular tributos.
+- Tabela única com hierarquia visual, destaque de regime anual e atalhos acessíveis entre linhas.
+- Estados explícitos de prejuízo, valores indisponíveis e composição divergente; layouts para celular e desktop.
+- Regressões de conciliação, valores salvos, seleção de mês/regime, teclado, exportações e impressão completa.
+
 ## [0.25.1] — 2026-10-20
 
 - Interface mensal com navegação entre competências, resumo dos valores e origem visível nas seções.

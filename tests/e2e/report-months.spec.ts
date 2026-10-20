@@ -68,6 +68,11 @@ test('compras, vendas e DIFAL por mês: edição isolada, rascunho, DRE, CSV, JS
  await page.locator('#result-competence').selectOption('0');await expect(page.locator('.sim-kpis article').first()).toContainText('1.050,00');
  expect(posts).toBe(1);expect(saved.result.annualRevenue).toBe(19266);expect(saved.difalProjection.annualCents).toBe(186000);
  await expect(page.locator('.sim-calendar')).toContainText('valores por competência');
+ await expect(page.locator('[data-dre-summary="revenue"]')).toContainText('1.050,00');
+ await expect(page.locator('.dre-flow-bars li')).toHaveCount(6);
+ await expect(page.locator('.sim-comparison-details')).not.toHaveAttribute('open','');
+ await page.locator('#dre-demonstrativo').evaluate(el=>el.scrollIntoView({block:'start'}));
+ await page.screenshot({path:info.outputPath('dre-visual-desktop.png')});
  const sales=page.locator('.dre-calendar-screen tr[data-dre-row="sales"]');
  await expect(sales).toContainText('1.000,00');await expect(sales).toContainText('2.100,00');
  const csvPromise=page.waitForEvent('download');await page.locator('#export-dre-csv').click();const download=await csvPromise;
@@ -80,14 +85,17 @@ test('compras, vendas e DIFAL por mês: edição isolada, rascunho, DRE, CSV, JS
  await page.locator('[data-period="monthly"]').click();await expect(page.locator('.sim-calendar')).toContainText('valores por competência');
  await page.locator('#result-competence').selectOption('11');await expect(page.locator('[data-difal-monthly]')).toContainText('210,00');
  await page.getByRole('button',{name:'Um mês por vez',exact:true}).click();
+ await expect(page.locator('[data-dre-summary="revenue"]')).toContainText('2.161,00');
  await expect(page.locator('#dre-month')).toHaveValue('11');await expect(page.locator('.sim-calendar h2')).toHaveText('Dezembro de 2027');
  await expect(page.locator('.dre-calendar-screen [data-dre-row="sales"] td').first()).toContainText('2.100,00');
  await page.locator('#dre-month').selectOption('0');await expect(page.locator('#result-competence')).toHaveValue('0');
  await expect(page.locator('.sim-kpis article').first()).toContainText('1.050,00');expect(posts).toBe(1);
+ await page.locator('[data-dre-jump="netProfit"]').click();await expect(page.locator('.dre-calendar-screen [data-dre-row="netProfit"]')).toBeFocused();
+ await expect(page.locator('.dre-calendar-screen [data-dre-row="netProfit"]')).toBeInViewport();
  for(const width of [390,320]){
   await page.setViewportSize({width,height:960});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   await page.locator('#dre-demonstrativo').scrollIntoViewIfNeeded();
-  if(width===390)await page.screenshot({path:info.outputPath('dre-mensal-mobile.png')});
+  if(width===390){await page.screenshot({path:info.outputPath('dre-mensal-mobile.png')});await page.locator('.dre-overview').evaluate(el=>el.scrollIntoView({block:'start'}));await page.screenshot({path:info.outputPath('dre-visual-mobile.png')});}
  }
  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
  await page.locator('#simulator-difal').screenshot({path:info.outputPath('difal-competencias.png')});expect(errors).toEqual([]);
