@@ -93,7 +93,7 @@ test('DIFAL projetado entra na DRE anual e mensal sem alterar a receita importad
   await expect(annual).toHaveCount(1);for(const cell of await annual.locator('td').allTextContents())expect(cell).toContain('90,00');
   await expect(page.locator('#annual-revenue')).toContainText('7.800,00');expect(posted.draft.values.salesRevenue).toBe(650);
   await page.getByRole('button',{name:'Mensal',exact:true}).click();const monthly=page.locator('[data-dre-row="difal"]');
-  await expect(monthly.locator('td')).toHaveCount(13);await expect(monthly.locator('td').first()).toContainText('7,50');await expect(monthly.locator('td').last()).toContainText('90,00');
+  await expect(monthly.locator('td')).toHaveCount(2);await expect(monthly.locator('td').first()).toContainText('7,50');await expect(monthly.locator('td').last()).toContainText('90,00');
 });
 
 test('histórico novo conserva a projeção DIFAL salva em vez de recalcular a estimativa',async({page})=>{

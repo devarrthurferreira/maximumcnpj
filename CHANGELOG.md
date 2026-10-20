@@ -1,5 +1,12 @@
 # Histórico de alterações
 
+## [0.26.1] — 2026-10-20
+
+- Alternância Mensal/Anual dentro da DRE, com período ativo destacado e competência antes do resumo.
+- Visão mensal inicia em um mês por vez; calendário completo continua opcional. Seletores duplicados removidos.
+- Troca de período preserva mês, regime e valores salvos; total anual soma as competências, sem média.
+- Conferência no navegador de navegação, teclado, totais distintos, meses sem dados e ausência de novas gravações.
+
 ## [0.26.0] — 2026-10-20
 
 - DRE como apresentação principal do resultado, com comparação de regimes recolhida e evidências de origem abaixo no histórico.
