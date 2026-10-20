@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.25.0] — 2026-10-20
+
+- DRE passa a usar compras, vendas, serviços e DIFAL reais de cada competência da coluna H, com total anual pela soma dos meses importados.
+- Seletor mensal, despesas e ajustes individuais, memória, gráficos, impressão e exportações seguem a mesma série, sem média mensal nem projeção de meses ausentes.
+- DIFAL V2 derivado das vendas/saídas por mês, inclusive ao reutilizar relatórios V1 conciliados.
+- Revisão idempotente em novas versões preserva os históricos, RBT12 e ajustes; relatórios e competências insuficientes ficam pendentes.
+- Regressões de sazonalidade, período parcial, meses sem movimento, centavos, validação, isolamento, salvamento e navegador.
+
 ## [0.24.1] — 2026-10-20
 
 - DIFAL gerencial reconhece vendas 5102 a CPF de outra UF em todas as competências, incluindo sufixos do Questor e descrição de produto.

@@ -1,12 +1,13 @@
 import {isDeepStrictEqual} from 'node:util';
 import {collection, scope} from './store.ts';
 import type {Doc} from './store.ts';
-import {AppError, need} from './security.ts';
+import {need} from './security.ts';
 import {purchaseSummary} from './purchase-store.ts';
 import {PURCHASE_MODE, SALES_MODE, COMPONENT_FIELDS, exactCents, exactSignedCents, financialReportingStatus} from './purchase-domain.ts';
 import {normalizeNatureCode, normalizeUf, salesOperation, summarizeDifal} from './difal.ts';
 import type {SalesOperation} from './difal.ts';
-import {annualizeReports} from '../public/simulator-projection.js';
+import {monthlyProjection, MONTHLY_FIELDS} from '../public/simulator-monthly.js';
+import {monthlyReportSource} from './simulation-monthly-source.ts';
 import type {generationSimulator} from './simulator-store.ts';
 
 type Source = Awaited<ReturnType<typeof generationSimulator>>;
@@ -129,10 +130,10 @@ export async function rebuildSimulationSource(snapshot: Doc): Promise<Source & {
   };
   const recalculatedSalesTotalCents = exactSignedCents([...totals.values()].reduce((sum, value) => exactSignedCents(sum + value), 0));
   const salesBalanceChangeCents = exactSignedCents(recalculatedSalesTotalCents - sales.totals.totalCents);
-  const projection = (() => {
-    try {return annualizeReports(fields, snapshot.reportMonths);}
-    catch (error) {throw new AppError(409, 'REPROCESS_SOURCE', error instanceof Error ? error.message : 'A receita reconstruída não permite uma projeção válida.');}
-  })();
+  check(fields.salesOptantCents+fields.salesNonOptantCents+fields.salesCpfCents>=0,'As devoluções superam as vendas de mercadorias reconstruídas.');
+  const monthlyReports=await monthlyReportSource(purchases,sales,currentRows,issuerUf);
+  const projection=monthlyReports?monthlyProjection(monthlyReports):null;
+  if(projection)check(MONTHLY_FIELDS.every(key=>projection.annualGroupsCents[key]===fields[key as keyof typeof fields]),'Os valores mensais reconstruídos não conciliam com os totais.');
   const warnings = [...(Array.isArray(original.warnings) ? original.warnings : []),
     'Recálculo sobre as linhas originais: natureza, descrição, valores e enquadramento da consulta foram preservados. Nenhum CNPJ foi consultado novamente.',
     'Serviços identificados nas linhas originais foram separados das mercadorias antes de aplicar ajustes do cenário.'];
@@ -141,7 +142,7 @@ export async function rebuildSimulationSource(snapshot: Doc): Promise<Source & {
   if (difal.pendingLines) warnings.push(`${difal.pendingLines} linhas elegíveis dependem de UF histórica do emitente ou destinatário; nenhum endereço atual foi utilizado para preencher a ausência.`);
   return {...original, generationId: snapshot.generationId, clientId: snapshot.clientId,
     company: structuredClone(snapshot.company || original.company), fields, revenueSplit: {version: 'SALES_SERVICES_V1'},
-    projection: original.periodBasis === 'COLUMN_H' ? projection : null,
+    projection, monthlyReports,
     purchases: {...original.purchases, totalCents: purchases.totals.totalCents},
     sales: {...original.sales, totalCents: recalculatedSalesTotalCents, servicesTotalCents: fields.serviceRevenueCents,
       operationTotals: [...operations.values()].sort((a, b) => a.operation.localeCompare(b.operation)), difal},

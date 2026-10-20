@@ -1,3 +1,5 @@
+import {baselineMonth} from '../public/simulator-monthly.js';
+import {annualizeReports} from '../public/simulator-projection.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -150,8 +152,9 @@ test('5102 histórico V1: todas as competências, prefill atual, nova DRE, expor
       simplePurchases:0,regularPurchases:94,salaries:1,benefits:2,adminExpenses:3,rent:4,cardExpenses:5}};
     const simulationId=randomUUID();
     await createSimulation(actor,{simulationId,generationId:generation._id,clientId,title:'Cenário sintético',
-      reportMonths:12,periodConfirmed:true,monthlyGroups,draft,rbt12Source:'MANUAL',rbt12ManualConfirmed:true});
+      reportMonths:12,periodConfirmed:true,monthlyGroups,monthlyInputs:source.monthlyReports!.map(row=>baselineMonth(row,draft.values)),draft,rbt12Source:'MANUAL',rbt12ManualConfirmed:true});
     const simulations=await collection('simulations'), original=(await simulations.findOne(scope({_id:simulationId})))!;
+    original.projection=annualizeReports(source.fields,12);delete original.monthlyInputs;delete original.source.monthlyReports;
     original.source.sales.difal=archived.difal;
     original.difalProjection=projectDifal(archived.difal,12,sales._id);
     original.engineInput=draftToInput(original.draft,original.difalProjection);
@@ -162,10 +165,10 @@ test('5102 histórico V1: todas as competências, prefill atual, nova DRE, expor
       reprocessing:{version:'SERVICES_DIFAL_2026_10_V1',originalId:simulationId}};
     await simulations.insertOne(oldChild);
     const result=await reprocessSimulations(actor,{});
-    assert.equal(result.version,'SERVICES_DIFAL_2026_10_V2'); assert.equal(result.total,1); assert.equal(result.counts.ok,1);
+    assert.equal(result.version,'REPORT_MONTHS_2026_10_V1'); assert.equal(result.total,1); assert.equal(result.counts.ok,1);
     const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,simulationId));
     assert.equal(child.difalProjection.sourceVersion,'DIFAL_ESTIMATE_V2');
-    assert.equal(child.difalProjection.monthlyCents,940); assert.equal(child.difalProjection.annualCents,11280);
+    assert(child.difalProjection.months.every((row:any)=>row.amountCents===940)); assert.equal(child.difalProjection.annualCents,11280);
     assert(child.result.regimes.every((regime:any)=>Math.abs(regime.dre.difal+112.8)<1e-9));
     assert.deepEqual(child.draft,original.draft); assert.deepEqual(child.rbt12Manual,original.rbt12Manual);
     await reprocessSimulations(actor,{}); assert.equal(await simulations.countDocuments(scope()),3);
@@ -233,8 +236,8 @@ test('Serviços 9000: totais por enquadramento, separação de mercadorias e pre
       purchasesOptantCents: 0, purchasesNonOptantCents: 4500});
     assert.equal(source.sales.servicesTotalCents, 210021); assert.deepEqual(source.sales.operationTotals, summary.operationTotals);
     assert.equal(source.sales.totalCents, 279521); assert.equal(source.projection?.totals.sales.totalCents, 279521);
-    assert.equal(source.projection?.totals.sales.monthlyCents, 93174);
-    assert.equal(source.projection?.groups.reduce((sum, group) => sum + (group.key.startsWith('sales') || group.key === 'serviceRevenueCents' ? group.monthlyCents : 0), 0), 93174);
+    assert.equal(source.projection?.totals.sales.totalCents, 279521);
+    assert.equal(source.projection?.groups.reduce((sum, group) => sum + (group.key.startsWith('sales') || group.key === 'serviceRevenueCents' ? group.totalCents : 0), 0), 279521);
     assert.equal(providerCalls, 3, 'Resumo e simulador leem o snapshot sem consultar novamente.');
 
     const negative = await createGeneration(actor, {generationId: randomUUID(), clientIds: [clientId]});

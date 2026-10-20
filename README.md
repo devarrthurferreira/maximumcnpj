@@ -1,12 +1,21 @@
-# Maximum CNPJ · v0.24.1
+# Maximum CNPJ · v0.25.0
+
+## Valores por competência — 20/10/2026
+
+- Compras, vendas, serviços e DIFAL são agregados pela data da coluna H, usando os valores líquidos Q − Y + AA − AB e o enquadramento congelado na consulta. O mesmo CPF em vários meses conserva todas as suas linhas.
+- O seletor de competência mostra e permite ajustar somente aquele mês. Despesas também são preenchidas por mês, inicialmente em zero. Rascunhos, simulações, gráficos, DRE, impressão, CSV e JSON conservam a série mensal.
+- `REPORT_MONTHS_V1`, `DIFAL_MONTHS_V1` e `DRE_CALENDAR_V3`: o anual soma as competências importadas, sem multiplicação por 12. Meses sem movimento dentro do intervalo confirmado têm zero; meses fora do intervalo ficam sem dados. Cada mês do relatório é associado ao mesmo mês do ano do cenário, mantendo a competência de origem na memória.
+- O modelo gerencial existente estima os tributos de cada competência separadamente; os valores anuais somam essas contribuições. A RBT12 permanece fixa e não é substituída pelas receitas. Não há transporte automático de saldo credor ou compensação entre meses; os limites e premissas mensais seguem o modelo existente, sem implementar apuração fiscal trimestral.
+- A revisão cria novas versões a partir dos relatórios originais. Ajustes mensais antigos são preservados como diferenças aplicadas a cada mês; despesas antigas se repetem nas competências importadas. Versões já mensais conservam seus ajustes individuais. Datas ou evidências insuficientes e ajustes que tornam uma competência inválida ficam pendentes para revisão; não se inventa uma média.
+- Simulações históricas continuam sendo abertas com os valores e o método que foram salvos. Somente novas versões usam o critério mensal. A publicação em produção é uma etapa separada do PR.
 
 ## Correção 20/10/2026 — DIFAL em todas as competências
 
 - A estimativa gerencial de 10% inclui a natureza **5102** e seus sufixos (`5102001`, `5102090`), além das naturezas 6101–6108 já previstas. No relatório Questor, a descrição pode ser o nome do produto. O cálculo usa o CPF do comprador na coluna A e compara a UF do emitente com a UF da coluna J; o primeiro dígito da natureza não substitui essa comparação.
 - Todas as linhas de todas as competências da coluna H entram na conferência. O mesmo CPF pode ter várias compras e vários meses: seus valores não são descartados por repetição do documento. Serviços 9000, devoluções, remessas, CNPJ e destinatários da mesma UF continuam excluídos; UFs ausentes continuam pendentes.
-- A fórmula da base permanece **Q − Y + AA − AB**, com Z informativa. O DIFAL mantém o arredondamento em centavos por linha. A DRE usa o total calculado ÷ competências, arredondado para a média mensal, e essa média × 12 para a projeção anual.
+- A fórmula da base permanece **Q − Y + AA − AB**, com Z informativa. O DIFAL mantém o arredondamento em centavos por linha. A DRE usa as linhas de cada competência, sem média nem extrapolação. O total anual soma somente os meses importados.
 - Novas importações usam `DIFAL_ESTIMATE_V2`. Prévia, servidor, CSV e PDF preservam também a leitura e a retomada de snapshots `DIFAL_ESTIMATE_V1`, com suas regras originais. Um cenário novo a partir de um relatório V1 recebe a estimativa atual derivada das linhas já conciliadas, sem nova consulta de CNPJs.
-- Ao abrir **Simulações**, administradores e operadores iniciam a revisão `SERVICES_DIFAL_2026_10_V2`, inclusive para originais já revisados no lote anterior. A correção cria versões vinculadas, preservando originais, versões anteriores, ajustes e RBT12. Reabrir a tela não duplica versões. O relatório original conserva seu valor histórico; uma nova importação emite o relatório atualizado.
+- Ao abrir **Simulações**, administradores e operadores iniciam a revisão `REPORT_MONTHS_2026_10_V1`, inclusive para originais já revisados no lote anterior. A correção cria versões vinculadas, preservando originais, versões anteriores, ajustes e RBT12. Reabrir a tela não duplica versões. O relatório original conserva seu valor histórico; uma nova importação emite o relatório atualizado.
 - Regressões sintéticas cobrem 12 competências, CPF repetido, prefixos 5102, exclusões, retomada V1, reprocessamento, DRE e exportações. Nenhum relatório real de cliente é versionado.
 
 ## Verificação integrada da entrega

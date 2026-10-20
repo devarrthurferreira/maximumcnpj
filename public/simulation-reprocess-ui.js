@@ -8,7 +8,7 @@ const simulationLink = (id, label) => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f
 
 function validate(data) {
   const validCount = value => Number.isSafeInteger(value) && value >= 0;
-  if (!data || data.version !== 'SERVICES_DIFAL_2026_10_V2' || !validCount(data.total) ||
+  if (!data || data.version !== 'REPORT_MONTHS_2026_10_V1' || !validCount(data.total) ||
       !['queued','processing','ok','pending','failed'].every(key => validCount(data.counts?.[key])) ||
       !validCount(data.retryableFailed) || data.retryableFailed > data.counts.failed ||
       typeof data.hasMore !== 'boolean' || typeof data.inventoryComplete !== 'boolean' ||

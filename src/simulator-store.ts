@@ -2,7 +2,8 @@ import { getGeneration } from './generation-store.ts';
 import { purchaseSummary, currentSalesDifal } from './purchase-store.ts';
 import { PURCHASE_MODE, SALES_MODE, exactCents, exactSignedCents } from './purchase-domain.ts';
 import { need } from './security.ts';
-import { annualizeReports } from '../public/simulator-projection.js';
+import {monthlyProjection, MONTHLY_FIELDS} from '../public/simulator-monthly.js';
+import {monthlyReportSource} from './simulation-monthly-source.ts';
 import { sameReportCompetences } from './report-competence.ts';
 
 type FinancialSummary = Awaited<ReturnType<typeof purchaseSummary>>;
@@ -83,8 +84,10 @@ export async function generationSimulator(id: string, clientId: string) {
   if (classification.purchases.nonCnpjCount) warnings.push('As compras de CPF e outros documentos não consultáveis estão em Compras de empresas fora do Simples, com subtotal disponível para conferência.');
   if (classification.sales.otherDocumentsCount) warnings.push('As vendas com CNO, documentos inválidos ou ausentes estão em Vendas Não Optantes SN. Vendas identificadas como CPF têm campo próprio.');
   if (sales.operationTotals?.some((item: any) => item.operation === 'DEVOLUCAO' && item.lines > 0)) warnings.push('Devoluções foram identificadas na aba de vendas e abatidas do saldo líquido antes do preenchimento dos campos do simulador.');
-  if (fields.serviceRevenueCents > 0) warnings.push('Vendas de serviços foram separadas das mercadorias e preenchem a receita de serviços pela média mensal, sem duplicar o faturamento. Naturezas iniciadas por 9000 são serviços, independentemente do sufixo.');
-  const projection = reportMonths ? annualizeReports(fields, reportMonths) : null;
-  return {projection, revenueSplit: {version: 'SALES_SERVICES_V1'}, generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
+  if (fields.serviceRevenueCents > 0) warnings.push('Vendas de serviços foram separadas das mercadorias e preenchem a receita de serviços pela competência de cada linha, sem duplicar o faturamento. Naturezas iniciadas por 9000 são serviços, independentemente do sufixo.');
+  const monthlyReports = await monthlyReportSource(purchases, sales);
+  const projection = monthlyReports ? monthlyProjection(monthlyReports) : null;
+  if(projection)need(MONTHLY_FIELDS.every(key=>projection.annualGroupsCents[key]===fields[key as keyof typeof fields]),'Os valores por competência não conciliam com os totais dos relatórios.',409,'SIMULATOR_INCONSISTENT');
+  return {projection, monthlyReports, revenueSplit: {version: 'SALES_SERVICES_V1'}, generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
     purchases: sourceMetadata(purchases), sales: sourceMetadata({...sales, difal: await currentSalesDifal(sales)}), fields, classification, warnings};
 }

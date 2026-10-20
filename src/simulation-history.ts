@@ -1,15 +1,15 @@
 import { collection, scope, audit } from './store.ts';
 import type { Doc } from './store.ts';
-import { need, text, digest, escapeRegex, integer } from './security.ts';
+import { AppError, need, text, digest, escapeRegex, integer } from './security.ts';
 import { write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { VERSION } from './domain.ts';
-import { annualizeReports, projectScenario, projectDifal } from '../public/simulator-projection.js';
+import {baselineMonth, calculateMonthlySimulation} from '../public/simulator-monthly.js';
 import {readRbt12Reference, rbt12InputSource} from './simulation-extrato.ts';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import { generationSimulator } from './simulator-store.ts';
 import { assertGenerationNotDeleted, assertLookupNotDeleted } from './generation-deletion.ts';
-import { calculateSimulation, draftToInput, MODEL_VERSION, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
+import { CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
   SIMULATION_VALUE_FIELDS } from '../public/simulator-engine.js';
 import type { SimulationDraft } from '../public/simulator-engine.js';
 
@@ -46,14 +46,8 @@ function signedSalesMoney(value: unknown) {
   return Math.round(value * 100) / 100;
 }
 
-/** Convert report cents into BRL using the same balanced rounding as the form. */
-function baselineGroups(source: Source, months: number): MonthlyGroups {
-  const projection = annualizeReports(source.fields, months);
-  return Object.fromEntries(GROUPS.map(key => [key, projection.monthlyGroupsCents[key] / 100])) as MonthlyGroups;
-}
-
 function request(input: unknown) {
-  object(input, ['simulationId', 'generationId', 'clientId', 'reportMonths', 'periodConfirmed', 'monthlyGroups', 'draft'], ['title', 'parentSimulationId', 'rbt12ExtractionId', 'rbt12Source', 'rbt12ManualConfirmed']);
+  object(input, ['simulationId', 'generationId', 'clientId', 'reportMonths', 'periodConfirmed', 'monthlyGroups', 'draft'], ['title', 'parentSimulationId', 'rbt12ExtractionId', 'rbt12Source', 'rbt12ManualConfirmed', 'monthlyInputs']);
   const simulationId = uuid(input.simulationId), generationId = uuid(input.generationId), clientId = uuid(input.clientId);
   const parentSimulationId = input.parentSimulationId == null ? null : uuid(input.parentSimulationId);
   const rbt12ExtractionId = input.rbt12ExtractionId == null ? null : uuid(input.rbt12ExtractionId);
@@ -78,6 +72,7 @@ function request(input: unknown) {
     'Os totais de vendas e compras devem corresponder aos cinco grupos preenchidos.', 400, 'SIMULATION_TOTAL');
   return {simulationId, generationId, clientId, title, reportMonths: input.reportMonths as number, periodConfirmed: true as const,
     monthlyGroups, draft, parentSimulationId, rbt12ExtractionId,
+    ...(input.monthlyInputs === undefined ? {} : {monthlyInputs: input.monthlyInputs}),
     // Preserve the previous normalized OCR request and hash for retries after an upgrade.
     ...(rbt12Source === 'MANUAL' ? {rbt12Source, rbt12ManualConfirmed: true as const} : {})};
 }
@@ -199,30 +194,22 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   const rbt12Manual = rbt12Source === 'MANUAL' ? reprocessing?.rbt12Manual || {source: 'MANUAL' as const, confirmed: true,
     rbt12Cents: Math.round(draft.rbt12! * 100), confirmedAt: createdAt,
     confirmedBy: {id: actor._id, name: actor.name}} : null;
-  const difalProjection = projectDifal(source.sales.difal, reportMonths, source.sales.jobId);
-  const engineInput = draftToInput(draft, difalProjection);
-  need(engineInput, 'Os valores ultrapassam os limites da calculadora. Confira as receitas mensais e a estimativa anual.');
-  const result = calculateSimulation(draft, difalProjection);
-  const projection = {...annualizeReports(source.fields, reportMonths), scenario: projectScenario(monthlyGroups, draft.values)};
-  need(Math.abs(result.annualRevenue - projection.scenario.annual.revenueCents / 100) < 0.01,
-    'A receita anual deve corresponder à receita mensal multiplicada por 12.', 409, 'SIMULATION_PROJECTION');
-  const baselineMonthlyGroups = baselineGroups(source, reportMonths);
-  const adjustments = GROUPS.filter(key => monthlyGroups[key] !== baselineMonthlyGroups[key]).map(field => ({
-    field, reportMonthlyValue: baselineMonthlyGroups[field], simulatedMonthlyValue: monthlyGroups[field]
-  }));
-  const baselineServiceRevenue = projection.monthlyGroupsCents.serviceRevenueCents === undefined ? null : projection.monthlyGroupsCents.serviceRevenueCents / 100;
-  const serviceAdjustments = baselineServiceRevenue !== null && draft.values.serviceRevenue !== baselineServiceRevenue ? [{
-    field: 'serviceRevenue', reportMonthlyValue: baselineServiceRevenue, simulatedMonthlyValue: draft.values.serviceRevenue
-  }] : [];
-  const allAdjustments = [...adjustments, ...serviceAdjustments];
-  const best = result.regimes.find(regime => regime.id === result.bestRegimeId);
+  need(source.monthlyReports, 'Este relatório não conserva as competências da coluna H. Reimporte compras e vendas para usar valores mensais; o histórico anterior permanece disponível.',409,'SIMULATION_MONTHS');
+  need(reportMonths===source.monthlyReports.length,'O período precisa corresponder às competências dos relatórios.',409,'SIMULATION_PERIOD');
+  need(Array.isArray(validated.monthlyInputs), 'Atualize a página para enviar os valores de cada competência.',409,'SIMULATION_MONTHS');
+  const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports!,validated.monthlyInputs,source.sales.jobId);}catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
+  const {difalProjection,engineInput,result,projection,monthlyInputs}=computed;
+  const first=baselineMonth(source.monthlyReports[0]);
+  const baselineMonthlyGroups=first.groups,baselineServiceRevenue=first.values.serviceRevenue;
+  const allAdjustments=computed.adjustments;
+  const best = result.regimes.find((regime: any) => regime.id === result.bestRegimeId);
   const snapshot = {_id: simulationId, ...scope(), requestHash, generationId, clientId,
     title: validated.title || `${source.company.name} · ${draft.year}`, company: source.company,
     createdAt, createdBy: {id: actor._id, name: actor.name}, appVersion: VERSION,
     ...(reprocessing ? {reprocessing: {version: reprocessing.version, originalId: reprocessing.originalId, completedAt: createdAt,
       ...(reprocessing.serviceRevenueMigration ? {serviceRevenueMigration:reprocessing.serviceRevenueMigration} : {})}} : {}),
-    modelVersion: MODEL_VERSION, calculatorSourceCommit: CALCULATOR_SOURCE_COMMIT, taxSources: TAX_SOURCES,
-    source, projection, difalProjection, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
+    modelVersion: result.version, calculatorSourceCommit: CALCULATOR_SOURCE_COMMIT, taxSources: TAX_SOURCES,
+    source, projection, difalProjection, monthlyInputs, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
     monthlyGroups, monthlyGroupsUnit: 'BRL', baselineMonthlyGroups,
     ...(baselineServiceRevenue === null ? {} : {baselineServiceRevenue}),
     manuallyAdjusted: allAdjustments.length > 0, adjustments: allAdjustments, draft, engineInput, result, parentSimulationId,

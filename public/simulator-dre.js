@@ -37,17 +37,20 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   const originals = Array.isArray(result?.regimes) ? result.regimes : [];
   const regimes = originals.map(r=>({id:r.id,name:r.name,available:r.available===true}));
   const hasCalendar = calendar != null;
-  const validCalendar = ['DRE_CALENDAR_V1','DRE_CALENDAR_V2'].includes(calendar?.version) && Array.isArray(calendar.months) && calendar.months.length===12;
+  const validCalendar = ['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3'].includes(calendar?.version) && Array.isArray(calendar.months) && calendar.months.length===12;
   const calendarYear = calendar?.year ?? engineInput?.year ?? null;
   const months = validCalendar ? calendar.months.map(month=>({...month})) : MONTH_NAMES.map((label,index)=>({number:index+1,label,period:calendarYear?`${calendarYear}-${String(index+1).padStart(2,'0')}`:null}));
-  const memory = id => {
-    const entry=unique(result?.memory,'id',id);
+  const actual=result?.method==='REPORT_MONTHS_V1';
+  const memory = (id,frame=null) => {
+    const entry=unique(frame?.monthResult?.memory||result?.memory,'id',id);
     return entry?.unit==='currency' && finite(entry.value) && entry.value>=0 ? entry.value : null;
   };
   function frame(regime,kind,index=null) {
     const saved=validCalendar?unique(calendar.regimes,'id',regime.id):null;
-    const available=regime.available===true && (kind==='annual'||!hasCalendar||saved?.available===true);
-    return {regime,kind,index,available,scale:kind==='month'?1/12:1,
+    const monthlyEntry=actual&&kind==='month'?result.monthlyResults.find(row=>row.month===index+1):null;
+    const available=regime.available===true && (kind==='annual'||!hasCalendar||saved?.available===true)&&(!actual||kind!=='month'||!!monthlyEntry);
+    const effective=monthlyEntry?.result.regimes.find(row=>row.id===regime.id)||regime;
+    return {regime:effective,kind,index,available,monthlyEntry,monthResult:monthlyEntry?.result,scale:kind==='month'&&!actual?1/12:1,
       get(key) {
         if(!available)return null;
         if(kind==='annual'||!hasCalendar){const value=regime.dre?.[key];return finite(value)?value*(kind==='month'?1/12:1):null;}
@@ -98,6 +101,10 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   if(GROUPS.every(key=>finite(monthlyGroups?.[key])&&monthlyGroups[key]===Math.round(monthlyGroups[key]*100)/100))salesMonthly=GROUPS.map(key=>monthlyGroups[key]);
   else if(monthlyGroups==null && projection?.scenario?.unit==='CENTS' && GROUPS.every(key=>Number.isSafeInteger(projection.scenario.monthlyGroupsCents?.[key])))salesMonthly=GROUPS.map(key=>projection.scenario.monthlyGroupsCents[key]/100);
   const salesDetail=index=>f=>{
+    if(actual){
+      const groups=f.monthlyEntry?f.monthlyEntry.groups:Object.fromEntries(GROUPS.map(key=>[key,sum(result.monthlyResults.map(row=>row.groups[key]))]));
+      return close(sum(GROUPS.map(key=>groups[key])),f.get('sales'))?good(groups[GROUPS[index]]):missing();
+    }
     const total=salesMonthly?sum(salesMonthly)*12*f.scale:null;
     return close(total,f.get('sales'))?good(salesMonthly[index]*12*f.scale):missing('Os grupos mensais não estão disponíveis ou não conciliam com as vendas salvas.');
   };
@@ -105,6 +112,10 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     Number.isSafeInteger(projection.monthlyGroupsCents?.serviceRevenueCents) && projection.monthlyGroupsCents.serviceRevenueCents>=0 &&
     (reportMonths==null||projection.reportMonths===reportMonths) ? projection.monthlyGroupsCents.serviceRevenueCents/100*12:null;
   const servicesDetail=adjustment=>f=>{
+    if(actual){
+      const baseline=f.monthlyEntry?source.monthlyReports.find(row=>row.sourceMonth===f.monthlyEntry.sourceMonth)?.fields.serviceRevenueCents/100:sum(source.monthlyReports.map(row=>row.fields.serviceRevenueCents))/100;
+      return finite(baseline)&&finite(f.get('services'))?good(adjustment?f.get('services')-baseline:baseline):missing();
+    }
     const annual=f.regime.dre?.services;
     if(!finite(serviceBaseline)||!finite(annual)||!close(annual*f.scale,f.get('services')))return missing('A base de serviços não está disponível ou não concilia com o cenário salvo.');
     return good((adjustment?annual-serviceBaseline:serviceBaseline)*f.scale);
@@ -118,9 +129,9 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     if(!['pure','hybrid','presumed','actual'].includes(id))return missing('Aplicabilidade do crédito não disponível nesta versão.');
     if((tax!=='icms'&&id==='pure')||(tax==='icms'&&['pure','hybrid'].includes(id)&&outside===false))return missing('Incluído no DAS; sem crédito externo neste regime.');
     if(tax==='icms'&&['pure','hybrid'].includes(id)&&outside===null)return missing('A opção de ICMS fora do DAS não está confirmada nesta versão.');
-    const credit=result?.credits?.[tax];
+    const credit=(f.monthResult||result)?.credits?.[tax];
     if(!['debit','potential','used','due','balance'].every(key=>finite(credit?.[key])&&credit[key]>=0)||
-      !close(credit.used,Math.min(credit.debit,credit.potential))||!close(credit.due,credit.debit-credit.used)||!close(credit.balance,credit.potential-credit.used))return missing('A apuração do crédito não está disponível ou não concilia.');
+      (!actual&&!close(credit.used,Math.min(credit.debit,credit.potential)))||!close(credit.due,credit.debit-credit.used)||!close(credit.balance,credit.potential-credit.used))return missing('A apuração do crédito não está disponível ou não concilia.');
     const d=f.regime.dre;
     const matches=tax==='icms'?close(d?.icmsUsed,credit.used)&&close(d?.icmsBalance,credit.balance)&&close(f.get('icmsNet'),-credit.due*f.scale):
       close(f.get(tax+'Debit'),-credit.debit*f.scale)&&close(f.get(tax+'Used'),credit.used*f.scale);
@@ -133,13 +144,13 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     const id=f.regime.id;
     if(['pure','hybrid'].includes(id))return missing('IRPJ incluído no DAS; sem parcela externa neste regime.');
     if(!['presumed','actual'].includes(id))return missing();
-    const basic=memory(id+'.irBasic'),additional=memory(id+'.irAdditional'),total=memory(id+'.irTotal');
+    const basic=memory(id+'.irBasic',f),additional=memory(id+'.irAdditional',f),total=memory(id+'.irTotal',f);
     return close(sum([basic,additional]),total)&&close(-total,f.regime.dre?.irpj)&&close(-total*f.scale,f.get('irpj'))?
       good(-(part==='basic'?basic:additional)*f.scale):missing('A memória do IRPJ não está disponível ou não concilia com o total salvo.');
   };
   const details=[
     {key:'salesBreakdown',label:'Composição da receita de vendas',parentKey:'sales',rows:GROUPS.map((key,index)=>detail(key,['Vendas a optantes do Simples','Vendas a não optantes do Simples','Vendas a CPFs'][index],'sales',salesDetail(index),{notes:['Componentes das vendas do cenário; valores líquidos podem incluir devoluções.'],sourceRefs:[`monthlyGroups.${key}`]}))},
-    {key:'serviceBreakdown',label:'Composição da receita de serviços',parentKey:'services',rows:[detail('serviceReport','Serviços dos relatórios · média projetada','services',servicesDetail(false),{sourceRefs:['projection.monthlyGroupsCents.serviceRevenueCents']}),detail('serviceAdjustment','Ajuste de serviços no cenário','services',servicesDetail(true),{notes:[reprocessing?.serviceRevenueMigration?.warning||'Diferença entre os serviços do cenário e a base importada; pode ser positiva, negativa ou zero.'],sourceRefs:['result.regimes[].dre.services','projection.monthlyGroupsCents.serviceRevenueCents']})]},
+    {key:'serviceBreakdown',label:'Composição da receita de serviços',parentKey:'services',rows:[detail('serviceReport',actual?'Serviços dos relatórios · por competência':'Serviços dos relatórios · média projetada','services',servicesDetail(false),{sourceRefs:['projection.monthlyGroupsCents.serviceRevenueCents']}),detail('serviceAdjustment','Ajuste de serviços no cenário','services',servicesDetail(true),{notes:[reprocessing?.serviceRevenueMigration?.warning||'Diferença entre os serviços do cenário e a base importada; pode ser positiva, negativa ou zero.'],sourceRefs:['result.regimes[].dre.services','projection.monthlyGroupsCents.serviceRevenueCents']})]},
     ...creditDetails,
     {key:'irpjBreakdown',label:'Composição do IRPJ',parentKey:'irpj',rows:[detail('irpjBasic','− IRPJ normal','irpj',irpjDetail('basic'),{sourceRefs:['result.memory:presumed.irBasic','result.memory:actual.irBasic']}),detail('irpjAdditional','− Adicional de IRPJ','irpj',irpjDetail('additional'),{sourceRefs:['result.memory:presumed.irAdditional','result.memory:actual.irAdditional']})]}
   ];
@@ -170,7 +181,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     indicator('operatingExpenseBurden','Despesas operacionais sobre receita',ratio(reconciledSum(['personnel','administrative','rent','cards'],'preTax','grossProfit'),{negative:true})),
     indicator('totalTaxes','Tributos e encargos totais',taxes,{unit:'currency',notes:['Inclui encargos sobre a folha. Créditos utilizados já foram abatidos; não deduzir novamente.']})
   ];
-  return {version:DRE_PRESENTATION_VERSION,regimes,sections,details,indicators,months,calendarYear,
+  return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,months,calendarYear,
     calendarReference:calendar?.rbt12Reference??null,calendarRounding:calendar?.rounding??'Valores completos preservados; exibição com duas casas decimais.',
     percentBasis:'Receita bruta total do cenário'};
 }

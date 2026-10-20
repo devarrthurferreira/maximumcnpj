@@ -79,7 +79,7 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   textLine(['Empresa', company.name || '', 'Código', company.code || '', 'CNPJ', company.cnpj || '']);
   textLine(['Ano do cenário', year ?? presentation.year ?? presentation.calendarYear ?? '', 'Versão da apresentação', presentation.version || '']);
   textLine(['Unidades', 'Valores monetários em BRL (R$); percentuais em %.']);
-  textLine(['Critério', 'Valores da simulação preservados. Projeção mensal, não lançamentos históricos.']);
+  textLine(['Critério', presentation.method==='REPORT_MONTHS_V1'?'Valores por competência dos relatórios. Total anual é a soma dos meses importados; meses fora do período sem dados.':'Valores da simulação preservados. Projeção mensal, não lançamentos históricos.']);
   textLine(['Arredondamento', 'Exibição com duas casas decimais; a soma dos meses exibidos pode diferir por centavos do total anual preservado.']);
   if (showPercent) textLine(['Análise vertical', presentation.percentBasis || 'Receita bruta total do cenário']);
   lines.push('');
