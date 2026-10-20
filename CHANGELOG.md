@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.25.1] — 2026-10-20
+
+- Interface mensal com navegação entre competências, resumo dos valores e origem visível nas seções.
+- Restauração de receitas e compras do mês selecionado, mantendo despesas e outros meses.
+- DIFAL com hierarquia de valor mensal, base e total, pendências explícitas e detalhes preservados durante a edição.
+- Seletor mensal nos indicadores sincronizado com a consulta da DRE; navegação preserva resultados já salvos.
+- Layout responsivo, navegação por teclado e cabeçalhos fixos da tabela; impressão, exportação e cálculo preservados.
+
 ## [0.25.0] — 2026-10-20
 
 - DRE passa a usar compras, vendas, serviços e DIFAL reais de cada competência da coluna H, com total anual pela soma dos meses importados.

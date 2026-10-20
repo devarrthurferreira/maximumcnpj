@@ -1,4 +1,13 @@
-# Maximum CNPJ · v0.25.0
+# Maximum CNPJ · v0.25.1
+
+## Interface por competência — 20/10/2026
+
+- Base importada com totais distintos de vendas e compras, período visível e conferência mês a mês.
+- Seletor de competência com nome do mês, anterior/próxima e contexto fixo durante a edição. O resumo reúne receitas, compras, despesas e DIFAL do mês; as seções repetem a competência selecionada.
+- Receitas e compras ajustadas recebem identificação própria. Restaurar um mês repõe somente suas receitas e compras, preservando despesas e os demais meses; a restauração do período inteiro tem rótulo explícito.
+- DIFAL com valor mensal, base elegível e total do período separados. Pendências de UF ficam em destaque; a conferência de todos os meses conserva seu estado ao editar valores.
+- Painel de resultados com seletor de mês sempre acessível, origem e ano do cenário distintos e atalho para a DRE. A seleção acompanha a consulta mensal da DRE; navegar entre competências preserva a simulação salva sem gravar outra versão.
+- Layout adaptado para computador e celular, controles de teclado, cabeçalhos e indicadores fixos durante a rolagem da tabela. Impressão, exportações, valores e regras de cálculo preservados.
 
 ## Valores por competência — 20/10/2026
 

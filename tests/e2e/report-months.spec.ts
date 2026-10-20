@@ -24,13 +24,48 @@ test('compras, vendas e DIFAL por mês: edição isolada, rascunho, DRE, CSV, JS
  await page.goto(`/simulator.html?generation=${generation}&client=${client}`);
  await expect(page.locator('#salesCpfCents')).toHaveValue('1000.00');await expect(page.locator('[data-difal-monthly]')).toContainText('100,00');
  await expect(page.locator('#simulator-projection')).not.toContainText('Média');
+ await expect(page.locator('#report-competence option:checked')).toHaveText('Janeiro / 2025');
+ await expect(page.locator('#report-prev')).toBeDisabled();await page.locator('#report-next').click();
+ await expect(page.locator('#report-competence')).toHaveValue('1');await expect(page.locator('#salesCpfCents')).toHaveValue('1100.00');
+ await page.locator('#report-prev').click();await expect(page.locator('#report-competence')).toHaveValue('0');
+ await expect(page.locator('#report-competence')).toBeFocused();
+ await expect(page.locator('#month-summary-revenue')).toContainText('1.050,00');
+ await page.locator('#simulator-difal summary').click();
+ await page.locator('#salesCpfCents').fill('');await expect(page.locator('#month-summary-revenue')).toHaveText('—');
+ await expect(page.locator('#annual-revenue')).toHaveText('Confira as receitas de todos os meses');
+ await page.locator('#salesCpfCents').fill('1250');
+ await expect(page.locator('#simulator-difal details')).toHaveAttribute('open','');
+ await expect(page.locator('#month-summary-revenue')).toContainText('1.300,00');
+ await expect(page.locator('#month-adjustment-state')).toHaveText('Receitas ou compras ajustadas');
+ await page.locator('#rent').fill('15');await page.locator('#restore-month').click();
+ await expect(page.locator('#salesCpfCents')).toHaveValue('1000.00');await expect(page.locator('#rent')).toHaveValue('15.00');
+ await expect(page.locator('#restore-month')).toBeDisabled();
+ await page.locator('#simulator-difal summary').click();
  await page.locator('#rent').fill('15');await page.locator('#report-competence').selectOption('11');
  await expect(page.locator('#salesCpfCents')).toHaveValue('2100.00');await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('310.00');await expect(page.locator('#rent')).toHaveValue('0.00');
  await expect(page.locator('[data-difal-monthly]')).toContainText('210,00');await expect(page.locator('[data-difal-annual]')).toContainText('1.860,00');
- await page.locator('#rent').fill('30');await page.reload();await expect(page.locator('#report-competence')).toHaveValue('11');await expect(page.locator('#rent')).toHaveValue('30.00');
+ await expect(page.locator('#report-next')).toBeDisabled();
+ await page.locator('#salesCpfCents').fill('2150');await page.locator('#rent').fill('30');
+ await page.locator('#report-competence').selectOption('0');await page.locator('#salesCpfCents').fill('1500');await page.locator('#restore-month').click();
+ await page.locator('#report-competence').selectOption('11');await expect(page.locator('#salesCpfCents')).toHaveValue('2150.00');await expect(page.locator('#rent')).toHaveValue('30.00');
+ await page.locator('#restore-month').click();await expect(page.locator('#rent')).toHaveValue('30.00');
+ for(const width of [1440,390,320]){
+  await page.setViewportSize({width,height:960});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await page.locator('#sim-section-purchases').scrollIntoViewIfNeeded();
+  const nav=await page.locator('.sim-month-nav').boundingBox();expect(nav!.y).toBeGreaterThanOrEqual(width<=1000?60:16);expect(nav!.height).toBeLessThan(135);
+  await expect(page.locator('#report-competence')).toBeInViewport();
+  if(width===390)await page.screenshot({path:info.outputPath('compras-mobile.png')});
+ }
+ await page.setViewportSize({width:1440,height:1000});
+ await page.locator('.sim-month-nav').scrollIntoViewIfNeeded();await page.screenshot({path:info.outputPath('competencias-desktop.png')});
+ await page.reload();await expect(page.locator('#report-competence')).toHaveValue('11');await expect(page.locator('#rent')).toHaveValue('30.00');
  await page.locator('#report-competence').selectOption('0');await expect(page.locator('#rent')).toHaveValue('15.00');
  await page.locator('#rbt12-manual').click();await page.locator('#rbt12').fill('500000');await page.locator('#rbt12-manual-confirm').check();
  await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('salva');
+ await page.locator('#report-competence').selectOption('11');await expect(page.locator('#simulation-save-status')).toContainText('salva');
+ await expect(page.locator('#result-competence')).toHaveValue('11');
+ await expect(page.locator('.sim-kpis article').first()).toContainText('2.161,00');
+ await page.locator('#result-competence').selectOption('0');await expect(page.locator('.sim-kpis article').first()).toContainText('1.050,00');
  expect(posts).toBe(1);expect(saved.result.annualRevenue).toBe(19266);expect(saved.difalProjection.annualCents).toBe(186000);
  await expect(page.locator('.sim-calendar')).toContainText('valores por competência');
  const sales=page.locator('.dre-calendar-screen tr[data-dre-row="sales"]');
@@ -43,6 +78,17 @@ test('compras, vendas e DIFAL por mês: edição isolada, rascunho, DRE, CSV, JS
  expect(exported.monthlyInputs).toEqual(saved.monthlyInputs);expect(exported.monthlyDre).toEqual(saved.monthlyDre);
  await page.goto(`/simulator.html?simulation=${saved._id}`);await expect(page.locator('#simulation-snapshot')).toBeVisible();expect(posts).toBe(1);
  await page.locator('[data-period="monthly"]').click();await expect(page.locator('.sim-calendar')).toContainText('valores por competência');
+ await page.locator('#result-competence').selectOption('11');await expect(page.locator('[data-difal-monthly]')).toContainText('210,00');
+ await page.getByRole('button',{name:'Um mês por vez',exact:true}).click();
+ await expect(page.locator('#dre-month')).toHaveValue('11');await expect(page.locator('.sim-calendar h2')).toHaveText('Dezembro de 2027');
+ await expect(page.locator('.dre-calendar-screen [data-dre-row="sales"] td').first()).toContainText('2.100,00');
+ await page.locator('#dre-month').selectOption('0');await expect(page.locator('#result-competence')).toHaveValue('0');
+ await expect(page.locator('.sim-kpis article').first()).toContainText('1.050,00');expect(posts).toBe(1);
+ for(const width of [390,320]){
+  await page.setViewportSize({width,height:960});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await page.locator('#dre-demonstrativo').scrollIntoViewIfNeeded();
+  if(width===390)await page.screenshot({path:info.outputPath('dre-mensal-mobile.png')});
+ }
  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
  await page.locator('#simulator-difal').screenshot({path:info.outputPath('difal-competencias.png')});expect(errors).toEqual([]);
 });
