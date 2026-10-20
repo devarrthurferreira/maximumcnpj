@@ -23,7 +23,7 @@ export function renderSection22(data) {
     <p class="sim-help">${esc(statementProcessingSummary(data))} Confira os valores na imagem original.</p></div></details>
     ${(data.warnings||[]).map(w=>`<p class="sim-extrato-warning" role="note">${esc(w)}</p>`).join('')}</div>`;
 }
-export function renderMonthlyDre({result,year,reference,period,regimeId,calendar,presentation,showPercent=false,monthView=false,month=0}) {
+export function renderMonthlyDre({result,year,reference,period,regimeId,calendar,presentation,showPercent=false,monthView=true,month=0}) {
   const data=['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3'].includes(calendar?.version)?calendar:buildMonthlyDre(result,year,reference,period);
   return renderCompleteMonthlyDre({presentation:presentation||buildDrePresentation({result,calendar:data}),calendar:data,year:data.year,regimeId,showPercent,monthView,month});
 }

@@ -62,6 +62,8 @@ test('Calendário único conserva meses distintos, modo móvel e impressão mens
   const saved=fixture(),row=saved.monthlyDre.regimes[0].rows.find((item:any)=>item.key==='revenue')!;
   row.months[0]=7777.77;row.months[11]=8888.88;row.annual=999999.99;
   await open(page,saved);await page.getByRole('button',{name:'Mensal',exact:true}).click();
+  await expect(page.locator('.dre-calendar-screen thead th')).toHaveCount(3);
+  await page.getByRole('button',{name:'12 meses',exact:true}).click();
   await expect(page.locator('.dre-calendar-screen thead th')).toHaveCount(14);
   const revenue=page.locator('.dre-calendar-screen [data-dre-row="revenue"]');await expect(revenue.locator('td').first()).toContainText('7.777,77');await expect(revenue.locator('td').nth(11)).toContainText('8.888,88');await expect(revenue.locator('td').last()).toContainText('999.999,99');
   await page.getByRole('button',{name:'Um mês por vez',exact:true}).click();await page.locator('#dre-month').selectOption('11');
@@ -105,6 +107,7 @@ test('serviços e DIFAL conciliam entre tela e CSV após reabrir histórico sem 
     expect(annualServices).toHaveLength(1);
     expect(annualServices[0].split(';').slice(5,9)).toEqual(Array(4).fill('30000,00'));
     await page.getByRole('button',{name:'Mensal',exact:true}).click();
+    await page.getByRole('button',{name:'12 meses',exact:true}).click();
     const monthly=(await downloadText(page,'#export-dre-csv')).text;
     const monthlyDifal=monthly.split('\r\n').filter(line=>line.includes('DIFAL estimado (10%)'));
     expect(monthlyDifal).toHaveLength(4);

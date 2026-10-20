@@ -36,6 +36,7 @@ test('Verified report values populate five categories and require monthly inputs
   await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva no histórico');await expect(page.locator('.sim-regime')).toHaveCount(4);await expect(page.locator('.sim-dre')).toContainText('Indicador');
   await expect(page.locator('.sim-dre')).not.toContainText('NaN');
+  await page.getByRole('button',{name:'12 meses',exact:true}).click();
   const cells=await page.locator('.sim-dre tr').filter({hasText:'Receita bruta total'}).locator('td').allTextContents();expect(cells.every(t=>t.includes('120.000,12'))).toBe(true);
   const shot=info.outputPath('simulador-desktop.png');await page.screenshot({path:shot,fullPage:true});await info.attach('Simulador completo',{path:shot,contentType:'image/png'});
   await expect(page.locator('#simulation-result details[open]')).toHaveCount(0);
@@ -76,12 +77,13 @@ test('Dashboard shows five charts, scales every monetary view and expands every 
   await expect(page.locator('.sim-notices-content')).toContainText('RBT12 informada');await expect(page.locator('.sim-notices-content')).toContainText('Não confirmados incluídos');
   await expect(page.locator('.sim-notices-content article')).toHaveCount(9);
   const annual=await page.locator('.sim-chart-profit .sim-chart-row-head strong').allTextContents();
-  await page.getByRole('button',{name:'Mensal',exact:true}).click();await expect(page.locator('.sim-dre .eyebrow')).toContainText('MENSAL');
+  await page.getByRole('button',{name:'Mensal',exact:true}).click();await expect(page.locator('.sim-dre h2')).toHaveText('DRE mensal');
   await expect(page.getByRole('button',{name:'Mensal',exact:true})).toBeFocused();
   await expect(page.locator('.sim-charts')).toBeVisible();
   await expect(page.locator('.sim-chart-revenue .sim-chart-composition-summary strong')).toContainText('11.000,01');
   await expect(page.locator('.sim-chart-purchases .sim-chart-composition-summary strong')).toContainText('4.500,01');
   await expect(page.locator('.sim-chart-expense-total strong')).toContainText('15.700,00');
+  await page.getByRole('button',{name:'12 meses',exact:true}).click();
   const cells=await page.locator('.sim-dre tr').filter({hasText:'Receita bruta total'}).locator('td').allTextContents();expect(cells).toHaveLength(13);expect(cells.slice(0,12).every(t=>t.includes('11.000,01'))).toBe(true);expect(cells[12]).toContain('132.000,12');await expect(page.locator('.sim-calendar .dre-calendar-screen thead th')).toHaveCount(14);
   const parse=(v:string)=>Number(v.replace(/[^0-9,-]/g,'').replace(',','.'));
   const monthly=await page.locator('.sim-chart-profit .sim-chart-row-head strong').allTextContents();monthly.forEach((v,i)=>expect(parse(v)).toBeCloseTo(parse(annual[i])/12,2));
@@ -240,9 +242,11 @@ test('DRE mensal mostra 12 meses, muda regime e conserva a RBT12 do extrato',asy
  await setup(page);await page.setViewportSize({width:1440,height:1100});await page.goto(url);await complete(page,{serviceRevenue:1000,salaries:3000,rent:700});
  await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
  await page.getByRole('button',{name:'Mensal',exact:true}).click();
+ await expect(page.locator('.sim-calendar .dre-calendar-screen thead th')).toHaveCount(3);
+ await page.getByRole('button',{name:'12 meses',exact:true}).click();
  await expect(page.locator('.sim-calendar .dre-calendar-screen thead th')).toHaveCount(14);
  await expect(page.locator('.sim-calendar .dre-calendar-screen thead')).toContainText('Janeiro');await expect(page.locator('.sim-calendar .dre-calendar-screen thead')).toContainText('Dezembro');
- await expect(page.locator('.sim-extrato-reference')).toContainText('150.000,00');await expect(page.locator('.sim-extrato-reference')).toContainText('08/2026');
+ await expect(page.locator('.dre-reading-footer')).toContainText('150.000,00');await expect(page.locator('.dre-reading-footer')).toContainText('08/2026');
  const options=await page.locator('#dre-regime option').evaluateAll(options=>options.map(o=>(o as HTMLOptionElement).value));
  const parse=(text:string)=>Number(text.replace(/[^0-9,-]/g,'').replace(',','.'));
  for(const id of options){await page.locator('#dre-regime').selectOption(id);

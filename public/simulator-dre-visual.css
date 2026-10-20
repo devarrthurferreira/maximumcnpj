@@ -5,6 +5,14 @@
 .dre-heading p { font-size:12px; line-height:1.6; color:#71666d; margin:0; }
 .dre-regime-control { flex:0 1 260px; min-width:210px; font-size:12px; color:#5a454f; font-weight:600; }
 .dre-regime-control select { min-height:44px; margin:7px 0 0; border:1px solid #d6c6ce; border-radius:8px; background:#fff; font-size:14px; }
+.dre-period-panel { display:grid; grid-template-columns:minmax(210px,auto) minmax(200px,280px) 1fr; gap:16px 24px; align-items:end; padding:20px; margin-top:20px; border:1px solid #e4d8de; border-radius:10px; background:#faf7f9; }
+.dre-period-field>span,.dre-month-control,.dre-period-year>span { display:block; font-size:12px; font-weight:600; color:#634855; }
+.dre-period-field .sim-period-toggle { margin-top:7px; background:#eee6eb; }
+.dre-period-field button { flex:1; font-size:14px; }
+.dre-period-field button[aria-pressed=true] { background:#750207; color:#fff; }
+.dre-month-control select { margin:7px 0 0; min-height:54px; border:1px solid #d6c6ce; border-radius:8px; background:#fff; font-size:14px; }
+.dre-period-year strong { display:flex; align-items:center; min-height:54px; margin-top:7px; font-size:23px; color:#4d3340; }
+.dre-period-panel>p { align-self:center; margin:18px 0 0; font-size:12px; line-height:1.7; color:#75616d; }
 .dre-overview { padding:22px 0; }
 .dre-overview-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
 .dre-overview-heading>span { font-size:10px; letter-spacing:1px; font-weight:650; color:#75646e; }
@@ -71,6 +79,8 @@
 .sim-comparison-details .sim-kpis { margin-top:20px; }
 .sim-evidence-title { font-size:18px; margin:28px 0 16px; color:#634455; }
 @media(max-width:1100px) {
+ .dre-period-panel { grid-template-columns:1fr 1fr; gap:12px 20px; }
+ .dre-period-panel>p { grid-column:1/-1; margin:0; }
  .dre-table-heading { flex-wrap:wrap; }
  .dre-visual .dre-toolbar { justify-content:space-between; flex:1 1 100%; }
  .dre-summary-cards article { padding:16px; }
@@ -83,6 +93,10 @@
  .simulator-clean .dre-heading h2 { font-size:23px; }
  .dre-regime-control { flex:auto; min-width:0; }
  .dre-regime-control select { font-size:16px; }
+ .dre-period-panel { grid-template-columns:1fr; gap:14px; padding:16px; margin-top:16px; }
+ .dre-month-control select { font-size:16px; min-height:48px; }
+ .dre-period-year { display:flex; align-items:center; justify-content:space-between; }
+ .dre-period-year strong { min-height:0; margin:0; }
  .dre-overview-heading { align-items:flex-start; gap:8px; }
  .dre-overview-heading p { width:100%; font-size:12px; }
  .dre-summary-cards { grid-template-columns:1fr; gap:8px; }
@@ -113,4 +127,4 @@
  .sim-comparison-details>summary { flex-wrap:wrap; gap:6px; }
 }
 @media(max-width:370px) { .dre-summary-cards article { grid-template-columns:1fr; gap:6px; } .dre-summary-cards article>strong { text-align:left; font-size:24px; } }
-@media print { .dre-overview,.dre-quick-nav,.dre-heading,.dre-table-heading,.dre-reading-footer,.dre-reading-note { display:none!important; } .sim-comparison-details { display:none; } }
+@media print { .dre-overview,.dre-quick-nav,.dre-heading,.dre-table-heading,.dre-reading-footer,.dre-reading-note,.dre-period-panel { display:none!important; } .sim-comparison-details { display:none; } }

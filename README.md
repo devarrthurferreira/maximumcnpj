@@ -1,4 +1,11 @@
-# Maximum CNPJ · v0.26.0
+# Maximum CNPJ · v0.26.1
+
+## DRE mensal ou anual — 20/10/2026
+
+- A escolha **Mensal / Anual** fica dentro da DRE, antes do resumo visual, com o período ativo em destaque.
+- Mensal abre um mês por vez, com seletor único de competência para o resumo, a tabela e os indicadores. A consulta dos 12 meses lado a lado continua disponível.
+- Anual apresenta o consolidado: nas simulações por competência, soma os meses importados. A troca conserva o mês, o regime e os percentuais escolhidos, sem recalcular ou gravar outra versão.
+- Meses sem dados têm identificação no seletor e estado vazio. Simulações antigas conservam a indicação e os valores da projeção salva. Impressão e exportações completas permanecem disponíveis.
 
 ## DRE visual — 20/10/2026
 
