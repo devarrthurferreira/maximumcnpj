@@ -1,3 +1,5 @@
+import {baselineMonth,calculateMonthlySimulation} from '../public/simulator-monthly.js';
+import {generationSimulator} from '../src/simulator-store.ts';
 import {section22} from './fixtures/section22.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -48,7 +50,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       serviceRevenue: 5000, salesRevenue: 200.01, simplePurchases: 33.34, regularPurchases: 166.67,
       salaries: 100, benefits: 5.25, adminExpenses: 0, rent: 10, cardExpenses: .29
     }};
-    const input = {simulationId: randomUUID(), rbt12ExtractionId: randomUUID(), generationId, clientId, reportMonths: 3,
+    const input: any = {simulationId: randomUUID(), rbt12ExtractionId: randomUUID(), generationId, clientId, reportMonths: 3,
       periodConfirmed: true, monthlyGroups, draft};
     await assert.rejects(createSimulation(actor, input), code('SIMULATOR_INCOMPLETE'));
     const jobs: any[] = [];
@@ -60,6 +62,9 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       await (await collection('providerControl')).deleteMany({});
       await processLookup(actor, job._id, transport);
     }
+    const monthlySource=await generationSimulator(generationId,clientId);
+    input.monthlyInputs=monthlySource.monthlyReports!.map(row=>{const entry=baselineMonth(row,draft.values);entry.values.serviceRevenue=5000;return entry;});
+    const expected=(d:any,entries=input.monthlyInputs)=>calculateMonthlySimulation(d,monthlySource.monthlyReports!,entries,monthlySource.sales.jobId);
     assert.equal(providerCalls, 4);
     await (await collection('simplesExtractions')).insertOne({...scope(),_id:input.rbt12ExtractionId,clientId,parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result:section22(50000000)});
     let saved: any;
@@ -99,17 +104,17 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.equal(saved.title, 'Empresa A · 2027');
       assert.deepEqual(saved.createdBy, {id: actor._id, name: actor.name});
       assert.deepEqual(saved.company, {name: 'Empresa A', code: '936'});
-      assert.deepEqual(saved.result, calculateSimulation(draft, saved.difalProjection));
-      assert.deepEqual(saved.engineInput, draftToInput(draft, saved.difalProjection));
+      assert.deepEqual(saved.result, expected(draft).result);
+      assert.deepEqual(saved.engineInput, expected(draft).engineInput);
       assert.deepEqual(saved.taxSources, TAX_SOURCES);
       assert.deepEqual(saved.draft, draft);
       assert.deepEqual(saved.monthlyGroups, monthlyGroups);
-      assert.deepEqual(saved.baselineMonthlyGroups, monthlyGroups);
+      assert.deepEqual(saved.baselineMonthlyGroups, baselineMonth(monthlySource.monthlyReports![0]).groups);
       assert.equal(saved.monthlyGroupsUnit, 'BRL');
-      assert.equal(saved.modelVersion, MODEL_VERSION);
+      assert.equal(saved.modelVersion, '1.3.0-report-months');
       assert.equal(saved.calculatorSourceCommit, CALCULATOR_SOURCE_COMMIT);
       assert.equal(saved.manuallyAdjusted, true);
-      assert.deepEqual(saved.adjustments, [{field:'serviceRevenue', reportMonthlyValue:0, simulatedMonthlyValue:5000}]);
+      assert.deepEqual(saved.adjustments, monthlySource.monthlyReports!.map(row=>({sourceMonth:row.sourceMonth,field:'serviceRevenue',reportMonthlyValue:0,simulatedMonthlyValue:5000})));
       assert.equal(saved.source.sales.totalCents, 60003);
       assert.equal(saved.source.purchases.totalCents, 60003);
       assert.equal(saved.source.sales.jobId, jobs[1]._id);
@@ -117,7 +122,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.deepEqual(saved.reportPeriod, {startDate:'2026-06-15',endDate:'2026-08-15',startMonth:'2026-06',endMonth:'2026-08',months:3,observedMonths:3,missingMonths:[]});
       assert.equal(saved.rbt12Source, 'SIMPLES_SECTION_22');
       const originalNormalized = {simulationId:input.simulationId,generationId,clientId,title:null,reportMonths:3,periodConfirmed:true,
-        monthlyGroups,draft,parentSimulationId:null,rbt12ExtractionId:input.rbt12ExtractionId};
+        monthlyGroups,draft,parentSimulationId:null,rbt12ExtractionId:input.rbt12ExtractionId,monthlyInputs:input.monthlyInputs};
       assert.equal((await (await collection('simulations')).findOne(scope({_id:saved._id})))!.requestHash,digest(JSON.stringify(originalNormalized)),
         'O formato de hash OCR anterior permanece idêntico após adicionar a opção manual.');
       assert.equal(saved.rbt12Manual, undefined);
@@ -158,11 +163,11 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
 
     await t.test('nova versão vinculada identifica ajustes e não modifica a original', async () => {
       const revised = await createSimulation(operator, {...input, simulationId: randomUUID(), parentSimulationId: saved._id,
-        title: 'Revisão 2028', monthlyGroups: {...monthlyGroups, salesCpfCents: 150},
+        title: 'Revisão 2028', monthlyInputs:input.monthlyInputs.map((row:any,index:number)=>index===2?{...row,groups:{...row.groups,salesCpfCents:350.01}}:row),monthlyGroups: {...monthlyGroups, salesCpfCents: 150},
         draft: {...draft, year: 2028, values: {...draft.values, salesRevenue: 250.01, rent: 15}}});
       assert.equal(revised.parentSimulationId, saved._id);
       assert.equal(revised.manuallyAdjusted, true);
-      assert.deepEqual(revised.adjustments, [{field: 'salesCpfCents', reportMonthlyValue: 100, simulatedMonthlyValue: 150}, {field:'serviceRevenue', reportMonthlyValue:0, simulatedMonthlyValue:5000}]);
+      assert.deepEqual(revised.adjustments, [...saved.adjustments.slice(0,2),{sourceMonth:'2026-08',field:'salesCpfCents',reportMonthlyValue:300.01,simulatedMonthlyValue:350.01},saved.adjustments[2]]);
       assert.equal(revised.createdBy.id, operator._id);
       assert.deepEqual(await getSimulation(saved._id), saved);
       await assert.rejects(createSimulation(actor, {...input, simulationId: randomUUID(), parentSimulationId: randomUUID()}), code('NOT_FOUND'));
@@ -381,11 +386,11 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.equal(manual.rbt12Source,'MANUAL'); assert.equal(manual.rbt12Extraction,null);
       assert.deepEqual(manual.rbt12Manual,{source:'MANUAL',confirmed:true,rbt12Cents:12345629,
         confirmedAt:manual.createdAt,confirmedBy:{id:operator._id,name:operator.name}});
-      assert.deepEqual(manual.result,calculateSimulation(manualInput.draft,manual.difalProjection));
+      assert.deepEqual(manual.result,expected(manualInput.draft).result);
       assert.equal(manual.engineInput.rbt12,123456.29);
       assert.notEqual(manual.engineInput.rbt12,manual.result.annualRevenue,'A RBT12 não é substituída pela projeção.');
       assert.deepEqual(manual.monthlyDre.rbt12Reference,{source:'MANUAL',rbt12Cents:12345629});
-      assert.equal(manual.monthlyDre.method,'AVERAGE_X12_FIXED_MANUAL_RBT12');
+      assert.equal(manual.monthlyDre.method,'REPORT_MONTHS_FIXED_RBT12');
       assert.deepEqual(await getSimulation(manual._id),manual);
       assert.deepEqual(await createSimulation(operator,manualInput),manual);
       await assert.rejects(createSimulation(operator,{...manualInput,draft:{...manualInput.draft,rbt12:123457}}),code('SIMULATION_EXISTS'));
@@ -396,7 +401,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       } finally {process.env.WORKSPACE_ID='simulation_history_test';}
       const zero=await createSimulation(actor,{...manualInput,simulationId:randomUUID(),draft:{...draft,rbt12:0}});
       assert.equal(zero.engineInput.rbt12,0);assert.equal(zero.rbt12Manual.rbt12Cents,0);
-      assert.deepEqual(zero.result,calculateSimulation({...draft,rbt12:0},zero.difalProjection),'Zero explícito conserva avisos e restrições do motor.');
+      assert.deepEqual(zero.result,expected({...draft,rbt12:0}).result,'Zero explícito conserva avisos e restrições do motor.');
       assert.equal(providerCalls,4,'A entrada manual não dispara consultas externas.');
       assert.deepEqual(await getSimulation(saved._id),saved,'O histórico OCR anterior permanece imutável.');
     });

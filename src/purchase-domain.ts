@@ -1,4 +1,4 @@
-import { calculateDifal, isPendingDifal, normalizeUf, normalizeNatureCode, salesOperation, DIFAL_VERSION, DIFAL_RATE_PERCENT, type SalesOperation, type DifalResult } from './difal.ts';
+import { calculateDifal, isPendingDifal, normalizeUf, normalizeNatureCode, salesOperation, DIFAL_VERSION, isDifalVersion, DIFAL_RATE_PERCENT, type SalesOperation, type DifalResult } from './difal.ts';
 import { normalizeCnpj, csvEncode } from './domain.ts';
 import { documentKind } from './lookup-domain.ts';
 import { need } from './security.ts';
@@ -83,13 +83,15 @@ export function compactPurchaseLine(input: any, version: PurchaseCalculationVers
   if (mode === SALES_MODE) {
     const rawNatureCode = String(input.natureCode ?? '').trim(), natureCode = normalizeNatureCode(rawNatureCode), description = String(input.description ?? '').trim();
     need(rawNatureCode.length <= 80 && description.length <= 2000, 'Natureza/descrição acima do limite.');
-    const operation = salesOperation(natureCode, description, !difalContext || difalContext.difalVersion === DIFAL_VERSION);
+    need(difalContext?.difalVersion === undefined || isDifalVersion(difalContext.difalVersion), 'Versão do DIFAL desconhecida.', 409, 'DIFAL_VERSION');
+    const difalVersion = isDifalVersion(difalContext?.difalVersion) ? difalContext.difalVersion : DIFAL_VERSION;
+    const operation = salesOperation(natureCode, description, !difalContext || isDifalVersion(difalContext.difalVersion), difalVersion);
     const balanceCents = operation === 'DEVOLUCAO' ? -input.totalCents : input.totalCents;
     need(Number.isSafeInteger(balanceCents) && Math.abs(balanceCents) <= MAX_LINE_CENTS, 'Saldo da operação inválido.');
     Object.assign(salesFields, {natureCode, description, operation, balanceCents});
-    if (difalContext?.difalVersion === DIFAL_VERSION) {
+    if (difalContext && isDifalVersion(difalContext.difalVersion)) {
       const recipientUf = normalizeUf(input.recipientUf);
-      Object.assign(salesFields, {recipientUf, difal: calculateDifal({...input, natureCode, description, operation, recipientUf, issuerUf: difalContext.issuerUf})});
+      Object.assign(salesFields, {recipientUf, difal: calculateDifal({...input, natureCode, description, operation, recipientUf, issuerUf: difalContext.issuerUf}, difalVersion)});
     }
   }
   const document = input.document.trim().replace(/[.\/\-\s]/g, '').toUpperCase();
@@ -167,6 +169,6 @@ export function purchaseCsv(job: any, rows: any[]): string {
       row.document, row.documentKind, row.name, row.natureCode || '', row.description || '', row.operation || '', row.quantity, moneyText(net ? row.grossCents : row.totalCents),
       ...['discountCents', 'accessoryCents', 'freightCents', 'abatementCents'].map(field => net ? moneyText(row[field]) : ''),
       moneyText(row.totalCents), moneyText(row.balanceCents ?? row.totalCents), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,
-      row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado', ...(sales ? (job.difalVersion === DIFAL_VERSION ? [job.issuerUf || '', row.recipientUf || '', DIFAL_RATE_PERCENT, isPendingDifal(row.difal) ? '' : moneyText(row.difal.baseCents), isPendingDifal(row.difal) ? '' : moneyText(row.difal.amountCents), isPendingDifal(row.difal) ? (row.difal.reason === 'MISSING_ISSUER_UF' ? 'Pendente — UF do emitente ausente' : 'Pendente — UF do destinatário ausente') : row.difal.reason, DIFAL_VERSION] : ['', '', '', '', '', 'Indisponível — reimporte as vendas', '']) : [])])
+      row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado', ...(sales ? (isDifalVersion(job.difalVersion) ? [job.issuerUf || '', row.recipientUf || '', DIFAL_RATE_PERCENT, isPendingDifal(row.difal) ? '' : moneyText(row.difal.baseCents), isPendingDifal(row.difal) ? '' : moneyText(row.difal.amountCents), isPendingDifal(row.difal) ? (row.difal.reason === 'MISSING_ISSUER_UF' ? 'Pendente — UF do emitente ausente' : 'Pendente — UF do destinatário ausente') : row.difal.reason, job.difalVersion] : ['', '', '', '', '', 'Indisponível — reimporte as vendas', '']) : [])])
   ]);
 }

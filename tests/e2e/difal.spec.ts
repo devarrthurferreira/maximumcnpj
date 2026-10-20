@@ -6,13 +6,13 @@ const existingJobId='00000000-0000-4000-8000-000000000083';
 const client={_id:clientId,code:'123',name:'EMPRESA SINTÉTICA DIFAL',active:true};
 const version='DIFAL_ESTIMATE_V1';
 const eligible={eligible:true,baseCents:15000,amountCents:1500,reason:'ELIGIBLE'};
-type Sale={name?:string;value?:string;document?:string;uf?:string;nature?:string;description?:string};
+type Sale={name?:string;value?:string;document?:string;uf?:string;nature?:string;description?:string;date?:string};
 function csv(sales:Sale[]=[{}]) {
   const header=Array(28).fill('');
   for(const [column,label] of [[0,'CNPJ / CPF / CNO'],[7,'Data Escrituração/Serviço'],[8,'Comprador'],[9,'Estado'],[11,'Natureza'],[14,'Descrição'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']] as const)header[column]=label;
   return [header,...sales.map(sale=>{
     const row=Array(28).fill('');
-    row[0]=sale.document??'123.456.789-00';row[7]='15/08/2026';row[8]=sale.name??'COMPRADOR SINTÉTICO';row[9]=sale.uf??'SP';row[11]=sale.nature??'6108';row[14]=sale.description??'Camiseta';row[16]=sale.value??'150,00';
+    row[0]=sale.document??'123.456.789-00';row[7]=sale.date??'15/08/2026';row[8]=sale.name??'COMPRADOR SINTÉTICO';row[9]=sale.uf??'SP';row[11]=sale.nature??'6108';row[14]=sale.description??'Camiseta';row[16]=sale.value??'150,00';
     return row;
   })].map(row=>row.join(';')).join('\r\n');
 }
@@ -51,6 +51,18 @@ test('DIFAL preview recalculates UF and changed sale value without changing fina
   await expect(page.locator('#purchase-review .import-totals')).toContainText('1.000,00');
   await page.setViewportSize({width:390,height:844});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+});
+
+test('5102 reconhece CPF de outra UF nas 12 competências e reavalia ao trocar o emitente',async({page})=>{
+  await ready(page,'MG');
+  await preview(page,Array.from({length:12},(_,i)=>({nature:i%2?'5102090':'5102001',
+    date:`15/${String(i+1).padStart(2,'0')}/2025`,description:'REGATA SINTÉTICA',value:'100,00',uf:'RJ'})));
+  const panel=page.locator('#purchase-review .purchase-difal');
+  await expect(panel).toContainText('12 linha(s) elegível(is)');
+  await expect(panel.locator('[data-difal-amount]')).toContainText('120,00');
+  await expect(page.locator('#purchase-review .import-totals')).toContainText('1.200,00');
+  await page.getByLabel('UF do estabelecimento emitente').selectOption('RJ');
+  await expect(panel.locator('[data-difal-amount]')).toContainText('0,00');
 });
 
 test('DIFAL rejects CNPJ, same UF, services and non-sale natures and marks missing recipient UF',async({page})=>{

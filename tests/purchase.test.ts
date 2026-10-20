@@ -179,5 +179,20 @@ test('DIFAL: pendências de UF, contexto legado e soma dos centavos por venda', 
   const legacy = compactPurchaseLine(source, 'NET_V2', SALES_MODE, {issuerUf: undefined, difalVersion: undefined});
   assert.equal(legacy.operation, 'OUTRAS'); assert.equal(legacy.difal, undefined); assert.equal(legacy.recipientUf, undefined);
   const csv = purchaseCsv({mode: SALES_MODE, calculationVersion: 'NET_V2', difalVersion: DIFAL_VERSION, issuerUf: 'MG', _id: 'difal', clientName: 'Empresa', fileName: 'vendas.csv'}, [{...compactPurchaseLine({...row, ...difalSale, grossCents: 15000, discountCents: 0, freightCents: 0, abatementCents: 0}, 'NET_V2', SALES_MODE, {issuerUf: 'MG', difalVersion: DIFAL_VERSION}), index: 0}]);
-  assert(csv.includes('"MG";"SP";"10";"150,00";"15,00";"ELIGIBLE";"DIFAL_ESTIMATE_V1"'));
+  assert(csv.includes('"MG";"SP";"10";"150,00";"15,00";"ELIGIBLE";"DIFAL_ESTIMATE_V2"'));
+});
+
+test('5102 usa CPF e UFs reais, conserva exclusões e a regra histórica V1', () => {
+  for (const natureCode of ['5102', '5102001', '5102090', '5.102.001']) {
+    const sale = {...difalSale, natureCode, description: 'LEGGING SINTÉTICA'};
+    assert.equal(calculateDifal(sale).amountCents, 1500);
+    assert.equal(calculateDifal(sale, 'DIFAL_ESTIMATE_V1').amountCents, 0);
+    assert.equal(salesOperation(natureCode, sale.description, true, 'DIFAL_ESTIMATE_V1'), 'OUTRAS');
+    for (const [change, reason] of [
+      [{recipientUf:'MG'}, 'SAME_UF'], [{recipientUf:''}, 'MISSING_RECIPIENT_UF'],
+      [{issuerUf:''}, 'MISSING_ISSUER_UF'], [{document:'00000000000191'}, 'NOT_CPF'],
+      [{natureCode:'900001'}, 'NOT_SALE'], [{natureCode:'6202001'}, 'NOT_SALE'],
+      [{natureCode:'5949'}, 'NOT_SALE'], [{description:'Remessa para venda'}, 'NOT_SALE']
+    ] as const) assert.equal(calculateDifal({...sale,...change}).reason, reason);
+  }
 });

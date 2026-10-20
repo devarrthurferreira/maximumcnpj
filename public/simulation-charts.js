@@ -79,12 +79,13 @@ function expenseChart(values, factor, unit) {
  * monthlyGroups uses the five report field names; despite their Cents suffix these
  * editable simulator values are BRL, matching monthlyGroupsUnit in saved simulations.
  */
-export function renderSimulationCharts({input = {}, result = {}, monthlyGroups = {}, period = 'annual'} = {}) {
+export function renderSimulationCharts({input = {}, result = {}, monthlyGroups = {}, period = 'annual',actualMonths=false,monthlyEntries=null} = {}) {
   const monthly = period === 'monthly';
-  const inputFactor = monthly ? 1 : 12, resultFactor = monthly ? 1 / 12 : 1;
+  const inputFactor = actualMonths?1:monthly ? 1 : 12, resultFactor = actualMonths?1:monthly ? 1 / 12 : 1;
   const unit = monthly ? 'por mês' : 'por ano';
-  const values = input?.values || input || {};
-  const groups = monthlyGroups || {};
+  const total=(kind,key)=>(monthlyEntries||[]).reduce((sum,row)=>sum+(row[kind]?.[key]||0),0);
+  const values = actualMonths?Object.fromEntries(['serviceRevenue','salesRevenue','simplePurchases','regularPurchases','salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,total('values',key)])):input?.values || input || {};
+  const groups = actualMonths?Object.fromEntries(['salesOptantCents','salesNonOptantCents','salesCpfCents'].map(key=>[key,total('groups',key)])):monthlyGroups || {};
   const regimes = Array.isArray(result?.regimes) ? result.regimes.filter(regime => regime && typeof regime === 'object') : [];
   const revenue = [
     {label:'Receita de serviços', value:scaled(values.serviceRevenue,inputFactor)},

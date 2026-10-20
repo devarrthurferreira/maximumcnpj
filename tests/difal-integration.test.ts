@@ -1,3 +1,5 @@
+import {baselineMonth} from '../public/simulator-monthly.js';
+import {annualizeReports} from '../public/simulator-projection.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -11,6 +13,11 @@ import { DIFAL_VERSION } from '../src/difal.ts';
 import { createGeneration, attachGenerationSale, attachGenerationPurchase, getGeneration } from '../src/generation-store.ts';
 import { generationSimulator } from '../src/simulator-store.ts';
 import { digits } from '../src/domain.ts';
+import { createSimulation, getSimulation } from '../src/simulation-history.ts';
+import { reprocessSimulations, reprocessedSimulationId } from '../src/simulation-reprocessing.ts';
+import { projectDifal } from '../public/simulator-projection.js';
+import { calculateSimulation, draftToInput } from '../public/simulator-engine.js';
+import { buildMonthlyDre } from '../public/simulator-calendar.js';
 
 test('DIFAL MongoDB: origem imutável, CPF, reconciliação, reimportação, legado e geração idempotente', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
   const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
@@ -112,6 +119,77 @@ test('DIFAL MongoDB: origem imutável, CPF, reconciliação, reimportação, leg
   }
 });
 
+test('5102 histórico V1: todas as competências, prefill atual, nova DRE, exportação e recálculo idempotente',
+ {skip: !process.env.MONGODB_URI, timeout:120000}, async () => {
+  const oldDb=process.env.MONGODB_DB, oldWs=process.env.WORKSPACE_ID;
+  process.env.MONGODB_DB='maximum_difal_5102_'+randomUUID().replaceAll('-','');
+  process.env.WORKSPACE_ID='difal_5102_test'; resetLookupIndexes();
+  const actor={_id:'tester',role:'admin',name:'Teste',email:'test@example.test'};
+  try {
+    const clientId=(await importCatalog(actor,[{code:'959',name:'Empresa sintética',uf:'MG'}])).items[0].id;
+    const generation=await createGeneration(actor,{generationId:randomUUID(),clientIds:[clientId]});
+    const rows=Array.from({length:12},(_,month)=>({document:'12345678900',name:'Pessoa sintética',quantity:'1',
+      serviceDate:`2025-${String(month+1).padStart(2,'0')}-15`,natureCode:month%2?'5102090':'5102001',
+      description:'REGATA SINTÉTICA',recipientUf:'RJ',grossCents:10000,discountCents:1000,accessoryCents:90000,
+      freightCents:500,abatementCents:100,totalCents:9400}));
+    const sales=(await attachGenerationSale(actor,generation._id,{clientId,importId:randomUUID(),
+      fileName:'vendas-sinteticas.csv',expectedRows:rows.length,issuerUf:'MG'})).job;
+    // Persist a real V1 snapshot through its original upload/reconciliation path.
+    await (await collection('lookupJobs')).updateOne(scope({_id:sales._id}),{$set:{difalVersion:'DIFAL_ESTIMATE_V1'}});
+    await uploadLookup(actor,sales._id,{offset:0,rows}); await finalizeLookup(actor,sales._id);
+    const purchases=(await attachGenerationPurchase(actor,generation._id,{clientId,importId:randomUUID(),
+      fileName:'compras-sinteticas.csv',expectedRows:rows.length})).job;
+    await uploadLookup(actor,purchases._id,{offset:0,rows}); await finalizeLookup(actor,purchases._id);
+    const archived=await purchaseSummary(sales._id,true,SALES_MODE);
+    assert.equal(archived.difal?.version,'DIFAL_ESTIMATE_V1'); assert.equal(archived.difal?.amountCents,0);
+    const oldJob=await (await collection('lookupJobs')).findOne(scope({_id:sales._id}));
+    const oldRows=await (await collection('purchaseLines')).find(scope({jobId:sales._id})).sort({index:1}).toArray();
+    const source=await generationSimulator(generation._id,clientId);
+    assert.equal(source.reportMonths,12); assert.equal(source.sales.difal?.eligibleLines,12);
+    assert.equal(source.sales.difal?.baseCents,112800); assert.equal(source.sales.difal?.amountCents,11280);
+    const monthlyGroups={salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:94,purchasesOptantCents:0,purchasesNonOptantCents:94};
+    const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:100000,values:{serviceRevenue:0,salesRevenue:94,
+      simplePurchases:0,regularPurchases:94,salaries:1,benefits:2,adminExpenses:3,rent:4,cardExpenses:5}};
+    const simulationId=randomUUID();
+    await createSimulation(actor,{simulationId,generationId:generation._id,clientId,title:'Cenário sintético',
+      reportMonths:12,periodConfirmed:true,monthlyGroups,monthlyInputs:source.monthlyReports!.map(row=>baselineMonth(row,draft.values)),draft,rbt12Source:'MANUAL',rbt12ManualConfirmed:true});
+    const simulations=await collection('simulations'), original=(await simulations.findOne(scope({_id:simulationId})))!;
+    original.projection=annualizeReports(source.fields,12);delete original.monthlyInputs;delete original.source.monthlyReports;
+    original.source.sales.difal=archived.difal;
+    original.difalProjection=projectDifal(archived.difal,12,sales._id);
+    original.engineInput=draftToInput(original.draft,original.difalProjection);
+    original.result=calculateSimulation(original.draft,original.difalProjection);
+    original.monthlyDre=buildMonthlyDre(original.result,original.draft.year,original.rbt12Manual,original.source.period);
+    await simulations.replaceOne(scope({_id:simulationId}),original);
+    const oldChild={...structuredClone(original),_id:randomUUID(),parentSimulationId:simulationId,
+      reprocessing:{version:'SERVICES_DIFAL_2026_10_V1',originalId:simulationId}};
+    await simulations.insertOne(oldChild);
+    const result=await reprocessSimulations(actor,{});
+    assert.equal(result.version,'REPORT_MONTHS_2026_10_V1'); assert.equal(result.total,1); assert.equal(result.counts.ok,1);
+    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,simulationId));
+    assert.equal(child.difalProjection.sourceVersion,'DIFAL_ESTIMATE_V2');
+    assert(child.difalProjection.months.every((row:any)=>row.amountCents===940)); assert.equal(child.difalProjection.annualCents,11280);
+    assert(child.result.regimes.every((regime:any)=>Math.abs(regime.dre.difal+112.8)<1e-9));
+    assert.deepEqual(child.draft,original.draft); assert.deepEqual(child.rbt12Manual,original.rbt12Manual);
+    await reprocessSimulations(actor,{}); assert.equal(await simulations.countDocuments(scope()),3);
+    assert.deepEqual(await simulations.findOne(scope({_id:simulationId})),original);
+    assert.deepEqual(await simulations.findOne(scope({_id:oldChild._id})),oldChild);
+    assert.deepEqual(await (await collection('lookupJobs')).findOne(scope({_id:sales._id})),oldJob);
+    assert.deepEqual(await (await collection('purchaseLines')).find(scope({jobId:sales._id})).sort({index:1}).toArray(),oldRows);
+    assert.equal((await purchaseSummary(sales._id,true,SALES_MODE)).difal?.amountCents,0);
+    assert((await purchaseExport(sales._id,'ALL',1,SALES_MODE)).content.includes('DIFAL_ESTIMATE_V1'));
+    const fresh=await createLookup(actor,{clientId,importId:randomUUID(),fileName:'vendas-corrigidas.csv',
+      expectedRows:rows.length,issuerUf:'MG'},SALES_MODE);
+    await uploadLookup(actor,fresh._id,{offset:0,rows}); await finalizeLookup(actor,fresh._id);
+    assert.equal((await purchaseSummary(fresh._id,true,SALES_MODE)).difal?.amountCents,11280);
+    assert((await purchaseExport(fresh._id,'ALL',1,SALES_MODE)).content.includes('"94,00";"9,40";"ELIGIBLE";"DIFAL_ESTIMATE_V2"'));
+  } finally {
+    await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
+    if(oldDb===undefined)delete process.env.MONGODB_DB;else process.env.MONGODB_DB=oldDb;
+    if(oldWs===undefined)delete process.env.WORKSPACE_ID;else process.env.WORKSPACE_ID=oldWs;
+  }
+});
+
 test('Serviços 9000: totais por enquadramento, separação de mercadorias e prefill conciliado sem duplicação', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
   const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
   process.env.MONGODB_DB = 'maximum_services_test_' + randomUUID().replaceAll('-', '');
@@ -158,8 +236,8 @@ test('Serviços 9000: totais por enquadramento, separação de mercadorias e pre
       purchasesOptantCents: 0, purchasesNonOptantCents: 4500});
     assert.equal(source.sales.servicesTotalCents, 210021); assert.deepEqual(source.sales.operationTotals, summary.operationTotals);
     assert.equal(source.sales.totalCents, 279521); assert.equal(source.projection?.totals.sales.totalCents, 279521);
-    assert.equal(source.projection?.totals.sales.monthlyCents, 93174);
-    assert.equal(source.projection?.groups.reduce((sum, group) => sum + (group.key.startsWith('sales') || group.key === 'serviceRevenueCents' ? group.monthlyCents : 0), 0), 93174);
+    assert.equal(source.projection?.totals.sales.totalCents, 279521);
+    assert.equal(source.projection?.groups.reduce((sum, group) => sum + (group.key.startsWith('sales') || group.key === 'serviceRevenueCents' ? group.totalCents : 0), 0), 279521);
     assert.equal(providerCalls, 3, 'Resumo e simulador leem o snapshot sem consultar novamente.');
 
     const negative = await createGeneration(actor, {generationId: randomUUID(), clientIds: [clientId]});

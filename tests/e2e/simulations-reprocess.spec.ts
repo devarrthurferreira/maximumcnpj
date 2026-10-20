@@ -4,7 +4,7 @@ const originalId = '00000000-0000-4000-8000-000000000001';
 const childId = '00000000-0000-4000-8000-000000000002';
 const original = {_id:originalId, title:'Cenário original', company:{code:'936',name:'EMPRESA SINTÉTICA'}, year:2027,
   createdAt:'2026-10-01T12:00:00Z', createdBy:{name:'Equipe de teste'}, annualRevenue:120000, bestAnnualProfit:30000, bestRegimeName:'Simples Puro', reportMonths:3};
-const completed = {version:'SERVICES_DIFAL_2026_10_V1',modelVersion:'current',startedAt:'2026-10-19T12:00:00Z',updatedAt:'2026-10-19T12:01:00Z',
+const completed = {version:'REPORT_MONTHS_2026_10_V1',modelVersion:'current',startedAt:'2026-10-19T12:00:00Z',updatedAt:'2026-10-19T12:01:00Z',
   total:4,counts:{queued:0,processing:0,ok:2,pending:1,failed:1},retryableFailed:1,inventoryComplete:true,hasMore:false,retryAfterMs:0,page:1,pageSize:100,totalPages:1,
   items:[
     {originalId,childId,status:'OK',code:'UPDATED',message:'Nova versão criada com serviços e DIFAL.',company:original.company,title:original.title},

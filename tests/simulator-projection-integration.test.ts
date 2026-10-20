@@ -1,3 +1,4 @@
+import {baselineMonth,calculateMonthlySimulation} from '../public/simulator-monthly.js';
 import {section22} from './fixtures/section22.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +13,7 @@ import {createSimulation,getSimulation} from '../src/simulation-history.ts';
 import {annualizeReports,REPORT_GROUPS} from '../public/simulator-projection.js';
 import {calculateSimulation} from '../public/simulator-engine.js';
 
-test('MongoDB: quatro competências -> média -> doze meses, histórico imutável e contrato protegido', {skip:!process.env.MONGODB_URI,timeout:120000},async()=>{
+test('MongoDB: quatro competências -> valores mensais -> soma do período, histórico imutável e contrato protegido', {skip:!process.env.MONGODB_URI,timeout:120000},async()=>{
  const oldDb=process.env.MONGODB_DB,oldWs=process.env.WORKSPACE_ID,testDb='maximum_annual_test_'+randomUUID().replaceAll('-','');
  process.env.MONGODB_DB=testDb;process.env.WORKSPACE_ID='annual_test';resetLookupIndexes();
  const actor={_id:'annual-tester',role:'admin',name:'Teste sintético',email:'test@example.test'};
@@ -27,29 +28,29 @@ test('MongoDB: quatro competências -> média -> doze meses, histórico imutáve
   }
   const lines=await collection('purchaseLines'),before=await lines.find(scope({jobId:{$in:jobIds}})).sort({_id:1}).toArray();
   const source=await generationSimulator(gen._id,clientId);assert.equal(source.reportMonths,4);
-  assert.equal(source.projection!.totals.sales.annualCents,120000000);
-  const groups=Object.fromEntries(REPORT_GROUPS.map(k=>[k,source.projection!.monthlyGroupsCents[k]/100]));
-  const request={simulationId:randomUUID(),rbt12ExtractionId:randomUUID(),generationId:gen._id,clientId,reportMonths:4,periodConfirmed:true,monthlyGroups:groups,
+  assert.equal(source.projection!.totals.sales.annualCents,40000000);
+  const groups=Object.fromEntries(REPORT_GROUPS.map(k=>[k,source.monthlyReports![0].fields[k]/100]));
+  const request={simulationId:randomUUID(),rbt12ExtractionId:randomUUID(),generationId:gen._id,clientId,reportMonths:4,periodConfirmed:true,monthlyGroups:groups,monthlyInputs:source.monthlyReports!.map(row=>({...baselineMonth(row,{salaries:15000,benefits:1000,adminExpenses:500,rent:3000,cardExpenses:400}),values:{...baselineMonth(row,{salaries:15000,benefits:1000,adminExpenses:500,rent:3000,cardExpenses:400}).values,serviceRevenue:2000}})),
    draft:{year:2027,salesAnnex:1,serviceAnnex:3,rbt12:888888.88,values:{serviceRevenue:2000,salesRevenue:100000,simplePurchases:0,regularPurchases:60000,salaries:15000,benefits:1000,adminExpenses:500,rent:3000,cardExpenses:400}}};
   await (await collection('simplesExtractions')).insertOne({...scope(),_id:request.rbt12ExtractionId,clientId,parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result:section22(88888888)});
   const saved=await createSimulation(actor,request);
-  assert.equal(saved.projection.version,'AVERAGE_X12_V2');assert.equal(saved.projection.reportMonths,4);assert.equal(saved.projection.timeline.length,12);
-  assert.equal(saved.projection.totals.sales.totalCents,40000000);assert.equal(saved.projection.totals.sales.monthlyCents,10000000);
-  assert.equal(saved.projection.totals.sales.annualCents,120000000);assert.equal(saved.projection.scenario.annual.revenueCents,122400000);
-  assert.equal(saved.result.annualRevenue,1224000);assert.equal(saved.engineInput.rbt12,888888.88);assert.equal(saved.manuallyAdjusted,true);
+  assert.equal(saved.projection.version,'REPORT_MONTHS_V1');assert.equal(saved.projection.reportMonths,4);assert.equal(saved.projection.timeline.length,4);
+  assert.equal(saved.projection.totals.sales.totalCents,40000000);assert.equal(saved.projection.timeline[0].salesCents,10000000);
+  assert.equal(saved.projection.totals.sales.annualCents,40000000);assert.equal(saved.projection.scenario.annual.revenueCents,40800000);
+  assert.equal(saved.result.annualRevenue,408000);assert.equal(saved.engineInput.rbt12,888888.88);assert.equal(saved.manuallyAdjusted,true);
   assert.deepEqual(await getSimulation(saved._id),saved);assert.deepEqual(await createSimulation(actor,request),saved);
   await assert.rejects(createSimulation(actor,{...request,simulationId:randomUUID(),reportMonths:5}),(e:any)=>e.code==='SIMULATION_PERIOD');
   await assert.rejects(createSimulation(actor,{...request,simulationId:randomUUID(),projection:{projectionMonths:16}}),(e:any)=>e.code==='VALIDATION');
   const adjusted=await createSimulation(actor,{...request,simulationId:randomUUID(),parentSimulationId:saved._id,
-   monthlyGroups:{...groups,salesCpfCents:100100},draft:{...request.draft,values:{...request.draft.values,salesRevenue:100100}}});
-  assert.equal(adjusted.manuallyAdjusted,true);assert.equal(adjusted.projection.totals.sales.annualCents,120000000);
-  assert.equal(adjusted.projection.scenario.annual.salesCents,120120000);assert.deepEqual(await getSimulation(saved._id),saved);
+   monthlyInputs:request.monthlyInputs.map((row,index)=>index?row:{...row,groups:{...row.groups,salesCpfCents:100100}}),monthlyGroups:{...groups,salesCpfCents:100100},draft:{...request.draft,values:{...request.draft.values,salesRevenue:100100}}});
+  assert.equal(adjusted.manuallyAdjusted,true);assert.equal(adjusted.projection.totals.sales.annualCents,40000000);
+  assert.equal(adjusted.projection.scenario.annual.revenueCents,40810000);assert.deepEqual(await getSimulation(saved._id),saved);
   assert.deepEqual(await lines.find(scope({jobId:{$in:jobIds}})).sort({_id:1}).toArray(),before);
-  // Legacy snapshots continue to require explicit month confirmation; arithmetic stays the same.
+  // Frozen dates also reconstruct the monthly series when old job metadata lacks a stored period.
   await(await collection('lookupJobs')).updateMany(scope({_id:{$in:jobIds}}),{$unset:{reportPeriod:''}});
-  const legacy=await generationSimulator(gen._id,clientId);assert.equal(legacy.projection,null);
-  const manual=await createSimulation(actor,{...request,simulationId:randomUUID()});assert.equal(manual.projection.totals.sales.annualCents,120000000);
-  assert.deepEqual(annualizeReports(source.fields,4).totals,saved.projection.totals);
+  const legacy=await generationSimulator(gen._id,clientId);assert.equal(legacy.projection!.version,'REPORT_MONTHS_V1');
+  const manual=await createSimulation(actor,{...request,simulationId:randomUUID()});assert.equal(manual.projection.totals.sales.annualCents,40000000);
+  assert.deepEqual(source.projection!.totals,saved.projection.totals);
   process.env.WORKSPACE_ID='outside';await assert.rejects(getSimulation(saved._id));
  }finally{
   const db=await database();assert.equal(db.databaseName,testDb);await db.dropDatabase();await closeDatabase();resetLookupIndexes();
@@ -75,37 +76,37 @@ test('MongoDB: serviços9000 e mercadorias com devolução alimentam DRE/DIFAL s
   await uploadLookup(actor,purchases.job._id,{offset:0,rows:dates.map(date=>row(date,20000,''))});await finalizeLookup(actor,purchases.job._id);
   const source=await generationSimulator(gen._id,clientId),p=source.projection!;
   assert.equal(source.fields.serviceRevenueCents,300003);assert.equal(source.fields.salesCpfCents,810000);
-  assert.equal(source.sales.totalCents,1110003);assert.equal(p.totals.sales.monthlyCents,370001);
-  assert.equal(p.monthlyGroupsCents.serviceRevenueCents,100001);
-  const groups=Object.fromEntries(REPORT_GROUPS.map(key=>[key,p.monthlyGroupsCents[key]/100]));
-  const draft:any={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:500000,values:{serviceRevenue:1000.01,salesRevenue:2700,simplePurchases:0,regularPurchases:200,salaries:0,benefits:0,adminExpenses:0,rent:0,cardExpenses:0}};
-  const request={simulationId:randomUUID(),generationId:gen._id,clientId,reportMonths:3,periodConfirmed:true,monthlyGroups:groups,draft,rbt12Source:'MANUAL',rbt12ManualConfirmed:true};
-  const saved=await createSimulation(actor,request),baseline=calculateSimulation(draft);
+  assert.equal(source.sales.totalCents,1110003);assert.equal(p.timeline[0].salesCents,400001);
+  assert.equal(p.timeline[0].fields.serviceRevenueCents,100001);
+  const groups=Object.fromEntries(REPORT_GROUPS.map(key=>[key,p.timeline[0].fields[key]/100]));
+  const draft:any={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:500000,values:{serviceRevenue:1000.01,salesRevenue:3000,simplePurchases:0,regularPurchases:200,salaries:0,benefits:0,adminExpenses:0,rent:0,cardExpenses:0}};
+  const request={simulationId:randomUUID(),generationId:gen._id,clientId,reportMonths:3,periodConfirmed:true,monthlyGroups:groups,monthlyInputs:source.monthlyReports!.map(row=>baselineMonth(row)),draft,rbt12Source:'MANUAL',rbt12ManualConfirmed:true};
+  const saved=await createSimulation(actor,request),baseline=calculateMonthlySimulation(draft,source.monthlyReports!.map(row=>({...row,difal:null})),request.monthlyInputs,source.sales.jobId).result;
   assert.equal(saved.manuallyAdjusted,false);assert.deepEqual(saved.adjustments,[]);
-  close(saved.result.annualRevenue,44400.12);assert.equal(saved.projection.scenario.annual.revenueCents,4440012);
+  close(saved.result.annualRevenue,11100.03);assert.equal(saved.projection.scenario.annual.revenueCents,1110003);
   assert.equal(saved.difalProjection?.sourceJobId,sales.job._id);assert.equal(saved.difalProjection?.sourceAmountCents,90000);
   assert.equal(saved.difalProjection?.sourceBaseCents,900000);assert.equal(saved.difalProjection?.eligibleLines,3);
-  assert.equal(saved.difalProjection?.monthlyCents,30000);assert.equal(saved.difalProjection?.annualCents,360000);
-  assert.equal(saved.engineInput.difalMonthly,300);
+  assert(saved.difalProjection?.months.every((row:any)=>row.amountCents===30000));assert.equal(saved.difalProjection?.annualCents,90000);
+  assert.equal(saved.engineInput.months[0].input.difalMonthly,300);
   for(const regime of saved.result.regimes){
    const prior=baseline.regimes.find(item=>item.id===regime.id)!;
-   close(regime.dre.services,12000.12);close(regime.dre.sales,32400);close(regime.dre.difal,-3600);
-   close(regime.dre.netRevenue,prior.dre.netRevenue-3600);close(regime.dre.preTax,prior.dre.preTax-3600);
-   if(regime.id!=='actual'){close(regime.totalTaxes,prior.totalTaxes+3600);close(regime.annualProfit,prior.annualProfit-3600);}
+   close(regime.dre.services,3000.03);close(regime.dre.sales,8100);close(regime.dre.difal,-900);
+   close(regime.dre.netRevenue,prior.dre.netRevenue-900);close(regime.dre.preTax,prior.dre.preTax-900);
+   if(regime.id!=='actual'){close(regime.totalTaxes,prior.totalTaxes+900);close(regime.annualProfit,prior.annualProfit-900);}
   }
   const actual=saved.result.regimes.find(item=>item.id==='actual')!;
   close(actual.dre.csll,-Math.max(0,actual.dre.preTax)*.09);
   close(saved.result.memory.find(item=>item.id==='actual.preTax')!.value as number,actual.dre.preTax);
   assert.deepEqual(saved.result.credits,baseline.credits);
-  assert.equal(saved.monthlyDre.version,'DRE_CALENDAR_V2');
-  assert(saved.monthlyDre.regimes.every((regime:any)=>regime.rows.find((row:any)=>row.key==='difal').months.every((value:number)=>value===-300)));
+  assert.equal(saved.monthlyDre.version,'DRE_CALENDAR_V3');
+  assert(saved.monthlyDre.regimes.every((regime:any)=>regime.rows.find((row:any)=>row.key==='difal').months.slice(5,8).every((value:number)=>value===-300)));
   for(const addition of[{difalProjection:{monthlyCents:0}},{difalMonthly:0},{source:{sales:{difal:{amountCents:0}}}}]){
    await assert.rejects(createSimulation(actor,{...request,...addition,simulationId:randomUUID()}),(error:any)=>error.code==='VALIDATION');
   }
   await assert.rejects(createSimulation(actor,{...request,simulationId:randomUUID(),draft:{...draft,values:{...draft.values,difalMonthly:0}}}),(error:any)=>error.code==='VALIDATION');
   await assert.rejects(createSimulation(actor,{...request,simulationId:randomUUID(),draft:{...draft,values:{...draft.values,salesRevenue:3700.01}}}),(error:any)=>error.code==='SIMULATION_TOTAL');
   const edited=await createSimulation(actor,{...request,simulationId:randomUUID(),parentSimulationId:saved._id,
-   monthlyGroups:{...groups,salesCpfCents:2800},draft:{...draft,values:{...draft.values,salesRevenue:2800,serviceRevenue:1100.01}}});
+   monthlyInputs:request.monthlyInputs.map((row,index)=>index?row:{...row,groups:{...row.groups,salesCpfCents:2800},values:{...row.values,serviceRevenue:1100.01}}),monthlyGroups:{...groups,salesCpfCents:2800},draft:{...draft,values:{...draft.values,salesRevenue:2800,serviceRevenue:1100.01}}});
   assert.deepEqual(edited.difalProjection,saved.difalProjection);assert.equal(edited.manuallyAdjusted,true);
   assert(edited.adjustments.some(item=>item.field==='serviceRevenue'));
   assert.deepEqual(await createSimulation(actor,request),saved);

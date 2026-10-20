@@ -302,3 +302,22 @@ test('legacy resumed sales preserve the original classification and upload field
   assert.equal('difal' in parsed.rows[0],false);
   assert.equal(parsed.difal,null);
 });
+
+test('5102 inclui todas as competências e linhas repetidas do mesmo CPF; retomada V1 permanece imutável', () => {
+  const inputs = Array.from({length:12}, (_, month) => {
+    const input = row('123.456.789-00','Comprador sintético','1','100,00');
+    input[7]=`15/${String(month+1).padStart(2,'0')}/2025`;
+    input[9]='RJ'; input[11]=month%2?'5102090':'5102001'; input[14]='REGATA SINTÉTICA';
+    input[24]='10,00'; input[25]='900,00'; input[26]='5,00'; input[27]='1,00';
+    return input;
+  });
+  const current = parsePurchaseMatrix([header,...inputs,inputs[0]],0,{type:'SALES',issuerUf:'MG'});
+  assert.deepEqual(current.errors,[]); assert.equal(current.period.months,12); assert.equal(current.period.observedMonths,12);
+  assert.equal(current.difal.version,'DIFAL_ESTIMATE_V2'); assert.equal(current.difal.eligibleLines,13);
+  assert.equal(current.difal.baseCents,13*9400); assert.equal(current.difal.amountCents,13*940);
+  assert(current.rows.every(row=>row.operation==='VENDA' && row.difal.amountCents===940));
+  const legacy = parsePurchaseMatrix([header,...inputs],0,{type:'SALES',issuerUf:'MG',difalVersion:'DIFAL_ESTIMATE_V1'});
+  assert.equal(legacy.totalCents,12*9400); assert.equal(legacy.difal.amountCents,0);
+  assert(legacy.rows.every(row=>row.operation==='OUTRAS'));
+  assert.throws(()=>parsePurchaseMatrix([header,...inputs],0,{type:'SALES',difalVersion:'UNKNOWN'}));
+});

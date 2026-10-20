@@ -2,19 +2,21 @@ import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {collection, scope, audit} from './store.ts';
 import type {Doc} from './store.ts';
-import {need, digest} from './security.ts';
+import {AppError, need, digest} from './security.ts';
 import {write} from './lookup-db.ts';
 import type {LookupActor} from './lookup-db.ts';
 import {getSimulation, createReprocessedSimulation} from './simulation-history.ts';
 import {rebuildSimulationSource} from './simulation-reprocessing-source.ts';
 import {assertGenerationNotDeleted} from './generation-deletion.ts';
 import {validateSection22} from './simulation-extrato.ts';
-import {annualizeReports, projectDifal, projectScenario, REPORT_GROUPS} from '../public/simulator-projection.js';
+import {annualizeReports, REPORT_GROUPS} from '../public/simulator-projection.js';
 import type {ReportGroup} from '../public/simulator-projection.js';
-import {calculateSimulation, draftToInput, MODEL_VERSION} from '../public/simulator-engine.js';
+
+import {baselineMonth, calculateMonthlySimulation, MONTHLY_MODEL_VERSION as MODEL_VERSION} from '../public/simulator-monthly.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 
-export const REPROCESS_VERSION = 'SERVICES_DIFAL_2026_10_V1';
+
+export const REPROCESS_VERSION = 'REPORT_MONTHS_2026_10_V1';
 export const SERVICE_REVENUE_MIGRATION_REVISION = 'LEGACY_ADDITIONAL_SERVICES_V1';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const PAGE_SIZE = 100;
@@ -50,6 +52,7 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   const oldPeriod = original.reportPeriod || original.source.period;
   if(oldPeriod)pending(source.period && oldPeriod.startMonth === source.period.startMonth && oldPeriod.endMonth === source.period.endMonth && oldPeriod.months === source.period.months,
     'REPROCESS_PERIOD', 'As competências inicial e final diferem das competências congeladas no histórico.');
+  const modern=original.result?.method==='REPORT_MONTHS_V1'&&Array.isArray(original.monthlyInputs);
   const p = annualizeReports(source.fields, original.reportMonths);
   pending(p.monthlyGroupsCents.serviceRevenueCents !== undefined, 'REPROCESS_SERVICES', 'A separação dos serviços não está disponível na origem.');
   const frozen = original.baselineMonthlyGroups || (original.projection?.monthlyGroupsCents &&
@@ -64,6 +67,7 @@ export function planReprocessing(original: any, source: any, workspaceId: string
     REPORT_GROUPS.every((field,index)=>moneyCents(frozen[field],index<3) === original.projection.monthlyGroupsCents[field]),
     'REPROCESS_BASELINE','A base mensal antiga diverge da projeção congelada no histórico.');
   const monthlyGroups = Object.fromEntries(REPORT_GROUPS.map((field, index) => {
+    if(modern)return [field,moneyCents(original.monthlyGroups[field],index<3)/100];
     const delta = moneyCents(original.monthlyGroups[field], index < 3) - moneyCents(frozen[field], index < 3);
     const adjusted = p.monthlyGroupsCents[field] + delta;
     pending(Number.isSafeInteger(adjusted) && (index < 3 || adjusted >= 0), 'REPROCESS_ADJUSTMENT', 'Um ajuste antigo produziria compras negativas ou valor fora do limite.');
@@ -83,7 +87,7 @@ export function planReprocessing(original: any, source: any, workspaceId: string
     if(original.projection?.monthlyGroupsCents?.serviceRevenueCents !== undefined)pending(
       moneyCents(baselineService) === original.projection.monthlyGroupsCents.serviceRevenueCents,
       'REPROCESS_BASELINE','A base original de serviços diverge da projeção congelada no histórico.');
-    draft.values.serviceRevenue = (newService + priorService - moneyCents(baselineService)) / 100;
+    draft.values.serviceRevenue = modern?priorService/100:(newService + priorService - moneyCents(baselineService)) / 100;
   } else {
     // The old form explicitly instructed users not to repeat services already in sales.
     // Its monthly service input therefore supplements the imported revenue. Move the
@@ -99,7 +103,7 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   draft.values.salesRevenue = REPORT_GROUPS.slice(0,3).reduce((sum, field) => sum + moneyCents(monthlyGroups[field], true), 0) / 100;
   draft.values.simplePurchases = monthlyGroups.purchasesOptantCents;
   draft.values.regularPurchases = monthlyGroups.purchasesNonOptantCents;
-  pending(draft.values.salesRevenue >= 0 && draft.values.serviceRevenue >= 0, 'REPROCESS_ADJUSTMENT',
+  pending(original.result?.method==='REPORT_MONTHS_V1'||(draft.values.salesRevenue >= 0 && draft.values.serviceRevenue >= 0), 'REPROCESS_ADJUSTMENT',
     'Os ajustes antigos produziriam receita negativa após separar mercadorias e serviços.');
   pending(draft.rbt12 !== undefined, 'RBT12_REQUIRED', 'O histórico não conserva uma RBT12 efetiva. A receita mensal projetada em doze meses não substitui essa informação.');
   moneyCents(draft.rbt12);
@@ -120,21 +124,36 @@ export function planReprocessing(original: any, source: any, workspaceId: string
     rbt12Extraction = {id: original.rbt12Extraction.id, fileName: original.rbt12Extraction.fileName,
       fileSha256: original.rbt12Extraction.fileSha256, ...checked};
   }
-  const difalProjection = projectDifal(source.sales.difal, original.reportMonths, source.sales.jobId);
-  pending(difalProjection, 'DIFAL_SOURCE_MISSING', 'O relatório original não possui os dados necessários para confirmar o DIFAL.');
-  pending(difalProjection.pendingLines === 0, 'DIFAL_UF_PENDING', `Há ${difalProjection.pendingLines} linhas aguardando UF do emitente ou destinatário para confirmar o DIFAL.`);
-  const engineInput = draftToInput(draft, difalProjection);
-  pending(engineInput, 'REPROCESS_INPUT', 'Os valores migrados não atendem aos limites e campos obrigatórios do simulador.');
-  const result = calculateSimulation(draft, difalProjection);
-  const projection = {...p, scenario: projectScenario(monthlyGroups, draft.values)};
-  const monthlyDre = buildMonthlyDre(result, draft.year, rbt12Extraction || rbt12Manual, source.period || null);
-  const alreadyCurrent = original.modelVersion === MODEL_VERSION && oldSplit &&
-    isDeepStrictEqual(original.draft, draft) && isDeepStrictEqual(original.monthlyGroups, monthlyGroups) &&
-    isDeepStrictEqual(original.difalProjection, difalProjection) && isDeepStrictEqual(original.engineInput, engineInput) &&
-    isDeepStrictEqual(original.result, result) && isDeepStrictEqual(original.projection, projection) && isDeepStrictEqual(original.monthlyDre, monthlyDre);
+  pending(source.monthlyReports,'SIMULATION_MONTHS','Reimporte compras e vendas com as datas da coluna H para calcular cada competência.');
+  const monthlyInputs=source.monthlyReports.map((row:any)=>{
+    const entry=baselineMonth(row,draft.values);
+    if(modern)return entry;
+    for(const field of REPORT_GROUPS)entry.groups[field]=(row.fields[field]+moneyCents(monthlyGroups[field],true)-p.monthlyGroupsCents[field])/100;
+    entry.values.serviceRevenue=(row.fields.serviceRevenueCents+moneyCents(draft.values.serviceRevenue)-p.monthlyGroupsCents.serviceRevenueCents!)/100;
+    return entry;
+  });
+  // Versions already using monthly values retain every individual adjustment.
+  if(original.monthlyInputs && original.result?.method==='REPORT_MONTHS_V1'){
+    for(let i=0;i<monthlyInputs.length;i++){
+      const oldRow=original.source.monthlyReports?.[i],oldInput=original.monthlyInputs[i];
+      pending(oldRow?.sourceMonth===monthlyInputs[i].sourceMonth&&oldInput?.sourceMonth===oldRow.sourceMonth,'REPROCESS_PERIOD','As competências antigas não reconciliam.');
+      const base=baselineMonth(oldRow);
+      for(const field of REPORT_GROUPS)monthlyInputs[i].groups[field]=(source.monthlyReports[i].fields[field]+moneyCents(oldInput.groups[field],true)-moneyCents(base.groups[field],true))/100;
+      monthlyInputs[i].values={...oldInput.values,serviceRevenue:(source.monthlyReports[i].fields.serviceRevenueCents+moneyCents(oldInput.values.serviceRevenue)-moneyCents(base.values.serviceRevenue))/100};
+    }
+  }
+  Object.assign(monthlyGroups,monthlyInputs[0].groups);
+  draft.values={...monthlyInputs[0].values,salesRevenue:REPORT_GROUPS.slice(0,3).reduce((sum,key)=>sum+moneyCents(monthlyGroups[key],true),0)/100,
+    simplePurchases:monthlyGroups.purchasesOptantCents,regularPurchases:monthlyGroups.purchasesNonOptantCents};
+  const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports,monthlyInputs,source.sales.jobId);}catch(error){throw new AppError(409,'REPROCESS_ADJUSTMENT',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
+  pending(computed.difalProjection,'DIFAL_SOURCE_MISSING','O relatório original não possui os dados necessários para confirmar o DIFAL.');
+  pending(computed.difalProjection.pendingLines===0,'DIFAL_UF_PENDING','Há linhas aguardando UF para confirmar o DIFAL.');
+  const alreadyCurrent=modern&&isDeepStrictEqual(original.result,computed.result)&&isDeepStrictEqual(original.projection,computed.projection)&&
+    isDeepStrictEqual(original.difalProjection,computed.difalProjection)&&isDeepStrictEqual(original.engineInput,computed.engineInput)&&
+    isDeepStrictEqual(original.monthlyDre,buildMonthlyDre(computed.result,draft.year,rbt12Extraction||rbt12Manual,source.period||null));
   const input = {simulationId: reprocessedSimulationId(workspaceId, original._id), generationId: original.generationId,
     clientId: original.clientId, parentSimulationId: original._id, title: String(original.title || source.company.name).slice(0,140) + ' · Atualizada',
-    reportMonths: original.reportMonths, periodConfirmed: true, monthlyGroups, draft,
+    reportMonths: original.reportMonths, periodConfirmed: true, monthlyGroups, draft, monthlyInputs,
     ...(rbt12Source === 'MANUAL' ? {rbt12Source, rbt12ManualConfirmed: true} : {rbt12ExtractionId: rbt12Extraction!.id})};
   return {alreadyCurrent, input, context: {version: REPROCESS_VERSION, originalId: original._id, source, rbt12Extraction, rbt12Manual, serviceRevenueMigration}};
 }

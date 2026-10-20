@@ -1,3 +1,4 @@
+import {calculateMonthlySimulation} from '../public/simulator-monthly.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -46,7 +47,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
   const monthlyGroups={salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:110,purchasesOptantCents:0,purchasesNonOptantCents:12};
   const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:100000,values:{serviceRevenue:50,salesRevenue:110,
    simplePurchases:0,regularPurchases:12,salaries:1,benefits:2,adminExpenses:3,rent:4,cardExpenses:5}};
-  return {generationId:generation._id,clientId,reportMonths:1,periodConfirmed:true,monthlyGroups,draft,
+  return {generationId:generation._id,clientId,reportMonths:1,periodConfirmed:true,monthlyGroups,draft,monthlyInputs:[{sourceMonth:'2026-08',groups:monthlyGroups,values:Object.fromEntries(['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,(draft.values as any)[key]]))}],
    rbt12Source:'MANUAL',rbt12ManualConfirmed:true};
  }
  async function save(input:any,index:number,legacy=true,change?:(record:any)=>void){
@@ -54,7 +55,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
   const simulations=await collection('simulations');
   const original:any=await simulations.findOne(scope({_id:id(index)}));
   if(legacy){
-   original.modelVersion='LEGACY_SYNTHETIC';
+   original.modelVersion='LEGACY_SYNTHETIC';delete original.monthlyInputs;delete original.source.monthlyReports;
    delete original.source.revenueSplit;delete original.source.fields.serviceRevenueCents;delete original.baselineServiceRevenue;
    original.source.fields.salesCpfCents+=5000;
    original.monthlyGroups.salesCpfCents+=50;original.baselineMonthlyGroups.salesCpfCents+=50;
@@ -102,12 +103,12 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.equal(child.draft.values.serviceRevenue,50);assert.equal(child.draft.values.regularPurchases,12);
    for(const field of ['salaries','benefits','adminExpenses','rent','cardExpenses'])assert.equal(child.draft.values[field],safe.draft.values[field]);
    assert.deepEqual(child.rbt12Manual,safe.rbt12Manual);assert.equal(child.rbt12Manual.confirmedBy.id,actor._id);
-   assert.deepEqual(child.result,calculateSimulation(child.draft,child.difalProjection));
-   assert.deepEqual(child.engineInput,draftToInput(child.draft,child.difalProjection));
+   assert.deepEqual(child.result,calculateMonthlySimulation(child.draft,child.source.monthlyReports,child.monthlyInputs,child.source.sales.jobId).result);
+   assert.deepEqual(child.engineInput,calculateMonthlySimulation(child.draft,child.source.monthlyReports,child.monthlyInputs,child.source.sales.jobId).engineInput);
    assert.equal(child.source.sales.difal.amountCents,1000);assert.equal(child.monthlyDre.months.length,12);
    const additionalChild=await getSimulation(reprocessedSimulationId(scope().workspaceId,additional._id));
    assert.equal(additionalChild.draft.values.serviceRevenue,75);assert.equal(additionalChild.draft.values.salesRevenue,110);
-   assert.equal(additionalChild.result.annualRevenue,(additional.draft.values.salesRevenue+additional.draft.values.serviceRevenue)*12);
+   assert.equal(additionalChild.result.annualRevenue,(additional.draft.values.salesRevenue+additional.draft.values.serviceRevenue));
    assert.equal(additionalChild.reprocessing.serviceRevenueMigration.priorMonthlyServiceCents,2500);
    assert.equal(additionalChild.reprocessing.serviceRevenueMigration.reportMonthlyServiceCents,5000);
    assert.equal(additionalChild.reprocessing.serviceRevenueMigration.appliedMonthlyServiceCents,7500);

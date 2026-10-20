@@ -109,7 +109,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     monthlyGroups: { salesOptantCents: 0, salesNonOptantCents: 0, salesCpfCents: 12000, purchasesOptantCents: 0, purchasesNonOptantCents: 4500 },
     draft: { year: 2028, salesAnnex: 2, serviceAnnex: 5, rbt12: 150000, values: { ...manual, salesRevenue: 12000, simplePurchases: 0, regularPurchases: 4500 } },
     source: { purchases: { jobId: jobIds.purchases, totalCents: 450_000 }, sales: { jobId: jobIds.sales, totalCents: 1_200_000 } },
-    result: { annualRevenue: 159_006 },
+    result: { annualRevenue: 13_250.50 },
   });
   expect(first.result.regimes).toHaveLength(4);
   expect(first.monthlyDre.months).toHaveLength(12);expect(first.monthlyDre.rbt12Reference.rbt12Cents).toBe(15000000);
@@ -122,9 +122,9 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   // Compare cells consistently: innerText adds table separators and CSS uppercase,
   // while Playwright's default toHaveText reads the underlying textContent.
   const originalDre = await page.locator('.sim-dre tbody tr > *').allTextContents();
-  // One detected month: (R$ 12,000 in sales + R$ 1,250.50 in monthly services) x 12.
+  // Only August is imported; other months are unavailable, not an extrapolated average.
   await expect(page.locator('.sim-dre tr').filter({hasText: 'Receita bruta total'}).locator('td')).toHaveText([
-    'R$ 159.006,00', 'R$ 159.006,00', 'R$ 159.006,00', 'R$ 159.006,00',
+    ...Array(7).fill('—'),'R$ 13.250,50',...Array(4).fill('—'),'R$ 13.250,50'
   ]);
 
   // A new context has no cookies or sessionStorage from the original tab.
@@ -144,10 +144,10 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     await expect(reopened).toHaveURL(new RegExp(`simulation=${first._id}$`));
     await expect(reopened.locator('#simulation-snapshot')).toBeVisible();
     await expect(reopened.locator('#simulator-form')).toHaveCount(0);
-    await expect(reopened.locator('#simulation-snapshot .sim-detail-grid strong')).toHaveText([
-      'R$ 150.000,00', 'R$ 1.250,50', 'R$ 12.000,00', 'R$ 0,00', 'R$ 0,00', 'R$ 12.000,00', 'R$ 0,00',
-      'R$ 4.500,00', 'R$ 900,00', 'R$ 150,00', 'R$ 99,95', 'R$ 800,00', 'R$ 60,00',
-    ]);
+    await expect(reopened.locator('#simulation-snapshot .sim-captured-details')).toContainText('RBT12: R$ 150.000,00');
+    await expect(reopened.locator('#simulation-snapshot table tbody tr')).toContainText('2026-08');
+    await expect(reopened.locator('#simulation-snapshot table tbody tr')).toContainText('12.000,00');
+    await expect(reopened.locator('#simulation-snapshot table tbody tr')).toContainText('1.250,50');
     await expect(reopened.locator('.sim-snapshot-meta')).toContainText('2028 · Vendas: Anexo II');
     await expect(reopened.locator('.sim-snapshot-meta')).toContainText('Serviços: Anexo V');
     await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
@@ -170,7 +170,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     expect(second._id).not.toBe(first._id);
     expect(second.parentSimulationId).toBe(first._id);
     expect(second.draft.values.serviceRevenue).toBe(1750.50);
-    expect(second.result.annualRevenue).toBe(165_006);
+    expect(second.result.annualRevenue).toBe(13_750.50);
     expect(second.source).toEqual(first.source);
     expect(second.result.regimes).not.toEqual(first.result.regimes);
     expect(await get(fresh.request, `/api/v4/simulations/${first._id}`)).toEqual(original);
