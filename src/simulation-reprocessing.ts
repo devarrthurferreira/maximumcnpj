@@ -14,7 +14,7 @@ import type {ReportGroup} from '../public/simulator-projection.js';
 import {calculateSimulation, draftToInput, MODEL_VERSION} from '../public/simulator-engine.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 
-export const REPROCESS_VERSION = 'SERVICES_DIFAL_2026_10_V1';
+export const REPROCESS_VERSION = 'SERVICES_DIFAL_2026_10_V2';
 export const SERVICE_REVENUE_MIGRATION_REVISION = 'LEGACY_ADDITIONAL_SERVICES_V1';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const PAGE_SIZE = 100;

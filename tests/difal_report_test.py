@@ -50,6 +50,21 @@ def story_text(meta):
 
 
 class DifalReportTests(unittest.TestCase):
+    def test_5102_new_reports_and_v1_archives_use_their_own_rules(self):
+        for version in ('DIFAL_ESTIMATE_V1', 'DIFAL_ESTIMATE_V2'):
+            old = version == 'DIFAL_ESTIMATE_V1'
+            job, rows, items = difal_fixture(nature='5102', description='REGATA SINTÉTICA',
+                                            operation='OUTRAS' if old else 'VENDA', reason='NOT_SALE' if old else 'ELIGIBLE')
+            job['difalVersion'] = version
+            job['purchaseInput']['difal']['version'] = version
+            meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+            self.assertEqual(meta['difal']['amountCents'], 0 if old else 1500)
+            self.assertEqual(meta['difal']['version'], version)
+            self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+        for nature in ('5102001', '5102090', '5.102.001'):
+            self.assertEqual(sales_operation(nature, 'REGATA SINTÉTICA'), 'VENDA')
+            self.assertEqual(sales_operation(nature, 'REGATA SINTÉTICA', 'DIFAL_ESTIMATE_V1'), 'OUTRAS')
+
     def test_requested_amounts_and_recalculation_preserve_sale_total(self):
         for total, amount in ((15000, 1500), (100000, 10000), (25000, 2500), (5, 1), (4, 0)):
             with self.subTest(total=total):

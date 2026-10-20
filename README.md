@@ -1,4 +1,13 @@
-# Maximum CNPJ · v0.24.0
+# Maximum CNPJ · v0.24.1
+
+## Correção 20/10/2026 — DIFAL em todas as competências
+
+- A estimativa gerencial de 10% inclui a natureza **5102** e seus sufixos (`5102001`, `5102090`), além das naturezas 6101–6108 já previstas. No relatório Questor, a descrição pode ser o nome do produto. O cálculo usa o CPF do comprador na coluna A e compara a UF do emitente com a UF da coluna J; o primeiro dígito da natureza não substitui essa comparação.
+- Todas as linhas de todas as competências da coluna H entram na conferência. O mesmo CPF pode ter várias compras e vários meses: seus valores não são descartados por repetição do documento. Serviços 9000, devoluções, remessas, CNPJ e destinatários da mesma UF continuam excluídos; UFs ausentes continuam pendentes.
+- A fórmula da base permanece **Q − Y + AA − AB**, com Z informativa. O DIFAL mantém o arredondamento em centavos por linha. A DRE usa o total calculado ÷ competências, arredondado para a média mensal, e essa média × 12 para a projeção anual.
+- Novas importações usam `DIFAL_ESTIMATE_V2`. Prévia, servidor, CSV e PDF preservam também a leitura e a retomada de snapshots `DIFAL_ESTIMATE_V1`, com suas regras originais. Um cenário novo a partir de um relatório V1 recebe a estimativa atual derivada das linhas já conciliadas, sem nova consulta de CNPJs.
+- Ao abrir **Simulações**, administradores e operadores iniciam a revisão `SERVICES_DIFAL_2026_10_V2`, inclusive para originais já revisados no lote anterior. A correção cria versões vinculadas, preservando originais, versões anteriores, ajustes e RBT12. Reabrir a tela não duplica versões. O relatório original conserva seu valor histórico; uma nova importação emite o relatório atualizado.
+- Regressões sintéticas cobrem 12 competências, CPF repetido, prefixos 5102, exclusões, retomada V1, reprocessamento, DRE e exportações. Nenhum relatório real de cliente é versionado.
 
 ## Verificação integrada da entrega
 

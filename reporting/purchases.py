@@ -20,7 +20,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 from .brand import draw_brand_header
 from .core import VERSION, display_date, number, percent, require, utcnow, snapshot_source
-from .difal import DIFAL_VERSION, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
+from .difal import DIFAL_VERSIONS, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
 
 PURCHASES_MODE = 'PURCHASES_V1'
 SALES_MODE = 'SALES_V1'
@@ -150,10 +150,10 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     summary, financial = job.get('summary') or {}, job.get('purchaseInput') or {}
     difal = None
     if sales and 'difalVersion' in job:
-        _check(job['difalVersion'] == DIFAL_VERSION)
+        _check(job['difalVersion'] in DIFAL_VERSIONS)
         issuer_uf = job.get('issuerUf')
         _check(isinstance(issuer_uf, str) and issuer_uf == normalize_uf(issuer_uf))
-        difal = {'version': DIFAL_VERSION, 'ratePercent': DIFAL_RATE_PERCENT, 'issuerUf': issuer_uf,
+        difal = {'version': job['difalVersion'], 'ratePercent': DIFAL_RATE_PERCENT, 'issuerUf': issuer_uf,
                  'eligibleLines': 0, 'baseCents': 0, 'amountCents': 0, 'pendingLines': 0}
     components = {key: 0 for key in (*COMPONENT_FIELDS, 'totalCents')} if version == 'NET_V2' else None
     expected = _integer(job.get('expectedRows'), 50_000)
@@ -189,8 +189,8 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             _check(isinstance(row.get('natureCode'), str) and
                    row['natureCode'] == re.sub(r'[^0-9]', '', row['natureCode'])[:4] and
                    isinstance(row.get('description'), str))
-            _check(row.get('operation') == sales_operation(row['natureCode'], row['description']))
-            expected_difal = calculate_difal(row, difal['issuerUf'])
+            _check(row.get('operation') == sales_operation(row['natureCode'], row['description'], difal['version']))
+            expected_difal = calculate_difal(row, difal['issuerUf'], difal['version'])
             stored_difal = row.get('difal')
             _check(isinstance(stored_difal, dict) and type(stored_difal.get('eligible')) is bool and
                    stored_difal['eligible'] == expected_difal['eligible'] and
@@ -249,7 +249,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             _check(_integer(stored_components.get(key)) == value)
     if difal is not None:
         stored_difal = financial.get('difal')
-        _check(isinstance(stored_difal, dict) and stored_difal.get('version') == DIFAL_VERSION and
+        _check(isinstance(stored_difal, dict) and stored_difal.get('version') == difal['version'] and
                stored_difal.get('issuerUf') == difal['issuerUf'])
         for key in ('ratePercent', 'eligibleLines', 'baseCents', 'amountCents', 'pendingLines'):
             _check(_integer(stored_difal.get(key)) == difal[key])

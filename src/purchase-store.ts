@@ -1,4 +1,4 @@
-import { calculateDifal, salesOperation, normalizeUf, summarizeDifal, DIFAL_VERSION, type DifalSummary } from './difal.ts';
+import { calculateDifal, salesOperation, normalizeUf, summarizeDifal, DIFAL_VERSION, isDifalVersion, type DifalSummary } from './difal.ts';
 import { collection, scope, audit } from './store.ts';
 import type { Doc } from './store.ts';
 import { getJob } from './lookup-db.ts';
@@ -41,17 +41,25 @@ async function financialPeriod(name: string, id: string, job: Doc) {
 /** Recompute from source fields and compare every persisted estimate before exposing it. */
 async function financialDifal(name: string, id: string, job: Doc): Promise<DifalSummary | null> {
   if (job.mode !== SALES_MODE || job.difalVersion === undefined) return null;
-  need(job.difalVersion === DIFAL_VERSION, 'Versão do DIFAL desconhecida. Reimporte as vendas.', 409, 'DIFAL_VERSION');
+  need(isDifalVersion(job.difalVersion), 'Versão do DIFAL desconhecida. Reimporte as vendas.', 409, 'DIFAL_VERSION');
   need(typeof job.issuerUf === 'string' && job.issuerUf === normalizeUf(job.issuerUf), 'UF do emitente divergente do snapshot.', 409, 'DIFAL_SNAPSHOT');
   const rows = await (await collection(name)).find(scope({jobId: id})).project({totalCents: 1, natureCode: 1, description: 1, operation: 1, document: 1, recipientUf: 1, difal: 1}).maxTimeMS(20000).toArray();
   need(rows.length === job.expectedRows, 'Linhas do DIFAL incompletas. Reimporte as vendas.', 409, 'DIFAL_SNAPSHOT');
   for (const row of rows) {
-    const expected = calculateDifal({...row, totalCents: row.totalCents, issuerUf: job.issuerUf});
-    need(row.operation === salesOperation(row.natureCode, row.description) && typeof row.recipientUf === 'string' && row.recipientUf === normalizeUf(row.recipientUf) && row.difal &&
+    const expected = calculateDifal({...row, totalCents: row.totalCents, issuerUf: job.issuerUf}, job.difalVersion);
+    need(row.operation === salesOperation(row.natureCode, row.description, true, job.difalVersion) && typeof row.recipientUf === 'string' && row.recipientUf === normalizeUf(row.recipientUf) && row.difal &&
       Object.entries(expected).every(([field, value]) => row.difal[field] === value),
       'DIFAL divergente dos dados da venda. Emissão bloqueada.', 409, 'DIFAL_SNAPSHOT');
   }
-  return summarizeDifal(rows.map(row => ({...row, totalCents: row.totalCents})), job.issuerUf);
+  return summarizeDifal(rows.map(row => ({...row, totalCents: row.totalCents})), job.issuerUf, job.difalVersion);
+}
+/** Derive today's estimate from already reconciled frozen rows for a new scenario. */
+export async function currentSalesDifal(summary: Awaited<ReturnType<typeof purchaseSummary>>): Promise<DifalSummary | null> {
+  if (!summary.difal || summary.difal.version === DIFAL_VERSION) return summary.difal || null;
+  const rows = await (await collection('purchaseLines')).find(scope({jobId: summary.job._id}))
+    .project({totalCents: 1, natureCode: 1, description: 1, document: 1, recipientUf: 1}).maxTimeMS(20000).toArray();
+  need(rows.length === summary.job.expectedRows, 'Linhas do DIFAL incompletas.', 409, 'DIFAL_SNAPSHOT');
+  return summarizeDifal(rows.map(row => ({...row, totalCents: row.totalCents})), summary.job.issuerUf);
 }
 function sameDifalSummary(actual: DifalSummary, saved: any) {
   return !!saved && Object.entries(actual).every(([field, value]) => saved[field] === value);

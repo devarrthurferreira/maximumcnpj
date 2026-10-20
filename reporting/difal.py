@@ -5,9 +5,12 @@ import math
 import re
 import unicodedata
 
-DIFAL_VERSION = 'DIFAL_ESTIMATE_V1'
+DIFAL_VERSION = 'DIFAL_ESTIMATE_V2'
+DIFAL_LEGACY_VERSION = 'DIFAL_ESTIMATE_V1'
+DIFAL_VERSIONS = (DIFAL_LEGACY_VERSION, DIFAL_VERSION)
 DIFAL_RATE_PERCENT = 10
-DIFAL_CFOPS = frozenset(('6101', '6102', '6103', '6104', '6105', '6106', '6107', '6108'))
+DIFAL_LEGACY_CFOPS = frozenset(('6101', '6102', '6103', '6104', '6105', '6106', '6107', '6108'))
+DIFAL_CFOPS = DIFAL_LEGACY_CFOPS | {'5102'}
 BRAZIL_UFS = frozenset('AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split())
 RETURN_CFOPS = frozenset(('5201','5202','5208','5209','5210','5410','5411','5412','5413','5503','5553','5555','5556','5660','5661','5662','5921','6201','6202','6208','6209','6210','6410','6411','6412','6413','6503','6553','6556','6660','6661','6662','7201','7202','7210','7211','7212','7553','7556'))
 OTHER_CFOPS = frozenset(('5213','5214','5215','5216','5918','5919','6213','6214','6215','6216','6555','6918','6919','6921','7930'))
@@ -19,7 +22,13 @@ def normalize_uf(value):
     return value if value in BRAZIL_UFS else ''
 
 
-def sales_operation(nature_code, description):
+def eligible_cfops(version):
+    if version not in DIFAL_VERSIONS:
+        raise ValueError('Versão do DIFAL desconhecida.')
+    return DIFAL_LEGACY_CFOPS if version == DIFAL_LEGACY_VERSION else DIFAL_CFOPS
+
+
+def sales_operation(nature_code, description, version=DIFAL_VERSION):
     """Mirror the versioned Node/browser classification for stored sales rows."""
     code = re.sub(r'[^0-9]', '', str(nature_code or ''))[:4]
     if code == '9000':
@@ -38,13 +47,14 @@ def sales_operation(nature_code, description):
     purpose = re.sub(r'[^a-z0-9]+', ' ', normalized).strip()
     if re.match(r'^(?:remessa|transferencia|bonificacao|doacao|brinde|amostra|conserto|consignacao)(?:\s|$)', purpose):
         return 'OUTRAS'
-    if code in DIFAL_CFOPS or 'venda' in text or 'faturamento' in text:
+    if code in eligible_cfops(version) or 'venda' in text or 'faturamento' in text:
         return 'VENDA'
     return 'OUTRAS'
 
 
-def calculate_difal(row, issuer_uf):
+def calculate_difal(row, issuer_uf, version=DIFAL_VERSION):
     """Integer cents and half-up rounding, matching the server's 10% estimate."""
+    cfops = eligible_cfops(version)
     def excluded(reason):
         return {'eligible': False, 'baseCents': 0, 'amountCents': 0, 'reason': reason}
     total = row.get('totalCents')
@@ -53,9 +63,9 @@ def calculate_difal(row, issuer_uf):
             not 0 <= total <= 9_007_199_254_740_991):
         return excluded('INVALID_TOTAL')
     code = re.sub(r'[^0-9]', '', str(row.get('natureCode') or ''))[:4]
-    if row.get('operation') != 'VENDA' or sales_operation(code, row.get('description')) != 'VENDA':
+    if row.get('operation') != 'VENDA' or sales_operation(code, row.get('description'), version) != 'VENDA':
         return excluded('NOT_SALE')
-    if code not in DIFAL_CFOPS:
+    if code not in cfops:
         return excluded('INELIGIBLE_NATURE')
     if not re.fullmatch(r'[0-9]{11}', str(row.get('document') or '')):
         return excluded('NOT_CPF')

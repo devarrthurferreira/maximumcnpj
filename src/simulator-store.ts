@@ -1,5 +1,5 @@
 import { getGeneration } from './generation-store.ts';
-import { purchaseSummary } from './purchase-store.ts';
+import { purchaseSummary, currentSalesDifal } from './purchase-store.ts';
 import { PURCHASE_MODE, SALES_MODE, exactCents, exactSignedCents } from './purchase-domain.ts';
 import { need } from './security.ts';
 import { annualizeReports } from '../public/simulator-projection.js';
@@ -86,5 +86,5 @@ export async function generationSimulator(id: string, clientId: string) {
   if (fields.serviceRevenueCents > 0) warnings.push('Vendas de serviços foram separadas das mercadorias e preenchem a receita de serviços pela média mensal, sem duplicar o faturamento. Naturezas iniciadas por 9000 são serviços, independentemente do sufixo.');
   const projection = reportMonths ? annualizeReports(fields, reportMonths) : null;
   return {projection, revenueSplit: {version: 'SALES_SERVICES_V1'}, generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
-    purchases: sourceMetadata(purchases), sales: sourceMetadata(sales), fields, classification, warnings};
+    purchases: sourceMetadata(purchases), sales: sourceMetadata({...sales, difal: await currentSalesDifal(sales)}), fields, classification, warnings};
 }

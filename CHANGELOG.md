@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.24.1] — 2026-10-20
+
+- DIFAL gerencial reconhece vendas 5102 a CPF de outra UF em todas as competências, incluindo sufixos do Questor e descrição de produto.
+- Regra V2 compartilhada entre prévia, servidor e PDF, com cálculo e exportação V1 preservados para relatórios antigos e importações retomadas.
+- Novos cenários derivados de relatórios V1 usam a estimativa atual sobre as linhas originais conciliadas, sem alterar a fonte.
+- Novo lote idempotente de revisão das simulações inclui originais já revisados, cria versões vinculadas e preserva as anteriores.
+- Regressões de 12 meses, CPF repetido, centavos, exclusões, persistência, DRE, exportações e navegador.
+
 ## [Não lançado] — 2026-10-19
 
 - Regressão de serviços e DIFAL em todos os regimes na DRE única, tela e CSV, com 12 meses e total anual.
