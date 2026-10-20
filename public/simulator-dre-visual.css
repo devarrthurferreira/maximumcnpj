@@ -1,0 +1,116 @@
+/* A single continuous DRE, with its saved figures explained visually. */
+.simulator-clean .dre-visual { padding:28px; margin:16px 0 24px; background:#fff; border-color:#e2dde0; border-radius:16px; }
+.dre-heading { display:flex; align-items:center; justify-content:space-between; gap:24px; padding-bottom:22px; border-bottom:1px solid #eee9ec; }
+.simulator-clean .dre-heading h2 { font-size:25px; letter-spacing:-.7px; margin:8px 0; }
+.dre-heading p { font-size:12px; line-height:1.6; color:#71666d; margin:0; }
+.dre-regime-control { flex:0 1 260px; min-width:210px; font-size:12px; color:#5a454f; font-weight:600; }
+.dre-regime-control select { min-height:44px; margin:7px 0 0; border:1px solid #d6c6ce; border-radius:8px; background:#fff; font-size:14px; }
+.dre-overview { padding:22px 0; }
+.dre-overview-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+.dre-overview-heading>span { font-size:10px; letter-spacing:1px; font-weight:650; color:#75646e; }
+.dre-overview-heading p { margin:0; font-size:12px; color:#71606a; }
+.dre-summary-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.dre-summary-cards article { min-width:0; padding:20px; border:1px solid #e7e0e4; background:#fcfbfc; border-radius:10px; }
+.dre-summary-cards article>span { font-size:12px; font-weight:500; color:#665660; }
+.dre-summary-cards article>strong { display:block; margin:12px 0 9px; font-size:clamp(22px,2.2vw,29px); font-weight:650; color:#33262d; letter-spacing:-.7px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.dre-summary-cards small { display:block; font-size:11px; line-height:1.6; color:#75636e; }
+.dre-summary-cards .dre-result-card { background:#164c43; border-color:#164c43; }
+.dre-summary-cards .dre-result-card>strong { color:#fff; }
+.dre-summary-cards .dre-result-card>span,.dre-summary-cards .dre-result-card small { color:#d5ebe3; }
+.dre-summary-cards .dre-result-card.is-loss { background:#7a263a; border-color:#7a263a; }
+.dre-summary-cards .dre-result-card.is-loss>span,.dre-summary-cards .dre-result-card.is-loss small { color:#ffe0e4; }
+.dre-summary-cards .dre-result-card.is-unavailable { background:#554d53; border-color:#554d53; }
+.dre-result-flow { margin:18px 0 0; padding:20px; border:1px solid #e9e3e7; border-radius:10px; }
+.dre-result-flow figcaption { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px; }
+.dre-result-flow figcaption strong { font-size:13px; font-weight:650; color:#4d3c47; }
+.dre-result-flow figcaption>span { font-size:11px; color:#786873; }
+.dre-flow-bars { list-style:none; padding:0; margin:0; }
+.dre-flow-bars li { display:grid; grid-template-columns:minmax(190px,1fr) minmax(80px,1.5fr) minmax(125px,auto); align-items:center; gap:18px; min-height:36px; }
+.dre-flow-label { font-size:12px; color:#6d5b66; }
+.dre-flow-bars strong { text-align:right; font-size:12px; font-weight:550; color:#4a3442; font-variant-numeric:tabular-nums; }
+.dre-flow-track { position:relative; height:24px; background:linear-gradient(90deg,transparent calc(50% - .5px),#d7cbd2 calc(50% - .5px),#d7cbd2 calc(50% + .5px),transparent calc(50% + .5px)); }
+.dre-flow-track i { display:block; position:absolute; top:5px; height:14px; background:#9e5367; border-radius:3px; }
+.dre-flow-revenue .dre-flow-track i { background:#750207; }
+.dre-flow-result .dre-flow-track i { background:#287362; }
+.dre-flow-result.is-negative .dre-flow-track i { background:#ad384e; }
+.dre-flow-result { border-top:1px solid #eee6eb; margin-top:5px; padding-top:5px; }
+.dre-flow-result .dre-flow-label,.dre-flow-result strong { font-weight:650; color:#264e44; }
+.dre-flow-result.is-negative .dre-flow-label,.dre-flow-result.is-negative strong { color:#922e45; }
+.dre-visual-empty { color:#786873; font-size:12px; line-height:1.7; margin:12px 0 0; }
+.dre-table-heading { display:flex; justify-content:space-between; gap:18px; align-items:center; padding:20px 0 0; border-top:1px solid #e9e0e5; }
+.dre-table-heading h3 { margin:0 0 6px; font-size:17px; color:#402e39; letter-spacing:-.2px; }
+.dre-table-heading p { font-size:12px; color:#796771; line-height:1.6; margin:0; max-width:440px; }
+.dre-visual .dre-toolbar { margin:0; justify-content:flex-end; gap:8px 16px; }
+.dre-visual .dre-percent-control { font-size:11px; }
+.dre-visual .dre-export-actions button { font-size:11px; background:#fff; border-color:#e4d5dd; border-radius:8px; }
+.dre-quick-nav { display:flex; gap:6px; flex-wrap:wrap; margin:18px 0 0; padding:0; }
+.dre-quick-nav button { min-height:36px; padding:8px 13px; border-radius:6px; border:1px solid #e7dce2; background:#faf7f9; color:#6c4054; font-size:11px; font-weight:600; }
+.dre-quick-nav button:last-child { color:#1b6553; background:#f0f7f3; border-color:#cbded5; }
+.dre-quick-nav button:hover { background:#f1e7ed; }
+.dre-reading-note { margin:12px 0 0; font-size:11px; color:#796872; line-height:1.7; }
+.simulator-clean .dre-visual .dre-table-wrap { margin-top:14px; border-radius:10px; border-color:#e0d5dc; }
+.simulator-clean .dre-visual .dre-row th { font-size:12px; color:#5b4653; }
+.simulator-clean .dre-visual .dre-detail th,.simulator-clean .dre-visual .dre-detail td { color:#81707b; font-size:11px; background:#fdfbfc; padding-top:8px; padding-bottom:8px; }
+.simulator-clean .dre-visual .dre-detail th { padding-left:25px; border-left:3px solid #eadde4; }
+.simulator-clean .dre-visual .dre-composition-label { display:inline; margin-left:6px; font-size:9px; color:#8a7783; }
+.simulator-clean .dre-visual tr.total td,.simulator-clean .dre-visual tr.total th { background:#f5eef2; border-top:1px solid #e2d2dc; font-size:13px; }
+.simulator-clean .dre-visual tr[data-dre-row=netProfit] td,.simulator-clean .dre-visual tr[data-dre-row=netProfit] th { background:#164c43; color:#fff; font-size:14px; padding-top:18px; padding-bottom:18px; }
+.simulator-clean .dre-visual tr[data-dre-row=netProfit] td.dre-loss-cell { background:#7a263a; }
+.simulator-clean .dre-visual tr[data-dre-row=netProfit] td.dre-unavailable-cell { background:#554d53; }
+.simulator-clean .dre-visual tr[data-dre-row=netProfit] .dre-negative { color:#ffe1d9; }
+.simulator-clean .dre-visual .dre-active-column { box-shadow:inset 2px 0 #b88c9e,inset -2px 0 #b88c9e; }
+.simulator-clean .dre-visual thead .dre-active-column { background:#750207; color:#fff; }
+.simulator-clean .dre-visual .dre-row:focus { outline:2px solid #a15b75; outline-offset:-2px; }
+.dre-visual :is(select,button):focus-visible { outline:2px solid #750207; outline-offset:3px; }
+.dre-reading-footer { margin-top:22px; border-top:1px solid #ece3e8; padding-top:18px; }
+.dre-reading-footer h3 { font-size:12px; color:#6c5361; margin:0 0 9px; }
+.dre-reading-footer>p { font-size:11px; color:#7d6b76; line-height:1.7; }
+.simulator-clean .sim-comparison-details { padding:20px; margin:20px 0; border-radius:12px; }
+.sim-comparison-details>summary { display:flex; align-items:center; justify-content:space-between; gap:16px; font-size:14px; color:#5c3f4e; cursor:pointer; font-weight:600; }
+.sim-comparison-details>summary>span { font-size:11px; font-weight:400; color:#826e7a; }
+.sim-comparison-details .sim-kpis { margin-top:20px; }
+.sim-evidence-title { font-size:18px; margin:28px 0 16px; color:#634455; }
+@media(max-width:1100px) {
+ .dre-table-heading { flex-wrap:wrap; }
+ .dre-visual .dre-toolbar { justify-content:space-between; flex:1 1 100%; }
+ .dre-summary-cards article { padding:16px; }
+ .dre-summary-cards article>strong { font-size:22px; }
+ .dre-flow-bars li { grid-template-columns:minmax(160px,1fr) minmax(60px,1fr) minmax(110px,auto); gap:12px; }
+}
+@media(max-width:650px) {
+ .simulator-clean .dre-visual { padding:18px 14px; border-radius:12px; }
+ .dre-heading { flex-direction:column; align-items:stretch; gap:16px; padding-bottom:18px; }
+ .simulator-clean .dre-heading h2 { font-size:23px; }
+ .dre-regime-control { flex:auto; min-width:0; }
+ .dre-regime-control select { font-size:16px; }
+ .dre-overview-heading { align-items:flex-start; gap:8px; }
+ .dre-overview-heading p { width:100%; font-size:12px; }
+ .dre-summary-cards { grid-template-columns:1fr; gap:8px; }
+ .dre-summary-cards article { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:6px 10px; padding:15px; }
+ .dre-summary-cards article>span { font-size:12px; }
+ .dre-summary-cards article>strong { margin:0; font-size:21px; text-align:right; }
+ .dre-summary-cards small { grid-column:1/-1; font-size:11px; }
+ .dre-summary-cards .dre-result-card { margin-top:2px; padding:18px 15px; }
+ .dre-result-flow { padding:15px; margin-top:12px; }
+ .dre-result-flow figcaption { display:block; margin-bottom:14px; }
+ .dre-result-flow figcaption>span { display:block; line-height:1.6; margin-top:5px; font-size:10px; }
+ .dre-flow-bars li { grid-template-columns:minmax(0,1fr) auto; gap:1px 12px; margin-bottom:7px; }
+ .dre-flow-label { font-size:11px; line-height:1.5; }
+ .dre-flow-bars strong { font-size:11px; }
+ .dre-flow-track { grid-row:2; grid-column:1/-1; height:17px; }
+ .dre-flow-track i { height:9px; top:4px; }
+ .dre-flow-result { padding-top:10px; }
+ .dre-table-heading { gap:14px; }
+ .dre-table-heading h3 { font-size:16px; }
+ .dre-quick-nav { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; }
+ .dre-quick-nav button { min-height:40px; padding:6px; font-size:11px; }
+ .dre-visual .dre-calendar-controls { gap:12px; }
+ .simulator-clean .dre-visual .dre-row th,.simulator-clean .dre-visual .dre-detail th { font-size:11px; }
+ .simulator-clean .dre-visual .dre-detail th { padding-left:11px; }
+ .simulator-clean .dre-visual .dre-composition-label { display:none; }
+ .simulator-clean .dre-visual tr.total td,.simulator-clean .dre-visual tr.total th { font-size:11px; }
+ .simulator-clean .dre-visual tr[data-dre-row=netProfit] td,.simulator-clean .dre-visual tr[data-dre-row=netProfit] th { font-size:11px; }
+ .sim-comparison-details>summary { flex-wrap:wrap; gap:6px; }
+}
+@media(max-width:370px) { .dre-summary-cards article { grid-template-columns:1fr; gap:6px; } .dre-summary-cards article>strong { text-align:left; font-size:24px; } }
+@media print { .dre-overview,.dre-quick-nav,.dre-heading,.dre-table-heading,.dre-reading-footer,.dre-reading-note { display:none!important; } .sim-comparison-details { display:none; } }

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {buildDreSummary} from '../public/simulator-dre-summary.js';
 import {buildDrePresentation,unifiedDreRows,DRE_PRESENTATION_VERSION} from '../public/simulator-dre.js';
 import {calculateSimulation,calculateTax,draftToInput} from '../public/simulator-engine.js';
 import {annualizeReports,projectDifal} from '../public/simulator-projection.js';
@@ -174,4 +175,41 @@ test('DRE única mantém legado, detalhes indisponíveis e extensões sem repeti
  assert.equal(rows.find(row=>row.key==='serviceReport').values.actual,null);
  assert.equal(rows.find(row=>row.key==='extraDetail'),extension);
  assert.equal(new Set(keys).size,keys.length);assert.deepEqual(rows.slice(-p.indicators.length),p.indicators);
+});
+
+
+test('resumo visual usa exatamente o quadro selecionado e não altera a apresentação',()=>{
+ const input=fixture(),calendar=buildMonthlyDre(input.result,2027),p=buildDrePresentation({...input,calendar});
+ const before=structuredClone(p);freeze(p);
+ for(const id of ['pure','hybrid','presumed','actual'])for(const mode of ['annual','calendarAnnual','month']){
+  const column={id,mode,month:0},summary=buildDreSummary(p,column),row=find(p,'netProfit');
+  assert.equal(summary.result,mode==='month'?row.monthlyValues[id][0]:mode==='calendarAnnual'?row.calendarAnnualValues[id]:row.values[id]);
+  assert.equal(summary.reconciled,true);near(summary.revenue-summary.deductions,summary.result);
+  assert.equal(summary.movements.length,6);
+ }
+ assert.deepEqual(p,before);
+});
+
+test('resumo visual distingue total anual salvo, prejuízo, zero e indisponibilidade',()=>{
+ const input=fixture(),calendar=buildMonthlyDre(input.result,2027);
+ const saved=calendar.regimes[3];for(const key of ['services','revenue','netRevenue','grossProfit','preTax','netProfit'])saved.rows.find(row=>row.key===key).annual+=50;
+ const p=buildDrePresentation({...input,calendar}),annual=buildDreSummary(p,{id:'actual',mode:'annual'}),captured=buildDreSummary(p,{id:'actual',mode:'calendarAnnual'});
+ assert.equal(captured.revenue,annual.revenue+50);assert.equal(captured.result,annual.result+50);assert(captured.reconciled);
+ input.draft.values.salesRevenue=0;input.draft.values.serviceRevenue=0;
+ const loss=buildDreSummary(buildDrePresentation({result:calculateSimulation(input.draft)}),{id:'actual',mode:'annual'});
+ assert.equal(loss.revenue,0);assert(loss.result<0);assert.equal(loss.margin,null);assert(loss.reconciled);
+ input.result.regimes[0].available=false;
+ const absent=buildDreSummary(buildDrePresentation(input),{id:'pure',mode:'annual'});
+ assert.equal(absent.revenue,null);assert.equal(absent.result,null);assert.equal(absent.deductions,null);assert.equal(absent.reconciled,false);
+});
+
+test('composição divergente ou incompleta preserva o resultado e impede gráfico enganoso',()=>{
+ const p=buildDrePresentation(fixture());find(p,'netProfit').values.actual+=1;
+ const broken=buildDreSummary(p,{id:'actual',mode:'annual'});
+ assert.equal(broken.complete,true);assert.equal(broken.reconciled,false);assert.equal(broken.deductions,null);
+ assert.equal(broken.result,find(p,'netProfit').values.actual);
+ find(p,'operatingExpenses').values.actual=null;
+ assert.equal(buildDreSummary(p,{id:'actual',mode:'annual'}).complete,false);
+ find(p,'revenue').monthlyValues.actual[1]=null;
+ assert.equal(buildDreSummary(p,{id:'actual',mode:'month',month:1}).revenue,null);
 });

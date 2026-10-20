@@ -30,6 +30,11 @@ test('DRE única conserva composição, escolhas, exportação e impressão anua
   const keys=await page.locator('.dre-complete [data-dre-row]').evaluateAll(rows=>rows.map(row=>(row as HTMLElement).dataset.dreRow));expect(new Set(keys).size).toBe(keys.length);expect(keys[keys.indexOf('sales')+1]).toBe('salesOptantCents');expect(keys.indexOf('grossMargin')).toBeGreaterThan(keys.indexOf('netProfit'));
   await expect(page.locator('.dre-footnotes')).toContainText('Saldo informativo');
   await expect(page.locator('.dre-complete [data-dre-row="netProfit"] td').first()).toContainText('123.456,78');
+  await expect(page.locator('[data-dre-summary="result"]')).toContainText('123.456,78');
+  await expect(page.locator('.dre-visual-empty')).toContainText('não concilia');await expect(page.locator('.dre-flow-bars')).toHaveCount(0);
+  await page.locator('#dre-regime').selectOption('actual');await expect(page.locator('.dre-flow-bars li')).toHaveCount(6);
+  await expect(page.locator('.dre-table-wrap thead .dre-active-column')).toHaveText('Lucro Real');
+  await page.locator('#dre-regime').selectOption('pure');
   await expect(page.locator('#dre-show-percent')).not.toBeChecked();await expect(page.locator('.dre-complete details[open]')).toHaveCount(0);
   await page.locator('#dre-show-percent').check();await expect(page.locator('.dre-complete [data-dre-row="revenue"] .dre-percent').first()).toHaveText('100%');
   await expect(page.locator('.dre-complete [data-dre-row="difal"] .dre-percent').first()).toHaveText('-2,4%');
@@ -131,5 +136,10 @@ test('DRE legada sem DIFAL não inventa valores e receita zero não recebe perce
   await expect(page.locator('.dre-complete [data-dre-row="difal"]')).toHaveCount(0);
   const amounts=await page.locator('.dre-complete > .dre-table-wrap .dre-percent').allTextContents();expect(amounts.length).toBeGreaterThan(0);expect(amounts.every(value=>value==='—')).toBe(true);
   await expect(page.locator('.dre-complete [data-dre-row="revenue"] td').nth(1)).toHaveText('——');
+  await expect(page.locator('.dre-result-card')).toHaveClass(/is-loss/);
+  await expect(page.locator('.dre-result-card')).toContainText('Prejuízo estimado');
+  await expect(page.locator('.dre-result-card [data-dre-summary="margin"]')).toHaveText('—');
+  await page.locator('#dre-regime').selectOption('hybrid');await expect(page.locator('[data-dre-summary="result"]')).toHaveText('—');
+  await expect(page.locator('.dre-result-card')).toHaveClass(/is-unavailable/);await expect(page.locator('.dre-flow-bars')).toHaveCount(0);
   await expect(page.locator('.dre-complete')).not.toContainText('NaN');await expect(page.locator('.dre-complete')).not.toContainText('Infinity');
 });

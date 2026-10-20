@@ -1,4 +1,12 @@
-# Maximum CNPJ · v0.25.1
+# Maximum CNPJ · v0.26.0
+
+## DRE visual — 20/10/2026
+
+- O resultado abre pela DRE. Comparações entre regimes ficam em uma seção recolhida, com gráficos complementares e memória abaixo do demonstrativo. Ao reabrir o histórico, a DRE vem antes da conferência dos relatórios de origem.
+- Receita bruta, deduções líquidas e resultado recebem destaque, com margem e indicação de lucro, prejuízo ou equilíbrio. Um gráfico mostra os movimentos já contidos na DRE, sem somar composições ou créditos novamente.
+- O resumo lê exatamente as células do regime e mês selecionados. Composição ausente ou divergente impede o gráfico, preservando os valores originais e indicando a necessidade de conferência. Meses sem dados e regimes indisponíveis continuam sem valores.
+- A tabela permanece única, com todas as linhas e composições, hierarquia visual e atalhos para receitas, tributos, compras, despesas e resultado. O regime selecionado fica em destaque na comparação anual.
+- Controles, resumo e gráfico adaptados a telas de 320 px, 390 px e desktop; foco de teclado e navegação entre competências preservados. Impressão conserva a tabela completa; CSV e JSON mantêm valores, ordem e conteúdo.
 
 ## Interface por competência — 20/10/2026
 
