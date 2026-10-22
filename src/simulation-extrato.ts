@@ -1,6 +1,6 @@
 import {collection,scope} from './store.ts';
 import {need} from './security.ts';
-import {section22RevenueHistory} from '../public/simulator-rbt12.js';
+import {reconcileSection22Extraction} from '../public/simulator-rbt12.js';
 export const EXTRATO_VERSION = 'SIMPLES_SECTION_22_V2';
 const cents = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= 100_000_000_000_000;
 /** A missing/failed PDF never silently becomes a manual or projected RBT12. */
@@ -23,25 +23,9 @@ export function validateSection22(result: any) {
   valid(result?.parserVersion === EXTRATO_VERSION && result?.sourceSection === '2.2' && cents(result?.rbt12Cents));
   valid(typeof result?.pa === 'string' && /^(0[1-9]|1[0-2])\/20\d{2}$/.test(result.pa));
   valid(/^[A-Z0-9]{8}$/.test(result.cnpjBasico || ''));
-  const [m,y] = result.pa.split('/').map(Number), absolute = y*12+m-1;
-  const expected = Array.from({length:12},(_,i)=>{const n=absolute-12+i;return `${Math.floor(n/12)}-${String(n%12+1).padStart(2,'0')}`;});
-  valid(Array.isArray(result.rbt12Window) && result.rbt12Window.length === 12);
-  const window = result.rbt12Window.map((row: any,i: number) => {
-    valid(row?.month === expected[i] && row?.period === `${expected[i].slice(5)}/${expected[i].slice(0,4)}` &&
-      cents(row.internalCents) && cents(row.externalCents) && cents(row.totalCents) && row.totalCents === row.internalCents+row.externalCents);
-    return {period:row.period,month:row.month,internalCents:row.internalCents as number,externalCents:row.externalCents as number,totalCents:row.totalCents as number,usedInRbt12:true};
-  });
-  const internal = window.reduce((s:number,r:any)=>s+r.internalCents,0), external=window.reduce((s:number,r:any)=>s+r.externalCents,0);
-  valid(cents(internal+external) && internal+external===result.rbt12Cents);
-  valid(result.rbt12Basis?.section==='2.2' && result.rbt12Basis?.months===12 && result.rbt12Basis?.startMonth===expected[0] &&
-    result.rbt12Basis?.endMonth===expected[11] && result.rbt12Basis?.internalCents===internal && result.rbt12Basis?.externalCents===external && result.rbt12Basis?.totalCents===internal+external);
-  let priorRevenues:ReturnType<typeof section22RevenueHistory>=[];
-  try {priorRevenues=section22RevenueHistory(result);} catch {valid(false);}
-  const priorByMonth=new Map(priorRevenues.map(row=>[row.month,row]));
-  for(const row of window) {
-    const prior=priorByMonth.get(row.month);
-    valid(prior&&prior.internalCents===row.internalCents&&prior.externalCents===row.externalCents&&prior.totalCents===row.totalCents);
-  }
+  const reconciled=(()=>{try{return reconcileSection22Extraction(result);}catch{
+    need(false,'A seção 2.2 está incompleta ou inconsistente. Leia novamente o extrato.',409,'RBT12_EXTRACTION');
+  }})();
   const processing: Record<string, unknown> = {};
   for(const [key,allowed] of [['extractionScope',['SECTION_22','FULL_DOCUMENT']],['searchablePdfScope',['SELECTED_PAGES','FULL_DOCUMENT']]] as const) {
     if(result[key]!==undefined) {valid((allowed as readonly unknown[]).includes(result[key]));processing[key]=result[key];}
@@ -55,9 +39,8 @@ export function validateSection22(result: any) {
   }
   return {parserVersion:EXTRATO_VERSION,sourceSection:'2.2',pa:result.pa,cnpjBasico:result.cnpjBasico,
     companyName:typeof result.companyName==='string'?result.companyName.slice(0,200):null,
-    rbt12Cents:internal+external,rbt12CalculatedCents:internal+external,rbt12Reconciled:true,
-    rbt12Basis:{section:'2.2',months:12,startMonth:expected[0],endMonth:expected[11],internalCents:internal,externalCents:external,totalCents:internal+external},
-    priorRevenues,rbt12Window:window,ocrUsed:result.ocrUsed===true,processedPages:result.processedPages||null,...processing};
+    ...reconciled,rbt12CalculatedCents:reconciled.rbt12Cents,rbt12Reconciled:true,
+    ocrUsed:result.ocrUsed===true,processedPages:result.processedPages||null,...processing};
 }
 export async function readRbt12Reference(id: string|null, clientId: string, declared: number|undefined) {
   need(id, 'Leia o Extrato do Simples Nacional ou escolha informar e confirmar a RBT12 manualmente.', 409, 'RBT12_REQUIRED');

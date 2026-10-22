@@ -18,9 +18,11 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
-export const MODEL_VERSION = '1.4.0-icms-anticipation';
+export const MODEL_VERSION = '1.6.0-difal-scenarios';
 const LEGACY_MODEL_VERSION = '1.2.0-services-difal';
 export const ICMS_ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_DRE_V1';
+export const DIFAL_POLICY_VERSION = 'DIFAL_SCENARIOS_V1';
+const REGIME_IDS = Object.freeze(['pure','hybrid','presumed','actual']);
 export const MONTHS = 12;
 export const SUBLIMIT = 3_600_000;
 export const SIMPLES_LIMIT = 4_800_000;
@@ -335,10 +337,35 @@ function checkChoices(input) {
     if (!values.includes(input[key])) failInput([key], 'Opção inválida.');
   }
 }
+/** New choices never mutate an older draft or normalize its request hash. */
+export function defaultDifalPolicy() {
+  return {version:DIFAL_POLICY_VERSION,enabled:{pure:true,hybrid:true,presumed:true,actual:true}};
+}
+export function parseDifalPolicy(value) {
+  strictObject(value,['version','enabled'],['difalPolicy']);
+  if(value.version!==DIFAL_POLICY_VERSION)failInput(['difalPolicy','version'],'Versão das opções de DIFAL inválida.');
+  strictObject(value.enabled,REGIME_IDS,['difalPolicy','enabled']);
+  for(const id of REGIME_IDS)if(typeof value.enabled[id]!=='boolean')failInput(['difalPolicy','enabled',id],'Escolha incluir ou excluir o DIFAL.');
+  return {version:DIFAL_POLICY_VERSION,enabled:Object.fromEntries(REGIME_IDS.map(id=>[id,value.enabled[id]]))};
+}
+/** Potential application, independent of the source amount (pending lines can have zero). */
+export function resolveDifalApplication({policy,regimeId,rbt12,icmsOutside=false}) {
+  if(!REGIME_IDS.includes(regimeId))failInput(['regimeId'],'Regime inválido para as opções de DIFAL.');
+  checkNumber(rbt12,VALUE_LIMIT,['rbt12']);
+  if(typeof icmsOutside!=='boolean')failInput(['icmsOutside'],'Informe uma opção válida.');
+  const selected=policy===undefined?defaultDifalPolicy():parseDifalPolicy(policy),enabled=selected.enabled[regimeId];
+  const simple=regimeId==='pure'||regimeId==='hybrid';
+  const reason=simple&&rbt12>=SUBLIMIT?'SUBLIMIT':simple&&icmsOutside?'ICMS_OUTSIDE_DAS':!enabled?'USER_EXCLUDED':'ENABLED';
+  const blocked=reason==='SUBLIMIT'||reason==='ICMS_OUTSIDE_DAS';
+  const message={SUBLIMIT:'Zerado automaticamente: RBT12 da competência igual ou superior a R$ 3.600.000.',ICMS_OUTSIDE_DAS:'Zerado automaticamente: ICMS fora do DAS.',USER_EXCLUDED:'Excluído deste cenário por escolha do usuário.',ENABLED:simple?'Incluído: DIFAL das vendas e antecipação das compras elegíveis.':'Incluído: DIFAL das vendas elegíveis; antecipação das compras não se aplica a este regime.'}[reason];
+  return {version:DIFAL_POLICY_VERSION,enabled,blocked,reason,message,rbt12,icmsOutside,salesDifal:enabled&&!blocked,purchaseAnticipation:simple&&enabled&&!blocked};
+}
 function parseTaxInput(input) {
   const hasDifal = input != null && Object.hasOwn(input, 'difalMonthly');
   const hasAnticipation = input != null && Object.hasOwn(input, 'icmsAnticipation');
-  strictObject(input, [...TAX_AMOUNT_FIELDS, 'year', 'salesAnnex', 'serviceAnnex', 'icmsOutside', 'rates', 'credits', ...(hasDifal ? ['difalMonthly'] : []), ...(hasAnticipation ? ['icmsAnticipation'] : [])]);
+  const hasDifalPolicy=input!=null&&Object.hasOwn(input,'difalPolicy');
+  strictObject(input, [...TAX_AMOUNT_FIELDS, 'year', 'salesAnnex', 'serviceAnnex', 'icmsOutside', 'rates', 'credits', ...(hasDifal ? ['difalMonthly'] : []), ...(hasAnticipation ? ['icmsAnticipation'] : []),...(hasDifalPolicy?['difalPolicy']:[])]);
+  const difalPolicy=hasDifalPolicy?parseDifalPolicy(input.difalPolicy):null;
   if (hasDifal) checkNumber(input.difalMonthly, VALUE_LIMIT, ['difalMonthly']);
   if (hasAnticipation) {
     strictObject(input.icmsAnticipation, ['version', 'monthlyCents'], ['icmsAnticipation']);
@@ -363,7 +390,7 @@ function parseTaxInput(input) {
     if (group.base > purchases[key]) failInput(['credits', key, 'base'], 'A base elegível não pode superar as compras deste grupo. Informe 0 se não houver crédito.');
     if (group.base * (group.cbsRate + group.ibsRate) > purchases[key] + 1e-8) failInput(['credits', key, 'cbsRate'], 'O crédito combinado de CBS e IBS não pode exceder as compras do grupo.');
   }
-  return { ...input, ...(hasAnticipation ? {icmsAnticipation: {...input.icmsAnticipation}} : {}), rates: { ...input.rates }, credits: Object.fromEntries(CREDIT_GROUPS.map(key => [key, { ...input.credits[key] }])) };
+  return { ...input,...(hasDifalPolicy?{difalPolicy}:{}), ...(hasAnticipation ? {icmsAnticipation: {...input.icmsAnticipation}} : {}), rates: { ...input.rates }, credits: Object.fromEntries(CREDIT_GROUPS.map(key => [key, { ...input.credits[key] }])) };
 }
 export const taxInputSchema = Object.freeze({
   parse: parseTaxInput,
@@ -430,6 +457,8 @@ export function calculateTax(rawInput) {
     const hasAnticipation = Object.hasOwn(input, 'icmsAnticipation');
     const anticipationBlocked = input.rbt12 >= SUBLIMIT || input.icmsOutside;
     const annualAnticipation = hasAnticipation && !anticipationBlocked ? input.icmsAnticipation.monthlyCents * MONTHS / 100 : 0;
+    const difalPolicy=input.difalPolicy||defaultDifalPolicy();
+    const difalApplications=Object.fromEntries(REGIME_IDS.map(regimeId=>[regimeId,resolveDifalApplication({policy:difalPolicy,regimeId,rbt12:input.rbt12,icmsOutside:input.icmsOutside})]));
     const memory = [];
     const warnings = [];
     const add = (id, section, label, formula, value, unit = 'currency')=>{
@@ -484,11 +513,11 @@ export function calculateTax(rawInput) {
     add('annual.revenue', 'Valores anuais', 'Receita total anual', 'Receita anual de serviços + receita anual de vendas', revenue);
     add('annual.cmv', 'Valores anuais', 'CMV total anual', 'CMV de optantes + CMV de não optantes; a parcela SN regular não é somada outra vez.', cmv);
     add('annual.operational', 'Valores anuais', 'Resultado antes de tributos e encargos', 'Receita − CMV − salários − benefícios − administração − aluguel − cartões', operational);
-    if (hasDifal) add('difal.annual', 'Tributos e encargos', 'DIFAL estimado anual (10%)', 'Estimativa mensal vinculada às operações importadas × 12. Deduzida uma única vez na receita líquida.', annualDifal);
+    if (hasDifal) add('difal.annual', 'Tributos e encargos', 'DIFAL anual importado, antes das opções por regime', 'Estimativa mensal vinculada às operações importadas × 12. A dedução efetiva depende da opção e do bloqueio de cada regime; confira suas linhas na DRE.', annualDifal);
     if (hasAnticipation) {
       add('icmsAnticipation.rate', 'Antecipação de ICMS', 'Percentual sobre compras interestaduais', 'Premissa gerencial aplicada às compras elegíveis do relatório de origem.', .0732, 'percent');
-      add('icmsAnticipation.annual', 'Antecipação de ICMS', 'Antecipação de ICMS anual aplicável ao Simples', anticipationBlocked ? 'Zero: RBT12 atingiu R$ 3.600.000 ou ICMS está fora do DAS.' : 'Antecipação mensal importada × 12; apenas Simples Puro e Híbrido, sem crédito adicional.', annualAnticipation);
-      add('icmsAnticipation.status', 'Antecipação de ICMS', 'Aplicação da antecipação de ICMS', 'O bloqueio por sublimite usa a RBT12 desta competência; não usa a receita mensal multiplicada por 12.', anticipationBlocked ? 'Não aplicada: sublimite alcançado ou ICMS fora do DAS.' : 'Aplicável ao Simples Puro e Híbrido abaixo do sublimite.', 'text');
+      add('icmsAnticipation.annual', 'Antecipação de ICMS', 'Referência anual da antecipação antes da opção por regime', anticipationBlocked ? 'Zero: RBT12 atingiu R$ 3.600.000 ou ICMS está fora do DAS.' : 'Antecipação mensal importada × 12; a dedução depende da opção de cada cenário Simples, sem crédito adicional.', annualAnticipation);
+      add('icmsAnticipation.status', 'Antecipação de ICMS', 'Condição da antecipação de ICMS', 'O bloqueio por sublimite usa a RBT12 desta competência; não usa a receita mensal multiplicada por 12.', anticipationBlocked ? 'Bloqueada: sublimite alcançado ou ICMS fora do DAS.' : 'Disponível abaixo do sublimite; a opção de cada cenário determina a inclusão.', 'text');
     }
     const groupNames = {
         simple: 'Simples com CBS/IBS no DAS',
@@ -693,7 +722,7 @@ export function calculateTax(rawInput) {
     const presumedAdditionalIr = positive(irTotalBase - IRPJ_ADDITIONAL_BASE) * IRPJ_ADDITIONAL_RATE;
     const presumedIr = presumedBasicIr + presumedAdditionalIr;
     const presumedCs = csTotalBase * CSLL_RATE;
-    const actualPreTax = operational - credits.cbs.due - credits.ibs.due - credits.icms.due - iss - annualDifal - regularPayroll;
+    const actualPreTax = operational - credits.cbs.due - credits.ibs.due - credits.icms.due - iss - (difalApplications.actual.salesDifal?annualDifal:0) - regularPayroll;
     const actualBase = positive(actualPreTax);
     const actualBasicIr = actualBase * IRPJ_RATE;
     const actualAdditionalIr = positive(actualBase - IRPJ_ADDITIONAL_BASE) * IRPJ_ADDITIONAL_RATE;
@@ -773,7 +802,7 @@ export function calculateTax(rawInput) {
         [
             'preTax',
             'Resultado antes de IRPJ/CSLL',
-            'Resultado operacional − CBS líquido − IBS líquido − ICMS líquido − ISS − DIFAL estimado − encargos LP/LR',
+            'Resultado operacional − CBS líquido − IBS líquido − ICMS líquido − ISS − DIFAL habilitado no Lucro Real − encargos LP/LR',
             actualPreTax
         ],
         [
@@ -826,6 +855,7 @@ export function calculateTax(rawInput) {
         const isPure = id === 'pure';
         const outside = !isSimple || input.icmsOutside;
         const available = !isSimple || simpleAvailable;
+        const application=difalApplications[id];
         const dre = {
             services: annual.services,
             sales: annual.sales,
@@ -835,8 +865,8 @@ export function calculateTax(rawInput) {
             ibsDebit: isPure ? 0 : -credits.ibs.debit,
             icmsNet: outside ? -credits.icms.due : 0,
             iss: outside ? -iss : 0,
-            ...(hasDifal ? {difal: -annualDifal} : {}),
-            ...(hasAnticipation ? {icmsAnticipation: isSimple ? -annualAnticipation : 0} : {}),
+            ...(hasDifal ? {difal: application.salesDifal ? -annualDifal : 0} : {}),
+            ...(hasAnticipation ? {icmsAnticipation: application.purchaseAnticipation ? -annualAnticipation : 0} : {}),
             netRevenue: 0,
             cmvSimple: -annual.cmvSimple,
             cmvRegular: -annual.cmvRegular,
@@ -873,8 +903,8 @@ export function calculateTax(rawInput) {
             ibsDebit: isPure ? 'Zero: IBS incluído no DAS' : '−Débito anual de IBS',
             icmsNet: outside ? '−(débito ICMS − crédito ICMS utilizado)' : 'Zero: ICMS incluído no DAS; sem crédito externo',
             iss: outside ? '−Serviços anuais × alíquota de ISS' : 'Zero: ISS incluído no DAS',
-            difal: '−DIFAL mensal estimado das operações importadas × 12; hipótese gerencial de 10%, sem novo abatimento no ICMS',
-            icmsAnticipation: !isSimple ? 'Zero: antecipação de ICMS aplicada somente ao Simples Puro e Híbrido.' : anticipationBlocked ? 'Zero: RBT12 atingiu R$ 3.600.000 ou ICMS está fora do DAS.' : '−Antecipação mensal das compras interestaduais elegíveis × 12; premissa de 7,32%, deduzida uma única vez e sem crédito adicional.',
+            difal: application.salesDifal?'−DIFAL mensal estimado das operações importadas × 12; hipótese gerencial de 10%, incluída uma única vez.':application.message,
+            icmsAnticipation: !isSimple ? 'Zero: antecipação de ICMS aplicada somente ao Simples Puro e Híbrido.' : !application.purchaseAnticipation ? application.message : '−Antecipação mensal das compras interestaduais elegíveis × 12; premissa de 7,32%, deduzida uma única vez e sem crédito adicional.',
             netRevenue: 'Receita bruta + linhas negativas de DAS, CBS, IBS, ICMS, ISS e DIFAL estimado' + (hasAnticipation ? ' + antecipação de ICMS quando aplicável' : ''),
             cmvSimple: '−Compras/CMV de optantes × 12',
             cmvRegular: '−Compras/CMV de não optantes × 12',
@@ -900,6 +930,8 @@ export function calculateTax(rawInput) {
             dre[key] = available ? cleanZero(dre[key]) : 0;
             add(`dre.${id}.${key}`, `DRE · ${name}`, DRE_LABELS[key], available ? formulas[key] : `Indisponível: ${simpleStatus}.`, dre[key]);
         }
+        add(`difal.option.${id}`,`DIFAL · ${name}`,'Opção de DIFAL do cenário','Escolha independente por regime; o bloqueio automático prevalece sobre a inclusão.',application.enabled?'Incluir':'Excluir','text');
+        add(`difal.status.${id}`,`DIFAL · ${name}`,'Aplicação do DIFAL e da antecipação',`RBT12 desta competência: ${currency(input.rbt12)}.`,application.message,'text');
         const margin = available && revenue > 0 ? dre.netProfit / revenue : null;
         const totalTaxes = available ? cleanZero(taxes) : 0;
         const taxBurden = available && revenue > 0 ? totalTaxes / revenue : null;
@@ -917,6 +949,7 @@ export function calculateTax(rawInput) {
             margin,
             totalTaxes,
             taxBurden,
+            difalApplication:application,
             dre
         };
     }
@@ -954,10 +987,11 @@ export function calculateTax(rawInput) {
     if (input.serviceAnnex === 4 && input.serviceRevenue > 0 && input.extraPayroll === 0) warn('annex-iv-payroll', 'warning', 'Anexo IV com encargos fora do DAS zerados', 'O Anexo IV exige revisar a CPP fora do DAS. Informe os encargos efetivos, considerando eventual atividade mista; o modelo mantém o zero que foi explicitamente informado.');
     if (excessRevenue > 0) warn('presumption-increase', 'warning', 'Acréscimo dos coeficientes de presunção', 'A parcela projetada acima de R$ 5 milhões recebe acréscimo relativo de 10% nos coeficientes, ponderado pela receita das atividades. A projeção pressupõe composição uniforme e não substitui a verificação por período.');
     if (revenue === 0) warn('zero-revenue', 'info', 'Receita zero aceita', 'A DRE continua calculando custos e despesas. Margem, carga sobre receita e ranking não são apresentados, pois não há receita para comparação.');
-    if (hasDifal) warn('difal-estimate', 'info', 'DIFAL estimado incluído na DRE', 'Hipótese gerencial de 10% aplicada às operações elegíveis importadas e projetada pelo período do relatório. A mesma referência compõe os cenários uma única vez; não comprova incidência ou alíquota legal em cada regime.');
-    if (hasAnticipation) warn('icms-anticipation', 'info', 'Antecipação de ICMS nas compras', anticipationBlocked ? 'Antecipação zerada nesta competência: a RBT12 alcançou o sublimite de R$ 3,6 milhões ou o ICMS está fora do DAS. A base importada permanece na memória para conferência.' : 'Premissa gerencial de 7,32% sobre compras interestaduais elegíveis, somente no Simples Puro e Híbrido. A dedução entra uma única vez na DRE e não gera crédito adicional.');
+    if (hasDifal) warn('difal-estimate', 'info', 'DIFAL estimado por cenário', 'A referência importada de 10% permanece disponível. Cada cenário pode excluir o DIFAL; no Simples, RBT12 igual ou superior a R$ 3,6 milhões ou ICMS fora do DAS zera sua aplicação. Esta é uma premissa gerencial, não uma determinação de incidência legal.');
+    if (hasAnticipation) warn('icms-anticipation', 'info', 'Antecipação de ICMS nas compras', anticipationBlocked ? 'Antecipação zerada nesta competência: a RBT12 alcançou o sublimite de R$ 3,6 milhões ou o ICMS está fora do DAS. A base importada permanece na memória para conferência.' : 'Premissa gerencial de 7,32% sobre compras interestaduais elegíveis, apenas nos cenários Simples que estiverem com a opção DIFAL ligada. A dedução entra uma única vez na DRE e não gera crédito adicional.');
     return {
-        version: hasAnticipation ? MODEL_VERSION : LEGACY_MODEL_VERSION,
+        version: hasDifal||hasAnticipation||Object.hasOwn(input,'difalPolicy') ? MODEL_VERSION : LEGACY_MODEL_VERSION,
+        difalPolicy:parseDifalPolicy(difalPolicy),
         annualRevenue: revenue,
         regimes,
         credits,
@@ -979,7 +1013,9 @@ export function createEmptyDraft() {
 export function draftToInput(draft, difalProjection = null, anticipationProjection = null) {
   try {
     const explicitRbt12 = Object.hasOwn(draft, 'rbt12');
-    strictObject(draft, explicitRbt12 ? ['year', 'salesAnnex', 'serviceAnnex', 'values', 'rbt12'] : ['year', 'salesAnnex', 'serviceAnnex', 'values']);
+    const hasDifalPolicy=Object.hasOwn(draft,'difalPolicy');
+    strictObject(draft, ['year','salesAnnex','serviceAnnex','values',...(explicitRbt12?['rbt12']:[]),...(hasDifalPolicy?['difalPolicy']:[])]);
+    const difalPolicy=hasDifalPolicy?parseDifalPolicy(draft.difalPolicy):null;
     checkChoices(draft);
     strictObject(draft.values, SIMULATION_VALUE_FIELDS, ['values']);
     for (const key of SIMULATION_VALUE_FIELDS) checkNumber(draft.values[key], VALUE_LIMIT, ['values', key]);
@@ -1001,6 +1037,7 @@ export function draftToInput(draft, difalProjection = null, anticipationProjecti
     }
     return taxInputSchema.parse({
       ...values, year: draft.year, salesAnnex: draft.salesAnnex, serviceAnnex: draft.serviceAnnex,
+      ...(hasDifalPolicy?{difalPolicy}:{}),
       ...(difalProjection === null ? {} : {difalMonthly: difalProjection.monthlyCents / 100}),
       ...(anticipationProjection === null ? {} : {icmsAnticipation: {version: ICMS_ANTICIPATION_VERSION, monthlyCents: anticipationProjection.monthlyCents}}),
       simpleRegularPurchases: 0, extraPayroll: 0, icmsOutside: false,
@@ -1026,7 +1063,7 @@ export function calculateSimulation(draft, difalProjection = null, anticipationP
       {id: 'difal.source', section: 'DIFAL estimado', label: 'DIFAL do período importado', formula: 'Soma das estimativas por operação no relatório de origem; ajustes manuais de receita não alteram esta referência.', value: difalProjection.sourceAmountCents / 100, unit: 'currency'},
       {id: 'difal.monthly', section: 'DIFAL estimado', label: 'DIFAL médio mensal', formula: `Total importado ÷ ${difalProjection.reportMonths} competências, arredondado em centavos.`, value: difalProjection.monthlyCents / 100, unit: 'currency'}
     );
-    if (difalProjection.pendingLines > 0) result.warnings.push({code: 'difal-partial', severity: 'warning', title: 'DIFAL parcial na DRE', detail: `${difalProjection.pendingLines} linhas aguardam UF do emitente ou destinatário. O cenário inclui apenas a estimativa confirmada; corrija a origem e reimporte para completar a base.`});
+    if (difalProjection.pendingLines > 0) result.warnings.push({code: 'difal-partial', severity: 'warning', title: 'Base de DIFAL com pendências', detail: `${difalProjection.pendingLines} linhas aguardam UF do emitente ou destinatário. A referência inclui apenas a estimativa confirmada; sua dedução respeita as opções e os bloqueios de cada cenário. Corrija a origem e reimporte para completar a base.`});
   }
   if (anticipationProjection !== null) {
     if (Object.hasOwn(anticipationProjection,'sourceBaseCents')) result.memory.push({id:'icmsAnticipation.base',section:'Antecipação de ICMS',label:'Base de compras interestaduais importada',formula:'Compras elegíveis com UF do emitente e do fornecedor confirmadas e diferentes; ajustes manuais não alteram a origem.',value:anticipationProjection.sourceBaseCents/100,unit:'currency'});

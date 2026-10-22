@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildRbt12Schedule,section22RevenueHistory,RBT12_SCHEDULE_VERSION} from '../public/simulator-rbt12.js';
+import {buildRbt12Schedule,section22RevenueHistory,reconcileSection22Extraction,RBT12_SCHEDULE_VERSION} from '../public/simulator-rbt12.js';
 import {section22,section22Year2025} from './fixtures/section22.ts';
 
 const months2025=Array.from({length:12},(_,index)=>`2025-${String(index+1).padStart(2,'0')}`);
@@ -53,4 +53,27 @@ test('Meses inválidos, duplicados, valores inexatos e histórico conflitante s�
  ]){const source=section22Year2025();change(source);assert.throws(()=>section22RevenueHistory(source),TypeError);}
  const source=section22Year2025();for(const row of source.priorRevenues){row.internalCents=100000000000000;row.totalCents=row.internalCents;}
  assert.throws(()=>buildRbt12Schedule(source,['2025-01']),/limite/);
+});
+
+test('conferência compartilhada concilia todas as receitas com janela e RBT12 do PA sem somar23meses',()=>{
+ const source=section22Year2025(),before=structuredClone(source),checked=reconcileSection22Extraction(source);
+ assert.equal(checked.priorRevenues.length,23);assert.equal(checked.rbt12Window.length,12);
+ assert.equal(checked.rbt12Cents,21000000);assert.equal(checked.rbt12Cents,checked.rbt12Window.reduce((sum,row)=>sum+row.totalCents,0));
+ assert.notEqual(checked.rbt12Cents,checked.priorRevenues.reduce((sum,row)=>sum+row.totalCents,0));
+ assert.deepEqual(source,before);assert.notEqual(checked.priorRevenues[0],source.priorRevenues[0]);assert.notEqual(checked.rbt12Window[0],source.rbt12Window[0]);
+ for(const total of [0,12345629]){
+  const legacy=section22(total);delete legacy.priorRevenues;delete legacy.rbt12CalculatedCents;delete legacy.rbt12Reconciled;
+  assert.equal(reconcileSection22Extraction(legacy).rbt12Cents,total);
+ }
+});
+test('conferência não confirma valores multiplicados por12/100, somas de todo histórico ou janela deslocada',()=>{
+ for(const change of [
+  source=>source.rbt12Cents*=100,source=>source.rbt12Cents*=12,
+  source=>source.rbt12Cents=source.priorRevenues.reduce((sum,row)=>sum+row.totalCents,0),
+  source=>source.rbt12Window=source.priorRevenues.slice(0,12),
+  source=>source.rbt12Window=source.rbt12Window.map((row,index)=>index?row:{...row,totalCents:row.totalCents*100}),
+  source=>source.rbt12Basis.totalCents++,source=>source.rbt12Basis.internalCents++,
+  source=>source.rbt12CalculatedCents*=100,source=>source.rbt12Reconciled=false,
+  source=>source.rbt12Window.pop(),source=>source.rbt12Basis.startMonth='2024-01',
+ ]){const source=section22Year2025();change(source);assert.throws(()=>reconcileSection22Extraction(source),TypeError);}
 });

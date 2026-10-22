@@ -92,6 +92,41 @@ class SimplesExtractTests(unittest.TestCase):
         self.assertEqual(result['rbt12Window'], rows[11:])
         self.assertEqual(sum(row['usedInRbt12'] for row in rows), 12)
 
+    def test_full_section_22_preserves_small_decreasing_revenues_and_never_accumulates_monthly_cells(self):
+        # Four competence/value pairs per line, including small amounts and declines.
+        # All identities and amounts are synthetic; no taxpayer document is a fixture.
+        periods = [f'{i % 12 + 1:02d}/{2024 + i // 12}' for i in range(23)]
+        inside = [125, 987654, 9, 450000, 20875, 72100, 9999999, 5600,
+                  115000, 240, 320050, 1234567, 26299, 2826650, 24629,
+                  259142, 275919, 26877, 2650234, 254513, 20858, 233390, 284945]
+        outside = [0] * 23
+        outside[2], outside[20] = 17, 206
+        lines = ['Extrato do Simples Nacional',
+                 'CNPJ Básico: 12.345.678 Nome Empresarial: EMPRESA SINTETICA',
+                 'Período de Apuração (PA): 12/2025', '2.1 Discriminativo de Receitas',
+                 'RBT12 999.999.999,99 888.888.888,88 1.888.888.888,87',
+                 '2.2) Receitas Brutas Anteriores (R$)']
+        for heading, values in [('2.2.1) Mercado Interno', inside), ('2.2.2) Mercado Externo', outside)]:
+            lines.append(heading)
+            lines += ['   '.join(f'{periods[j]} {money(values[j])}'
+                                for j in range(i, min(i + 4, 23))) for i in range(0, 23, 4)]
+        lines += ['2.3) Folha de Salários Anteriores (R$)', '11/2025 999.999.999,99']
+        text = '\n'.join(lines)
+        parsed = parse_statement_text(text)
+        converted, _, _ = convert_statement_pdf(digital_pdf(text), section_only=True,
+            ocr_engine=lambda _: self.fail('A native monthly table does not require OCR'))
+        for result in [parsed, converted]:
+            self.assertEqual([row['period'] for row in result['priorRevenues']], periods)
+            self.assertEqual([row['internalCents'] for row in result['priorRevenues']], inside)
+            self.assertEqual([row['externalCents'] for row in result['priorRevenues']], outside)
+            self.assertEqual([row['totalCents'] for row in result['priorRevenues']],
+                             [a + b for a, b in zip(inside, outside)])
+            self.assertEqual(result['rbt12Cents'], sum(inside[11:]) + sum(outside[11:]))
+            self.assertEqual(result['rbt12Window'], result['priorRevenues'][11:])
+            self.assertEqual(result['rbt12Basis']['startMonth'], '2024-12')
+            self.assertEqual(result['rbt12Basis']['endMonth'], '2025-11')
+        self.assertFalse(converted['ocrUsed'])
+
     def test_cnpj_punctuation_can_be_separate_tokens_without_changing_digits(self):
         for text in [sample().replace('12.345.678', '12 . 345 . 678'),
                      declaration_sample().replace('12.345.678/0001-00', '12 . 345 . 678 / 0001 - 00'),

@@ -474,6 +474,41 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.deepEqual(await getSimulation(saved._id),saved,'O histórico OCR anterior permanece imutável.');
     });
 
+    await t.test('opções de DIFAL estritas, idempotentes e preservadas em nova versão sem alterar o hash legado', async () => {
+      const policy = {version:'DIFAL_SCENARIOS_V1', enabled:{pure:false, hybrid:true, presumed:false, actual:true}};
+      const records = await collection('simulations'), count = await records.countDocuments(scope());
+      const original = await records.findOne(scope({_id:saved._id}));
+      for (const bad of [undefined, null, [], {}, true,
+        {...policy,version:'UNKNOWN'}, {...policy,extra:true}, {...policy,enabled:null},
+        {...policy,enabled:{pure:false,hybrid:true,presumed:false}},
+        {...policy,enabled:{...policy.enabled,other:true}},
+        ...['false', 0, 1, null, undefined].map(pure => ({...policy,enabled:{...policy.enabled,pure}}))]) {
+        await assert.rejects(createSimulation(actor,{...input,simulationId:randomUUID(),draft:{...draft,difalPolicy:bad}}),code('VALIDATION'));
+      }
+      assert.equal(await records.countDocuments(scope()),count);
+      const requested = {...input,simulationId:randomUUID(),draft:{...draft,difalPolicy:{
+        enabled:{actual:true,presumed:false,hybrid:true,pure:false},version:policy.version
+      }}};
+      const before = structuredClone(requested);
+      const [configured,concurrent] = await Promise.all([createSimulation(actor,requested),createSimulation(actor,requested)]);
+      assert.deepEqual(configured,concurrent);assert.deepEqual(requested,before);
+      assert.deepEqual(configured.draft.difalPolicy,policy);
+      assert.equal(JSON.stringify(configured.draft.difalPolicy),JSON.stringify(policy),'A política recebe ordem canônica antes do hash.');
+      assert.deepEqual(configured.result,expected({...draft,difalPolicy:policy}).result);
+      assert.deepEqual(configured.engineInput,expected({...draft,difalPolicy:policy}).engineInput);
+      assert.deepEqual(await createSimulation(actor,{...requested,draft:{...draft,difalPolicy:policy}}),configured);
+      assert.equal(await records.countDocuments(scope({_id:configured._id})),1);
+      await assert.rejects(createSimulation(actor,{...requested,draft:{...draft,difalPolicy:{...policy,enabled:{...policy.enabled,pure:true}}}}),code('SIMULATION_EXISTS'));
+      await assert.rejects(createSimulation(actor,{...requested,draft}),code('SIMULATION_EXISTS'));
+      const revision = await createSimulation(operator,{...input,simulationId:randomUUID(),parentSimulationId:configured._id,
+        draft:{...draft,difalPolicy:structuredClone(configured.draft.difalPolicy)}});
+      assert.equal(revision.parentSimulationId,configured._id);assert.deepEqual(revision.draft.difalPolicy,policy);
+      assert.deepEqual(await getSimulation(configured._id),configured);
+      assert.deepEqual(await getSimulation(saved._id),saved);assert.deepEqual(await createSimulation(actor,input),saved);
+      assert.deepEqual(await records.findOne(scope({_id:saved._id})),original,'A escolha nova não reescreve o snapshot nem o hash anterior.');
+      assert.equal(Object.hasOwn(saved.draft,'difalPolicy'),false,'A ausência histórica continua ausente.');
+    });
+
     await t.test('HTTP exige sessão, origem válida e permissão de escrita; viewer pode reabrir', async () => {
       server = http.createServer(handler);
       await new Promise<void>(resolve => server!.listen(0, '127.0.0.1', resolve));

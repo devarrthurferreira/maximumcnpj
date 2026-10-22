@@ -1,4 +1,4 @@
-export const MONTHLY_MODEL_VERSION: '1.5.0-cpf-cnpj';
+export const MONTHLY_MODEL_VERSION: '1.6.0-difal-scenarios';
 import type {ReportFields} from './simulator-projection.js';
 import type {Rbt12Schedule} from './simulator-rbt12.js';
 export const MONTHLY_VERSION: 'REPORT_MONTHS_V1';

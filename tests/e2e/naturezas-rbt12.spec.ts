@@ -97,11 +97,12 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
   const result=section22Year2025(),extractionId=randomUUID(),mongo=new MongoClient(process.env.MONGODB_URI!);
   try{await mongo.connect();await mongo.db(process.env.MONGODB_DB).collection('simplesExtractions').insertOne({_id:extractionId as any,clientId,workspaceId:process.env.WORKSPACE_ID||'maximum',parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result});}finally{await mongo.close();}
   await statement(page,clientId,extractionId,result);await expect(page.locator('#guided-rbt12-continue')).toBeEnabled();await page.locator('#guided-rbt12-continue').click();
+  for(const regime of ['pure','hybrid','presumed','actual'])await expect(page.locator(`#difal-enabled-${regime}`)).toBeChecked();
   await expect(page.locator('label[for="rbt12"]')).toHaveText('RBT12 do PA 12/2025');await expect(page.locator('#rbt12')).toHaveValue('210000.00');
   await expect(page.locator('#salesCpfCents')).toHaveValue('5000.00');await expect(page.locator('#salesNonOptantCents')).toHaveValue('4000.00');await expect(page.locator('#serviceRevenue')).toHaveValue('500.00');await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('3200.00');
   await expect(page.locator('#month-context')).toContainText('78.000,00');
   await expect(page.locator('[data-difal-monthly]')).toContainText('1.000,00');await expect(page.locator('[data-anticipation-monthly]')).toContainText('234,24');
-  await page.locator('#rbt12-schedule summary').click();await expect(page.locator('#rbt12-schedule tbody tr')).toHaveCount(2);await expect(page.locator('#rbt12-schedule')).toContainText('90.000,00');
+  await expect(page.locator('#rbt12-schedule > details')).toHaveAttribute('open','');await expect(page.locator('#rbt12-schedule .projection-table-wrap tbody tr')).toHaveCount(2);await expect(page.locator('#rbt12-schedule')).toContainText('90.000,00');
   await page.locator('.sim-report-details>summary').click();await page.locator('.sim-operation-audit>summary').click();
   await expect(page.locator('.sim-operation-audit')).toContainText('21.700,00');await expect(page.locator('.sim-operation-audit')).toContainText('7.500,00');await expect(page.locator('.sim-operation-audit')).toContainText('1.500,00');
   await page.locator('.sim-report-details>summary').click();
@@ -113,6 +114,7 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
   expect(saved.rbt12Schedule.rows.map((row:any)=>row.rbt12Cents)).toEqual([7_800_000,9_000_000]);
   expect(saved.source.operationAudit).toMatchObject({salesReturnsCents:150_000,purchaseServicesCents:50_000,excludedSalesCents:150_000,excludedPurchaseCents:20_000});
   expect(saved.result.annualRevenue).toBe(21_700);
+  expect(saved.draft.difalPolicy).toEqual({version:'DIFAL_SCENARIOS_V1',enabled:{pure:true,hybrid:true,presumed:true,actual:true}});
   expect(saved.difalProjection.annualCents).toBe(220_000);
   expect(saved.difalProjection.sourceVersion).toBe('DIFAL_ESTIMATE_V4');
   expect(saved.anticipationProjection.sourceVersion).toBe('ICMS_ANTICIPATION_V3');
@@ -132,11 +134,31 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
     await reopened.locator('#dre-regime').selectOption('hybrid');await expect(reopened.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('234,24');
     const stored=await fresh.request.get(`/api/v4/simulations/${saved._id}`);expect(await stored.json()).toEqual(saved);
     for(const width of [1440,390]){await reopened.setViewportSize({width,height:1000});expect(await reopened.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await reopened.locator('#simulator-anticipation').screenshot({path:info.outputPath(`antecipacao-${width}.png`)});}
+    await expect(reopened.locator('#sim-difal-options [data-difal-option="pure"]')).toContainText('Incluído por escolha');
+    await reopened.locator('#create-version').click();await expect(reopened.locator('#simulator-form')).toBeVisible();
+    await expect(reopened.locator('#difal-enabled-pure')).toBeChecked();
+    await reopened.locator('#difal-enabled-pure').uncheck();await reopened.locator('#difal-enabled-actual').uncheck();
+    await reopened.locator('#rbt12-manual').click();await reopened.locator('#rbt12').fill('100000');await reopened.locator('#rbt12-manual-confirm').check();
+    const childSaving=reopened.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/simulations'&&response.request().method()==='POST');
+    await reopened.locator('#generate-simulation').click();const childResponse=await childSaving;expect(childResponse.ok(),await childResponse.text()).toBe(true);const child=await childResponse.json();
+    expect(child.parentSimulationId).toBe(saved._id);expect(child.draft.difalPolicy.enabled).toEqual({pure:false,hybrid:true,presumed:true,actual:false});
+    expect(child.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,-2200,-2200,0]);
+    expect(child.result.regimes.map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([0,-549,0,0]);
+    expect(child.difalProjection).toEqual(saved.difalProjection);expect(child.source.fields).toEqual(saved.source.fields);
+    await reopened.goto(`/simulator.html?simulation=${child._id}`);
+    await expect(reopened.locator('[data-difal-option="pure"]')).toContainText('Não incluído por escolha');
+    await expect(reopened.locator('[data-difal-state="pure"]')).toContainText('Excluído deste cenário');
+    expect(await (await fresh.request.get(`/api/v4/simulations/${child._id}`)).json()).toEqual(child);
+    expect(await (await fresh.request.get(`/api/v4/simulations/${saved._id}`)).json()).toEqual(saved);
+    await reopened.locator('#create-version').click();await expect(reopened.locator('#difal-enabled-pure')).not.toBeChecked();await expect(reopened.locator('#difal-enabled-actual')).not.toBeChecked();
   }finally{await fresh.close();}
   await page.locator('#rbt12-manual').click();await page.locator('#rbt12').fill('3600000');await page.locator('#rbt12-manual-confirm').check();
   const atSublimit=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/simulations'&&response.request().method()==='POST');
   await page.locator('#generate-simulation').click();const sublimitResponse=await atSublimit;expect(sublimitResponse.ok(),await sublimitResponse.text()).toBe(true);const sublimit=await sublimitResponse.json();
   expect(sublimit.result.regimes.map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([0,0,0,0]);
+  expect(sublimit.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,0,-2200,-2200]);
+  expect(sublimit.draft.difalPolicy.enabled).toEqual(saved.draft.difalPolicy.enabled);
+  for(const regime of ['pure','hybrid']){await expect(page.locator(`#difal-enabled-${regime}`)).toBeChecked();await expect(page.locator(`[data-difal-option="${regime}"]`)).toHaveAttribute('data-state','SUBLIMIT');}
   expect(sublimit.source.fields).toEqual(saved.source.fields);expect(sublimit.difalProjection).toEqual(saved.difalProjection);
   // A shorter, valid PA window cannot silently replace earlier monthly RBT12s.
   let missingHistoryWrites=0;page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/v4/simulations')missingHistoryWrites++;});

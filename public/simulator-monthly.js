@@ -1,7 +1,7 @@
 import {REPORT_GROUPS} from './simulator-projection.js';
 import {calculateSimulation, draftToInput, SIMULATION_VALUE_FIELDS} from './simulator-engine.js';
 
-export const MONTHLY_MODEL_VERSION='1.5.0-cpf-cnpj';
+export const MONTHLY_MODEL_VERSION='1.6.0-difal-scenarios';
 export const MONTHLY_VERSION='REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS=Object.freeze([...REPORT_GROUPS,'serviceRevenueCents']);
 const sum=values=>values.reduce((a,b)=>a+b,0);
@@ -103,6 +103,8 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     const dre=Object.fromEntries(Object.keys(regime.dre).map(key=>[key,sum(all.map(item=>item.dre[key]))]));
     const totalTaxes=sum(all.map(item=>item.totalTaxes));
     return {...regime,available:all.every(item=>item.available),...(all.some(item=>!item.available)?{status:`Indisponível em: ${monthlyResults.filter((row,index)=>!all[index].available).map(row=>row.sourceMonth).join(', ')}`} : {}),annualProfit:dre.netProfit,monthlyProfit:null,totalTaxes,dre,
+      difalApplication:{version:regime.difalApplication.version,enabled:regime.difalApplication.enabled,
+        months:all.map((item,index)=>({sourceMonth:monthlyResults[index].sourceMonth,...item.difalApplication}))},
       margin:annualRevenue>0?dre.netProfit/annualRevenue:null,taxBurden:annualRevenue>0?totalTaxes/annualRevenue:null};
   });
   const ranked=annualRevenue>0?regimes.filter(row=>row.available).sort((a,b)=>b.annualProfit-a.annualProfit):[];
@@ -111,6 +113,11 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     (!fixedMemory(item.id)||monthlyResults.every(row=>row.result.memory.some(entry=>entry.id===item.id&&entry.unit===item.unit&&entry.value===item.value)))).map(item=>fixedMemory(item.id)?{...item}:({...item,label:item.label.replace(/médio mensal|mensal|anual|da competência/g,'do período'),
     formula:'Soma dos valores calculados separadamente em cada competência importada.',
     value:sum(monthlyResults.map(row=>row.result.memory.find(entry=>entry.id===item.id)?.value||0))}));
+  for(const regime of regimes){
+    const choices=regime.difalApplication.months;
+    memory.push({id:`difal.option.${regime.id}`,section:`DIFAL · ${regime.name}`,label:'Opção de DIFAL do cenário',formula:'Escolha preservada em todas as competências; bloqueios automáticos são avaliados por mês.',value:regime.difalApplication.enabled?'Incluir':'Excluir',unit:'text'},
+      {id:`difal.status.${regime.id}`,section:`DIFAL · ${regime.name}`,label:'Aplicação por competência',formula:'Cada mês usa sua RBT12 e conserva o motivo de inclusão, exclusão ou bloqueio.',value:choices.map(item=>`${item.sourceMonth}: ${item.message}`).join(' '),unit:'text'});
+  }
   const warnings=[...new Map(monthlyResults.flatMap(row=>row.result.warnings.map(item=>({...item,detail:`${row.sourceMonth}: ${item.detail}`}))).filter(item=>!['difal-estimate'].includes(item.code)).map(item=>[item.code,item])).values()];
   warnings.push({code:'actual-months',severity:'info',title:'Valores por competência',detail:`Compras, vendas, serviços, DIFAL e antecipação seguem cada mês da coluna H. ${rbt12Schedule?'RBT12 móvel composta pelas 12 receitas anteriores de cada competência, exclusivamente do quadro 2.2.':'RBT12 fixa informada para o cenário.'} Total anual é a soma dos meses importados. Meses fora do período não têm dados. Não há compensação automática de créditos entre competências.`});
   const result={...first,version:MONTHLY_MODEL_VERSION,method:MONTHLY_VERSION,annualRevenue,regimes,credits,memory,warnings,monthlyResults,...(rbt12Schedule?{rbt12Schedule}:{}),

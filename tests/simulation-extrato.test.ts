@@ -5,7 +5,7 @@ import {section22,section22Year2025} from './fixtures/section22.ts';
 
 test('RBT12 provém de doze competências explícitas da seção 2.2, com ambos os mercados',()=>{
  const source=section22(16200000);source.rbt12Window[0].externalCents=123456;source.rbt12Window[0].totalCents+=123456;
- source.rbt12Cents+=123456;source.rbt12Basis.externalCents=123456;source.rbt12Basis.totalCents+=123456;
+ source.rbt12Cents+=123456;source.rbt12CalculatedCents=source.rbt12Cents;source.rbt12Basis.externalCents=123456;source.rbt12Basis.totalCents+=123456;
  const result=validateSection22(source);assert.equal(result.rbt12Cents,16323456);assert.equal(result.rbt12Window.length,12);
  assert.equal(result.rbt12Basis.startMonth,'2025-08');assert.equal(result.rbt12Basis.endMonth,'2026-07');
 });
@@ -16,6 +16,7 @@ test('RBT12 ausente, manual, com janela deslocada ou valores corrompidos nunca �
   (v:any)=>v.rbt12Window[0].month='2026-08',(v:any)=>v.rbt12Window[0].internalCents='0',
   (v:any)=>v.rbt12Window[0].externalCents=-1,(v:any)=>v.rbt12Window[0].totalCents=NaN,
   (v:any)=>v.rbt12Basis.months=11,(v:any)=>v.rbt12Basis.totalCents++,
+  (v:any)=>v.rbt12CalculatedCents*=100,(v:any)=>v.rbt12Reconciled=false,
  ]){const value=section22();change(value);assert.throws(()=>validateSection22(value),(e:any)=>e.code==='RBT12_EXTRACTION');}
  for(const value of [null,{},[],{rbt12:150000}])assert.throws(()=>validateSection22(value));
 });

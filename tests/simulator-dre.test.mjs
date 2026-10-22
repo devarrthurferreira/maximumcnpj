@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildDreSummary,buildDreEvolution} from '../public/simulator-dre-summary.js';
-import {buildDrePresentation,unifiedDreRows,DRE_PRESENTATION_VERSION} from '../public/simulator-dre.js';
-import {calculateSimulation,calculateTax,draftToInput} from '../public/simulator-engine.js';
+import {buildDrePresentation,unifiedDreRows,DRE_PRESENTATION_VERSION,dreDifalNotes} from '../public/simulator-dre.js';
+import {calculateSimulation,calculateTax,draftToInput,defaultDifalPolicy} from '../public/simulator-engine.js';
 import {annualizeReports,projectDifal} from '../public/simulator-projection.js';
 import {buildMonthlyDre,dreRows} from '../public/simulator-calendar.js';
 import {renderAnnualDre,renderCompleteMonthlyDre,renderDrePrintDocument} from '../public/simulator-dre-view.js';
@@ -49,6 +49,31 @@ test('DRE concilia antecipação de ICMS separada do DIFAL em anual, meses, subt
  assert.deepEqual(input,before);assert.equal(find(buildDrePresentation({result:baseline}),'icmsAnticipation'),undefined);
 });
 
+test('escolha de DIFAL e bloqueio ficam visíveis na DRE, CSV e impressão sem reinterpretar históricos',()=>{
+ const input=fixture();input.draft.difalPolicy=defaultDifalPolicy();input.draft.difalPolicy.enabled.actual=false;
+ input.draft.rbt12=3600000;
+ input.result=calculateSimulation(input.draft,{version:'DIFAL_DRE_V1',monthlyCents:10000,annualCents:120000},
+  {version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73200,annualCents:878400});
+ input.calendar=buildMonthlyDre(input.result,2027);
+ const before=structuredClone(input);freeze(input);const p=buildDrePresentation(input);
+ assert.deepEqual(p.difalPolicy,input.result.difalPolicy);assert.notEqual(p.difalPolicy,input.result.difalPolicy);
+ assert.deepEqual(find(p,'difal').values,{pure:0,hybrid:0,presumed:-1200,actual:0});
+ assert.equal(find(p,'icmsAnticipation').values.pure,0);
+ const notes=dreDifalNotes(p);assert.equal(notes.length,4);
+ assert.match(notes[0],/DIFAL: incluir.*Zerado automaticamente.*3.600.000/);
+ assert.match(notes[3],/DIFAL: excluir.*escolha do usuário/);
+ for(const output of [buildDreCsv({presentation:p}),renderAnnualDre({presentation:p,calendar:input.calendar,year:2027}),renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027})]){
+  assert.match(output,/DIFAL nos cenários/);assert.match(output,/Zerado automaticamente/);assert.match(output,/escolha do usuário/);
+ }
+ assert.deepEqual(input,before);
+ const legacy=structuredClone(input.result);delete legacy.difalPolicy;for(const regime of legacy.regimes)delete regime.difalApplication;
+ const original=JSON.stringify(legacy),old=buildDrePresentation({result:legacy});
+ assert.equal(Object.hasOwn(old,'difalPolicy'),false);assert.deepEqual(dreDifalNotes(old),[]);
+ assert(!buildDreCsv({presentation:old}).includes('DIFAL nos cenários'));
+ assert(!renderDrePrintDocument({presentation:old,year:2027}).includes('DIFAL nos cenários'));
+ assert.equal(find(old,'difal').values.presumed,-1200);assert.equal(JSON.stringify(legacy),original);
+});
+
 test('DRE e impressão distinguem RBT12 por competência da referência fixa legada',()=>{
  const input=fixture(),calendar=buildMonthlyDre(input.result,2027,{source:'MANUAL',confirmed:true,rbt12Cents:18000000});
  const fixed=buildDrePresentation({...input,calendar});
@@ -79,6 +104,11 @@ test('mês Simples disponível continua consultável quando outra competência i
   rows:reports.map((row,index)=>({sourceMonth:row.sourceMonth,status:'CONFIRMED',rbt12Cents:index?360000001:18000000,startMonth:`2024-0${index+1}`,endMonth:index?'2025-01':'2024-12',missingMonths:[],window:[]}))};
  const out=calculateMonthlySimulation(draft,reports,reports.map(row=>baselineMonth(row)),'source',schedule),calendar=buildMonthlyDre(out.result,2027),source={monthlyReports:reports};
  const input={result:out.result,calendar,source},before=structuredClone(input),p=buildDrePresentation(input);
+ const notes=dreDifalNotes(p);assert.match(notes[0],/2025-01: Incluído:.*2025-02: Zerado automaticamente/);
+ const januaryNotes=dreDifalNotes(p,{sourceMonth:'2025-01'});assert(!januaryNotes[0].includes('Zerado automaticamente'));
+ assert.match(dreDifalNotes(p,{sourceMonth:'2025-02'})[0],/Zerado automaticamente/);
+ assert.match(dreDifalNotes(p,{sourceMonth:'2025-03'})[0],/Sem decisão registrada/);
+ assert.notEqual(p.regimes[0].difalApplication,input.result.regimes[0].difalApplication);
  const captured=out.result.monthlyResults[0].result.regimes.find(row=>row.id==='pure');
  assert.equal(out.result.regimes[0].available,false);assert.equal(calendar.regimes[0].available,false);
  assert.equal(calendar.regimes[0].rows.find(row=>row.key==='netProfit').annual,null);

@@ -12,6 +12,24 @@ const unique = (rows,key,value) => {const matches=Array.isArray(rows)?rows.filte
 const SUBTOTALS = new Set(['revenue','netRevenue','cmv','grossProfit','personnel','preTax','netProfit']);
 const GROUPS = ['salesOptantCents','salesNonOptantCents','salesCpfCents'];
 
+/** Explain captured decisions only; older snapshots never acquire today's policy. */
+export function dreDifalNotes(presentation,{sourceMonth=null}={}) {
+  return (presentation?.regimes||[]).flatMap(regime=>{
+    const application=regime.difalApplication;
+    if(application?.version!=='DIFAL_SCENARIOS_V1'||typeof application.enabled!=='boolean')return [];
+    const choice=`${regime.name} · DIFAL: ${application.enabled?'incluir':'excluir'}.`;
+    if(!Array.isArray(application.months))return [choice+' '+(application.message||'')];
+    const months=application.months.filter(item=>!sourceMonth||item.sourceMonth===sourceMonth);
+    if(!months.length)return [choice+' Sem decisão registrada para esta competência.'];
+    const groups=new Map();
+    for(const item of months){
+      if(!groups.has(item.message))groups.set(item.message,[]);
+      groups.get(item.message).push(item.sourceMonth);
+    }
+    return [choice+' '+[...groups].map(([message,periods])=>`${periods.join(', ')}: ${message}`).join(' ')];
+  });
+}
+
 /** One continuous display/export order, retaining the original row objects and values. */
 export function unifiedDreRows(presentation) {
   const base=(presentation?.sections||[]).flatMap(section=>section.rows||[]);
@@ -63,6 +81,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     };
   }
   const regimes = originals.map(r=>({id:r.id,name:r.name,available:r.available===true,
+    ...(r.difalApplication?.version==='DIFAL_SCENARIOS_V1'?{difalApplication:structuredClone(r.difalApplication)}:{}),
     ...(actual?{monthlyAvailability:months.map((_,index)=>frame(r,'month',index).available)}:{})}));
   function checkedFrame(f,compute) {
     if(!f.available)return missing(actual&&f.kind==='month'&&!f.monthlyEntry?'Sem dados importados para esta competência.':f.regime.available===true?'Calendário salvo não disponível para este regime.':f.regime.status&&!/^Disponível/.test(f.regime.status)?f.regime.status:'Regime indisponível neste cenário.');
@@ -188,6 +207,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     indicator('totalTaxes','Tributos e encargos totais',taxes,{unit:'currency',notes:['Inclui encargos sobre a folha. Créditos utilizados já foram abatidos; não deduzir novamente.']})
   ];
   return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,months,calendarYear,
+    ...(result?.difalPolicy?.version==='DIFAL_SCENARIOS_V1'?{difalPolicy:structuredClone(result.difalPolicy)}:{}),
     ...(calendar?.rbt12Schedule?{rbt12Schedule:structuredClone(calendar.rbt12Schedule)}:{}),
     calendarReference:calendar?.rbt12Reference??null,calendarRounding:calendar?.rounding??'Valores completos preservados; exibição com duas casas decimais.',
     percentBasis:'Receita bruta total do cenário'};
