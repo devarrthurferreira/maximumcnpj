@@ -21,7 +21,7 @@ function sheetMatrix(name, preview = false) {
 }
 function validate(parser, data, header) {
   return parser.parsePurchaseMatrix(matrix, Number(header), {type:data.reportType || data.type || 'PURCHASES', calculationVersion:data.calculationVersion || 'NET_V2',
-    companyCode:data.companyCode, issuerUf:data.issuerUf, difalVersion:data.difalVersion, operationVersion:data.operationVersion, ...(csvSource ? {sourceFormat:'CSV', delimiter:csvSource.delimiter, sourceLines:csvSource.sourceLines, recoverDescriptionSeparators:true} : {})});
+    companyCode:data.companyCode, issuerUf:data.issuerUf, difalVersion:data.difalVersion, operationVersion:data.operationVersion, anticipationVersion:data.anticipationVersion, ...(csvSource ? {sourceFormat:'CSV', delimiter:csvSource.delimiter, sourceLines:csvSource.sourceLines, recoverDescriptionSeparators:true} : {})});
 }
 self.onmessage = async ({data}) => {
   try {

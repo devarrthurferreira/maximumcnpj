@@ -1,4 +1,4 @@
-export const MONTHLY_MODEL_VERSION: '1.4.0-natures-rbt12';
+export const MONTHLY_MODEL_VERSION: '1.4.1-cpf-anticipation';
 import type {ReportFields} from './simulator-projection.js';
 import type {Rbt12Schedule} from './simulator-rbt12.js';
 export const MONTHLY_VERSION: 'REPORT_MONTHS_V1';

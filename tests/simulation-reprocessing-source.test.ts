@@ -158,9 +158,9 @@ test('Recálculo reconstrói serviços, devoluções e DIFAL sobre linhas congel
     });
     await t.test('compras antigas sem natureza bloqueiam a regra nova sem modificar o histórico',async()=>{
       await lines.updateOne(scope({jobId:purchases._id,index:0}),{$unset:{natureCode:''}});
-      await jobs.updateOne(scope({_id:purchases._id}),{$unset:{operationVersion:''}});
+      await jobs.updateOne(scope({_id:purchases._id}),{$unset:{operationVersion:'',anticipationVersion:''}});
       try{await assert.rejects(rebuildSimulationSource(original),(error:any)=>error.code==='SIMULATION_OPERATIONS');}
-      finally{await lines.updateOne(scope({jobId:purchases._id,index:0}),{$set:{natureCode:'1102'}});await jobs.updateOne(scope({_id:purchases._id}),{$set:{operationVersion:current.operationVersion}});}
+      finally{await lines.updateOne(scope({jobId:purchases._id,index:0}),{$set:{natureCode:'1102'}});await jobs.updateOne(scope({_id:purchases._id}),{$set:{operationVersion:current.operationVersion,anticipationVersion:purchases.anticipationVersion}});}
       assert.deepEqual(original,archivedSnapshot);
     });
     await t.test('origem, competência, componentes e workspace divergentes bloqueiam antes do recálculo', async () => {

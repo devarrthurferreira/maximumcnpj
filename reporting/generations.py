@@ -6,6 +6,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Spacer, PageBreak
 
 from .core import require, utcnow, display_date, number
+from .anticipation import ANTICIPATION_VERSION
 from .purchases import (PURCHASES_MODE, SALES_MODE, purchase_metadata, purchase_pdf_styles, purchase_story,
                         purchase_page_callback, purchase_paragraph, purchase_table, money, _check, _integer)
 
@@ -67,6 +68,9 @@ def generation_metadata(db, generation_id, workspace, part=1):
     if 'SALES' in totals_by_type:
         totals_by_type['SALES']['difal'] = {'baseCents': 0, 'amountCents': 0, 'eligibleLines': 0,
                                           'pendingLines': 0, 'unavailableReports': 0}
+    if 'PURCHASES' in totals_by_type:
+        totals_by_type['PURCHASES']['anticipation'] = {'baseCents': 0, 'amountCents': 0, 'eligibleLines': 0,
+            'pendingLines': 0, 'unavailableReports': 0, 'legacyReports': 0}
     for company in selected:
         reports = {}
         for report_type in required:
@@ -86,6 +90,14 @@ def generation_metadata(db, generation_id, workspace, part=1):
                 else:
                     for key in ('baseCents', 'amountCents', 'eligibleLines', 'pendingLines'):
                         totals['difal'][key] = _integer(totals['difal'][key] + meta['difal'][key])
+            else:
+                estimate = meta.get('anticipation')
+                if estimate is None:
+                    totals['anticipation']['unavailableReports'] += 1
+                else:
+                    for key in ('baseCents', 'amountCents', 'eligibleLines', 'pendingLines'):
+                        totals['anticipation'][key] = _integer(totals['anticipation'][key] + estimate[key])
+                    totals['anticipation']['legacyReports'] += int(estimate['version'] != ANTICIPATION_VERSION)
         sections.append({'company': company, 'reports': reports})
     # Keep the internal purchases list for consumers of older generation metadata.
     purchases = [section['reports']['PURCHASES'] for section in sections if 'PURCHASES' in section['reports']]
@@ -163,6 +175,27 @@ def render_generation_pdf(meta):
                                    'Os valores acima incluem somente operações elegíveis reconciliadas.', 'small'))
             story.append(p('Parâmetro médio estimado, sem equivalência automática à alíquota legal. '
                            'Exibido separadamente, sem alterar o total de vendas ou outros impostos.', 'small'))
+        else:
+            estimate = totals['anticipation']
+            story += [p(f'Antecipação de ICMS (7,32%) {scope}', 'heading')]
+            if estimate['unavailableReports'] == len(meta['purchases']):
+                story.append(p('Indisponível: todos os relatórios de compras desta parte são históricos '
+                               'anteriores ao cálculo da antecipação de ICMS.', 'small'))
+            else:
+                rows = [['Base elegível', 'Antecipação de ICMS (7,32%)', 'Linhas elegíveis', 'Linhas pendentes por UF'],
+                        [money(estimate['baseCents']), money(estimate['amountCents']), number(estimate['eligibleLines']),
+                         number(estimate['pendingLines'])]]
+                story += [purchase_table(rows, (.30, .30, .20, .20), width, styles), Spacer(1, 4)]
+                if estimate['unavailableReports'] or estimate['pendingLines']:
+                    story.append(p(f'Estimativa parcial: {number(estimate["unavailableReports"])} relatórios históricos '
+                                   f'sem antecipação disponível e {number(estimate["pendingLines"])} linhas pendentes por UF. '
+                                   'Os valores acima somam somente operações elegíveis reconciliadas.', 'small'))
+                if estimate['legacyReports']:
+                    story.append(p(f'{number(estimate["legacyReports"])} relatórios preservam a regra histórica V1, '
+                                   'anterior à restrição a CPF. Confira a versão nas memórias individuais.', 'small'))
+            story.append(p('Nas novas importações, somente compras interestaduais com fornecedor CPF de 11 dígitos '
+                           'e natureza de compra do catálogo ou serviço 8000. Parâmetro gerencial separado do total '
+                           'de compras; as regras de regime e sublimite são aplicadas na DRE.', 'small'))
     story += [p('Como conferir esta geração', 'heading'),
               p('As próximas páginas apresentam, por empresa e tipo de relatório, os grupos gerenciais, as bases dos percentuais '
                 'e os valores usados no cálculo. Fórmula atual: Q - Y + AA - AB. A despesa acessória Z é informativa. '

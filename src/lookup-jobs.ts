@@ -1,3 +1,4 @@
+import {ANTICIPATION_VERSION} from './icms-anticipation.ts';
 import { DIFAL_VERSION, normalizeUf } from './difal.ts';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.ts';
 import { randomUUID } from 'node:crypto';
@@ -30,7 +31,7 @@ async function createLookupRecord(actor:LookupActor,input:any,mode:string,repeat
     return existing;
   };
   if(old)return sameInput(old);
-  const job={_id:id,...scope(),mode,...(repeatedFrom?{repeatedFrom}:{}),...(isFinancialMode(mode)?{calculationVersion:PURCHASE_CALCULATION_VERSION,operationVersion:OPERATION_CATALOG_VERSION,issuerUf}:{}),...(mode===SALES_MODE?{difalVersion:DIFAL_VERSION}:{}),clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
+  const job={_id:id,...scope(),mode,...(repeatedFrom?{repeatedFrom}:{}),...(isFinancialMode(mode)?{calculationVersion:PURCHASE_CALCULATION_VERSION,operationVersion:OPERATION_CATALOG_VERSION,issuerUf}:{}),...(mode===SALES_MODE?{difalVersion:DIFAL_VERSION}:mode===PURCHASE_MODE?{anticipationVersion:ANTICIPATION_VERSION}:{}),clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
   try{await jobs.insertOne(job);}catch(error:any){
     if(error.code!==11000)throw error;
     const concurrent=await jobs.findOne(scope({_id:id}));
@@ -47,7 +48,7 @@ export async function uploadLookup(actor:LookupActor,id:string,input:any){
     need(j.status==='UPLOADING','Este lote não aceita novas linhas.',409);
     need(Array.isArray(input.rows)&&input.rows.length>0&&input.rows.length<=250,'Envie até 250 linhas por parte.');
     const offset=integer(input.offset,0,j.expectedRows-1);need(offset+input.rows.length<=j.expectedRows,'Linhas excedem o tamanho do lote.');
-    const lines=input.rows.map((row:any)=>isFinancialMode(j.mode)?compactPurchaseLine(row,calculationVersion(j),j.mode,{issuerUf:j.issuerUf,difalVersion:j.difalVersion,operationVersion:j.operationVersion}):compactLine(row)),hash=digest(JSON.stringify(lines)),chunks=await collection('chunks'),key=`lookup:${id}:${offset}`;
+    const lines=input.rows.map((row:any)=>isFinancialMode(j.mode)?compactPurchaseLine(row,calculationVersion(j),j.mode,{issuerUf:j.issuerUf,difalVersion:j.difalVersion,operationVersion:j.operationVersion,anticipationVersion:j.anticipationVersion}):compactLine(row)),hash=digest(JSON.stringify(lines)),chunks=await collection('chunks'),key=`lookup:${id}:${offset}`;
     const old=await chunks.findOne(scope({_id:key}));if(old){need(old.hash===hash,'Parte já enviada com outros dados.',409);if(old.complete)return {uploaded:j.uploaded};}
     need(offset===j.uploaded || (old && offset+lines.length===j.uploaded),'Retome a próxima parte esperada.',409,'UPLOAD_OFFSET');
     await chunks.updateOne(scope({_id:key}),{$setOnInsert:{...scope(),hash,complete:false,createdAt:new Date()}},{upsert:true});
@@ -124,9 +125,11 @@ export async function recheckLookup(actor: LookupActor, id: string, input: any =
         ...(financial ? {purchaseInput: old.purchaseInput, calculationVersion: calculationVersion(old), ...(old.operationVersion ? {operationVersion:old.operationVersion} : {}), ...(old.issuerUf !== undefined ? {issuerUf:old.issuerUf} : {})} : {}),
         ...(old.reportPeriod ? {reportPeriod: old.reportPeriod} : {}),
         ...(old.mode === SALES_MODE && old.difalVersion ? {difalVersion: old.difalVersion, issuerUf: old.issuerUf} : {}),
-        status: 'PROCESSING', startedAt: new Date()}, ...(financial && (!old.operationVersion || old.issuerUf === undefined || old.mode === SALES_MODE && old.difalVersion === undefined) ? {$unset: {
+        ...(old.mode === PURCHASE_MODE && old.anticipationVersion ? {anticipationVersion:old.anticipationVersion} : {}),
+        status: 'PROCESSING', startedAt: new Date()}, ...(financial && (!old.operationVersion || old.issuerUf === undefined || old.mode === SALES_MODE && old.difalVersion === undefined || old.mode === PURCHASE_MODE && old.anticipationVersion === undefined) ? {$unset: {
           ...(!old.operationVersion ? {operationVersion:''} : {}), ...(old.issuerUf === undefined ? {issuerUf:''} : {}),
-          ...(old.mode === SALES_MODE && old.difalVersion === undefined ? {difalVersion:''} : {})}} : {})});
+          ...(old.mode === SALES_MODE && old.difalVersion === undefined ? {difalVersion:''} : {}),
+          ...(old.mode === PURCHASE_MODE && old.anticipationVersion === undefined ? {anticipationVersion:''} : {})}} : {})});
       await audit(actor._id, 'lookup.recheck', fresh._id);
       return getJob(fresh._id);
     });

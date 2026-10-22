@@ -1,7 +1,7 @@
 import {REPORT_GROUPS} from './simulator-projection.js';
 import {calculateSimulation, draftToInput, SIMULATION_VALUE_FIELDS} from './simulator-engine.js';
 
-export const MONTHLY_MODEL_VERSION='1.4.0-natures-rbt12';
+export const MONTHLY_MODEL_VERSION='1.4.1-cpf-anticipation';
 export const MONTHLY_VERSION='REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS=Object.freeze([...REPORT_GROUPS,'serviceRevenueCents']);
 const sum=values=>values.reduce((a,b)=>a+b,0);
@@ -46,11 +46,12 @@ export function monthlyAnticipation(reports){
   const present=reports.filter(row=>row.anticipation);
   if(!present.length)return null;
   check(present.length===reports.length,'A antecipação de ICMS precisa estar disponível para todas as competências.');
-  for(const {anticipation:a} of reports)check(a.version==='ICMS_ANTICIPATION_V1'&&a.ratePercent===7.32&&
+  const sourceVersion=present[0].anticipation.version;
+  for(const {anticipation:a} of reports)check(['ICMS_ANTICIPATION_V1','ICMS_ANTICIPATION_V2'].includes(a.version)&&a.version===sourceVersion&&a.ratePercent===7.32&&
     ['amountCents','baseCents','eligibleLines','pendingLines'].every(key=>Number.isSafeInteger(a[key])&&a[key]>=0),'Referência da antecipação de ICMS inválida.');
   const totals=Object.fromEntries(['amountCents','baseCents','eligibleLines','pendingLines'].map(key=>[key,sum(reports.map(row=>row.anticipation[key]))]));
   check(Object.values(totals).every(Number.isSafeInteger),'Total de antecipação de ICMS acima do limite seguro.');
-  return {version:'ICMS_ANTICIPATION_MONTHS_V1',sourceVersion:'ICMS_ANTICIPATION_V1',ratePercent:7.32,
+  return {version:'ICMS_ANTICIPATION_MONTHS_V1',sourceVersion,ratePercent:7.32,
     sourceAmountCents:totals.amountCents,sourceBaseCents:totals.baseCents,annualCents:totals.amountCents,
     eligibleLines:totals.eligibleLines,pendingLines:totals.pendingLines,reportMonths:reports.length,
     months:reports.map(row=>({sourceMonth:row.sourceMonth,month:row.month,...row.anticipation}))};

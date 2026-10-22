@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.28.1] — 2026-10-22
+
+- Antecipação de ICMS de compras restrita a CPF nas operações interestaduais elegíveis, mantendo 7,32% e serviços 8000. CNPJ, CNO e documentos ausentes ou fora do formato CPF não geram valor nem pendência de UF.
+- Prévia, linhas, resumo, CSV e PDF de compras mostram a antecipação e sua base, confirmadas no servidor. Custos de compras sem CPF permanecem preservados.
+- DRE usa a mesma restrição, somente no Simples puro/híbrido e abaixo do sublimite. UF ausente nas compras continua pendente; não é substituída silenciosamente pela UF das vendas. DIFAL sobre vendas continua em 10%.
+- Contrato V2 para novos cálculos; V1 explícita conserva sua regra histórica. Relatórios sem versão mantêm retomada e conferência originais e indicam estimativa indisponível. Nova revisão cria versões vinculadas sem modificar snapshots anteriores.
+
+- Validação: 220 testes de regras, 69 de integração/reprocessamento, 141 Python/PDF/OCR e 114 de navegador aprovados. PDF e layouts desktop/mobile conferidos.
+
 ## [0.28.0] — 2026-10-22
 
 - Catálogo completo da coluna D: 619 naturezas, quatro dígitos, sem inferência pela descrição; compras preservam natureza e UF na importação.
