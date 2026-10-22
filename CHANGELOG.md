@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.29.0] — 2026-10-22
+
+- DIFAL de vendas inclui CPF e CNPJ válido nas naturezas elegíveis entre UFs diferentes, mantendo 10%.
+- DIFAL de entrada — Antecipação de ICMS inclui CPF e CNPJ válido em compras e serviços 8000 interestaduais, mantendo 7,32%. Documentos inválidos, CNO e ausência de documento permanecem excluídos.
+- Prévia, linhas, resumo, CSV, PDF e DRE usam os novos contratos. Relatórios anteriores podem exibir a estimativa atual derivada das linhas salvas, após conciliação da regra original e com origem identificada, sem modificar os dados históricos.
+- Simples puro/híbrido e bloqueio pelo sublimite preservados; nova revisão vinculada atualiza simulações sem sobrescrever originais.
+
+- Validação: 223 testes de regras, 76 casos de integração/reprocessamento, 149 testes Python/PDF/OCR e 123 casos únicos de navegador conferidos, incluindo reexecuções após ajustar fixtures e expectativas para CNPJ. Paridade Node/Python em 1.470 cálculos e revisão visual dos relatórios.
+
 ## [0.28.2] — 2026-10-22
 
 - Compras/entradas identificam explicitamente o DIFAL de entrada — Antecipação de ICMS na tela, prévia, CSV e PDF.

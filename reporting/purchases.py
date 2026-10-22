@@ -20,8 +20,9 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 from .brand import draw_brand_header
 from .core import VERSION, display_date, number, percent, require, utcnow, snapshot_source
-from .difal import DIFAL_VERSIONS, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
+from .difal import DIFAL_VERSION, DIFAL_VERSIONS, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
 from .operation_catalog import OPERATION_CATALOG_VERSION, classify_operation_nature, normalize_operation_nature
+from .tax_documents import is_canonical_cnpj as _valid_cnpj
 from .anticipation import (ANTICIPATION_VERSION, ANTICIPATION_VERSIONS, ANTICIPATION_RATE_PERCENT,
                            ANTICIPATION_PENDING_REASONS, calculate_anticipation)
 
@@ -125,18 +126,6 @@ def _integer(value, maximum=MAX_SAFE_INTEGER):
     return int(value)
 
 
-def _valid_cnpj(value):
-    if not isinstance(value, str) or not re.fullmatch(r'[A-Z0-9]{12}[0-9]{2}', value):
-        return False
-    if re.fullmatch(r'(\d)\1{13}', value) or value.startswith('000000000000'):
-        return False
-    def digit(text, weights):
-        remainder = sum((ord(char) - 48) * weight for char, weight in zip(text, weights)) % 11
-        return str(0 if remainder < 2 else 11 - remainder)
-    first = digit(value[:12], [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
-    return value[12:] == first + digit(value[:12] + first, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
-
-
 def _document_kind(document):
     if not document:
         return 'AUSENTE'
@@ -180,8 +169,13 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         isinstance(job['issuerUf'], str) and job['issuerUf'] == normalize_uf(job['issuerUf']))
     if operation_version is not None:
         _check(issuer_metadata_valid)
-    derive_anticipation = not sales and 'anticipationVersion' not in job and version == 'NET_V2' and issuer_metadata_valid
+    derive_difal = sales and job.get('difalVersion') != DIFAL_VERSION and version == 'NET_V2' and issuer_metadata_valid
+    derive_anticipation = not sales and job.get('anticipationVersion') != ANTICIPATION_VERSION and version == 'NET_V2' and issuer_metadata_valid
+    difal_derivation_complete = derive_difal
     derivation_complete = derive_anticipation
+    derived_difal = {'version': DIFAL_VERSION, 'ratePercent': DIFAL_RATE_PERCENT,
+        'issuerUf': normalize_uf(job.get('issuerUf')), 'eligibleLines': 0, 'baseCents': 0,
+        'amountCents': 0, 'pendingLines': 0} if derive_difal else None
     derived_anticipation = {'version': ANTICIPATION_VERSION, 'ratePercent': ANTICIPATION_RATE_PERCENT,
         'issuerUf': normalize_uf(job.get('issuerUf')), 'eligibleLines': 0, 'baseCents': 0,
         'amountCents': 0, 'pendingLines': 0} if derive_anticipation else None
@@ -256,17 +250,24 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
                 anticipation[key] = _integer(anticipation[key] + expected_anticipation[key])
             anticipation['eligibleLines'] += int(expected_anticipation['eligible'])
             anticipation['pendingLines'] += int(expected_anticipation['reason'] in ANTICIPATION_PENDING_REASONS)
-        elif derive_anticipation:
+        if derive_difal or derive_anticipation:
             has_fields = (isinstance(row.get('natureCode'), str) and
                           re.fullmatch(r'[0-9]{4}', row['natureCode']) is not None and
                           isinstance(row.get('recipientUf'), str) and row['recipientUf'] == normalize_uf(row['recipientUf']))
-            derivation_complete = derivation_complete and has_fields
-            if has_fields:
-                calculated = calculate_anticipation(row, derived_anticipation['issuerUf'])
+            for deriving, target, calculate, reasons in (
+                    (derive_difal, derived_difal, calculate_difal, PENDING_REASONS),
+                    (derive_anticipation, derived_anticipation, calculate_anticipation, ANTICIPATION_PENDING_REASONS)):
+                if not deriving or not has_fields:
+                    continue
+                # A historical operation label was validated above under its
+                # original rule; the current tax view uses today's catalog.
+                calculated = calculate({key: value for key, value in row.items() if key != 'operation'}, target['issuerUf'])
                 for key in ('baseCents', 'amountCents'):
-                    derived_anticipation[key] = _integer(derived_anticipation[key] + calculated[key])
-                derived_anticipation['eligibleLines'] += int(calculated['eligible'])
-                derived_anticipation['pendingLines'] += int(calculated['reason'] in ANTICIPATION_PENDING_REASONS)
+                    target[key] = _integer(target[key] + calculated[key])
+                target['eligibleLines'] += int(calculated['eligible'])
+                target['pendingLines'] += int(calculated['reason'] in reasons)
+            difal_derivation_complete = difal_derivation_complete and has_fields
+            derivation_complete = derivation_complete and has_fields
         operation = row.get('operation') if sales else None
         if sales:
             operation = operation if operation in operation_totals else 'OUTRAS'
@@ -395,11 +396,15 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
                           'suppliers': group['count'], 'supplierPercent': group['countPercent'],
                           'fileValuePercent': group['valuePercent']} for group in reporting_groups]
     quantity_text = format(quantity, 'f').rstrip('0').rstrip('.') if '.' in format(quantity, 'f') else format(quantity, 'f')
+    difal_origin = 'IMPORTED' if difal is not None else 'UNAVAILABLE'
     anticipation_origin = 'IMPORTED' if anticipation is not None else 'UNAVAILABLE'
-    if derivation_complete:
-        anticipation = derived_anticipation
-        anticipation_origin = 'DERIVED_FROM_SNAPSHOT'
-    return {'job': {key: job.get(key) for key in ('_id', 'mode', 'clientId', 'clientCode', 'clientName', 'fileName', 'completedAt', 'reportPeriod')},
+    if derive_difal:
+        difal = derived_difal if difal_derivation_complete else None
+        difal_origin = 'DERIVED_FROM_SNAPSHOT' if difal_derivation_complete else 'UNAVAILABLE'
+    if derive_anticipation:
+        anticipation = derived_anticipation if derivation_complete else None
+        anticipation_origin = 'DERIVED_FROM_SNAPSHOT' if derivation_complete else 'UNAVAILABLE'
+    return {'job': {key: job.get(key) for key in ('_id', 'mode', 'clientId', 'clientCode', 'clientName', 'fileName', 'completedAt', 'reportPeriod', 'difalVersion', 'anticipationVersion')},
             'reportType': 'SALES' if sales else 'PURCHASES',
             'totalCents': total_cents, 'cnpjCents': cnpj_cents, 'nonCnpjCents': non_cnpj_cents,
             'lineCount': line_count, 'uniqueSuppliers': unique, 'groups': list(groups.values()),
@@ -408,6 +413,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             'reportingGroups': reporting_groups, 'managerialGroups': managerial_groups,
             'unconfirmed': unknown, 'components': components, 'operationTotals': list(operation_totals.values()) if sales else [], 'calculationVersion': version,
             'difal': difal,
+            'difalOrigin': difal_origin,
             'anticipation': anticipation,
             'anticipationOrigin': anticipation_origin,
             'operationVersion': operation_version,
@@ -504,7 +510,7 @@ def purchase_story(meta, width, styles):
                  number(meta['lineCount']), money(meta['totalCents']), percent(100 if meta['totalCents'] else 0)])
     story += [purchase_table(rows, (.24, .12, .16, .08, .24, .16), width, styles, True), Spacer(1, 6)]
     if sales:
-        story += difal_story(meta.get('difal'), width, styles)
+        story += difal_story(meta.get('difal'), width, styles, meta.get('difalOrigin'))
     else:
         story += anticipation_story(meta.get('anticipation'), width, styles, meta.get('anticipationOrigin'))
     if sales and meta.get('operationTotals'):
@@ -568,13 +574,17 @@ def purchase_story(meta, width, styles):
     return story
 
 
-def difal_story(difal, width, styles):
+def difal_story(difal, width, styles, origin=None):
     """Keep the estimate separate from invoice totals and preserve missing-data states."""
     p = lambda value, style='body': purchase_paragraph(value, styles, style)
     story = [p('DIFAL sobre vendas (10%)', 'heading')]
     if difal is None:
-        return story + [p('Indisponível neste histórico: o snapshot foi criado antes do cálculo de DIFAL. '
-                          'Reimporte as vendas para calcular a estimativa com as UFs da operação.', 'small')]
+        return story + [p('Indisponível neste histórico: os dados salvos não permitem conferir o DIFAL em todas as linhas. '
+                          'São necessários os valores das vendas, a natureza de quatro dígitos e o campo de UF '
+                          'do destinatário preservados. Reimporte as vendas para completar esses dados.', 'small')]
+    if origin == 'DERIVED_FROM_SNAPSHOT':
+        story.append(p('Calculado a partir dos dados salvos no relatório de origem, após conferir a regra original, '
+                       'sem modificar o lote ou as suas linhas. A estimativa atual inclui CPF ou CNPJ válido.', 'small'))
     rows = [['UF do emitente', 'Linhas elegíveis', 'Base elegível', 'DIFAL sobre vendas (10%)'],
             [difal['issuerUf'] or 'Não informada', number(difal['eligibleLines']),
              money(difal['baseCents']), money(difal['amountCents'])]]
@@ -583,7 +593,7 @@ def difal_story(difal, width, styles):
         story.append(p(f'Estimativa parcial: {number(difal["pendingLines"])} linhas pendentes por UF do emitente '
                        'ou do destinatário ausente. Essas linhas não integram a base nem o valor acima.', 'small'))
     story.append(p('Alíquota média estimada de 10%, sem equivalência automática à alíquota legal. '
-                   'Aplica-se somente a vendas de mercadoria elegíveis para CPF de outra UF; '
+                   'Aplica-se somente a vendas de mercadoria elegíveis para CPF ou CNPJ válido de outra UF; '
                    'base = total registrado da venda. Valores arredondados por linha e somados uma única vez. '
                    'Este relatório mostra o total do período importado, sem alterar o total de vendas. '
                    'Nas novas simulações, cada competência usa as vendas daquele mês, e o total anual soma '
@@ -600,8 +610,8 @@ def anticipation_story(anticipation, width, styles, origin=None):
                           'em todas as linhas. São necessários os valores Q - Y + AA - AB, a natureza de quatro dígitos '
                           'e o campo de UF do fornecedor preservados. Reimporte as compras para completar esses dados.', 'small')]
     if origin == 'DERIVED_FROM_SNAPSHOT':
-        story.append(p('Calculado a partir dos dados salvos no relatório de origem, sem modificar o lote ou as suas linhas. '
-                       'A estimativa considera somente as operações elegíveis com CPF.', 'small'))
+        story.append(p('Calculado a partir dos dados salvos no relatório de origem, após conferir a regra original, '
+                       'sem modificar o lote ou as suas linhas. A estimativa atual inclui CPF ou CNPJ válido.', 'small'))
     rows = [['UF da empresa', 'Linhas elegíveis', 'Base elegível', 'Antecipação de ICMS (7,32%)'],
             [anticipation['issuerUf'] or 'Não informada', number(anticipation['eligibleLines']),
              money(anticipation['baseCents']), money(anticipation['amountCents'])]]
@@ -609,13 +619,9 @@ def anticipation_story(anticipation, width, styles, origin=None):
     if anticipation['pendingLines']:
         story.append(p(f'Estimativa parcial: {number(anticipation["pendingLines"])} linhas pendentes por UF da empresa '
                        'ou do fornecedor ausente. Essas linhas não integram a base nem o valor acima.', 'small'))
-    if anticipation['version'] == ANTICIPATION_VERSION:
-        story.append(p('Somente compras interestaduais com fornecedor identificado por CPF de 11 dígitos. '
-                       'CNPJs, CNOs, documentos ausentes ou inválidos não integram esta base. '
-                       'Naturezas consideradas: operações de compra do catálogo e serviços de prefixo 8000.', 'small'))
-    else:
-        story.append(p('Regra histórica V1 preservada: compras interestaduais do catálogo e serviços 8000, '
-                       'sem a restrição posterior a CPF. Este snapshot não foi recalculado.', 'small'))
+    story.append(p('Somente compras interestaduais com fornecedor identificado por CPF de 11 dígitos ou CNPJ válido. '
+                   'CNOs, documentos ausentes ou inválidos não integram esta base. '
+                   'Naturezas consideradas: operações de compra do catálogo e serviços de prefixo 8000.', 'small'))
     story.append(p('Parâmetro gerencial de 7,32%, sem equivalência automática à alíquota legal. '
                    'Base = total registrado da compra; arredondamento por linha em centavos e soma uma única vez. '
                    'Este valor fica separado do total de compras. Na DRE, a antecipação é aplicada somente ao Simples puro '

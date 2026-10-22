@@ -106,7 +106,8 @@ test('Recálculo reconstrói serviços, devoluções e DIFAL sobre linhas congel
       assert.deepEqual(rebuilt.fields, {salesOptantCents: 40000, salesNonOptantCents: 0, salesCpfCents: 20000,
         serviceRevenueCents: 12000, purchasesOptantCents: 0, purchasesNonOptantCents: 9000});
       assert.equal(rebuilt.sales.totalCents, 72000);
-      assert.equal(rebuilt.sales.difal?.amountCents, 2000); assert.equal(rebuilt.sales.difal?.pendingLines, 0);
+      assert.equal(rebuilt.sales.difal?.amountCents, 6000); assert.equal(rebuilt.sales.difal?.pendingLines, 0);
+      assert.equal(rebuilt.sales.difal?.version, 'DIFAL_ESTIMATE_V4');
       assert.equal(rebuilt.reprocessingSource.originalSalesTotalCents, 72000);
       assert.equal(rebuilt.reprocessingSource.salesBalanceChangeCents, 0);
       assert.equal(rebuilt.reprocessingSource.missingOperationEvidenceLines, 0, 'Linha neutra sem evidência não bloqueia a receita.');
@@ -122,11 +123,11 @@ test('Recálculo reconstrói serviços, devoluções e DIFAL sobre linhas congel
       await jobs.updateOne(scope({_id: sales._id}), {$unset: {issuerUf: ''}});
       try {
         const rebuilt = await rebuildSimulationSource(original);
-        assert.equal(rebuilt.sales.difal?.pendingLines, 1); assert.equal(rebuilt.sales.difal?.amountCents, 0);
+        assert.equal(rebuilt.sales.difal?.pendingLines, 2); assert.equal(rebuilt.sales.difal?.amountCents, 0);
         assert.equal(rebuilt.reprocessingSource.issuerUfSource, 'UNAVAILABLE');
         const withFrozenUf = structuredClone(original); withFrozenUf.source.sales.difal = current.sales.difal;
         const fromFrozen = await rebuildSimulationSource(withFrozenUf);
-        assert.equal(fromFrozen.sales.difal?.amountCents, 2000);
+        assert.equal(fromFrozen.sales.difal?.amountCents, 6000);
         assert.equal(fromFrozen.reprocessingSource.issuerUfSource, 'ORIGINAL_SIMULATION');
       } finally {await jobs.updateOne(scope({_id: sales._id}), {$set: {issuerUf: 'MG'}});}
       await lines.updateOne(scope({jobId: sales._id, index: 2}), {$unset: {recipientUf: ''}});
@@ -141,7 +142,7 @@ test('Recálculo reconstrói serviços, devoluções e DIFAL sobre linhas congel
         assert.equal(rebuilt.sales.selectedTotalCents,52000);assert.equal(rebuilt.operationAudit.excludedSalesCents,20000);
         assert.equal(rebuilt.reprocessingSource.originalSalesTotalCents, 72000);
         assert.equal(rebuilt.reprocessingSource.salesBalanceChangeCents, -20000);
-        assert.equal(rebuilt.sales.difal?.amountCents, 0);
+        assert.equal(rebuilt.sales.difal?.amountCents, 4000, 'A venda a CNPJ continua elegível; somente a devolução é excluída.');
         assert(rebuilt.warnings.some((warning: string) => warning.includes('não é um ajuste manual')));
         await lines.updateOne(scope({jobId: sales._id, index: 0}), {$set: {natureCode: '6202'}});
         assert.equal((await rebuildSimulationSource(original)).sales.selectedTotalCents,12000);

@@ -55,10 +55,10 @@ test('DIFAL preview recalculates UF and changed sale value without changing fina
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
 });
 
-test('5102 reconhece CPF de outra UF nas 12 competências e reavalia ao trocar o emitente',async({page})=>{
+test('5102 reconhece CPF e CNPJ de outra UF nas 12 competências e reavalia ao trocar o emitente',async({page})=>{
   await ready(page,'MG');
   await preview(page,Array.from({length:12},(_,i)=>({nature:i%2?'5102090':'5102001',
-    date:`15/${String(i+1).padStart(2,'0')}/2025`,description:'REGATA SINTÉTICA',value:'100,00',uf:'RJ'})));
+    date:`15/${String(i+1).padStart(2,'0')}/2025`,document:i%2?'11222333000181':'12345678900',description:'REGATA SINTÉTICA',value:'100,00',uf:'RJ'})));
   const panel=page.locator('#purchase-review .purchase-difal');
   await expect(panel).toContainText('12 linha(s) elegível(is)');
   await expect(panel.locator('[data-difal-amount]')).toContainText('120,00');
@@ -67,22 +67,26 @@ test('5102 reconhece CPF de outra UF nas 12 competências e reavalia ao trocar o
   await expect(panel.locator('[data-difal-amount]')).toContainText('0,00');
 });
 
-test('DIFAL rejects CNPJ, same UF, services and non-sale natures and marks missing recipient UF',async({page})=>{
+test('DIFAL inclui CPF e CNPJ válidos e exclui outros documentos, mesma UF, serviços e operações sem venda',async({page})=>{
   await ready(page,'MG');
   await expect(page.getByLabel('UF do estabelecimento emitente')).toHaveValue('MG');
   await preview(page,[{},
     {name:'Pessoa jurídica',document:'11222333000181'},
+    {name:'CNPJ inválido',document:'11222333000182'},
+    {name:'CNO',document:'123456789012'},
+    {name:'Documento ausente',document:''},
     {name:'Mesma UF',uf:'MG'},
     {name:'Serviço',nature:'9000',description:'Prestação de serviço'},
     {name:'Remessa',nature:'6949',description:'Remessa'},
-    {name:'Sem UF',uf:''}]);
+    {name:'Sem UF',uf:''},{name:'CNPJ sem UF',document:'11222333000181',uf:''}]);
   const table=page.locator('#purchase-review tbody');
   await expect(table.getByRole('row').nth(0)).toContainText('15,00');
-  for(const name of ['Pessoa jurídica','Mesma UF','Serviço','Remessa'])await expect(table.getByRole('row').filter({hasText:name})).toContainText('Não se aplica');
-  await expect(table.getByRole('row').filter({hasText:'Sem UF'})).toContainText('Pendente');
-  await expect(page.locator('#purchase-review .purchase-difal')).toContainText('1 linha(s) pendente(s)');
+  await expect(table.getByRole('row').filter({hasText:'Pessoa jurídica'})).toContainText('15,00');
+  for(const name of ['CNPJ inválido','CNO','Documento ausente','Mesma UF','Serviço','Remessa'])await expect(table.getByRole('row').filter({hasText:name})).toContainText('Não se aplica');
+  // The preview table shows its first eight lines; pending lines below it remain in the totals.
+  await expect(page.locator('#purchase-review .purchase-difal')).toContainText('2 linha(s) pendente(s)');
   await expect(page.locator('#purchase-review .purchase-difal')).toContainText('Valor parcial');
-  await expect(page.locator('#purchase-review [data-difal-amount]')).toContainText('15,00');
+  await expect(page.locator('#purchase-review [data-difal-amount]')).toContainText('30,00');
 });
 
 for(const guided of [false,true])test(`DIFAL ${guided?'guided':'full'} import preserves issuer UF during retry and displays persisted calculation`,async({page})=>{

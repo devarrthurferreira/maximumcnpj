@@ -1,7 +1,7 @@
 import {REPORT_GROUPS} from './simulator-projection.js';
 import {calculateSimulation, draftToInput, SIMULATION_VALUE_FIELDS} from './simulator-engine.js';
 
-export const MONTHLY_MODEL_VERSION='1.4.2-entries-report';
+export const MONTHLY_MODEL_VERSION='1.5.0-cpf-cnpj';
 export const MONTHLY_VERSION='REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS=Object.freeze([...REPORT_GROUPS,'serviceRevenueCents']);
 const sum=values=>values.reduce((a,b)=>a+b,0);
@@ -47,7 +47,7 @@ export function monthlyAnticipation(reports){
   if(!present.length)return null;
   check(present.length===reports.length,'A antecipação de ICMS precisa estar disponível para todas as competências.');
   const sourceVersion=present[0].anticipation.version;
-  for(const {anticipation:a} of reports)check(['ICMS_ANTICIPATION_V1','ICMS_ANTICIPATION_V2'].includes(a.version)&&a.version===sourceVersion&&a.ratePercent===7.32&&
+  for(const {anticipation:a} of reports)check(['ICMS_ANTICIPATION_V1','ICMS_ANTICIPATION_V2','ICMS_ANTICIPATION_V3'].includes(a.version)&&a.version===sourceVersion&&a.ratePercent===7.32&&
     ['amountCents','baseCents','eligibleLines','pendingLines'].every(key=>Number.isSafeInteger(a[key])&&a[key]>=0),'Referência da antecipação de ICMS inválida.');
   const totals=Object.fromEntries(['amountCents','baseCents','eligibleLines','pendingLines'].map(key=>[key,sum(reports.map(row=>row.anticipation[key]))]));
   check(Object.values(totals).every(Number.isSafeInteger),'Total de antecipação de ICMS acima do limite seguro.');

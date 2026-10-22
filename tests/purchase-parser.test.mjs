@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {amountCents, decimal, decodePurchaseCsv, parsePurchaseMatrix, fiscalDate} from '../public/purchase-parser.js';
 import {OPERATION_CATALOG_VERSION} from '../public/operation-catalog.js';
-import {DIFAL_VERSION} from '../public/difal.js';
-import {ANTICIPATION_VERSION, ANTICIPATION_LEGACY_VERSION} from '../public/icms-anticipation.js';
+import {DIFAL_VERSION, DIFAL_CATALOG_VERSION} from '../public/difal.js';
+import {ANTICIPATION_VERSION, ANTICIPATION_PREVIOUS_VERSION, ANTICIPATION_LEGACY_VERSION} from '../public/icms-anticipation.js';
 
 const header = Array(28).fill('');
 for (const [index,label] of [[0,'Documento'],[7,'Data Escrituração/Serviço'],[8,'Razão social'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']]) header[index] = label;
@@ -256,17 +256,22 @@ test('DIFAL preview uses registered sale total, recipient UF and the shared isol
     sale('123.456.789-00','MG','6108','Venda de mercadoria','150,00'),
     sale('123.456.789-00','SP','9000','Prestação de serviço','150,00'),
     sale('123.456.789-00','SP','6108','Venda de mercadoria','1000,00'),
-    sale('123.456.789-00','SP','6949','Remessa de mercadoria','150,00')];
+    sale('123.456.789-00','SP','6949','Remessa de mercadoria','150,00'),
+    sale('12.abc.345/01de-35','SP','6108','Venda de mercadoria','150,00'),
+    sale('11222333000182','SP','6108','Venda de mercadoria','150,00')];
   const report=parsePurchaseMatrix([header,...inputs],0,{type:'SALES',issuerUf:'MG'});
   assert.equal(report.errors.length,0);
   assert.equal(report.rows[0].recipientUf,'SP');
   assert.equal(report.rows[0].operation,'VENDA');
-  assert.deepEqual(report.rows.map(row=>row.difal.amountCents),[1500,0,0,0,10000,0]);
-  assert.deepEqual(report.rows.map(row=>row.difal.eligible),[true,false,false,false,true,false]);
-  assert.equal(report.difal.amountCents,11500);
-  assert.equal(report.difal.baseCents,115000);
-  assert.equal(report.difal.eligibleLines,2);
+  assert.deepEqual(report.rows.map(row=>row.difal.amountCents),[1500,1500,0,0,10000,0,1500,0]);
+  assert.deepEqual(report.rows.map(row=>row.difal.eligible),[true,true,false,false,true,false,true,false]);
+  assert.equal(report.rows.at(-1).difal.reason,'NOT_CPF_OR_CNPJ');
+  assert.equal(report.difal.amountCents,14500);
+  assert.equal(report.difal.baseCents,145000);
+  assert.equal(report.difal.eligibleLines,4);
   assert.equal(report.difal.pendingLines,0);
+  const historical=parsePurchaseMatrix([header,...inputs],0,{type:'SALES',issuerUf:'MG',difalVersion:DIFAL_CATALOG_VERSION});
+  assert.equal(historical.difal.amountCents,11500);assert.equal(historical.rows[1].difal.reason,'NOT_CPF');assert.equal(historical.rows[6].difal.reason,'NOT_CPF');
   const changedUf=parsePurchaseMatrix([header,eligible],0,{type:'SALES',issuerUf:'SP'});
   assert.equal(changedUf.difal.amountCents,0);
   eligible[16]='1000,00';
@@ -316,22 +321,25 @@ test('compras usam catálogo e primeiros quatro dígitos sem mudar total ou infe
   assert.throws(()=>parsePurchaseMatrix([header,...inputs],0,{operationVersion:'UNKNOWN'}),/catálogo/);
 });
 
-test('antecipação de compras usa 7,32% somente para CPF interestadual e deixa pendências explícitas', () => {
+test('antecipação de compras usa 7,32% para CPF e CNPJ válido interestadual, preserva versões e pendências', () => {
   const purchase=(document='123.456.789-00',uf='SP',nature='2102001')=>{
     const input=row(document,'Fornecedor sintético','1','150,00'); input[9]=uf; input[11]=nature;
     input[24]='10,00'; input[25]='900,00'; input[26]='2,00'; input[27]='1,00'; return input;
   };
   const inputs=[purchase(),purchase('11222333000181'),purchase('123456789012'),purchase(''),purchase('12345678900','MG'),
-    purchase('12345678900','','2102'),purchase('12345678900','SP','1202'),purchase('12345678900','SP','8000102')];
+    purchase('12345678900','','2102'),purchase('12345678900','SP','1202'),purchase('12345678900','SP','8000102'),purchase('12.abc.345/01de-35'),purchase('11222333000182')];
   const report=parsePurchaseMatrix([header,...inputs],0,{issuerUf:'MG'});
   assert.deepEqual(report.errors,[]);
-  assert.deepEqual(report.rows.map(value=>value.anticipation.reason),['ELIGIBLE','NOT_CPF','NOT_CPF','NOT_CPF','SAME_UF','MISSING_RECIPIENT_UF','NOT_PURCHASE','ELIGIBLE']);
+  assert.deepEqual(report.rows.map(value=>value.anticipation.reason),['ELIGIBLE','ELIGIBLE','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','SAME_UF','MISSING_RECIPIENT_UF','NOT_PURCHASE','ELIGIBLE','ELIGIBLE','NOT_CPF_OR_CNPJ']);
   assert.equal(report.rows[0].totalCents,14100); assert.equal(report.rows[0].anticipation.amountCents,1032);
-  assert.equal(report.totalCents,112800); assert.equal(report.components.accessoryCents,720000);
-  assert.deepEqual(report.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:2,baseCents:28200,amountCents:2064,pendingLines:1});
+  assert.equal(report.totalCents,141000); assert.equal(report.components.accessoryCents,900000);
+  assert.deepEqual(report.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:4,baseCents:56400,amountCents:4128,pendingLines:1});
   const missing=parsePurchaseMatrix([header,purchase()],0,{});
   assert.equal(missing.anticipation.pendingLines,1); assert.equal(missing.rows[0].anticipation.reason,'MISSING_ISSUER_UF');
-  assert.equal(parsePurchaseMatrix([header,purchase('11222333000181')]).anticipation.pendingLines,0);
+  assert.equal(parsePurchaseMatrix([header,purchase('11222333000181')]).anticipation.pendingLines,1);
+  assert.equal(parsePurchaseMatrix([header,purchase('11222333000182')]).anticipation.pendingLines,0);
+  const cpfOnly=parsePurchaseMatrix([header,purchase('11222333000181')],0,{issuerUf:'MG',anticipationVersion:ANTICIPATION_PREVIOUS_VERSION});
+  assert.equal(cpfOnly.anticipation.amountCents,0);assert.equal(cpfOnly.rows[0].anticipation.reason,'NOT_CPF');
   const historical=parsePurchaseMatrix([header,purchase('11222333000181')],0,{issuerUf:'MG',anticipationVersion:ANTICIPATION_LEGACY_VERSION});
   assert.equal(historical.rows[0].anticipation.amountCents,1032); assert.equal(historical.anticipation.version,ANTICIPATION_LEGACY_VERSION);
   const legacy=parsePurchaseMatrix([header,purchase()],0,{issuerUf:'MG',anticipationVersion:null});

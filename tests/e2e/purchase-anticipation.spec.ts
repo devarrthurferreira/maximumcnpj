@@ -1,5 +1,6 @@
 import {test,expect,type Page} from '@playwright/test';
-import {ANTICIPATION_VERSION} from '../../src/icms-anticipation.ts';
+import {ANTICIPATION_VERSION, ANTICIPATION_PREVIOUS_VERSION} from '../../src/icms-anticipation.ts';
+import {DIFAL_VERSION, DIFAL_CATALOG_VERSION} from '../../src/difal.ts';
 import {OPERATION_CATALOG_VERSION} from '../../src/operation-catalog.ts';
 
 const clientId='81000000-0000-4000-8000-000000000001',generationId='81000000-0000-4000-8000-000000000002',jobId='81000000-0000-4000-8000-000000000003';
@@ -27,7 +28,7 @@ const summary={version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligi
 const totals={lines:1,totalCents:15000,uniqueDocuments:1,uniqueCnpjs:0,nonCnpjDocumentCount:1,nonCnpjLines:1};
 const groups=[{status:'NAO_OPTANTE',count:1,lines:1,totalCents:15000,countPercent:100,valuePercent:100,unconfirmedCount:0,unconfirmedCents:0}];
 
-test('Antecipação compras mostra CPF, 7,32%, exclusões e pendências e recalcula a UF',async({page},testInfo)=>{
+test('Antecipação compras inclui CPF e CNPJ válido, 7,32%, exclusões e pendências e recalcula a UF',async({page},testInfo)=>{
   await base(page);
   await page.route(/\/api\/v4\/purchases(?:[/?]|$)/,r=>r.fulfill({json:{items:[],total:0}}));
   await page.goto('/purchases.html');await page.getByLabel('Empresa responsável (Código / ID)').selectOption(clientId);
@@ -44,25 +45,27 @@ test('Antecipação compras mostra CPF, 7,32%, exclusões e pendências e recalc
   await page.getByLabel('UF do estabelecimento comprador').selectOption('MG');
   await preview(page,[{},
     {name:'Pessoa jurídica',document:'11222333000181'},
-    {name:'Documento outro',document:'123456789012'},
+    {name:'CNPJ inválido',document:'11222333000182'},
     {name:'Mesma UF',uf:'MG'},
     {name:'Serviço 8000',nature:'8000102'},
     {name:'Devolução',nature:'1202001'},
     {name:'Sem UF',uf:''},
-    {name:'Sem documento',document:''}]);
-  await expect(panel.locator('[data-anticipation-amount]')).toContainText('21,96');
-  await expect(panel).toContainText('2 linha(s) elegível(is)');await expect(panel).toContainText('1 linha(s) pendente(s)');
+    {name:'Pessoa alfanumérica',document:'12.abc.345/01de-35'}]);
+  await expect(panel.locator('[data-anticipation-amount]')).toContainText('43,92');
+  await expect(panel).toContainText('Compras com CPF ou CNPJ');
+  await expect(panel).toContainText('4 linha(s) elegível(is)');await expect(panel).toContainText('1 linha(s) pendente(s)');
   const table=page.locator('#purchase-review tbody');
-  for(const name of ['Pessoa jurídica','Documento outro','Sem documento'])await expect(table.getByRole('row').filter({hasText:name})).toContainText('Fornecedor não identificado por CPF');
+  await expect(table.getByRole('row').filter({hasText:'CNPJ inválido'})).toContainText('Fornecedor não identificado por CPF ou CNPJ válido');
+  for(const name of ['Pessoa jurídica','Pessoa alfanumérica'])await expect(table.getByRole('row').filter({hasText:name})).toContainText('10,98');
   await expect(table.getByRole('row').filter({hasText:'Mesma UF'})).toContainText('Não se aplica');
   await expect(table.getByRole('row').filter({has:page.getByRole('cell',{name:'Serviço 8000',exact:true})})).toContainText('10,98');
   await expect(table.getByRole('row').filter({hasText:'Devolução'})).toContainText('Não se aplica');
   await expect(table.getByRole('row').filter({hasText:'Sem UF'})).toContainText('Pendente');
   const desktop=testInfo.outputPath('anticipation-preview-desktop.png');
-  await panel.screenshot({path:desktop});await testInfo.attach('Antecipação compras CPF desktop',{path:desktop,contentType:'image/png'});
+  await panel.screenshot({path:desktop});await testInfo.attach('Antecipação compras CPF e CNPJ desktop',{path:desktop,contentType:'image/png'});
   await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   const mobile=testInfo.outputPath('anticipation-preview-mobile.png');
-  await panel.screenshot({path:mobile});await testInfo.attach('Antecipação compras CPF mobile',{path:mobile,contentType:'image/png'});
+  await panel.screenshot({path:mobile});await testInfo.attach('Antecipação compras CPF e CNPJ mobile',{path:mobile,contentType:'image/png'});
 });
 
 for(const guided of [false,true])test(`Antecipação ${guided?'guiada':'completa'} preserva UF no retry, mostra snapshot e envia somente insumos`,async({page})=>{
@@ -125,15 +128,15 @@ test('Retomada de compras preserva o envio antigo e calcula a antecipação apó
 
 for(const guided of [false,true])test(`Relatório de entradas ${guided?'guiado':'completo'} mostra DIFAL calculado dos dados salvos sem reimportar`,async({page},testInfo)=>{
   await base(page,'MG');let writes=0;
-  // Old job deliberately has neither anticipationVersion nor operationVersion.
-  const job={_id:jobId,generationId,clientId,clientCode:client.code,clientName:client.name,mode:'PURCHASES_V1',issuerUf:'MG',calculationVersion:'NET_V2',fileName:'810-ENTRADAS.csv',status:'COMPLETED',expectedRows:1,uploaded:1,createdAt:'2026-10-20T12:00:00Z'};
+  // The frozen job still records the old CPF-only rule; its current view includes CNPJ.
+  const job={_id:jobId,generationId,clientId,clientCode:client.code,clientName:client.name,mode:'PURCHASES_V1',issuerUf:'MG',anticipationVersion:ANTICIPATION_PREVIOUS_VERSION,calculationVersion:'NET_V2',fileName:'810-ENTRADAS.csv',status:'COMPLETED',expectedRows:1,uploaded:1,createdAt:'2026-10-20T12:00:00Z'};
   await page.route('**/api/v4/generations/'+generationId,r=>r.fulfill({json:{_id:generationId,requiredReports:['PURCHASES'],companies:[{clientId,name:client.name,code:client.code,purchaseJobId:jobId,purchase:job}]}}));
   await page.route(/\/api\/v4\/purchases(?:[/?]|$)/,route=>{
     if(route.request().method()!=='GET')writes++;
     const url=new URL(route.request().url());
     if(url.pathname==='/api/v4/purchases')return route.fulfill({json:{items:[job],total:1}});
     if(url.pathname.endsWith('/summary'))return route.fulfill({json:{job,calculationVersion:'NET_V2',anticipation:summary,anticipationOrigin:'DERIVED_FROM_SNAPSHOT',totals,reportingGroups:groups}});
-    if(url.pathname.endsWith('/results')||url.pathname.endsWith('/lines'))return route.fulfill({json:{items:[{document:'12345678900',name:'FORNECEDOR SINTÉTICO',documentKind:'CPF',recipientUf:'SP',quantity:'1',natureCode:'2102',totalCents:15000,anticipation:result,anticipationOrigin:'DERIVED_FROM_SNAPSHOT'}],page:1,total:1,pageSize:100}});
+    if(url.pathname.endsWith('/results')||url.pathname.endsWith('/lines'))return route.fulfill({json:{items:[{document:'11222333000181',name:'FORNECEDOR CNPJ SINTÉTICO',documentKind:'CNPJ',recipientUf:'SP',quantity:'1',natureCode:'2102',totalCents:15000,anticipation:result,anticipationOrigin:'DERIVED_FROM_SNAPSHOT'}],page:1,total:1,pageSize:100}});
     return route.fulfill({json:job});
   });
   await page.goto(`/purchases.html?generation=${generationId}&client=${clientId}&job=${jobId}${guided?'&guided=1':''}`);
@@ -141,7 +144,7 @@ for(const guided of [false,true])test(`Relatório de entradas ${guided?'guiado':
   await expect(panel.getByRole('heading',{name:'DIFAL de entrada — Antecipação de ICMS'})).toBeVisible();
   await expect(panel).toContainText('Calculado a partir dos dados já salvos neste relatório.');
   await expect(panel.locator('[data-anticipation-amount]')).toContainText('10,98');
-  await expect(panel).not.toContainText('importe');await expect(panel).toContainText('Compras com CPF · 7,32%');
+  await expect(panel).not.toContainText('importe');await expect(panel).toContainText('Compras com CPF ou CNPJ · 7,32%');
   await expect(page.locator('#purchase-report-view .purchase-hero')).toContainText('150,00');
   if(!guided){
     const desktop=testInfo.outputPath('difal-entrada-snapshot-desktop.png');await panel.screenshot({path:desktop});await testInfo.attach('DIFAL de entrada calculado do histórico desktop',{path:desktop,contentType:'image/png'});
@@ -172,4 +175,53 @@ test('Relatório de entradas sem dados salvos suficientes informa indisponibilid
   await page.getByLabel('Visualização').selectOption('lines');
   await expect(page.locator('#purchase-result-list tbody')).toContainText('Indisponível');
   await expect(page.locator('#purchase-result-list tbody')).not.toContainText('R$ 0,00');
+});
+
+test('DIFAL vendas inclui CNPJ numérico e alfanumérico na prévia e usa a versão atual do resumo histórico',async({page})=>{
+  await base(page,'MG');let writes=0;
+  const job={_id:jobId,clientId,clientCode:client.code,clientName:client.name,mode:'SALES_V1',issuerUf:'MG',difalVersion:DIFAL_CATALOG_VERSION,calculationVersion:'NET_V2',fileName:'810-VENDAS.csv',status:'COMPLETED',expectedRows:1,uploaded:1,createdAt:'2026-10-20T12:00:00Z'};
+  await page.route(/\/api\/v4\/sales(?:[/?]|$)/,route=>{
+    if(route.request().method()!=='GET')writes++;
+    const url=new URL(route.request().url());
+    if(url.pathname==='/api/v4/sales')return route.fulfill({json:{items:[job],total:1}});
+    if(url.pathname.endsWith('/summary'))return route.fulfill({json:{job,calculationVersion:'NET_V2',difal:{...summary,version:DIFAL_VERSION,ratePercent:10,amountCents:1500},difalOrigin:'DERIVED_FROM_SNAPSHOT',totals,reportingGroups:groups}});
+    if(url.pathname.endsWith('/results')||url.pathname.endsWith('/lines'))return route.fulfill({json:{items:[{document:'11222333000181',name:'COMPRADOR CNPJ SINTÉTICO',documentKind:'CNPJ',recipientUf:'SP',quantity:'1',natureCode:'6108',operation:'VENDA',totalCents:15000,difal:{...result,amountCents:1500},difalOrigin:'DERIVED_FROM_SNAPSHOT'}],page:1,total:1,pageSize:100}});
+    return route.fulfill({json:job});
+  });
+  await page.goto('/purchases.html?type=SALES');await page.getByLabel('Empresa responsável (Código / ID)').selectOption(clientId);
+  await page.locator('#purchase-file').setInputFiles({name:'810-VENDAS.csv',mimeType:'text/csv',buffer:Buffer.from(csv([
+    {name:'Pessoa física',nature:'6108'},
+    {name:'Pessoa jurídica',document:'11222333000181',nature:'6108'},
+    {name:'Pessoa alfanumérica',document:'12.abc.345/01de-35',nature:'6108'},
+    {name:'CNPJ inválido',document:'11222333000182',nature:'6108'}]))});
+  await page.getByRole('button',{name:'Conferir colunas e valores'}).click();
+  const previewPanel=page.locator('#purchase-review .purchase-difal');
+  await expect(previewPanel).toContainText('Vendas com CPF ou CNPJ');
+  await expect(previewPanel.locator('[data-difal-amount]')).toContainText('45,00');
+  await expect(previewPanel).toContainText('3 linha(s) elegível(is)');
+  await expect(page.locator('#purchase-review tbody tr').filter({hasText:'CNPJ inválido'})).toContainText('Destinatário não identificado por CPF ou CNPJ válido');
+  await page.goto(`/purchases.html?type=SALES&client=${clientId}&job=${jobId}`);
+  const panel=page.locator('#purchase-report-view .purchase-difal');
+  await expect(panel).toContainText('Vendas com CPF ou CNPJ');
+  await expect(panel).toContainText('Calculado a partir dos dados já salvos neste relatório.');
+  await expect(panel.locator('[data-difal-amount]')).toContainText('15,00');
+  await page.getByLabel('Visualização').selectOption('lines');
+  await expect(page.locator('#purchase-result-list tbody')).toContainText('15,00');
+  await expect(page.locator('#purchase-result-list tbody')).toContainText('Calculado dos dados salvos');expect(writes).toBe(0);
+});
+
+for(const sales of [false,true])test(`Retomada ${sales?'vendas':'compras'} mantém regra congelada só CPF na prévia`,async({page})=>{
+  await base(page,'MG');
+  const endpoint=sales?'sales':'purchases',fileName=sales?'810-VENDAS.csv':'810-COMPRAS.csv';
+  const job={_id:jobId,clientId,clientCode:client.code,clientName:client.name,mode:sales?'SALES_V1':'PURCHASES_V1',issuerUf:'MG',operationVersion:OPERATION_CATALOG_VERSION,
+    ...(sales?{difalVersion:DIFAL_CATALOG_VERSION}:{anticipationVersion:ANTICIPATION_PREVIOUS_VERSION}),calculationVersion:'NET_V2',fileName,status:'UPLOADING',expectedRows:1,uploaded:0,createdAt:'2026-10-20T12:00:00Z'};
+  await page.route(new RegExp(`/api/v4/${endpoint}(?:[/?]|$)`),route=>route.fulfill({json:new URL(route.request().url()).pathname===`/api/v4/${endpoint}`?{items:[job],total:1}:job}));
+  await page.goto(`/purchases.html?${sales?'type=SALES&':''}client=${clientId}&job=${jobId}`);
+  await expect(page.getByRole('heading',{name:'Importação incompleta'})).toBeVisible();
+  await page.locator('#purchase-file').setInputFiles({name:fileName,mimeType:'text/csv',buffer:Buffer.from(csv([{document:'11222333000181',nature:sales?'6108':'2102'}]))});
+  await page.getByRole('button',{name:'Conferir colunas e valores'}).click();
+  const panel=page.locator('#purchase-review .purchase-difal');
+  await expect(panel).toContainText(sales?'Vendas com CPF':'Compras com CPF');await expect(panel).not.toContainText('CPF ou CNPJ');
+  await expect(panel.locator(sales?'[data-difal-amount]':'[data-anticipation-amount]')).toContainText('0,00');
+  await expect(page.locator('#purchase-review tbody')).toContainText(sales?'Destinatário não identificado por CPF':'Fornecedor não identificado por CPF');
 });

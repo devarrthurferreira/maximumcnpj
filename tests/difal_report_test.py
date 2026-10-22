@@ -4,7 +4,7 @@ from copy import deepcopy
 from unittest.mock import patch
 
 from reporting.core import ReportError
-from reporting.difal import DIFAL_VERSION, DIFAL_PREVIOUS_VERSION, calculate_difal, sales_operation
+from reporting.difal import DIFAL_VERSION, DIFAL_CPF_VERSION, DIFAL_PREVIOUS_VERSION, calculate_difal, sales_operation
 from reporting.operation_catalog import OPERATION_CATALOG_GROUPS, OPERATION_CATALOG_VERSION
 from reporting.purchases import COMPONENT_FIELDS, reconcile_purchase_snapshot, purchase_story, purchase_pdf_styles, render_purchase_pdf
 from reporting.generations import generation_metadata, render_generation_pdf
@@ -13,7 +13,7 @@ import generations_report_test
 
 
 def difal_fixture(cents=15000, *, reason='ELIGIBLE', issuer='MG', recipient='SP',
-                  nature='6108', description='Camiseta', operation='VENDA', cnpj=False):
+                  nature='6108', description='Camiseta', operation='VENDA', cnpj=False, version=DIFAL_VERSION):
     job, source_lines, source_items = sales_fixture()
     row = deepcopy(source_lines[0 if cnpj else -1])
     row.update(index=0, _id=f'{job["_id"]}:0', totalCents=cents, grossCents=cents,
@@ -27,12 +27,12 @@ def difal_fixture(cents=15000, *, reason='ELIGIBLE', issuer='MG', recipient='SP'
         item = deepcopy(source_items[0])
         item.update(occurrences=1, totalCents=cents)
         items.append(item)
-    job.update(difalVersion=DIFAL_VERSION, issuerUf=issuer, expectedRows=1, uploaded=1,
+    job.update(difalVersion=version, issuerUf=issuer, expectedRows=1, uploaded=1,
                summary={'lines': 1, 'unique': int(cnpj), 'invalid': int(not cnpj), 'duplicates': 0},
                purchaseInput={'totalCents': cents, 'balanceCents': row['balanceCents'],
                               'cnpjCents': cents if cnpj else 0,
                               'components': {key: row[key] for key in (*COMPONENT_FIELDS, 'totalCents')},
-                              'difal': {'version': DIFAL_VERSION, 'ratePercent': 10, 'issuerUf': issuer,
+                              'difal': {'version': version, 'ratePercent': 10, 'issuerUf': issuer,
                                         'eligibleLines': int(reason == 'ELIGIBLE'),
                                         'baseCents': row['difal']['baseCents'], 'amountCents': row['difal']['amountCents'],
                                         'pendingLines': int(reason in ('MISSING_ISSUER_UF', 'MISSING_RECIPIENT_UF'))}})
@@ -51,16 +51,75 @@ def story_text(meta):
 
 
 class DifalReportTests(unittest.TestCase):
-    def test_5102_new_reports_and_v1_archives_use_their_own_rules(self):
-        for version in ('DIFAL_ESTIMATE_V1', 'DIFAL_ESTIMATE_V2', DIFAL_VERSION):
+    def test_cpf_and_valid_numeric_or_alphanumeric_cnpj_are_eligible(self):
+        _, rows, _ = difal_fixture()
+        for document in ('12345678901', '123.456.789-01', '11222333000181', '11.222.333/0001-81',
+                         '12ABC34501DE35', '12.abc.345/01de-35'):
+            self.assertEqual(calculate_difal({**rows[0], 'document': document}, 'MG')['amountCents'], 1500)
+        for document in ('11222333000182', '12ABC34501DE36', '00000000000000', '11111111111111',
+                         '123456789012', '', None, 'INVALIDO'):
+            self.assertEqual(calculate_difal({**rows[0], 'document': document}, '')['reason'], 'NOT_CPF_OR_CNPJ')
+
+    def test_v3_cnpj_snapshot_is_validated_and_current_view_is_read_only(self):
+        job, rows, items = difal_fixture(cnpj=True, reason='NOT_CPF', version=DIFAL_CPF_VERSION)
+        frozen = deepcopy((job, rows, items))
+        meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+        self.assertEqual(meta['difal']['amountCents'], 1500)
+        self.assertEqual(meta['difal']['version'], DIFAL_VERSION)
+        self.assertEqual(meta['job']['difalVersion'], DIFAL_CPF_VERSION)
+        self.assertEqual(meta['difalOrigin'], 'DERIVED_FROM_SNAPSHOT')
+        self.assertEqual((job, rows, items), frozen)
+        self.assertEqual(calculate_difal(rows[0], 'MG', DIFAL_CPF_VERSION)['reason'], 'NOT_CPF')
+        self.assertIn('Calculado a partir dos dados salvos no relatório de origem', story_text(meta))
+        self.assertIn('CPF ou CNPJ válido', story_text(meta))
+        self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+        for change in (lambda j, r: r['difal'].update(amountCents=1500),
+                       lambda j, r: j['purchaseInput']['difal'].update(amountCents=1500)):
+            job, rows, items = deepcopy(frozen)
+            change(job, rows[0])
+            with self.assertRaises(ReportError):
+                reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+
+    def test_unversioned_view_requires_all_frozen_metadata_and_missing_issuer_is_pending(self):
+        job, rows, items = difal_fixture(cnpj=True)
+        job.pop('difalVersion')
+        job.pop('issuerUf')
+        job['purchaseInput'].pop('difal')
+        rows[0].pop('difal')
+        meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+        self.assertEqual(meta['difalOrigin'], 'DERIVED_FROM_SNAPSHOT')
+        self.assertEqual(meta['difal']['pendingLines'], 1)
+        self.assertEqual(meta['difal']['amountCents'], 0)
+        frozen = deepcopy((job, rows, items))
+        for key, value in (('natureCode', None), ('natureCode', ''), ('natureCode', '6108002'),
+                           ('recipientUf', None), ('recipientUf', 'sp'), ('recipientUf', 'XX')):
+            job, rows, items = deepcopy(frozen)
+            if value is None:
+                rows[0].pop(key)
+            else:
+                rows[0][key] = value
+            meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+            self.assertEqual(meta['difalOrigin'], 'UNAVAILABLE')
+            self.assertIsNone(meta['difal'])
+        job, rows, items = difal_fixture(nature='', operation='OUTRAS', reason='NOT_SALE', version=DIFAL_CPF_VERSION)
+        meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+        self.assertIsNone(meta['difal'])
+        self.assertEqual(meta['difalOrigin'], 'UNAVAILABLE')
+
+    def test_5102_original_rules_are_validated_before_current_view(self):
+        for version in ('DIFAL_ESTIMATE_V1', 'DIFAL_ESTIMATE_V2', DIFAL_CPF_VERSION, DIFAL_VERSION):
             old = version == 'DIFAL_ESTIMATE_V1'
             job, rows, items = difal_fixture(nature='5102', description='REGATA SINTÉTICA',
                                             operation='OUTRAS' if old else 'VENDA', reason='NOT_SALE' if old else 'ELIGIBLE')
             job['difalVersion'] = version
             job['purchaseInput']['difal']['version'] = version
+            frozen = deepcopy((job, rows, items))
             meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
-            self.assertEqual(meta['difal']['amountCents'], 0 if old else 1500)
-            self.assertEqual(meta['difal']['version'], version)
+            self.assertEqual(meta['difal']['amountCents'], 1500)
+            self.assertEqual(meta['difal']['version'], DIFAL_VERSION)
+            self.assertEqual(meta['job']['difalVersion'], version)
+            self.assertEqual(meta['difalOrigin'], 'IMPORTED' if version == DIFAL_VERSION else 'DERIVED_FROM_SNAPSHOT')
+            self.assertEqual((job, rows, items), frozen)
             self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
         for nature in ('5102001', '5102090', '5.102.001'):
             self.assertEqual(sales_operation(nature, 'REGATA SINTÉTICA'), 'VENDA')
@@ -82,7 +141,6 @@ class DifalReportTests(unittest.TestCase):
 
     def test_exclusions_and_missing_ufs_have_distinct_states(self):
         cases = [
-            {'reason': 'NOT_CPF', 'cnpj': True},
             {'reason': 'SAME_UF', 'recipient': 'MG'},
             {'reason': 'NOT_SALE', 'nature': '9000', 'operation': 'SERVICO', 'description': 'Prestação de serviço'},
             {'reason': 'NOT_SALE', 'nature': '6202', 'operation': 'DEVOLUCAO', 'description': 'Devolução'},
@@ -153,7 +211,7 @@ class DifalReportTests(unittest.TestCase):
                 with self.assertRaises(ReportError):
                     reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
 
-    def test_v3_uses_all_catalog_sales_and_never_description_fallback(self):
+    def test_current_uses_all_catalog_sales_and_never_description_fallback(self):
         for nature in OPERATION_CATALOG_GROUPS['VENDA']:
             row = {'natureCode': nature + '002', 'description': 'Remessa de serviço',
                    'document': '123.456.789-01', 'totalCents': 10005, 'recipientUf': 'SP'}
@@ -225,8 +283,14 @@ class DifalReportTests(unittest.TestCase):
         snapshots[entries[1][0]][0].pop('difalVersion')
         with patch('reporting.generations.purchase_metadata', side_effect=metadata):
             meta = generation_metadata(db, '00000000-0000-4000-8000-000000000090', WORKSPACE)
-        self.assertEqual(meta['totalsByType']['SALES']['difal']['unavailableReports'], 1)
-        self.assertEqual(meta['totalsByType']['SALES']['difal']['amountCents'], 1500)
+        self.assertEqual(meta['totalsByType']['SALES']['difal']['unavailableReports'], 0)
+        self.assertEqual(meta['totalsByType']['SALES']['difal']['derivedReports'], 1)
+        self.assertEqual(meta['totalsByType']['SALES']['difal']['amountCents'], 11500)
+        snapshots[entries[1][0]][1][0].pop('recipientUf')
+        with patch('reporting.generations.purchase_metadata', side_effect=metadata):
+            unavailable = generation_metadata(db, '00000000-0000-4000-8000-000000000090', WORKSPACE)
+        self.assertEqual(unavailable['totalsByType']['SALES']['difal']['unavailableReports'], 1)
+        self.assertEqual(unavailable['totalsByType']['SALES']['difal']['amountCents'], 1500)
         self.assertTrue(render_generation_pdf(meta).startswith(b'%PDF'))
 
 
