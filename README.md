@@ -1,4 +1,15 @@
-# Maximum CNPJ · v0.26.1
+# Maximum CNPJ · v0.27.0
+
+## Conferência e evolução das simulações — 22/10/2026
+
+- O histórico identifica o método salvo: soma das competências importadas ou projeção mensal legada. Cada card mostra o período de origem; os totais continuam exatamente como foram salvos.
+- Originais com revisão concluída oferecem acesso direto à versão atualizada, preservando a consulta e a exclusão independente de cada versão. Links só apontam para simulações existentes no mesmo workspace.
+- O acompanhamento da revisão mostra progresso e diferencia versões concluídas de pendências. Versões já criadas passam a aparecer mesmo quando o restante do lote é interrompido.
+- A DRE permite conferir a evolução entre competências usando seus valores salvos: receita, resultado, margem e DIFAL. Ausência de dados, referência anterior zero e projeções legadas recebem indicação própria; não se recalculam tributos ao navegar.
+- Ao gerar, um campo incompleto de outra competência leva ao mês e ao campo que precisam de correção. Ao editar valores de um resultado já gerado, um aviso oferece atualizar a simulação; a versão anterior permanece no histórico.
+- Correções de regressões do fluxo guiado validam despesas inicialmente em zero, total pela soma das competências e alternância anual com os controles atuais.
+
+A revisão do histórico ainda precisa da página Simulações aberta e visível com perfil administrador ou operador. Esta entrega não executa um lote sobre o banco de produção. Cálculos gerenciais, regras de DIFAL e snapshots permanecem preservados.
 
 ## DRE mensal ou anual — 20/10/2026
 

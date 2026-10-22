@@ -56,6 +56,29 @@
 .dre-quick-nav button:last-child { color:#1b6553; background:#f0f7f3; border-color:#cbded5; }
 .dre-quick-nav button:hover { background:#f1e7ed; }
 .dre-reading-note { margin:12px 0 0; font-size:11px; color:#796872; line-height:1.7; }
+.dre-evolution { margin:0 0 22px; }
+.dre-evolution-heading h3 { margin:0 0 6px; font-size:16px; color:#402e39; }
+.dre-evolution-heading p,.dre-evolution-unavailable { margin:0 0 14px; color:#796771; font-size:12px; line-height:1.7; }
+.dre-evolution-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.dre-evolution-metrics article { min-width:0; padding:16px; border:1px solid #e7e0e4; border-radius:10px; background:#faf8f9; }
+.dre-evolution-metrics article>span { color:#665660; font-size:12px; }
+.dre-evolution-metrics strong { display:block; margin:10px 0 7px; font-size:20px; color:#402e39; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.dre-evolution-metrics small { display:block; color:#75636e; font-size:11px; line-height:1.6; }
+.dre-evolution-year { margin:0 0 22px; padding:16px 18px; border:1px solid #e7e0e4; border-radius:10px; }
+.dre-evolution-year>summary { color:#5c3f4e; font-size:14px; font-weight:600; cursor:pointer; }
+.dre-evolution-year>summary>span { display:inline-block; margin-left:8px; color:#796771; font-size:11px; font-weight:400; }
+.dre-evolution-year>summary:focus-visible { outline:2px solid #750207; outline-offset:5px; }
+.dre-evolution-year>p { color:#796771; font-size:12px; line-height:1.7; }
+.dre-evolution-months { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:16px 0 0; padding:0; list-style:none; }
+.dre-evolution-months li { min-width:0; border:1px solid #e7e0e4; border-radius:8px; padding:14px; background:#fcfbfc; }
+.dre-evolution-months h4 { margin:0 0 5px; color:#523a48; font-size:13px; }
+.dre-evolution-months small,.dre-evolution-months p { font-size:11px; color:#796771; }
+.dre-evolution-months dl { margin:13px 0 0; }
+.dre-evolution-months dl>div { display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px 8px; margin-top:7px; font-size:11px; }
+.dre-evolution-months dt { color:#796771; }
+.dre-evolution-months dd { margin:0; color:#254f43; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.dre-evolution-months dd.is-loss { color:#922e45; }
+.dre-evolution-months li.is-missing { border-style:dashed; background:#fff; }
 .simulator-clean .dre-visual .dre-table-wrap { margin-top:14px; border-radius:10px; border-color:#e0d5dc; }
 .simulator-clean .dre-visual .dre-row th { font-size:12px; color:#5b4653; }
 .simulator-clean .dre-visual .dre-detail th,.simulator-clean .dre-visual .dre-detail td { color:#81707b; font-size:11px; background:#fdfbfc; padding-top:8px; padding-bottom:8px; }
@@ -79,6 +102,7 @@
 .sim-comparison-details .sim-kpis { margin-top:20px; }
 .sim-evidence-title { font-size:18px; margin:28px 0 16px; color:#634455; }
 @media(max-width:1100px) {
+ .dre-evolution-metrics,.dre-evolution-months { grid-template-columns:repeat(2,minmax(0,1fr)); }
  .dre-period-panel { grid-template-columns:1fr 1fr; gap:12px 20px; }
  .dre-period-panel>p { grid-column:1/-1; margin:0; }
  .dre-table-heading { flex-wrap:wrap; }
@@ -88,6 +112,13 @@
  .dre-flow-bars li { grid-template-columns:minmax(160px,1fr) minmax(60px,1fr) minmax(110px,auto); gap:12px; }
 }
 @media(max-width:650px) {
+ .dre-evolution-metrics { grid-template-columns:1fr; }
+ .dre-evolution-metrics article { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:6px 10px; padding:14px; }
+ .dre-evolution-metrics strong { margin:0; font-size:19px; }
+ .dre-evolution-metrics small { grid-column:1/-1; }
+ .dre-evolution-year { padding:14px; }
+ .dre-evolution-year>summary>span { display:block; margin:7px 0 0; }
+ .dre-evolution-months { grid-template-columns:1fr; }
  .simulator-clean .dre-visual { padding:18px 14px; border-radius:12px; }
  .dre-heading { flex-direction:column; align-items:stretch; gap:16px; padding-bottom:18px; }
  .simulator-clean .dre-heading h2 { font-size:23px; }
@@ -126,5 +157,5 @@
  .simulator-clean .dre-visual tr[data-dre-row=netProfit] td,.simulator-clean .dre-visual tr[data-dre-row=netProfit] th { font-size:11px; }
  .sim-comparison-details>summary { flex-wrap:wrap; gap:6px; }
 }
-@media(max-width:370px) { .dre-summary-cards article { grid-template-columns:1fr; gap:6px; } .dre-summary-cards article>strong { text-align:left; font-size:24px; } }
-@media print { .dre-overview,.dre-quick-nav,.dre-heading,.dre-table-heading,.dre-reading-footer,.dre-reading-note,.dre-period-panel { display:none!important; } .sim-comparison-details { display:none; } }
+@media(max-width:370px) { .dre-summary-cards article,.dre-evolution-metrics article { grid-template-columns:1fr; gap:6px; } .dre-summary-cards article>strong { text-align:left; font-size:24px; } }
+@media print { .dre-overview,.dre-quick-nav,.dre-heading,.dre-table-heading,.dre-reading-footer,.dre-reading-note,.dre-period-panel,.dre-evolution,.dre-evolution-year,.dre-evolution-unavailable { display:none!important; } .sim-comparison-details { display:none; } }

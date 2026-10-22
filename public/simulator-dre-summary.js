@@ -24,3 +24,43 @@ export function buildDreSummary(presentation,column) {
     deductions:reconciled?-movements.slice(1,-1).reduce((sum,row)=>sum+row.value,0):null,
     movements,reconciled,complete};
 }
+
+const evolutionMetrics = [
+  ['revenue','Receita bruta','currency'],
+  ['netProfit','Resultado líquido','currency'],
+  ['netMargin','Margem líquida','percent'],
+  ['difal','DIFAL estimado','currency']
+];
+const monthOrdinal = value => /^\d{4}-(0[1-9]|1[0-2])$/.test(value || '')
+  ? Number(value.slice(0,4))*12+Number(value.slice(5,7)) : null;
+
+/** Compare saved cells only. Missing months and legacy averages never become a trend. */
+export function buildDreEvolution(presentation,calendar,regimeId,selectedMonth=0) {
+  const actual=presentation?.method==='REPORT_MONTHS_V1'&&calendar?.version==='DRE_CALENDAR_V3'&&calendar?.months?.length===12;
+  if(!actual)return {available:false,reason:'Esta simulação usa a projeção mensal salva. A evolução exige valores individuais por competência.',months:[],metrics:[]};
+  const rows=unifiedDreRows(presentation),regime=presentation.regimes.find(item=>item.id===regimeId);
+  const months=calendar.months.map((month,index)=>{
+    const sourceMonth=monthOrdinal(month.sourceMonth)!==null?month.sourceMonth:null;
+    const values=Object.fromEntries(evolutionMetrics.map(([key])=>[key,sourceMonth&&regime?.available===true?readDreValue(rows.find(row=>row.key===key),{id:regimeId,mode:'month',month:index}):null]));
+    return {label:month.label,sourceMonth,...values};
+  });
+  const index=Number.isInteger(selectedMonth)&&selectedMonth>=0&&selectedMonth<12?selectedMonth:0;
+  const current=months[index],previous=index>0?months[index-1]:null;
+  const reason=regime?.available!==true?'Este regime está indisponível neste cenário.':
+    !current.sourceMonth?'Sem dados importados para o mês selecionado.':
+    !previous?'O mês anterior está fora deste calendário.':
+    !previous.sourceMonth?'O mês imediatamente anterior não tem dados importados.':
+    monthOrdinal(current.sourceMonth)-monthOrdinal(previous.sourceMonth)!==1?'As competências de origem não são consecutivas.':'';
+  const metrics=evolutionMetrics.filter(([key])=>key!=='difal'||rows.some(row=>row.key===key)).map(([key,label,unit])=>{
+    // DIFAL is shown as an amount deducted; the original signed DRE cell stays untouched.
+    const normalize=value=>value===null?null:value===0?0:key==='difal'?-value:value;
+    const value=normalize(current[key]),base=normalize(previous?.[key]??null);
+    const delta=!reason&&value!==null&&base!==null?value-base:null;
+    const change=delta!==null&&Math.abs(delta)<1e-9?0:delta;
+    return {key,label,unit,value,previous:base,change,
+      ratio:unit==='currency'&&change!==null&&base>0?change/base:null,
+      reason:reason|| (change===null?'Valor não disponível nos dois meses.':'')};
+  });
+  return {available:true,months,current,previous,metrics,reason,
+    importedCount:months.filter(month=>month.sourceMonth).length};
+}

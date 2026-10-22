@@ -187,7 +187,12 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.equal(list.items[0].year, 2028);
       assert.equal(list.items[0].source, undefined);
       assert.equal(list.items[0].result, undefined);
+      assert.equal(list.items[0].projection, undefined);
       assert.equal(list.items[0].workspaceId, undefined);
+      assert.equal(list.items[0].calculationMethod, 'REPORT_MONTHS_V1');
+      assert.deepEqual(list.items[0].reportPeriod, saved.reportPeriod);
+      assert.equal(list.items[0].parentSimulationDeleted, false);
+      assert.equal(list.items[0].updatedSimulationId, null);
       assert.equal(typeof list.items[0].bestAnnualProfit, 'number');
       assert.equal((await simulationHistory(1, {clientId})).total, 3);
       assert.equal((await simulationHistory(1, {clientId: outside})).total, 0);
@@ -209,6 +214,51 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.equal(firstPage.total, 22); assert.equal(firstPage.items.length, 20); assert.equal(secondPage.items.length, 2);
       assert.equal(new Set([...firstPage.items, ...secondPage.items].map(item => item._id)).size, 22);
       await (await collection('simulations')).deleteMany(scope({title: {$regex: '^Página '}}));
+    });
+
+    await t.test('histórico identifica o método salvo e somente a última correção viva da mesma origem', async () => {
+      const c = await collection('simulations'), original = (await c.findOne(scope({_id: saved._id})))!;
+      const parentId = randomUUID(), unknownId = randomUUID(), oldId = randomUUID(), currentId = randomUUID();
+      const completedAt = new Date('2026-10-20T10:00:00Z');
+      const corrected = (id: string, createdAt: Date, extra: Record<string, unknown> = {}) => ({
+        ...original, _id: id, parentSimulationId: parentId, title: 'Metadados revisão', createdAt,
+        reprocessing: {version: 'REPORT_MONTHS_2026_10_V1', originalId: parentId, completedAt,
+          serviceRevenueMigration: {privateEvidence: 'Not part of history summaries'}}, ...extra
+      });
+      const records = [
+        {...original, _id: parentId, title: 'Metadados original', result: {...original.result, method: undefined},
+          projection: {version: 'AVERAGE_X12_V2'}, createdAt: new Date('2026-10-19T10:00:00Z')},
+        {...original, _id: unknownId, title: 'Metadados desconhecido', result: {}, projection: {version: 'UNKNOWN'}},
+        corrected(oldId, new Date('2026-10-20T10:00:00Z')),
+        corrected(currentId, new Date('2026-10-21T10:00:00Z')),
+        corrected(randomUUID(), new Date('2026-10-22T10:00:00Z'), {deletedAt: new Date()}),
+        corrected(randomUUID(), new Date('2026-10-22T11:00:00Z'), {clientId: outside}),
+        corrected(randomUUID(), new Date('2026-10-22T12:00:00Z'), {generationId: randomUUID()}),
+        corrected(randomUUID(), new Date('2026-10-22T13:00:00Z'), {workspaceId: 'outside_history'}),
+        corrected(randomUUID(), new Date('2026-10-22T14:00:00Z'), {reprocessing: {version: 'OTHER', originalId: unknownId}}),
+        corrected(randomUUID(), new Date('2026-10-22T15:00:00Z'), {reprocessing: undefined})
+      ];
+      try {
+        await c.insertMany(records);
+        const list = await simulationHistory(1, {search: 'Metadados'}), parent = list.items.find(row => row._id === parentId)!;
+        assert.equal(parent.calculationMethod, 'AVERAGE_X12_V2');
+        assert.equal(parent.updatedSimulationId, currentId, 'Versões excluídas, manuais ou de outra empresa/geração/workspace não substituem a correção.');
+        assert.equal(list.items.find(row => row._id === unknownId)!.calculationMethod, null);
+        const current = list.items.find(row => row._id === currentId)!;
+        assert.equal(current.calculationMethod, 'REPORT_MONTHS_V1');
+        assert.equal(current.parentSimulationDeleted, false);
+        assert.deepEqual(current.reprocessing, {version: 'REPORT_MONTHS_2026_10_V1', originalId: parentId, completedAt});
+        assert.equal(current.result, undefined); assert.equal(current.projection, undefined); assert.equal(current.source, undefined);
+        await c.updateOne(scope({_id: currentId}), {$set: {deletedAt: new Date()}});
+        assert.equal((await simulationHistory(1, {search: 'Metadados original'})).items[0].updatedSimulationId, oldId);
+        await c.updateOne(scope({_id: oldId}), {$set: {deletedAt: new Date()}});
+        assert.equal((await simulationHistory(1, {search: 'Metadados original'})).items[0].updatedSimulationId, null);
+        await c.deleteOne(scope({_id: parentId}));
+        const orphan = (await simulationHistory(1, {search: 'Metadados'})).items.find(row => row.parentSimulationId === parentId)!;
+        assert.equal(orphan.parentSimulationDeleted, true);
+        assert.deepEqual(await getSimulation(saved._id), saved, 'A consulta da listagem preserva os valores congelados.');
+        assert.equal(providerCalls, 4, 'A listagem não consulta fontes externas.');
+      } finally { await c.deleteMany({_id: {$in: records.map(row => row._id)}}); }
     });
 
     await t.test('leitura histórica não depende dos relatórios nem recalcula resultados', async () => {

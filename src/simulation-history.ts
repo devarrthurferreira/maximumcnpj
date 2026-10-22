@@ -82,7 +82,8 @@ async function simulations() {
   await Promise.all([
     c.createIndex({workspaceId: 1, createdAt: -1, _id: -1}),
     c.createIndex({workspaceId: 1, clientId: 1, createdAt: -1, _id: -1}),
-    c.createIndex({workspaceId: 1, year: 1, createdAt: -1, _id: -1})
+    c.createIndex({workspaceId: 1, year: 1, createdAt: -1, _id: -1}),
+    c.createIndex({workspaceId: 1, parentSimulationId: 1, createdAt: -1, _id: -1})
   ]);
   return c;
 }
@@ -259,10 +260,37 @@ export async function simulationHistory(page: number, filters: {clientId?: strin
   }
   const c = await simulations();
   const projection = {_id: 1, generationId: 1, clientId: 1, title: 1, company: 1, year: 1, createdAt: 1, createdBy: 1,
-    annualRevenue: 1, bestRegimeId: 1, bestRegimeName: 1, bestAnnualProfit: 1, manuallyAdjusted: 1, reportMonths: 1, parentSimulationId: 1};
+    annualRevenue: 1, bestRegimeId: 1, bestRegimeName: 1, bestAnnualProfit: 1, manuallyAdjusted: 1, reportMonths: 1, parentSimulationId: 1,
+    reportPeriod: 1, periodBasis: 1, modelVersion: 1, 'result.method': 1, 'projection.version': 1,
+    'reprocessing.version': 1, 'reprocessing.originalId': 1, 'reprocessing.completedAt': 1};
   const [items, total] = await Promise.all([
     c.find(query).project(projection).sort({createdAt: -1, _id: -1}).skip((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).maxTimeMS(20000).toArray(),
     c.countDocuments(query, {maxTimeMS: 20000})
   ]);
-  return {items, total, page, pageSize: PAGE_SIZE};
+  // The original remains immutable. Expose where its completed revision can be
+  // opened instead of presenting the old projection as though it were updated.
+  // Scope both sides by workspace, company and generation; no snapshot hydration.
+  const parentIds = [...new Set(items.map(item => item.parentSimulationId).filter(Boolean))];
+  const [revisions, parents] = await Promise.all([
+    items.length ? c.aggregate([
+      {$match: scope({deletedAt: {$exists: false}, 'reprocessing.version': {$exists: true},
+        $or: items.map(item => ({parentSimulationId: item._id, clientId: item.clientId, generationId: item.generationId})),
+        $expr: {$eq: ['$reprocessing.originalId', '$parentSimulationId']}})},
+      {$sort: {createdAt: -1, _id: -1}},
+      {$group: {_id: '$parentSimulationId', simulationId: {$first: '$_id'}}}
+    ], {maxTimeMS: 20000}).toArray() : [],
+    parentIds.length ? c.find(scope({_id: {$in: parentIds}, deletedAt: {$exists: false}}))
+      .project({_id: 1, clientId: 1, generationId: 1}).maxTimeMS(20000).toArray() : []
+  ]);
+  const revisionsByParent = new Map(revisions.map(row => [row._id, row.simulationId]));
+  const parentsById = new Map(parents.map(row => [row._id, row]));
+  const summaries = items.map(item => {
+    const {result, projection: sourceProjection, ...summary} = item;
+    const calculationMethod = result?.method === 'REPORT_MONTHS_V1' ? result.method :
+      ['AVERAGE_X12_V1', 'AVERAGE_X12_V2'].includes(sourceProjection?.version) ? sourceProjection.version : null;
+    const parent = parentsById.get(item.parentSimulationId);
+    return {...summary, calculationMethod, updatedSimulationId: revisionsByParent.get(item._id) || null,
+      ...(item.parentSimulationId ? {parentSimulationDeleted: !parent || parent.clientId !== item.clientId || parent.generationId !== item.generationId} : {})};
+  });
+  return {items: summaries, total, page, pageSize: PAGE_SIZE};
 }

@@ -36,7 +36,7 @@ test('Verified report values populate five categories and require monthly inputs
   await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva no histórico');await expect(page.locator('.sim-regime')).toHaveCount(4);await expect(page.locator('.sim-dre')).toContainText('Indicador');
   await expect(page.locator('.sim-dre')).not.toContainText('NaN');
-  await page.getByRole('button',{name:'12 meses',exact:true}).click();
+  await page.getByRole('button',{name:'Anual',exact:true}).click();
   const cells=await page.locator('.sim-dre tr').filter({hasText:'Receita bruta total'}).locator('td').allTextContents();expect(cells.every(t=>t.includes('120.000,12'))).toBe(true);
   const shot=info.outputPath('simulador-desktop.png');await page.screenshot({path:shot,fullPage:true});await info.attach('Simulador completo',{path:shot,contentType:'image/png'});
   await expect(page.locator('#simulation-result details[open]')).toHaveCount(0);
@@ -130,7 +130,7 @@ test('Save is single-flight and failed retries preserve the exact immutable requ
   await page.goto(url);await complete(page);await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#serviceRevenue')).toBeDisabled();await expect(page.locator('#generate-simulation')).toBeDisabled();await expect(page.locator('#simulation-save-status')).toContainText('Salvando');expect(requests).toHaveLength(1);release();
   await expect(page.locator('#retry-save')).toBeVisible();await expect(page.locator('#simulation-save-status')).not.toContainText('Simulação salva');await expect(page.locator('#serviceRevenue')).toBeEnabled();
   await page.locator('#retry-save').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');expect(requests).toHaveLength(2);expect(requests[1]).toEqual(requests[0]);
-  await page.locator('#serviceRevenue').fill('100');await expect(page.locator('#simulation-result')).toBeEmpty();await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');expect(requests[2].simulationId).not.toBe(requests[0].simulationId);
+  await page.locator('#serviceRevenue').fill('100');await expect(page.locator('#simulation-result .sim-dre,#results-top')).toHaveCount(0);await expect(page.locator('#simulation-changes-notice')).toBeVisible();await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');expect(requests[2].simulationId).not.toBe(requests[0].simulationId);
 });
 test('Unavailable regimes and zero revenue never become misleading zero-valued comparisons',async({page})=>{
   await setup(page);await page.goto(url);await complete(page,{serviceRevenue:500000});await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');await expect(page.locator('.sim-chart-profit .sim-chart-unavailable')).toHaveCount(2);await expect(page.locator('.sim-regime').first()).toContainText('Indisponível');

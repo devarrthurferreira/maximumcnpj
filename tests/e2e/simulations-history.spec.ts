@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test';
 const item={_id:'00000000-0000-4000-8000-000000000001',title:'Cenário com novas despesas',company:{code:'936',name:'EMPRESA DE TESTE'},year:2027,createdAt:'2026-09-30T16:00:00Z',createdBy:{id:'operator',name:'Equipe Teste'},annualRevenue:120000,bestRegimeId:'pure',bestRegimeName:'Simples Puro',bestAnnualProfit:50000,manuallyAdjusted:true,reportMonths:1};
 async function session(page:any,user:any={_id:'operator',role:'operator',name:'Teste'}){
  await page.route('**/api/auth/session',(r:any)=>r.fulfill({json:{user}}));
- await page.route(/\/api\/v4\/simulations\/reprocess(?:\?.*)?$/,(r:any)=>r.fulfill({json:{version:'SERVICES_DIFAL_2026_10_V1',total:0,counts:{queued:0,processing:0,ok:0,pending:0,failed:0},retryableFailed:0,inventoryComplete:true,hasMore:false,retryAfterMs:0,items:[],page:1,totalPages:1}}));
+ await page.route(/\/api\/v4\/simulations\/reprocess(?:\?.*)?$/,(r:any)=>r.fulfill({json:{version:'REPORT_MONTHS_2026_10_V1',total:0,counts:{queued:0,processing:0,ok:0,pending:0,failed:0},retryableFailed:0,inventoryComplete:true,hasMore:false,retryAfterMs:0,items:[],page:1,totalPages:1}}));
 }
 test('Simulation history searches, filters, paginates and exposes direct detail links on desktop/mobile',async({page},info)=>{
  await session(page);const queries:URLSearchParams[]=[];const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
@@ -91,4 +91,30 @@ test('Perfil de leitura pode rever simulações sem receber controles de exclus�
  await page.route(/\/api\/v4\/simulations\/[a-f0-9-]{36}$/,r=>{if(r.request().method()==='DELETE')deletes++;return r.fulfill({status:403,json:{message:'Sem permissão'}});});
  await page.goto('/simulations.html');await expect(page.getByRole('link',{name:'Rever simulação'})).toBeVisible();
  await expect(page.locator('[data-delete-simulation]')).toHaveCount(0);await expect(page.getByRole('dialog')).toHaveCount(0);expect(deletes).toBe(0);
+});
+
+
+test('Histórico diferencia competências, projeção legada e revisão sem alterar os totais salvos',async({page})=>{
+ await session(page,{_id:'viewer',role:'viewer',name:'Leitura'});
+ const originalId=item._id,childId='00000000-0000-4000-8000-000000000002',unknownId='00000000-0000-4000-8000-000000000003';
+ const items=[
+  {...item,calculationMethod:'AVERAGE_X12_V2',updatedSimulationId:childId,annualRevenue:120000},
+  {...item,_id:childId,title:'Revisão por competência',calculationMethod:'REPORT_MONTHS_V1',reportMonths:3,reportPeriod:{startMonth:'2025-01',endMonth:'2025-03',months:3},annualRevenue:91234.56,bestAnnualProfit:1234.56,parentSimulationId:originalId,parentSimulationDeleted:false,reprocessing:{version:'REPORT_MONTHS_2026_10_V1',originalId,completedAt:'2026-10-22T12:00:00Z'}},
+  {...item,_id:unknownId,title:'Histórico sem identificação do método',calculationMethod:null,annualRevenue:12345.67,parentSimulationId:'00000000-0000-4000-8000-000000000009',parentSimulationDeleted:true}
+ ];
+ const methods:string[]=[];
+ await page.route('**/api/v4/simulations?*',r=>{methods.push(r.request().method());return r.fulfill({json:{items,total:3,page:1,pageSize:20}});});
+ await page.goto('/simulations.html');
+ const original=page.locator(`[data-simulation-id="${originalId}"]`),child=page.locator(`[data-simulation-id="${childId}"]`),unknown=page.locator(`[data-simulation-id="${unknownId}"]`);
+ await expect(original).toContainText('Receita anual projetada');await expect(original).toContainText('Referência mensal × 12');
+ await expect(original.getByRole('link',{name:'Abrir versão atualizada'})).toHaveAttribute('href',`/simulator.html?simulation=${childId}`);
+ await expect(original.getByRole('link',{name:'Rever esta versão'})).toHaveAttribute('href',`/simulator.html?simulation=${originalId}`);
+ await expect(child).toContainText('POR COMPETÊNCIA');await expect(child).toContainText('REVISÃO AUTOMÁTICA');
+ await expect(child).toContainText('Receita do período');await expect(child).toContainText('Soma de 3 competências · sem média');
+ await expect(child).toContainText('01/2025 a 03/2025');await expect(child).toContainText('91.234,56');await expect(child).toContainText('1.234,56');
+ await expect(child).not.toContainText('× 12');await expect(child.getByRole('link',{name:'Ver original'})).toHaveAttribute('href',`/simulator.html?simulation=${originalId}`);
+ await expect(unknown).toContainText('Receita registrada');await expect(unknown).toContainText('Conforme simulação salva');await expect(unknown).toContainText('12.345,67');
+ await expect(unknown).not.toContainText('× 12');await expect(unknown).toContainText('Versão anterior excluída');await expect(unknown.getByRole('link',{name:'Ver versão anterior'})).toHaveCount(0);
+ await page.setViewportSize({width:320,height:800});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+ expect(methods.every(method=>method==='GET')).toBe(true);await expect(page.locator('[data-delete-simulation]')).toHaveCount(0);
 });

@@ -201,3 +201,30 @@ test('Ocultar a aba aborta o envio em andamento e voltar retoma o lote do servid
   await expect(page.locator('#history-reprocess').getByRole('heading',{name:'Atualização encerrada com pendências'})).toBeVisible();
   expect(posts).toBe(2);
 });
+
+
+test('Versões concluídas aparecem no histórico mesmo quando uma etapa posterior falha',async({page})=>{
+ let reads=0,posts=0;
+ await page.route('**/api/auth/session',route=>route.fulfill({json:{user:{_id:'operator',role:'operator',name:'Teste'}}}));
+ await page.route('**/api/v4/simulations?*',route=>{
+  reads++;
+  const items=posts>=2?[{...original,updatedSimulationId:childId},{...original,_id:childId,title:'Versão mensal concluída',calculationMethod:'REPORT_MONTHS_V1'}]:[original];
+  return route.fulfill({json:{items,total:items.length,page:1,pageSize:20}});
+ });
+ const partial={...queued,counts:{queued:3,processing:0,ok:1,pending:0,failed:0},items:[completed.items[0]]};
+ await page.route('**/api/v4/simulations/reprocess',route=>{
+  if(route.request().method()==='GET')return route.fulfill({json:queued});
+  posts++;
+  return posts===1?route.fulfill({json:partial}):route.fulfill({status:503,json:{message:'Conexão interrompida após salvar a primeira revisão.'}});
+ });
+ await page.goto('/simulations.html?search=936&year=2027');
+ const panel=page.locator('#history-reprocess');
+ await expect(panel.getByRole('heading',{name:'Atualização interrompida'})).toBeVisible();
+ await expect(panel.getByRole('progressbar',{name:'Progresso da revisão do histórico'})).toHaveAttribute('value','1');
+ await expect(panel.getByRole('progressbar')).toHaveAttribute('max','4');
+ await expect(panel).toContainText('1 de 4 processadas');await expect(panel).not.toContainText('Verificação concluída');
+ await expect(page.locator(`[data-simulation-id="${childId}"]`)).toContainText('Versão mensal concluída');
+ await expect(page.locator(`[data-simulation-id="${originalId}"]`).getByRole('link',{name:'Abrir versão atualizada'})).toBeVisible();
+ await expect(page.getByLabel('Buscar simulações')).toHaveValue('936');await expect(page.getByLabel('Ano do cenário')).toHaveValue('2027');
+ expect(reads).toBe(2);expect(posts).toBe(2);
+});

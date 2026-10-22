@@ -221,7 +221,34 @@ function updateRevenue() {
   $('#annual-revenue').textContent=revenueTotal===null?(actualMonths()?'Confira as receitas de todos os meses':'Calculada automaticamente'):money(revenueTotal);
   updateMonthWorkspace(); updateProjection(); updateDifalSource();
 }
-function invalidate() { S.result=null; S.snapshot=null; S.pending=null; $('#simulation-result').innerHTML=''; $('#simulator-error').textContent=''; renderNotices(); }
+function invalidate() {
+  const hadResult=!!S.result;
+  S.result=null; S.snapshot=null; S.pending=null;
+  const host=$('#simulation-result');
+  if(hadResult||host.querySelector('#simulation-changes-notice')){
+    host.innerHTML='<section class="card sim-changes-notice" id="simulation-changes-notice" role="status"><h2>Valores alterados</h2><p>Gere a simulação novamente para atualizar a DRE. As versões já salvas permanecem no histórico.</p><button type="button" id="regenerate-simulation">Atualizar simulação</button></section>';
+    $('#regenerate-simulation').onclick=()=>$('#simulator-form').requestSubmit();
+  }else host.innerHTML='';
+  $('#simulator-error').textContent=''; renderNotices();
+}
+
+function validateAllMonths() {
+  if(!actualMonths())return true;
+  captureMonth();
+  for(let index=0;index<S.monthlyInputs.length;index++){
+    const row=S.monthlyInputs[index];
+    const field=[...IMPORTED,...MANUAL].find(key=>{
+      const amount=IMPORTED.includes(key)?row.groups[key]:row.values[key];
+      return !Number.isFinite(amount)||Math.abs(amount)>1e12||(!IMPORTED.slice(0,3).includes(key)&&amount<0)||amount!==Math.round(amount*100)/100;
+    });
+    if(!field)continue;
+    selectReportMonth(index);
+    const input=$('#'+field),label=$(`label[for="${field}"]`).textContent.replace(/\s*\*$/,'');
+    fail(new Error(`Confira ${label} em ${competenceLabel(row.sourceMonth)}. Preencha o valor com até duas casas decimais; use 0 quando não houver movimento.`));
+    input.focus();input.reportValidity();return false;
+  }
+  return true;
+}
 function draft() {
   const d=createEmptyDraft(); d.year=Number($('#simulation-year').value);d.salesAnnex=Number($('#sales-annex').value);d.serviceAnnex=Number($('#service-annex').value);
   MANUAL.forEach(key=>d.values[key]=value(key));
@@ -582,6 +609,7 @@ async function simulate() {
   if(manual&&(value('rbt12')===null||!$('#rbt12-manual-confirm').checked)){fail(new Error('Informe a RBT12 efetiva e confirme a origem manual para gerar a simulação.'));(value('rbt12')===null?$('#rbt12'):$('#rbt12-manual-confirm')).focus();return;}
   if(!manual&&(!isSection22(S.rbt12Data)||!S.rbt12ExtractionId||S.rbt12ExtractionId!==(S.rbt12Data.extractionId||S.rbt12Data.id)||Math.round(value('rbt12')*100)!==S.rbt12Data.rbt12Cents)){fail(new Error('Leia a seção 2.2 do PDF ou escolha informar a RBT12 sem o extrato.'));$('#rbt12-pdf').focus();return;}
   if(!$('#simulator-form').reportValidity())return;
+  if(!validateAllMonths())return;
   try {
     $('#simulator-error').textContent='';
     captureMonth();

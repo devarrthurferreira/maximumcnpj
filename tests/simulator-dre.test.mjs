@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildDreSummary} from '../public/simulator-dre-summary.js';
+import {buildDreSummary,buildDreEvolution} from '../public/simulator-dre-summary.js';
 import {buildDrePresentation,unifiedDreRows,DRE_PRESENTATION_VERSION} from '../public/simulator-dre.js';
 import {calculateSimulation,calculateTax,draftToInput} from '../public/simulator-engine.js';
 import {annualizeReports,projectDifal} from '../public/simulator-projection.js';
@@ -212,4 +212,41 @@ test('composição divergente ou incompleta preserva o resultado e impede gráfi
  assert.equal(buildDreSummary(p,{id:'actual',mode:'annual'}).complete,false);
  find(p,'revenue').monthlyValues.actual[1]=null;
  assert.equal(buildDreSummary(p,{id:'actual',mode:'month',month:1}).revenue,null);
+});
+
+function evolutionFixture(){
+ const values={revenue:[100,150,0],netProfit:[-20,10,-5],netMargin:[-.2,10/150,null],difal:[-10,-15,0]};
+ const presentation={method:'REPORT_MONTHS_V1',regimes:[{id:'actual',available:true}],sections:[{rows:Object.entries(values).map(([key,months])=>({key,monthlyValues:{actual:[...months,...Array(9).fill(null)]}}))}]};
+ const calendar={version:'DRE_CALENDAR_V3',months:Array.from({length:12},(_,i)=>({label:String(i+1),sourceMonth:i<3?`2025-0${i+1}`:null}))};
+ return {presentation,calendar};
+}
+test('evolução lê meses congelados, calcula pontos percentuais e mantém DIFAL como dedução sem alterar células',()=>{
+ const {presentation,calendar}=evolutionFixture(),before=structuredClone({presentation,calendar});freeze(presentation);freeze(calendar);
+ const data=buildDreEvolution(presentation,calendar,'actual',1),metric=key=>data.metrics.find(row=>row.key===key);
+ assert.equal(data.importedCount,3);assert.equal(data.reason,'');assert.equal(data.months[3].revenue,null);
+ assert.equal(metric('revenue').change,50);assert.equal(metric('revenue').ratio,.5);
+ assert.equal(metric('netProfit').change,30);assert.equal(metric('netProfit').ratio,null,'Prejuízo anterior não é denominador de crescimento percentual.');
+ near(metric('netMargin').change,10/150+.2);assert.equal(metric('netMargin').ratio,null);
+ assert.equal(metric('difal').value,15);assert.equal(metric('difal').previous,10);assert.equal(metric('difal').change,5);
+ assert.equal(data.months[1].difal,-15);assert.deepEqual({presentation,calendar},before);
+});
+test('evolução não compara projeção pela média, meses ausentes, janeiro ou origens não consecutivas',()=>{
+ const {presentation,calendar}=evolutionFixture();
+ assert.match(buildDreEvolution(presentation,calendar,'actual',0).reason,/fora deste calendário/);
+ const missing=buildDreEvolution(presentation,calendar,'actual',3);assert.match(missing.reason,/Sem dados importados/);assert(missing.metrics.every(row=>row.change===null));
+ calendar.months[0].sourceMonth=null;
+ assert.match(buildDreEvolution(presentation,calendar,'actual',1).reason,/imediatamente anterior/);
+ calendar.months[0].sourceMonth='2024-01';assert.match(buildDreEvolution(presentation,calendar,'actual',1).reason,/não são consecutivas/);
+ delete presentation.method;assert.equal(buildDreEvolution(presentation,calendar,'actual',1).available,false);
+ presentation.method='REPORT_MONTHS_V1';calendar.version='DRE_CALENDAR_V2';assert.equal(buildDreEvolution(presentation,calendar,'actual',1).available,false);
+});
+test('evolução distingue receita zero e DIFAL zero de ausentes e respeita regime indisponível',()=>{
+ const {presentation,calendar}=evolutionFixture();
+ const data=buildDreEvolution(presentation,calendar,'actual',2),metric=key=>data.metrics.find(row=>row.key===key);
+ assert.equal(metric('revenue').value,0);assert.equal(metric('revenue').change,-150);assert.equal(metric('revenue').ratio,-1);
+ assert.equal(metric('difal').value,0);assert.equal(metric('difal').change,-15);assert.equal(metric('netMargin').change,null);
+ presentation.sections[0].rows= presentation.sections[0].rows.filter(row=>row.key!=='difal');
+ assert(!buildDreEvolution(presentation,calendar,'actual',2).metrics.some(row=>row.key==='difal'));
+ presentation.regimes[0].available=false;
+ const unavailable=buildDreEvolution(presentation,calendar,'actual',1);assert.match(unavailable.reason,/indisponível/);assert(unavailable.metrics.every(row=>row.change===null&&row.value===null));
 });

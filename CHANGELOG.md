@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.27.0] — 2026-10-22
+
+- Histórico distingue soma mensal e projeção legada, identifica o período e oferece acesso direto à revisão existente no mesmo workspace.
+- Progresso da revisão e atualização parcial da lista preservam a visibilidade das versões já concluídas após interrupções.
+- Comparação entre competências na DRE com valores salvos, variações absolutas e margens em pontos percentuais; dados ausentes não viram zero.
+- Validação direciona ao campo incompleto de outra competência; edição de resultado gerado informa a necessidade de atualizar a simulação.
+- Regressões do fluxo guiado alinhadas à soma mensal e aos controles atuais; fórmulas fiscais e originais preservados.
+
 ## [0.26.1] — 2026-10-20
 
 - Alternância Mensal/Anual dentro da DRE, com período ativo destacado e competência antes do resumo.

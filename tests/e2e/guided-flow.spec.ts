@@ -81,7 +81,7 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
   await page.locator('#guided-rbt12-skip').click();await expect(page.locator('#simulator-form')).toBeVisible();
   await expect(page.locator('#rbt12')).toBeEditable();await expect(page.locator('#rbt12')).toHaveValue('');
   await expect(page.locator('#serviceRevenue')).toHaveValue('0.00');
-  for(const field of manualFields.filter(field=>field!=='serviceRevenue'))await expect(page.locator('#'+field)).toHaveValue('');
+  for(const field of manualFields.filter(field=>field!=='serviceRevenue'))await expect(page.locator('#'+field)).toHaveValue('0.00');
   await expect(page.locator('#salesCpfCents')).toHaveValue('12000.00');await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('4500.00');
   await screenshots(page,info,'guided-manual-inputs');
   let saves=0;page.on('request',r=>{if(r.method()==='POST'&&new URL(r.url()).pathname==='/api/v4/simulations')saves++;});
@@ -93,7 +93,7 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
   const saving=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/v4/simulations'&&r.request().method()==='POST');
   await page.locator('#generate-simulation').click();const response=await saving;expect(response.ok(),await response.text()).toBe(true);const snapshot=await response.json();
   expect(snapshot).toMatchObject({generationId:generation._id,clientId:realClient,rbt12Source:'MANUAL',reportMonths:1,periodBasis:'COLUMN_H',draft:{rbt12:150000,values:{salesRevenue:12000,serviceRevenue:0,regularPurchases:4500}},source:{revenueSplit:{version:'SALES_SERVICES_V1'},fields:{serviceRevenueCents:0},purchases:{totalCents:450000},sales:{totalCents:1200000}}});
-  expect(snapshot.rbt12Extraction).toBeFalsy();expect(snapshot.rbt12ExtractionId).toBeFalsy();expect(snapshot.result.annualRevenue).toBe(144000);
+  expect(snapshot.rbt12Extraction).toBeFalsy();expect(snapshot.rbt12ExtractionId).toBeFalsy();expect(snapshot.result.method).toBe('REPORT_MONTHS_V1');expect(snapshot.result.annualRevenue).toBe(12000);
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');await screenshots(page,info,'guided-result');
   const mongo=new MongoClient(process.env.MONGODB_URI!);
   try{await mongo.connect();const db=mongo.db(process.env.MONGODB_DB),workspaceId=process.env.WORKSPACE_ID||'maximum';
@@ -105,7 +105,7 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
     const login=await fresh.request.post('/api/auth/login',{data:{email:process.env.ADMIN_EMAIL,password:process.env.ADMIN_PASSWORD},headers:{Origin:origin}});expect(login.ok()).toBe(true);
     const reopened=await fresh.newPage();await reopened.goto(`/simulator.html?simulation=${snapshot._id}`);
     await expect(reopened.locator('#simulation-snapshot')).toContainText('informada manualmente');await expect(reopened.locator('#simulator-form')).toHaveCount(0);
-    await expect(reopened.locator('.sim-dre')).toContainText('144.000,00');await expect(reopened.locator('.sim-regime')).toHaveCount(4);
+    await expect(reopened.locator('.sim-dre')).toContainText('12.000,00');await expect(reopened.locator('.sim-regime')).toHaveCount(4);
     await reopened.locator('#create-version').click();await expect(reopened.locator('#rbt12')).toBeEditable();
     await reopened.locator('#rbt12-use-pdf').click();await readStatement(reopened);
     await reopened.reload();await expect(reopened.locator('#rbt12')).toHaveValue('150000.00');

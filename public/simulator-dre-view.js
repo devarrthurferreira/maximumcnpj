@@ -1,5 +1,5 @@
 import {unifiedDreRows} from './simulator-dre.js';
-import {readDreValue,buildDreSummary} from './simulator-dre-summary.js';
+import {readDreValue,buildDreSummary,buildDreEvolution} from './simulator-dre-summary.js';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=value=>value==null||!Number.isFinite(value)?'—':value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}).replace(/\u00a0/g,' ');
 const percent=value=>value==null||!Number.isFinite(value)?'—':(value*100).toLocaleString('pt-BR',{maximumFractionDigits:2})+'%';
@@ -55,6 +55,23 @@ function visualSummary(presentation,column,periodLabel,regime){
     <figure class="dre-result-flow"><figcaption><strong>Da receita ao resultado</strong><span>Receita + movimentos da DRE = resultado líquido</span></figcaption>${bars}</figure></div>`;
 }
 function quickNavigation(){return `<nav class="dre-quick-nav" aria-label="Ir para uma linha da DRE">${[['services','Receitas'],['das','Tributos'],['cmvSimple','Compras'],['salaries','Despesas'],['netProfit','Resultado']].map(([key,label])=>`<button type="button" data-dre-jump="${key}">${label}</button>`).join('')}</nav>`;}
+function monthlyEvolution(presentation,calendar,regimeId,month){
+  const data=buildDreEvolution(presentation,calendar,regimeId,month);
+  const context=data.available&&data.previous&&data.current?.sourceMonth&&data.previous.sourceMonth?`${data.current.label} / ${data.current.sourceMonth.slice(0,4)} em relação a ${data.previous.label} / ${data.previous.sourceMonth.slice(0,4)} (origem dos relatórios).`:data.reason;
+  if(!data.available)return `<p class="dre-evolution-unavailable">${esc(data.reason)}</p>`;
+  const change=metric=>metric.change===null?'—':metric.unit==='percent'?`${metric.change>0?'+':''}${(metric.change*100).toLocaleString('pt-BR',{maximumFractionDigits:2})} p.p.`:`${metric.change>0?'+':''}${money(metric.change)}`;
+  const note=metric=>metric.reason|| (metric.unit==='percent'?'Diferença em pontos percentuais.':metric.ratio===null?'Variação em reais; base anterior zero ou negativa.':`${metric.ratio>0?'+':''}${percent(metric.ratio)} sobre o valor do mês anterior.`);
+  return `<section class="dre-evolution" aria-label="Variação em relação ao mês anterior"><div class="dre-evolution-heading"><h3>O que mudou no mês</h3><p>${esc(context)}</p></div>
+    <div class="dre-evolution-metrics">${data.metrics.map(metric=>`<article data-dre-change="${metric.key}"><span>${esc(metric.label)}</span><strong>${change(metric)}</strong><small>${esc(note(metric))}</small>${metric.key==='difal'&&!metric.reason?'<small>Variação do valor deduzido na DRE.</small>':''}</article>`).join('')}</div>
+    ${data.reason&&context!==data.reason?`<p class="dre-evolution-unavailable">${esc(data.reason)}</p>`:''}</section>`;
+}
+function annualEvolution(presentation,calendar,regimeId){
+  const data=buildDreEvolution(presentation,calendar,regimeId);
+  if(!data.available)return '';
+  return `<details id="dre-evolution-year" class="dre-evolution-year"><summary>Evolução por competência <span>${data.importedCount} de 12 meses com dados importados</span></summary>
+    <p>Valores do regime selecionado, iguais aos da DRE mensal. A margem usa a receita bruta de cada mês. Meses ausentes permanecem sem dados.</p>
+    <ol class="dre-evolution-months">${data.months.map((month,index)=>`<li data-dre-evolution-month="${index}" class="${!month.sourceMonth?'is-missing':''}"><h4>${esc(month.label)}</h4>${month.sourceMonth?`<small>Origem: ${esc(month.sourceMonth)}</small><dl><div><dt>Receita</dt><dd>${money(month.revenue)}</dd></div><div><dt>Resultado</dt><dd class="${month.netProfit<0?'is-loss':''}">${money(month.netProfit)}</dd></div><div><dt>Margem</dt><dd>${percent(month.netMargin)}</dd></div></dl>`:'<p>Sem dados importados</p>'}</li>`).join('')}</ol></details>`;
+}
 function readingNote(showPercent){return `<p class="dre-reading-note">R$ · valores negativos são deduções · composições detalham valores já incluídos · — indica indisponível.${showPercent?' Percentuais sobre a receita bruta do mesmo período e regime.':''}</p>`;}
 function contextFooter(presentation,calendar,year){return `<footer class="dre-reading-footer"><h3>Referências deste demonstrativo</h3>${referenceLine(calendar)}${footnotes(presentation)}${calendar?methodology({calendar,year}):''}</footer>`;}
 export function renderAnnualDre({presentation,calendar,year,regimeId,showPercent=false}){
@@ -62,6 +79,7 @@ export function renderAnnualDre({presentation,calendar,year,regimeId,showPercent
   return `<section class="card sim-dre dre-complete dre-visual" id="dre-demonstrativo"><div class="dre-heading"><div><span class="eyebrow">DEMONSTRAÇÃO DO RESULTADO</span><h2>DRE anual</h2><p>Consolidado de ${esc(year)} · ${presentation.method==='REPORT_MONTHS_V1'?'soma das competências importadas':'projeção anual salva'}</p></div>${regimeControl(presentation,regime,true)}</div>
   ${periodControl({calendar,year})}
   ${visualSummary(presentation,annualColumn(regime),'Total anual · '+year,regime)}
+  ${annualEvolution(presentation,calendar,regime.id)}
   <div class="dre-table-heading"><div><h3>Demonstrativo completo</h3><p>Todos os regimes lado a lado. A coluna do regime selecionado fica em destaque.</p></div>${toolbar(showPercent)}</div>
   ${quickNavigation()}${readingNote(showPercent)}${table({presentation,columns,showPercent,highlightId:regime.id})}${contextFooter(presentation,calendar,year)}</section>`;
 }
@@ -79,6 +97,7 @@ export function renderCompleteMonthlyDre({presentation,calendar,year,regimeId,sh
   return `<section class="card sim-dre sim-calendar dre-complete dre-visual${monthView?' dre-single-month':''}" id="dre-demonstrativo"><div class="dre-heading"><div><span class="eyebrow">DEMONSTRAÇÃO DO RESULTADO</span><h2>DRE mensal</h2><p>Cenário ${esc(year)} · ${calendar?.version==='DRE_CALENDAR_V3'?'valores por competência dos relatórios':'projeção pela média mensal salva'}</p></div>${regimeControl(presentation,regime)}</div>
   ${periodControl({monthly:true,calendar,year,months,selectedMonth})}
   ${visualSummary(presentation,summaryColumn,selected?.label+' / '+year,regime)}
+  ${monthlyEvolution(presentation,calendar,regime.id,selectedMonth)}
   <div class="dre-table-heading"><div><h3>Demonstrativo completo</h3><p>${monthView?'Mês selecionado e total anual.':'Janeiro a dezembro e total anual.'} Todas as composições na mesma tabela.</p></div>${toolbar(showPercent)}</div>
   <div class="dre-calendar-controls"><div role="group" aria-label="Visualização do calendário"><button type="button" data-dre-month-view="single" aria-pressed="${monthView}">Um mês por vez</button><button type="button" data-dre-month-view="all" aria-pressed="${!monthView}">12 meses</button></div></div>
   ${quickNavigation()}${readingNote(showPercent)}${table({presentation,columns,showPercent,className:'dre-calendar-screen',label:monthView?'DRE do mês selecionado e total anual':'DRE de janeiro a dezembro com coluna Indicador fixa'})}
