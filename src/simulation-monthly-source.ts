@@ -134,6 +134,6 @@ export async function monthlyReportSource(purchases: any, sales: any, _currentSa
   need(!purchaseUf||!salesUf||purchaseUf===salesUf,'As UFs da empresa nos relatórios de compras e vendas divergem. Revise os arquivos.',409,'SIMULATION_OPERATIONS');
   // A versioned purchase estimate must retain its own confirmed UF, including
   // an explicitly missing UF. Sales cannot silently resolve its pending rows.
-  const anticipationUf=purchases.job.anticipationVersion===ANTICIPATION_VERSION?purchaseUf:purchaseUf||normalizeUf(issuerUf)||salesUf;
+  const anticipationUf=purchases.anticipation?.version===ANTICIPATION_VERSION||purchases.job.anticipationVersion===ANTICIPATION_VERSION?purchaseUf:purchaseUf||normalizeUf(issuerUf)||salesUf;
   return selectOperationMonths(p,s,normalizeUf(issuerUf)||salesUf,anticipationUf);
 }

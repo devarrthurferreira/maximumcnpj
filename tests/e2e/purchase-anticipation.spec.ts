@@ -33,7 +33,7 @@ test('Antecipação compras mostra CPF, 7,32%, exclusões e pendências e recalc
   await page.goto('/purchases.html');await page.getByLabel('Empresa responsável (Código / ID)').selectOption(clientId);
   await preview(page);
   const panel=page.locator('#purchase-review .purchase-anticipation');
-  await expect(panel.getByRole('heading',{name:'Antecipação de ICMS · compras com CPF'})).toBeVisible();
+  await expect(panel.getByRole('heading',{name:'DIFAL de entrada — Antecipação de ICMS'})).toBeVisible();
   await expect(panel.locator('[data-anticipation-amount]')).toHaveText('Pendente');
   await page.getByLabel('UF do estabelecimento comprador').selectOption('MG');
   await expect(panel.locator('[data-anticipation-amount]')).toContainText('10,98');
@@ -81,8 +81,8 @@ for(const guided of [false,true])test(`Antecipação ${guided?'guiada':'completa
     if(url.pathname==='/api/v4/purchases')return route.request().method()==='POST'?create(route):route.fulfill({json:{items:job?[job]:[],total:job?1:0}});
     if(url.pathname.endsWith('/rows')){uploads.push(route.request().postDataJSON());job.uploaded=1;return route.fulfill({json:{uploaded:1}});}
     if(url.pathname.endsWith('/finalize')){job.status='COMPLETED';return route.fulfill({json:job});}
-    if(url.pathname.endsWith('/summary'))return route.fulfill({json:{job,calculationVersion:'NET_V2',anticipation:summary,totals,reportingGroups:groups}});
-    if(url.pathname.endsWith('/results')||url.pathname.endsWith('/lines'))return route.fulfill({json:{items:[{document:'12345678900',name:'FORNECEDOR SINTÉTICO',documentKind:'CPF',recipientUf:'SP',quantity:'1',natureCode:'2102',natureOperation:'COMPRAS',totalCents:15000,anticipation:result}],page:1,total:1,pageSize:100}});
+    if(url.pathname.endsWith('/summary'))return route.fulfill({json:{job,calculationVersion:'NET_V2',anticipation:summary,anticipationOrigin:'IMPORTED',totals,reportingGroups:groups}});
+    if(url.pathname.endsWith('/results')||url.pathname.endsWith('/lines'))return route.fulfill({json:{items:[{document:'12345678900',name:'FORNECEDOR SINTÉTICO',documentKind:'CPF',recipientUf:'SP',quantity:'1',natureCode:'2102',natureOperation:'COMPRAS',totalCents:15000,anticipation:result,anticipationOrigin:'IMPORTED'}],page:1,total:1,pageSize:100}});
     return route.fulfill({json:job});
   });
   await page.goto(guided?`/purchases.html?generation=${generationId}&client=${clientId}&guided=1`:'/purchases.html');
@@ -97,10 +97,10 @@ for(const guided of [false,true])test(`Antecipação ${guided?'guiada':'completa
   expect(creates).toHaveLength(2);expect(creates[0]).toEqual(creates[1]);expect(creates[1].issuerUf).toBe('MG');
   expect(uploads[0].rows[0]).toMatchObject({document:'123.456.789-00',recipientUf:'SP',natureCode:'2102',natureOperation:'COMPRAS',operationVersion:OPERATION_CATALOG_VERSION,totalCents:15000});
   expect(uploads[0].rows[0]).not.toHaveProperty('anticipation');expect(uploads[0].rows[0]).not.toHaveProperty('difal');
-  if(!guided){await page.getByLabel('Visualização').selectOption('lines');await expect(page.locator('#purchase-result-list')).toContainText('UF fornecedor');await expect(page.locator('#purchase-result-list')).toContainText('Antecipação de ICMS · 7,32%');await expect(page.locator('#purchase-result-list tbody')).toContainText('10,98');}
+  if(!guided){await page.getByLabel('Visualização').selectOption('lines');await expect(page.locator('#purchase-result-list')).toContainText('UF fornecedor');await expect(page.locator('#purchase-result-list')).toContainText('DIFAL de entrada — Antecipação de ICMS · 7,32%');await expect(page.locator('#purchase-result-list tbody')).toContainText('10,98');}
 });
 
-test('Retomada de compras sem versão de antecipação preserva campos e informa indisponibilidade',async({page})=>{
+test('Retomada de compras preserva o envio antigo e calcula a antecipação após concluir',async({page})=>{
   await base(page,'MG');let uploaded:any;
   const job:any={_id:jobId,clientId,clientCode:client.code,clientName:client.name,mode:'PURCHASES_V1',operationVersion:OPERATION_CATALOG_VERSION,issuerUf:'MG',calculationVersion:'NET_V2',fileName:'810-COMPRAS.csv',status:'UPLOADING',expectedRows:1,uploaded:0,createdAt:'2026-10-20T12:00:00Z'};
   await page.route(/\/api\/v4\/purchases(?:[/?]|$)/,route=>{
@@ -108,16 +108,68 @@ test('Retomada de compras sem versão de antecipação preserva campos e informa
     if(url.pathname==='/api/v4/purchases')return route.fulfill({json:route.request().method()==='POST'?job:{items:[job],total:1}});
     if(url.pathname.endsWith('/rows')){uploaded=route.request().postDataJSON();job.uploaded=1;return route.fulfill({json:{uploaded:1}});}
     if(url.pathname.endsWith('/finalize')){job.status='COMPLETED';return route.fulfill({json:job});}
-    if(url.pathname.endsWith('/summary'))return route.fulfill({json:{job,calculationVersion:'NET_V2',anticipation:null,totals,reportingGroups:groups}});
+    if(url.pathname.endsWith('/summary'))return route.fulfill({json:{job,calculationVersion:'NET_V2',anticipation:summary,anticipationOrigin:'DERIVED_FROM_SNAPSHOT',totals,reportingGroups:groups}});
     if(url.pathname.endsWith('/results'))return route.fulfill({json:{items:[],total:0,pageSize:100}});
     return route.fulfill({json:job});
   });
   await page.goto(`/purchases.html?client=${clientId}&job=${jobId}`);
   await expect(page.getByRole('heading',{name:'Importação incompleta'})).toBeVisible();
   await preview(page);
-  await expect(page.locator('#purchase-review .purchase-anticipation')).toContainText('Indisponível neste histórico');
+  await expect(page.locator('#purchase-review .purchase-anticipation')).toContainText('Cálculo indisponível nesta retomada');
   await expect(page.locator('#purchase-review [data-anticipation-amount]')).toHaveCount(0);
   await page.locator('#purchase-confirm').click();
-  await expect(page.locator('#purchase-report-view .purchase-anticipation')).toContainText('Indisponível neste histórico');
+  await expect(page.locator('#purchase-report-view .purchase-anticipation')).toContainText('Calculado a partir dos dados já salvos neste relatório.');
+  await expect(page.locator('#purchase-report-view [data-anticipation-amount]')).toContainText('10,98');
   expect(uploaded.rows[0]).not.toHaveProperty('anticipation');expect(uploaded.rows[0].operationVersion).toBe(OPERATION_CATALOG_VERSION);
+});
+
+for(const guided of [false,true])test(`Relatório de entradas ${guided?'guiado':'completo'} mostra DIFAL calculado dos dados salvos sem reimportar`,async({page},testInfo)=>{
+  await base(page,'MG');let writes=0;
+  // Old job deliberately has neither anticipationVersion nor operationVersion.
+  const job={_id:jobId,generationId,clientId,clientCode:client.code,clientName:client.name,mode:'PURCHASES_V1',issuerUf:'MG',calculationVersion:'NET_V2',fileName:'810-ENTRADAS.csv',status:'COMPLETED',expectedRows:1,uploaded:1,createdAt:'2026-10-20T12:00:00Z'};
+  await page.route('**/api/v4/generations/'+generationId,r=>r.fulfill({json:{_id:generationId,requiredReports:['PURCHASES'],companies:[{clientId,name:client.name,code:client.code,purchaseJobId:jobId,purchase:job}]}}));
+  await page.route(/\/api\/v4\/purchases(?:[/?]|$)/,route=>{
+    if(route.request().method()!=='GET')writes++;
+    const url=new URL(route.request().url());
+    if(url.pathname==='/api/v4/purchases')return route.fulfill({json:{items:[job],total:1}});
+    if(url.pathname.endsWith('/summary'))return route.fulfill({json:{job,calculationVersion:'NET_V2',anticipation:summary,anticipationOrigin:'DERIVED_FROM_SNAPSHOT',totals,reportingGroups:groups}});
+    if(url.pathname.endsWith('/results')||url.pathname.endsWith('/lines'))return route.fulfill({json:{items:[{document:'12345678900',name:'FORNECEDOR SINTÉTICO',documentKind:'CPF',recipientUf:'SP',quantity:'1',natureCode:'2102',totalCents:15000,anticipation:result,anticipationOrigin:'DERIVED_FROM_SNAPSHOT'}],page:1,total:1,pageSize:100}});
+    return route.fulfill({json:job});
+  });
+  await page.goto(`/purchases.html?generation=${generationId}&client=${clientId}&job=${jobId}${guided?'&guided=1':''}`);
+  const panel=page.locator('#purchase-report-view .purchase-anticipation');
+  await expect(panel.getByRole('heading',{name:'DIFAL de entrada — Antecipação de ICMS'})).toBeVisible();
+  await expect(panel).toContainText('Calculado a partir dos dados já salvos neste relatório.');
+  await expect(panel.locator('[data-anticipation-amount]')).toContainText('10,98');
+  await expect(panel).not.toContainText('importe');await expect(panel).toContainText('Compras com CPF · 7,32%');
+  await expect(page.locator('#purchase-report-view .purchase-hero')).toContainText('150,00');
+  if(!guided){
+    const desktop=testInfo.outputPath('difal-entrada-snapshot-desktop.png');await panel.screenshot({path:desktop});await testInfo.attach('DIFAL de entrada calculado do histórico desktop',{path:desktop,contentType:'image/png'});
+    await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+    const mobile=testInfo.outputPath('difal-entrada-snapshot-mobile.png');await panel.screenshot({path:mobile});await testInfo.attach('DIFAL de entrada calculado do histórico mobile',{path:mobile,contentType:'image/png'});
+  }else await page.getByRole('link',{name:'Ver relatório completo e baixar arquivos'}).click();
+  await page.getByLabel('Visualização').selectOption('lines');
+  await expect(page.locator('#purchase-result-list')).toContainText('DIFAL de entrada — Antecipação de ICMS · 7,32%');
+  await expect(page.locator('#purchase-result-list tbody')).toContainText('10,98');
+  await expect(page.locator('#purchase-result-list tbody')).toContainText('Calculado dos dados salvos');
+  expect(writes).toBe(0);
+});
+
+test('Relatório de entradas sem dados salvos suficientes informa indisponibilidade sem falso zero',async({page})=>{
+  await base(page,'MG');
+  const job={_id:jobId,clientId,clientCode:client.code,clientName:client.name,mode:'PURCHASES_V1',calculationVersion:'NET_V2',fileName:'810-ENTRADAS-ANTIGAS.csv',status:'COMPLETED',expectedRows:1,uploaded:1,createdAt:'2026-10-01T12:00:00Z'};
+  await page.route(/\/api\/v4\/purchases(?:[/?]|$)/,route=>{
+    const url=new URL(route.request().url());
+    if(url.pathname==='/api/v4/purchases')return route.fulfill({json:{items:[job],total:1}});
+    if(url.pathname.endsWith('/summary'))return route.fulfill({json:{job,calculationVersion:'NET_V2',anticipation:null,anticipationOrigin:'UNAVAILABLE',totals,reportingGroups:groups}});
+    if(url.pathname.endsWith('/results')||url.pathname.endsWith('/lines'))return route.fulfill({json:{items:[{document:'12345678900',name:'FORNECEDOR SINTÉTICO',documentKind:'CPF',quantity:'1',totalCents:15000,anticipation:null,anticipationOrigin:'UNAVAILABLE'}],page:1,total:1,pageSize:100}});
+    return route.fulfill({json:job});
+  });
+  await page.goto(`/purchases.html?client=${clientId}&job=${jobId}`);
+  const panel=page.locator('#purchase-report-view .purchase-anticipation');
+  await expect(panel).toContainText('Indisponível neste histórico: faltam dados salvos');
+  await expect(panel).toContainText('importe o relatório');await expect(panel.locator('[data-anticipation-amount]')).toHaveCount(0);
+  await page.getByLabel('Visualização').selectOption('lines');
+  await expect(page.locator('#purchase-result-list tbody')).toContainText('Indisponível');
+  await expect(page.locator('#purchase-result-list tbody')).not.toContainText('R$ 0,00');
 });

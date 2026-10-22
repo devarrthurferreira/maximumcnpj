@@ -5,6 +5,7 @@ import {normalizeUf} from './difal.ts';
 export const ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_V2';
 export const ANTICIPATION_LEGACY_VERSION = 'ICMS_ANTICIPATION_V1';
 export type AnticipationVersion = typeof ANTICIPATION_VERSION | typeof ANTICIPATION_LEGACY_VERSION;
+export type AnticipationOrigin = 'IMPORTED' | 'DERIVED_FROM_SNAPSHOT' | 'UNAVAILABLE';
 export function isAnticipationVersion(value:unknown):value is AnticipationVersion {
   return value===ANTICIPATION_VERSION||value===ANTICIPATION_LEGACY_VERSION;
 }

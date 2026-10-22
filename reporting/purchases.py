@@ -173,6 +173,18 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         _check(isinstance(issuer_uf, str) and issuer_uf == normalize_uf(issuer_uf))
         anticipation = {'version': job['anticipationVersion'], 'ratePercent': ANTICIPATION_RATE_PERCENT,
                         'issuerUf': issuer_uf, 'eligibleLines': 0, 'baseCents': 0, 'amountCents': 0, 'pendingLines': 0}
+    # Older NET_V2 imports may already contain the required frozen operation
+    # fields. Derive a read-only estimate only when every row has those fields;
+    # an absent field makes the whole estimate unavailable, never a partial zero.
+    issuer_metadata_valid = ('issuerUf' not in job or
+        isinstance(job['issuerUf'], str) and job['issuerUf'] == normalize_uf(job['issuerUf']))
+    if operation_version is not None:
+        _check(issuer_metadata_valid)
+    derive_anticipation = not sales and 'anticipationVersion' not in job and version == 'NET_V2' and issuer_metadata_valid
+    derivation_complete = derive_anticipation
+    derived_anticipation = {'version': ANTICIPATION_VERSION, 'ratePercent': ANTICIPATION_RATE_PERCENT,
+        'issuerUf': normalize_uf(job.get('issuerUf')), 'eligibleLines': 0, 'baseCents': 0,
+        'amountCents': 0, 'pendingLines': 0} if derive_anticipation else None
     components = {key: 0 for key in (*COMPONENT_FIELDS, 'totalCents')} if version == 'NET_V2' else None
     expected = _integer(job.get('expectedRows'), 50_000)
     _check(expected > 0 and _integer(job.get('uploaded')) == expected)
@@ -244,6 +256,17 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
                 anticipation[key] = _integer(anticipation[key] + expected_anticipation[key])
             anticipation['eligibleLines'] += int(expected_anticipation['eligible'])
             anticipation['pendingLines'] += int(expected_anticipation['reason'] in ANTICIPATION_PENDING_REASONS)
+        elif derive_anticipation:
+            has_fields = (isinstance(row.get('natureCode'), str) and
+                          re.fullmatch(r'[0-9]{4}', row['natureCode']) is not None and
+                          isinstance(row.get('recipientUf'), str) and row['recipientUf'] == normalize_uf(row['recipientUf']))
+            derivation_complete = derivation_complete and has_fields
+            if has_fields:
+                calculated = calculate_anticipation(row, derived_anticipation['issuerUf'])
+                for key in ('baseCents', 'amountCents'):
+                    derived_anticipation[key] = _integer(derived_anticipation[key] + calculated[key])
+                derived_anticipation['eligibleLines'] += int(calculated['eligible'])
+                derived_anticipation['pendingLines'] += int(calculated['reason'] in ANTICIPATION_PENDING_REASONS)
         operation = row.get('operation') if sales else None
         if sales:
             operation = operation if operation in operation_totals else 'OUTRAS'
@@ -372,6 +395,10 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
                           'suppliers': group['count'], 'supplierPercent': group['countPercent'],
                           'fileValuePercent': group['valuePercent']} for group in reporting_groups]
     quantity_text = format(quantity, 'f').rstrip('0').rstrip('.') if '.' in format(quantity, 'f') else format(quantity, 'f')
+    anticipation_origin = 'IMPORTED' if anticipation is not None else 'UNAVAILABLE'
+    if derivation_complete:
+        anticipation = derived_anticipation
+        anticipation_origin = 'DERIVED_FROM_SNAPSHOT'
     return {'job': {key: job.get(key) for key in ('_id', 'mode', 'clientId', 'clientCode', 'clientName', 'fileName', 'completedAt', 'reportPeriod')},
             'reportType': 'SALES' if sales else 'PURCHASES',
             'totalCents': total_cents, 'cnpjCents': cnpj_cents, 'nonCnpjCents': non_cnpj_cents,
@@ -382,6 +409,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             'unconfirmed': unknown, 'components': components, 'operationTotals': list(operation_totals.values()) if sales else [], 'calculationVersion': version,
             'difal': difal,
             'anticipation': anticipation,
+            'anticipationOrigin': anticipation_origin,
             'operationVersion': operation_version,
             'natureTotals': [nature_totals[code] for code in sorted(nature_totals)] if operation_version else None,
             'quantityDisplay': quantity_text.replace('.', ','), 'generatedAt': utcnow(), 'sources': sorted(sources),
@@ -478,7 +506,7 @@ def purchase_story(meta, width, styles):
     if sales:
         story += difal_story(meta.get('difal'), width, styles)
     else:
-        story += anticipation_story(meta.get('anticipation'), width, styles)
+        story += anticipation_story(meta.get('anticipation'), width, styles, meta.get('anticipationOrigin'))
     if sales and meta.get('operationTotals'):
         operation_labels = {'VENDA':'Vendas','SERVICO':'Vendas de serviços','DEVOLUCAO':'Devoluções','OUTRAS':'Outras'}
         operation_rows = [['Operação','Linhas','Valor antes do sinal','Impacto no saldo']]
@@ -563,13 +591,17 @@ def difal_story(difal, width, styles):
     return story
 
 
-def anticipation_story(anticipation, width, styles):
+def anticipation_story(anticipation, width, styles, origin=None):
     """Show the reconciled purchase estimate without changing the purchase base."""
     p = lambda value, style='body': purchase_paragraph(value, styles, style)
-    story = [p('Antecipação de ICMS (7,32%)', 'heading')]
+    story = [p('DIFAL de entrada — Antecipação de ICMS (7,32%)', 'heading')]
     if anticipation is None:
-        return story + [p('Indisponível neste histórico: o snapshot foi criado antes do cálculo da antecipação de ICMS. '
-                          'Reimporte as compras para calcular a estimativa com o documento e as UFs da operação.', 'small')]
+        return story + [p('Indisponível neste histórico: os dados salvos não permitem conferir a antecipação de ICMS '
+                          'em todas as linhas. São necessários os valores Q - Y + AA - AB, a natureza de quatro dígitos '
+                          'e o campo de UF do fornecedor preservados. Reimporte as compras para completar esses dados.', 'small')]
+    if origin == 'DERIVED_FROM_SNAPSHOT':
+        story.append(p('Calculado a partir dos dados salvos no relatório de origem, sem modificar o lote ou as suas linhas. '
+                       'A estimativa considera somente as operações elegíveis com CPF.', 'small'))
     rows = [['UF da empresa', 'Linhas elegíveis', 'Base elegível', 'Antecipação de ICMS (7,32%)'],
             [anticipation['issuerUf'] or 'Não informada', number(anticipation['eligibleLines']),
              money(anticipation['baseCents']), money(anticipation['amountCents'])]]

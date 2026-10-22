@@ -69,8 +69,9 @@ test('compras CPF e CNPJ preservam custos, mas só CPF gera antecipação no rel
         const csvRows=XLSX.utils.sheet_to_json<string[]>(workbook.Sheets[workbook.SheetNames[0]],{header:1,raw:true}),headers=csvRows[0];
         const at=(row:string[],header:string)=>row[headers.indexOf(header)];
         const cnpj=csvRows.slice(1).find(row=>at(row,'Documento do fornecedor (A)')==='11222333000181')!;
-        expect(at(cnpj,'Total calculado (R$)')).toBe('3000,00');expect(at(cnpj,'Base antecipação de ICMS (R$)')).toBe('0,00');expect(at(cnpj,'Antecipação de ICMS (R$)')).toBe('0,00');expect(at(cnpj,'Situação antecipação de ICMS')).toBe('NOT_CPF');
-        expect(csvRows.slice(1).reduce((sum,row)=>sum+Number(String(at(row,'Antecipação de ICMS (R$)')||'0').replace(',','.')),0)).toBeCloseTo(329.4,2);
+        expect(at(cnpj,'Total calculado (R$)')).toBe('3000,00');expect(at(cnpj,'Base DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('0,00');expect(at(cnpj,'DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('0,00');expect(at(cnpj,'Situação DIFAL de entrada — Antecipação de ICMS')).toBe('NOT_CPF');
+        expect(at(cnpj,'Origem DIFAL de entrada')).toBe('IMPORTED');
+        expect(csvRows.slice(1).reduce((sum,row)=>sum+Number(String(at(row,'DIFAL de entrada — Antecipação de ICMS (R$)')||'0').replace(',','.')),0)).toBeCloseTo(329.4,2);
       }finally{await detailed.close();}
     }
     await page.locator('[data-guided-continue]').click();

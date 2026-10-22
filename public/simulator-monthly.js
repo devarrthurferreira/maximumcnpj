@@ -1,7 +1,7 @@
 import {REPORT_GROUPS} from './simulator-projection.js';
 import {calculateSimulation, draftToInput, SIMULATION_VALUE_FIELDS} from './simulator-engine.js';
 
-export const MONTHLY_MODEL_VERSION='1.4.1-cpf-anticipation';
+export const MONTHLY_MODEL_VERSION='1.4.2-entries-report';
 export const MONTHLY_VERSION='REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS=Object.freeze([...REPORT_GROUPS,'serviceRevenueCents']);
 const sum=values=>values.reduce((a,b)=>a+b,0);

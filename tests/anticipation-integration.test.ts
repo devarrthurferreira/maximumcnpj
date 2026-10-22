@@ -38,9 +38,11 @@ test('Antecipação compras V2: CPF, catálogo, UF, snapshot, CSV, retomada e ve
   const summary=await purchaseSummary(job._id),lines=await collection('purchaseLines'),jobs=await collection('lookupJobs');
   assert.deepEqual(summary.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:2,baseCents:101255,amountCents:7412,pendingLines:1});
   assert.deepEqual(summary.job.purchaseInput.anticipation,summary.anticipation);
+  assert.equal(summary.anticipationOrigin,'IMPORTED');
   assert.equal(summary.totals.totalCents,237760);assert.equal(providerCalls,1,'Somente CNPJ vai ao provedor; CPF não cria consulta.');
   const details=await purchaseRows(job._id,'ALL',1,true);
   assert.deepEqual(details.items.map((row:any)=>row.anticipation.reason),['ELIGIBLE','SAME_UF','NOT_CPF','NOT_CPF','NOT_CPF','ELIGIBLE','NOT_PURCHASE','MISSING_RECIPIENT_UF']);
+  assert(details.items.every((row:any)=>row.anticipationOrigin==='IMPORTED'));
   const grouped=await purchaseRows(job._id,'ALL',1),cpf=grouped.items.find((row:any)=>row.documentKind==='CPF');
   assert.deepEqual(cpf.anticipation,{baseCents:101255,amountCents:7412,eligibleLines:2,pendingLines:1});
   const csv=await purchaseExport(job._id,'ALL',1);
@@ -58,6 +60,12 @@ test('Antecipação compras V2: CPF, catálogo, UF, snapshot, CSV, retomada e ve
    assert.deepEqual(months![0].anticipation,purchases.anticipation);
    assert.equal(months![0].anticipation.amountCents,0);
    assert.equal(months![0].difal.amountCents,10000);
+   await jobs.updateOne(scope({_id:purchase._id}),{$unset:{anticipationVersion:'',issuerUf:'','purchaseInput.anticipation':''}});
+   await lines.updateMany(scope({jobId:purchase._id}),{$unset:{anticipation:''}});
+   const derived=await purchaseSummary(purchase._id),derivedMonths=await monthlyReportSource(derived,sales,undefined,'MG');
+   assert.equal(derived.anticipationOrigin,'DERIVED_FROM_SNAPSHOT');
+   assert.equal(derived.anticipation?.issuerUf,'');assert.equal(derived.anticipation?.pendingLines,1);
+   assert.deepEqual(derivedMonths![0].anticipation,derived.anticipation,'A UF das vendas não substitui a UF ausente das compras.');
   });
 
   await t.test('servidor rejeita imposto ou resumo adulterado e mantém a fonte original na reconsulta',async()=>{
@@ -83,13 +91,66 @@ test('Antecipação compras V2: CPF, catálogo, UF, snapshot, CSV, retomada e ve
     assert.equal(Object.hasOwn(staged!,'anticipation'),!!version);
     await uploadLookup(actor,old._id,payload);await complete(old._id);
     const oldSummary=await purchaseSummary(old._id);
-    assert.equal(oldSummary.anticipation?.version,version);assert.equal(oldSummary.anticipation?.amountCents,version?1464:undefined);
+    assert.equal(oldSummary.anticipation?.version,version||ANTICIPATION_VERSION);assert.equal(oldSummary.anticipation?.amountCents,version?1464:0);
+    assert.equal(oldSummary.anticipationOrigin,version?'IMPORTED':'DERIVED_FROM_SNAPSHOT');
+    assert.equal(Object.hasOwn(oldSummary.job.purchaseInput,'anticipation'),!!version,'Finalizar upload legado não persiste resumo derivado.');
     const repeated=await recheckLookup(actor,old._id);
     assert.equal(repeated.anticipationVersion,version);
     await (await collection('providerControl')).deleteMany({});await processLookup(actor,repeated._id,transport);
     assert.deepEqual((await purchaseSummary(repeated._id)).anticipation,oldSummary.anticipation);
-    if(!version)assert((await purchaseExport(old._id,'ALL',1)).content.includes('Indisponível — reimporte as compras'));
+    if(!version)assert((await purchaseExport(old._id,'ALL',1)).content.includes('DERIVED_FROM_SNAPSHOT'));
    }
+  });
+  await t.test('relatório existente deriva CPF por linha, agrupa, exporta e preserva jobs, linhas e hashes',async()=>{
+   const original=await createLookup(actor,{clientId,importId:randomUUID(),fileName:'compras-historicas.csv',expectedRows:7,issuerUf:'MG'},PURCHASE_MODE);
+   await jobs.updateOne(scope({_id:original._id}),{$unset:{anticipationVersion:''}});
+   const payload={offset:0,rows:[row(7),row(7),row(10000,{natureCode:'8000'}),row(20000,{document:cnpj}),row(200,{recipientUf:'MG'}),row(500,{recipientUf:''}),row(1000,{natureCode:'1202'})]};
+   await uploadLookup(actor,original._id,payload);await uploadLookup(actor,original._id,payload);await complete(original._id);
+   const snapshot=async()=>({job:await jobs.findOne(scope({_id:original._id})),rows:await lines.find(scope({jobId:original._id})).sort({index:1}).toArray(),
+     chunks:await (await collection('chunks')).find(scope({_id:`lookup:${original._id}:0`})).toArray(),items:await (await collection('lookupItems')).find(scope({jobId:original._id})).sort({_id:1}).toArray()});
+   const before=await snapshot(),callsBefore=providerCalls;
+   const derived=await purchaseSummary(original._id);
+   assert.equal(derived.job.anticipationVersion,undefined);assert.equal(derived.job.purchaseInput.anticipation,undefined);
+   assert.equal(derived.anticipationOrigin,'DERIVED_FROM_SNAPSHOT');
+   assert.deepEqual(derived.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:3,baseCents:10014,amountCents:734,pendingLines:1});
+   const detailed=await purchaseRows(original._id,'ALL',1,true),grouped=await purchaseRows(original._id,'ALL',1);
+   assert(detailed.items.every((row:any)=>row.anticipationOrigin==='DERIVED_FROM_SNAPSHOT'));
+   assert.deepEqual(detailed.items.map((row:any)=>row.anticipation.amountCents),[1,1,732,0,0,0,0]);
+   assert.deepEqual(grouped.items.find((row:any)=>row.documentKind==='CPF').anticipation,{baseCents:10014,amountCents:734,eligibleLines:3,pendingLines:1});
+   assert.equal(grouped.items.find((row:any)=>row.documentKind==='CNPJ').anticipation.amountCents,0);
+   const exported=await purchaseExport(original._id,'ALL',1);
+   assert(exported.content.includes('DIFAL de entrada — Antecipação de ICMS (R$)'));assert(exported.content.includes('Origem DIFAL de entrada'));
+   assert(exported.content.includes('DERIVED_FROM_SNAPSHOT'));assert(exported.content.includes('ICMS_ANTICIPATION_V2'));assert(exported.content.includes('Pendente — UF do fornecedor ausente'));
+   assert.equal(providerCalls,callsBefore);assert.deepEqual(await snapshot(),before);
+   await lines.updateOne(scope({jobId:original._id,index:0}),{$inc:{totalCents:1}});
+   try{await assert.rejects(purchaseExport(original._id,'ALL',1),errorCode('PURCHASE_TOTAL'));}
+   finally{await lines.updateOne(scope({jobId:original._id,index:0}),{$inc:{totalCents:-1}});}
+   const repeated=await recheckLookup(actor,original._id);
+   assert.equal(repeated.anticipationVersion,undefined);
+   await (await collection('providerControl')).deleteMany({});await processLookup(actor,repeated._id,transport);
+   assert.deepEqual((await purchaseSummary(repeated._id)).anticipation,derived.anticipation);
+   assert.deepEqual(await snapshot(),before);
+  });
+  await t.test('metadados históricos ausentes tornam a estimativa inteira indisponível, sem confirmar zero',async()=>{
+   const old=await createLookup(actor,{clientId,importId:randomUUID(),fileName:'compras-sem-metadados.csv',expectedRows:2,issuerUf:'MG'},PURCHASE_MODE);
+   await jobs.updateOne(scope({_id:old._id}),{$unset:{anticipationVersion:''}});
+   await uploadLookup(actor,old._id,{offset:0,rows:[row(10000),row(10000)]});await complete(old._id);
+   await jobs.updateOne(scope({_id:old._id}),{$unset:{operationVersion:''}});
+   await lines.updateMany(scope({jobId:old._id}),{$unset:{operationVersion:'',natureOperation:''}});
+   for(const field of ['natureCode','recipientUf']){
+    await lines.updateOne(scope({jobId:old._id,index:1}),{$unset:{[field]:''}});
+    const unavailable=await purchaseSummary(old._id);
+    assert.equal(unavailable.anticipation,null);assert.equal(unavailable.anticipationOrigin,'UNAVAILABLE');
+    for(const detailed of [true,false])assert((await purchaseRows(old._id,'ALL',1,detailed)).items.every((row:any)=>row.anticipation===null&&row.anticipationOrigin==='UNAVAILABLE'));
+    const csv=await purchaseExport(old._id,'ALL',1);assert(csv.content.includes('Indisponível — reimporte as compras'));assert(!csv.content.includes('ICMS_ANTICIPATION_V2'));
+    await lines.updateOne(scope({jobId:old._id,index:1}),{$set:{[field]:field==='natureCode'?'1102':'SP'}});
+   }
+   for(const invalidIssuer of [null,'sp','XX']){
+    await jobs.updateOne(scope({_id:old._id}),{$set:{issuerUf:invalidIssuer}});
+    assert.equal((await purchaseSummary(old._id)).anticipationOrigin,'UNAVAILABLE');
+   }
+   await jobs.updateOne(scope({_id:old._id}),{$unset:{issuerUf:''}});
+   assert.equal((await purchaseSummary(old._id)).anticipation?.pendingLines,2);
   });
  }finally{
   await (await database()).dropDatabase();await closeDatabase();resetLookupIndexes();

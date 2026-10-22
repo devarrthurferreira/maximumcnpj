@@ -34,6 +34,18 @@ def anticipation_fixture(total=10000, *, nature='2102', issuer='MG', recipient='
     return job, [row], items
 
 
+def derivable_fixture(**kwargs):
+    job, rows, items = anticipation_fixture(**kwargs)
+    job.pop('anticipationVersion')
+    job.pop('operationVersion')
+    job['purchaseInput'].pop('anticipation')
+    for row in rows:
+        row.pop('operationVersion')
+        row.pop('natureOperation')
+        row.pop('anticipation')
+    return job, rows, items
+
+
 class AnticipationReportTests(unittest.TestCase):
     def test_requested_rate_rounds_each_line_and_keeps_purchase_total(self):
         for total, expected in ((10000, 732), (15000, 1098), (100000, 7320), (1250, 92), (5, 0), (7, 1), (0, 0)):
@@ -45,6 +57,7 @@ class AnticipationReportTests(unittest.TestCase):
                 self.assertEqual(meta['totalCents'], total)
                 self.assertEqual(sum(group['totalCents'] for group in meta['reportingGroups']), total)
                 self.assertIsNone(meta['difal'])
+                self.assertEqual(meta['anticipationOrigin'], 'IMPORTED')
         row = {'totalCents': 1250, 'natureCode': '1102', 'recipientUf': 'SP', 'document': '12345678901'}
         self.assertEqual(summarize_anticipation([row, row], 'MG')['amountCents'], 184)
 
@@ -122,7 +135,75 @@ class AnticipationReportTests(unittest.TestCase):
             self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
         legacy = reconcile_purchase_snapshot(*net_fixture(), WORKSPACE)
         self.assertIsNone(legacy['anticipation'])
+        self.assertEqual(legacy['anticipationOrigin'], 'UNAVAILABLE')
         self.assertIn('Indisponível neste histórico', story_text(legacy))
+
+    def test_old_complete_rows_derive_v2_without_changing_the_snapshot(self):
+        job, rows, items = derivable_fixture()
+        frozen = deepcopy((job, rows, items))
+        meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+        self.assertEqual(meta['anticipationOrigin'], 'DERIVED_FROM_SNAPSHOT')
+        self.assertEqual(meta['anticipation'], {
+            'version': ANTICIPATION_VERSION, 'ratePercent': 7.32, 'issuerUf': 'MG',
+            'baseCents': 10000, 'amountCents': 732, 'eligibleLines': 1, 'pendingLines': 0})
+        self.assertEqual(meta['totalCents'], 10000)
+        self.assertEqual((job, rows, items), frozen)
+        self.assertIn('Calculado a partir dos dados salvos no relatório de origem', story_text(meta))
+        self.assertIn('DIFAL de entrada — Antecipação de ICMS', story_text(meta))
+        self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+        # Legacy rows may contain an unversioned cached estimate. It is not a
+        # trusted source and must never be used instead of the raw fields.
+        rows[0]['anticipation'] = {'amountCents': 99999999}
+        job['purchaseInput']['anticipation'] = {'amountCents': 99999999}
+        self.assertEqual(reconcile_purchase_snapshot(job, rows, items, WORKSPACE)['anticipation']['amountCents'], 732)
+
+    def test_derivation_distinguishes_unknown_ufs_from_missing_metadata(self):
+        for omit_issuer, recipient in ((True, 'SP'), (False, ''), (True, '')):
+            job, rows, items = derivable_fixture(recipient=recipient)
+            if omit_issuer:
+                job.pop('issuerUf')
+            meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+            self.assertEqual(meta['anticipationOrigin'], 'DERIVED_FROM_SNAPSHOT')
+            self.assertEqual(meta['anticipation']['pendingLines'], 1)
+            self.assertEqual(meta['anticipation']['amountCents'], 0)
+            self.assertIn('Estimativa parcial', story_text(meta))
+        for field, value in (('natureCode', None), ('natureCode', ''), ('natureCode', '2102002'),
+                             ('recipientUf', None), ('recipientUf', 'sp'), ('recipientUf', 'XX')):
+            job, rows, items = derivable_fixture()
+            if value is None:
+                rows[0].pop(field)
+            else:
+                rows[0][field] = value
+            meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+            self.assertIsNone(meta['anticipation'])
+            self.assertEqual(meta['anticipationOrigin'], 'UNAVAILABLE')
+        for issuer in (None, 'mg', 'XX'):
+            job, rows, items = derivable_fixture()
+            job['issuerUf'] = issuer
+            self.assertIsNone(reconcile_purchase_snapshot(job, rows, items, WORKSPACE)['anticipation'])
+        job, rows, items = anticipation_fixture()
+        job.pop('anticipationVersion')
+        job['issuerUf'] = 'mg'
+        with self.assertRaises(ReportError):
+            reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+        job, rows, items = derivable_fixture()
+        rows[0]['natureCode'] = '9999'
+        meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+        self.assertEqual(meta['anticipationOrigin'], 'DERIVED_FROM_SNAPSHOT')
+        self.assertEqual(meta['anticipation']['eligibleLines'], 0)
+
+    def test_any_incomplete_line_disables_derivation_and_q_v1_is_unavailable(self):
+        job, rows, items = net_fixture()
+        job['issuerUf'] = 'MG'
+        for row in rows:
+            row.update(natureCode='2102', recipientUf='SP')
+        meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+        self.assertEqual(meta['anticipation']['baseCents'], 20000)  # only the CPF line
+        rows[0].pop('recipientUf')
+        self.assertIsNone(reconcile_purchase_snapshot(job, rows, items, WORKSPACE)['anticipation'])
+        rows[0]['recipientUf'] = 'SP'
+        job['calculationVersion'] = 'Q_V1'
+        self.assertIsNone(reconcile_purchase_snapshot(job, rows, items, WORKSPACE)['anticipation'])
 
     def test_consolidation_sums_once_and_identifies_missing_and_old_versions(self):
         db, _, _, snapshots = generations_report_test.GenerationReportTests().setup_db(3, ['PURCHASES'])
@@ -141,9 +222,20 @@ class AnticipationReportTests(unittest.TestCase):
             meta = generation_metadata(db, generations_report_test.GENERATION, WORKSPACE)
         self.assertEqual(meta['totalsByType']['PURCHASES']['anticipation'], {
             'baseCents': 30000, 'amountCents': 2196, 'eligibleLines': 2, 'pendingLines': 0,
-            'unavailableReports': 1, 'legacyReports': 1})
+            'unavailableReports': 1, 'legacyReports': 1, 'derivedReports': 0})
         self.assertEqual(meta['totalsByType']['PURCHASES']['totalCents'], 130000)
         self.assertTrue(render_generation_pdf(meta).startswith(b'%PDF'))
+
+        job, rows, items = snapshots[entries[0][0]]
+        job.pop('anticipationVersion')
+        job['purchaseInput'].pop('anticipation')
+        rows[0].pop('anticipation')
+        with patch('reporting.generations.purchase_metadata', side_effect=lambda db, job, workspace:
+                   reconcile_purchase_snapshot(*snapshots[job['_id']], workspace)):
+            derived = generation_metadata(db, generations_report_test.GENERATION, WORKSPACE)
+        self.assertEqual(derived['totalsByType']['PURCHASES']['anticipation']['derivedReports'], 1)
+        self.assertEqual(derived['totalsByType']['PURCHASES']['anticipation']['amountCents'], 2196)
+        self.assertTrue(render_generation_pdf(derived).startswith(b'%PDF'))
 
 
 if __name__ == '__main__':

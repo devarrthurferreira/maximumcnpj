@@ -17,7 +17,7 @@ import {baselineMonth, calculateMonthlySimulation, MONTHLY_MODEL_VERSION as MODE
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 
 
-export const REPROCESS_VERSION = 'CPF_ANTICIPATION_2026_10_V3';
+export const REPROCESS_VERSION = 'CPF_ENTRIES_2026_10_V4';
 export const SERVICE_REVENUE_MIGRATION_REVISION = 'LEGACY_ADDITIONAL_SERVICES_V1';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const PAGE_SIZE = 100;
