@@ -1,5 +1,7 @@
 import {test, expect} from '@playwright/test';
 import * as XLSX from 'xlsx';
+import {OPERATION_CATALOG_VERSION} from '../../src/operation-catalog.ts';
+import {DIFAL_VERSION} from '../../src/difal.ts';
 
 const clientId = '00000000-0000-4000-8000-000000000020';
 const client = {_id:clientId, code:'000', name:'EMPRESA DEMONSTRAÇÃO', active:true};
@@ -15,6 +17,8 @@ const csv = () => {
 
 for (const type of ['PURCHASES','SALES']) test(`${type} imports cp1252 columns, keeps financial values and provides snapshot downloads`, async ({page}, testInfo) => {
   const sales=type==='SALES', report=sales?'vendas':'compras', endpoint=sales?'sales':'purchases';
+  const codes=sales?['5102001','6108001','9000001']:['2102001','1202001','8000102'];
+  const operations=sales?['VENDA','VENDA','SERVICO_VENDA']:['COMPRAS','DEVOLUCAO_VENDA','SERVICO_COMPRA'];
   let job:any = null, posted:any[] = [], pdfBody:any, csvBody:any;
   const pageErrors:string[] = []; page.on('pageerror', e => pageErrors.push(e.message));
   await page.route('**/api/auth/session', route => route.fulfill({json:{user:{_id:'test',role:'operator',mustChangePassword:false}}}));
@@ -23,8 +27,8 @@ for (const type of ['PURCHASES','SALES']) test(`${type} imports cp1252 columns, 
     const url = new URL(route.request().url()), method = route.request().method(), p = method === 'POST' ? route.request().postDataJSON() : {};
     if (url.pathname === `/api/v4/${endpoint}`) {
       if (method === 'GET') return route.fulfill({json:{items:job ? [job] : [],total:job ? 1 : 0,page:1}});
-      expect(p.clientId).toBe(clientId); expect(p.type).toBe(type); expect(p.expectedRows).toBe(3);
-      job = {_id:p.importId,calculationVersion:'NET_V2',clientId,clientCode:'000',clientName:client.name,fileName:p.fileName,expectedRows:3,uploaded:0,status:'UPLOADING',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:1,invalid:1,duplicates:1}};
+      expect(p.clientId).toBe(clientId); expect(p.type).toBe(type); expect(p.expectedRows).toBe(3); expect(p.issuerUf).toBe('MG');
+      job = {_id:p.importId,calculationVersion:'NET_V2',operationVersion:OPERATION_CATALOG_VERSION,issuerUf:p.issuerUf,...(sales?{difalVersion:DIFAL_VERSION}:{}),clientId,clientCode:'000',clientName:client.name,fileName:p.fileName,expectedRows:3,uploaded:0,status:'UPLOADING',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:1,invalid:1,duplicates:1}};
       return route.fulfill({json:job});
     }
     if (url.pathname.endsWith('/rows')) { posted = p.rows; job.uploaded = 3; return route.fulfill({json:{uploaded:3}}); }
@@ -43,12 +47,17 @@ for (const type of ['PURCHASES','SALES']) test(`${type} imports cp1252 columns, 
   await expect(page.getByRole('button',{name:sales?/Vendas/:/Compras/})).toHaveAttribute('aria-pressed','true');
   await expect(page.locator('#purchase-file')).toBeDisabled();
   await page.getByLabel('Empresa responsável (Código / ID)').selectOption(clientId);
-  await page.locator('#purchase-file').setInputFiles({name:`000-${report.toUpperCase()}.csv`,mimeType:'text/csv',buffer:Buffer.from(csv(),'latin1')});
+  await page.getByLabel(`UF do estabelecimento ${sales?'emitente':'comprador'}`).selectOption('MG');
+  const source=csv().split('\r\n').map(line=>line.split(';'));
+  source[0][9]='Estado';source[0][11]='Natureza';source[0][14]='Descrição';
+  for(let index=1;index<source.length;index++){source[index][9]='SP';source[index][11]=codes[index-1];source[index][14]='Descrição sintética';}
+  await page.locator('#purchase-file').setInputFiles({name:`000-${report.toUpperCase()}.csv`,mimeType:'text/csv',buffer:Buffer.from(source.map(line=>line.join(';')).join('\r\n'),'latin1')});
   await page.getByRole('button',{name:'Conferir colunas e valores'}).click();
   await expect(page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'})).toBeVisible();
+  await expect(page.locator('#purchase-review tbody')).toContainText(sales?'Vendas de serviços':'Devolução de venda');
   await page.getByRole('button',{name:'Confirmar empresa e consultar 1 CNPJs'}).click();
   await expect(page.getByRole('heading',{name:`Total de ${report} do relatório`})).toBeVisible();
-  expect(posted).toEqual(sales ? lines.map(line => ({...line,natureCode:'',description:'',operation:'OUTRAS',recipientUf:'',balanceCents:line.totalCents})) : lines);
+  expect(posted).toEqual(lines.map((line,index)=>({...line,natureCode:codes[index].slice(0,4),description:'Descrição sintética',recipientUf:'SP',natureOperation:operations[index],operationVersion:OPERATION_CATALOG_VERSION,...(sales?{operation:index===2?'SERVICO':'VENDA',balanceCents:line.totalCents}:{})})));
   if (sales) {await expect(page.getByRole('heading',{name:'Explore os compradores e valores'})).toBeVisible();await expect(page).toHaveURL(/type=SALES/);}
   await expect(page.locator('.purchase-hero')).toContainText('165,20');
   await expect(page.locator('.purchase-group').first()).toContainText('115,20');

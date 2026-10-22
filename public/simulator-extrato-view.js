@@ -14,13 +14,15 @@ export function statementProcessingSummary(data) {
 }
 export function renderSection22(data) {
   if(!isSection22(data))return '';
-  return `<div class="sim-extrato-review"><details class="sim-extrato-details"><summary><span>Conferir seção 2.2<small>12 competências · PA ${esc(data.pa)}</small></span><strong>${money(data.rbt12Cents/100)}</strong></summary>
+  const history=Array.isArray(data.priorRevenues)&&data.priorRevenues.length>12?data.priorRevenues:null;
+  return `<div class="sim-extrato-review"><details class="sim-extrato-details"><summary><span>Conferir seção 2.2<small>RBT12 do PA ${esc(data.pa)} · 12 competências</small></span><strong>${money(data.rbt12Cents/100)}</strong></summary>
     <div class="sim-extrato-content"><p class="sim-extrato-company"><strong>${esc(data.companyName||'Empresa do extrato')}</strong><small>CNPJ básico ${esc(data.cnpjBasico)}</small></p>
     <p class="sim-help">Soma dos mercados interno e externo nas 12 competências anteriores ao PA. O mês do PA, a seção 2.1, o DAS e a projeção anual não entram neste valor.</p>
     <div class="sim-extrato-table-wrap" tabindex="0" role="region" aria-label="Doze receitas da seção 2.2 que compõem a RBT12"><table><thead><tr><th>Competência</th><th>Mercado interno</th><th>Mercado externo</th><th>Total</th></tr></thead><tbody>
     ${data.rbt12Window.map(row=>`<tr><th scope="row">${esc(row.period)}</th><td>${money(row.internalCents/100)}</td><td>${money(row.externalCents/100)}</td><td>${money(row.totalCents/100)}</td></tr>`).join('')}
     </tbody><tfoot><tr><th scope="row">RBT12 · soma das 12 competências</th><td>${money(data.rbt12Basis?.internalCents/100)}</td><td>${money(data.rbt12Basis?.externalCents/100)}</td><td>${money(data.rbt12Cents/100)}</td></tr></tfoot></table></div>
     <p class="sim-help">${esc(statementProcessingSummary(data))} Confira os valores na imagem original.</p></div></details>
+    ${history?`<details class="sim-extrato-details sim-extrato-history"><summary><span>Histórico completo do quadro 2.2<small>${history.length} receitas mensais disponíveis para as janelas de RBT12</small></span></summary><div class="sim-extrato-content"><p class="sim-help">O cálculo de cada competência usa os 12 meses imediatamente anteriores. O histórico completo permite compor essas janelas sem repetir a RBT12 do PA em todos os meses.</p><div class="sim-extrato-table-wrap" tabindex="0" role="region" aria-label="Histórico completo de receitas da seção 2.2"><table><thead><tr><th>Competência</th><th>Mercado interno</th><th>Mercado externo</th><th>Total</th></tr></thead><tbody>${history.map(row=>`<tr><th scope="row">${esc(row.period)}</th><td>${money(row.internalCents/100)}</td><td>${money(row.externalCents/100)}</td><td>${money(row.totalCents/100)}</td></tr>`).join('')}</tbody></table></div></div></details>`:''}
     ${(data.warnings||[]).map(w=>`<p class="sim-extrato-warning" role="note">${esc(w)}</p>`).join('')}</div>`;
 }
 export function renderMonthlyDre({result,year,reference,period,regimeId,calendar,presentation,showPercent=false,monthView=true,month=0}) {

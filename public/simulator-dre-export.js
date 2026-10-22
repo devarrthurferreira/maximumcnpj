@@ -27,15 +27,16 @@ function rowContexts(presentation) {
   return contexts;
 }
 
+const availableFor=(regime,frame,month)=>frame==='monthly'&&Array.isArray(regime.monthlyAvailability)?regime.monthlyAvailability[month]===true:regime.available===true;
 function valueFor(row, regime, frame, month) {
-  if (!regime.available) return null;
+  if (!availableFor(regime,frame,month)) return null;
   if (frame === 'monthly') return row.monthlyValues?.[regime.id]?.[month] ?? null;
   if (frame === 'calendarAnnual') return row.calendarAnnualValues?.[regime.id] ?? null;
   return row.values?.[regime.id] ?? null;
 }
 
 function percentFor(row, regime, frame, month) {
-  if (!regime.available || row.unit !== 'currency') return null;
+  if (!availableFor(regime,frame,month) || row.unit !== 'currency') return null;
   if (frame === 'monthly') return row.monthlyPercentValues?.[regime.id]?.[month] ?? null;
   if (frame === 'calendarAnnual') return row.calendarAnnualPercentValues?.[regime.id] ?? null;
   return row.percentValues?.[regime.id] ?? null;

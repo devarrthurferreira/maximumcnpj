@@ -1,10 +1,12 @@
 import {test, expect, type Page} from '@playwright/test';
+import {OPERATION_CATALOG_VERSION} from '../../src/operation-catalog.ts';
+import {DIFAL_VERSION} from '../../src/difal.ts';
 
 const clientId='00000000-0000-4000-8000-000000000081';
 const generationId='00000000-0000-4000-8000-000000000082';
 const existingJobId='00000000-0000-4000-8000-000000000083';
 const client={_id:clientId,code:'123',name:'EMPRESA SINTÉTICA DIFAL',active:true};
-const version='DIFAL_ESTIMATE_V1';
+const version=DIFAL_VERSION;
 const eligible={eligible:true,baseCents:15000,amountCents:1500,reason:'ELIGIBLE'};
 type Sale={name?:string;value?:string;document?:string;uf?:string;nature?:string;description?:string;date?:string};
 function csv(sales:Sale[]=[{}]) {
@@ -91,7 +93,7 @@ for(const guided of [false,true])test(`DIFAL ${guided?'guided':'full'} import pr
   const create=async(route:any)=>{
     const payload=route.request().postDataJSON();creates.push(payload);
     if(creates.length===1)return route.fulfill({status:503,json:{message:'Falha temporária sintética'}});
-    job={_id:payload.importId,clientId,clientCode:client.code,clientName:client.name,generationId:guided?generationId:undefined,type:'SALES',difalVersion:version,issuerUf:payload.issuerUf,calculationVersion:'NET_V2',fileName:payload.fileName,status:'UPLOADING',expectedRows:1,uploaded:0,createdAt:'2026-10-09T12:00:00Z'};
+    job={_id:payload.importId,clientId,clientCode:client.code,clientName:client.name,generationId:guided?generationId:undefined,type:'SALES',difalVersion:version,operationVersion:OPERATION_CATALOG_VERSION,issuerUf:payload.issuerUf,calculationVersion:'NET_V2',fileName:payload.fileName,status:'UPLOADING',expectedRows:1,uploaded:0,createdAt:'2026-10-09T12:00:00Z'};
     return route.fulfill({json:guided?{generation:generation(),job}:job});
   };
   await page.route('**/api/v4/generations/'+generationId,route=>route.fulfill({json:generation()}));
@@ -116,9 +118,9 @@ for(const guided of [false,true])test(`DIFAL ${guided?'guided':'full'} import pr
   await expect(page.locator('#purchase-report-view [data-difal-amount]')).toContainText('15,00');
   await expect(page.locator('#purchase-report-view .purchase-hero')).toContainText('150,00');
   expect(creates).toHaveLength(2);expect(creates[0]).toEqual(creates[1]);expect(creates[1].issuerUf).toBe('MG');
-  expect(uploads[0].rows[0]).toMatchObject({recipientUf:'SP',natureCode:'6108',operation:'VENDA',totalCents:15000});
+  expect(uploads[0].rows[0]).toMatchObject({recipientUf:'SP',natureCode:'6108',operation:'VENDA',natureOperation:'VENDA',operationVersion:OPERATION_CATALOG_VERSION,totalCents:15000});
   expect(uploads[0].rows[0]).not.toHaveProperty('difal');
-  if(!guided){await page.getByLabel('Visualização').selectOption('lines');await expect(page.locator('#purchase-result-list')).toContainText('DIFAL estimado · 10%');await expect(page.locator('#purchase-result-list tbody')).toContainText('15,00');}
+  if(!guided){await page.getByLabel('Visualização').selectOption('lines');await expect(page.locator('#purchase-result-list')).toContainText('DIFAL sobre vendas · 10%');await expect(page.locator('#purchase-result-list tbody')).toContainText('15,00');}
 });
 
 test('Legacy completed sales display DIFAL unavailable rather than a false zero',async({page})=>{

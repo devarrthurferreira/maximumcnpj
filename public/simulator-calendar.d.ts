@@ -4,7 +4,8 @@ export const DRE_ROWS: readonly (readonly string[])[];
 export function dreRows(result: any): readonly (readonly string[])[];
 export type MonthlyDre = {
   version: string; year: number; unit: string; method: string; reportPeriod: unknown;
-  rbt12Reference: any; months: Array<{number:number;label:string;period:string}>; rounding:string;
+  rbt12Reference: any; rbt12Schedule?: import('./simulator-rbt12.js').Rbt12Schedule;
+  months: Array<{number:number;label:string;period:string;sourceMonth?:string|null;rbt12Cents?:number|null}>; rounding:string;
   regimes:Array<{id:string;name:string;available:boolean;rows:Array<{key:string;label:string;annual:number|null;months:(number|null)[]}>}>;
 };
 export function buildMonthlyDre(result: any, year: number, reference?: any, reportPeriod?: unknown): MonthlyDre;

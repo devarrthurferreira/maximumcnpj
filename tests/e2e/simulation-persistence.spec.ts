@@ -1,6 +1,5 @@
 import {MongoClient} from 'mongodb';
-import {readStatement} from './extrato-helper.ts';
-import {section22} from '../fixtures/section22.ts';
+import {readStatement,statementHistory} from './extrato-helper.ts';
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
@@ -73,6 +72,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
       offset: 0,
       rows: [{
         document: '12345678900', name: 'Pessoa sintética', serviceDate: '2026-08-15', quantity: '1',
+        natureCode: kind === 'sales' ? '5102' : '1102', description: 'Operação sintética', recipientUf: 'SP',
         grossCents: totalCents + 2_000, discountCents: 2_500, accessoryCents: 999,
         freightCents: 800, abatementCents: 300, totalCents,
       }],
@@ -93,7 +93,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   const extractionId=randomUUID();
   const mongo=new MongoClient(process.env.MONGODB_URI!);
   try{await mongo.connect();await mongo.db(process.env.MONGODB_DB).collection('simplesExtractions').insertOne({
-    _id:extractionId as any,clientId,workspaceId:process.env.WORKSPACE_ID||'maximum',parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result:section22()
+    _id:extractionId as any,clientId,workspaceId:process.env.WORKSPACE_ID||'maximum',parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result:statementHistory()
   });}finally{await mongo.close();}
   await readStatement(page,15000000,extractionId);
   const manual = { serviceRevenue: 1250.50, salaries: 900, benefits: 150, adminExpenses: 99.95, rent: 800, cardExpenses: 60 };
@@ -112,6 +112,8 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     result: { annualRevenue: 13_250.50 },
   });
   expect(first.result.regimes).toHaveLength(4);
+  expect(first.rbt12Schedule).toMatchObject({complete:true,rows:[{sourceMonth:'2026-08',rbt12Cents:15000000,startMonth:'2025-08',endMonth:'2026-07'}]});
+  expect(first.result.monthlyResults[0].engineInput.rbt12).toBe(150000);
   expect(first.monthlyDre.months).toHaveLength(12);expect(first.monthlyDre.rbt12Reference.rbt12Cents).toBe(15000000);
   expect(first.result.memory.length).toBeGreaterThan(0);
   expect(first.createdAt).toBeTruthy();
@@ -148,7 +150,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     await expect(reopened).toHaveURL(new RegExp(`simulation=${first._id}$`));
     await expect(reopened.locator('#simulation-snapshot')).toBeVisible();
     await expect(reopened.locator('#simulator-form')).toHaveCount(0);
-    await expect(reopened.locator('#simulation-snapshot .sim-captured-details')).toContainText('RBT12: R$ 150.000,00');
+    await expect(reopened.locator('#simulation-snapshot .sim-captured-details')).toContainText('RBT12 de referência do PA 08/2026: R$ 150.000,00');
     await expect(reopened.locator('#simulation-snapshot table tbody tr')).toContainText('2026-08');
     await expect(reopened.locator('#simulation-snapshot table tbody tr')).toContainText('12.000,00');
     await expect(reopened.locator('#simulation-snapshot table tbody tr')).toContainText('1.250,50');

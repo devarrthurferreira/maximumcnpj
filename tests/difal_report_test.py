@@ -4,7 +4,8 @@ from copy import deepcopy
 from unittest.mock import patch
 
 from reporting.core import ReportError
-from reporting.difal import DIFAL_VERSION, calculate_difal, sales_operation
+from reporting.difal import DIFAL_VERSION, DIFAL_PREVIOUS_VERSION, calculate_difal, sales_operation
+from reporting.operation_catalog import OPERATION_CATALOG_GROUPS, OPERATION_CATALOG_VERSION
 from reporting.purchases import COMPONENT_FIELDS, reconcile_purchase_snapshot, purchase_story, purchase_pdf_styles, render_purchase_pdf
 from reporting.generations import generation_metadata, render_generation_pdf
 from purchases_report_test import sales_fixture, net_fixture, WORKSPACE
@@ -51,7 +52,7 @@ def story_text(meta):
 
 class DifalReportTests(unittest.TestCase):
     def test_5102_new_reports_and_v1_archives_use_their_own_rules(self):
-        for version in ('DIFAL_ESTIMATE_V1', 'DIFAL_ESTIMATE_V2'):
+        for version in ('DIFAL_ESTIMATE_V1', 'DIFAL_ESTIMATE_V2', DIFAL_VERSION):
             old = version == 'DIFAL_ESTIMATE_V1'
             job, rows, items = difal_fixture(nature='5102', description='REGATA SINTÉTICA',
                                             operation='OUTRAS' if old else 'VENDA', reason='NOT_SALE' if old else 'ELIGIBLE')
@@ -86,7 +87,7 @@ class DifalReportTests(unittest.TestCase):
             {'reason': 'NOT_SALE', 'nature': '9000', 'operation': 'SERVICO', 'description': 'Prestação de serviço'},
             {'reason': 'NOT_SALE', 'nature': '6202', 'operation': 'DEVOLUCAO', 'description': 'Devolução'},
             {'reason': 'NOT_SALE', 'nature': '6918', 'operation': 'OUTRAS', 'description': 'Remessa'},
-            {'reason': 'INELIGIBLE_NATURE', 'nature': '6999', 'description': 'Venda'},
+            {'reason': 'NOT_SALE', 'nature': '6999', 'operation': 'OUTRAS', 'description': 'Venda'},
             {'reason': 'MISSING_ISSUER_UF', 'issuer': ''},
             {'reason': 'MISSING_RECIPIENT_UF', 'recipient': ''},
         ]
@@ -107,7 +108,8 @@ class DifalReportTests(unittest.TestCase):
                 self.assertEqual(reconcile_purchase_snapshot(job, lines, items, WORKSPACE)['difal']['amountCents'], 1500)
         for description in ('Prestação de serviço', 'Devolução', 'Remessa', 'Transferência', 'Bonificação'):
             _, lines, _ = difal_fixture(description=description)
-            self.assertFalse(calculate_difal(lines[0], 'MG')['eligible'])
+            self.assertTrue(calculate_difal(lines[0], 'MG')['eligible'])
+            self.assertFalse(calculate_difal(lines[0], 'MG', DIFAL_PREVIOUS_VERSION)['eligible'])
         self.assertEqual(sales_operation('6999', 'Camiseta'), 'OUTRAS')
         self.assertEqual(sales_operation('6108', 'Venda de kit para conserto'), 'VENDA')
 
@@ -121,7 +123,7 @@ class DifalReportTests(unittest.TestCase):
                     meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
                     text = story_text(meta)
                     self.assertIn('Vendas de serviços', text)
-                    self.assertIn('DIFAL estimado na DRE', text)
+                    self.assertIn('DIFAL sobre vendas aparece em linha própria na DRE', text)
                     self.assertEqual(meta['difal']['amountCents'], 0)
                     service = next(item for item in meta['operationTotals'] if item['operation'] == 'SERVICO')
                     self.assertEqual(service['balanceCents'], 15000)
@@ -135,7 +137,6 @@ class DifalReportTests(unittest.TestCase):
             lambda j, r: r.pop('difal'),
             lambda j, r: r.update(recipientUf='MG'),
             lambda j, r: r.update(recipientUf='sp'),
-            lambda j, r: r.update(description='Prestação de serviço'),
             lambda j, r: r.update(natureCode='6999'),
             lambda j, r: r.update(operation='SERVICO'),
             lambda j, r: j.update(issuerUf='SP'),
@@ -152,6 +153,34 @@ class DifalReportTests(unittest.TestCase):
                 with self.assertRaises(ReportError):
                     reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
 
+    def test_v3_uses_all_catalog_sales_and_never_description_fallback(self):
+        for nature in OPERATION_CATALOG_GROUPS['VENDA']:
+            row = {'natureCode': nature + '002', 'description': 'Remessa de serviço',
+                   'document': '123.456.789-01', 'totalCents': 10005, 'recipientUf': 'SP'}
+            with self.subTest(nature=nature):
+                self.assertEqual(sales_operation(row['natureCode'], row['description']), 'VENDA')
+                self.assertEqual(calculate_difal(row, 'MG'), {
+                    'eligible': True, 'baseCents': 10005, 'amountCents': 1001, 'reason': 'ELIGIBLE'})
+        for operation, natures in OPERATION_CATALOG_GROUPS.items():
+            if operation == 'VENDA':
+                continue
+            for nature in natures:
+                row = {'natureCode': nature, 'description': 'Venda de mercadoria',
+                       'document': '12345678901', 'totalCents': 10000, 'recipientUf': 'SP'}
+                with self.subTest(operation=operation, nature=nature):
+                    self.assertEqual(calculate_difal(row, 'MG')['reason'], 'NOT_SALE')
+        for nature in ('8000002', '8000102', '9000001', '9999001', ''):
+            self.assertEqual(calculate_difal({'natureCode': nature, 'description': 'Venda',
+                'document': '12345678901', 'totalCents': 10000, 'recipientUf': 'SP'}, 'MG')['reason'], 'NOT_SALE')
+
+    def test_v2_unknown_description_sale_remains_frozen(self):
+        job, rows, items = difal_fixture(nature='6999', description='Venda', reason='INELIGIBLE_NATURE')
+        job['difalVersion'] = job['purchaseInput']['difal']['version'] = DIFAL_PREVIOUS_VERSION
+        self.assertEqual(reconcile_purchase_snapshot(job, rows, items, WORKSPACE)['difal']['amountCents'], 0)
+        rows[0]['description'] = 'Prestação de serviço'
+        with self.assertRaises(ReportError):
+            reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+
     def test_changed_sale_without_updated_difal_blocks_report(self):
         job, rows, items = difal_fixture()
         rows[0].update(totalCents=100000, grossCents=100000, balanceCents=100000)
@@ -164,7 +193,7 @@ class DifalReportTests(unittest.TestCase):
         for fixture_args, expected in (({}, 'R$ 15,00'), ({'reason': 'MISSING_RECIPIENT_UF', 'recipient': ''}, 'Estimativa parcial')):
             meta = reconcile_purchase_snapshot(*difal_fixture(**fixture_args), WORKSPACE)
             text = story_text(meta)
-            self.assertIn('DIFAL estimado (10%)', text)
+            self.assertIn('DIFAL sobre vendas (10%)', text)
             self.assertIn('Base elegível', text)
             self.assertIn(expected, text)
             self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))

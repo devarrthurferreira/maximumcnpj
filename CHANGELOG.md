@@ -1,5 +1,16 @@
 # Histórico de alterações
 
+## [0.28.0] — 2026-10-22
+
+- Catálogo completo da coluna D: 619 naturezas, quatro dígitos, sem inferência pela descrição; compras preservam natureza e UF na importação.
+- Receita selecionada por vendas e serviços, com devoluções de venda do relatório de compras; custos selecionados por COMPRAS e serviços 8000, com auditoria de exclusões.
+- DIFAL sobre vendas V3 em 10% das vendas interestaduais a CPF; versões V1/V2 preservadas.
+- Antecipação de ICMS de 7,32% separada, somente Simples puro/híbrido, bloqueada no sublimite inclusivo; sem duplicação nem crédito adicional.
+- RBT12 móvel por competência a partir de todo o histórico explícito do quadro 2.2; ausência de meses bloqueia o cálculo e valor do PA deixa de ser repetido automaticamente.
+- Tela, memória, calendário, CSV/PDF e snapshots incluem conferências de naturezas e RBT12; competências disponíveis permanecem consultáveis quando outro mês impede o consolidado do regime.
+- Nova revisão idempotente cria versões vinculadas e exige reimportação quando fontes antigas perderam evidências necessárias.
+- Regressões de catálogo, fontes, tributos, limites, persistência, isolamento, relatórios e fluxo completo no navegador, com dados sintéticos.
+
 ## [0.27.0] — 2026-10-22
 
 - Histórico distingue soma mensal e projeção legada, identifica o período e oferece acesso direto à revisão existente no mesmo workspace.

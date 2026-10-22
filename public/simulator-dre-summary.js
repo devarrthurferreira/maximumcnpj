@@ -41,15 +41,17 @@ export function buildDreEvolution(presentation,calendar,regimeId,selectedMonth=0
   const rows=unifiedDreRows(presentation),regime=presentation.regimes.find(item=>item.id===regimeId);
   const months=calendar.months.map((month,index)=>{
     const sourceMonth=monthOrdinal(month.sourceMonth)!==null?month.sourceMonth:null;
-    const values=Object.fromEntries(evolutionMetrics.map(([key])=>[key,sourceMonth&&regime?.available===true?readDreValue(rows.find(row=>row.key===key),{id:regimeId,mode:'month',month:index}):null]));
-    return {label:month.label,sourceMonth,...values};
+    const available=Array.isArray(regime?.monthlyAvailability)?regime.monthlyAvailability[index]===true:regime?.available===true;
+    const values=Object.fromEntries(evolutionMetrics.map(([key])=>[key,sourceMonth&&available?readDreValue(rows.find(row=>row.key===key),{id:regimeId,mode:'month',month:index}):null]));
+    return {label:month.label,sourceMonth,available,...values};
   });
   const index=Number.isInteger(selectedMonth)&&selectedMonth>=0&&selectedMonth<12?selectedMonth:0;
   const current=months[index],previous=index>0?months[index-1]:null;
-  const reason=regime?.available!==true?'Este regime está indisponível neste cenário.':
-    !current.sourceMonth?'Sem dados importados para o mês selecionado.':
+  const reason=!current.sourceMonth?'Sem dados importados para o mês selecionado.':
+    !current.available?'Este regime está indisponível na competência selecionada.':
     !previous?'O mês anterior está fora deste calendário.':
     !previous.sourceMonth?'O mês imediatamente anterior não tem dados importados.':
+    !previous.available?'Este regime está indisponível na competência anterior.':
     monthOrdinal(current.sourceMonth)-monthOrdinal(previous.sourceMonth)!==1?'As competências de origem não são consecutivas.':'';
   const metrics=evolutionMetrics.filter(([key])=>key!=='difal'||rows.some(row=>row.key===key)).map(([key,label,unit])=>{
     // DIFAL is shown as an amount deducted; the original signed DRE cell stays untouched.

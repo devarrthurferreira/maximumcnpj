@@ -21,6 +21,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from .brand import draw_brand_header
 from .core import VERSION, display_date, number, percent, require, utcnow, snapshot_source
 from .difal import DIFAL_VERSIONS, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
+from .operation_catalog import OPERATION_CATALOG_VERSION, classify_operation_nature, normalize_operation_nature
 
 PURCHASES_MODE = 'PURCHASES_V1'
 SALES_MODE = 'SALES_V1'
@@ -39,6 +40,12 @@ MANAGEMENT_NOTE = ('Somente optantes confirmados integram Simples. Os demais doc
 SALES_MANAGEMENT_NOTE = ('Somente CNPJs optantes confirmados integram Optantes SN. CPFs ficam em um grupo próprio. '
                          'Os demais documentos e os CNPJs não confirmados integram Não optantes SN; '
                          'a situação original da fonte permanece preservada.')
+NATURE_LABELS = {
+    'COMPRAS': 'Compras', 'VENDA': 'Vendas',
+    'DEVOLUCAO_VENDA': 'Devoluções de venda', 'DEVOLUCAO_COMPRA': 'Devoluções de compra',
+    'OUTRAS': 'Outras operações', 'SERVICO_COMPRA': 'Serviços de compra (8000)',
+    'SERVICO_VENDA': 'Vendas de serviços (9000)', 'NAO_CLASSIFICADA': 'Não classificada',
+}
 
 
 @lru_cache(maxsize=1)
@@ -147,6 +154,8 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     _check(isinstance(job.get('clientId'), str) and bool(job['clientId']))
     version = job.get('calculationVersion', 'Q_V1')
     _check(version in ('Q_V1', 'NET_V2') and (not sales or version == 'NET_V2'))
+    operation_version = job.get('operationVersion')
+    _check(operation_version is None or operation_version == OPERATION_CATALOG_VERSION)
     summary, financial = job.get('summary') or {}, job.get('purchaseInput') or {}
     difal = None
     if sales and 'difalVersion' in job:
@@ -166,6 +175,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     by_cnpj, indexes, non_cnpj_documents, cpf_documents = {}, set(), set(), set()
     total_raw_cents = total_cents = non_cnpj_cents = excluded_lines = cpf_cents = cpf_lines = 0
     operation_totals = {key: {'operation': key, 'lines': 0, 'totalCents': 0, 'balanceCents': 0} for key in ('VENDA','SERVICO','DEVOLUCAO','OUTRAS')}
+    nature_totals = {}
     quantity = Decimal(0)
     # v0.8.0 dropped the redundant partner kind when copying financial lines.
     # Its server-owned SALES_V1 job still identifies buyers; explicit mismatches
@@ -184,6 +194,18 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         valid = _valid_cnpj(document)
         _check(row['valid'] == valid and row.get('cnpj') == (document if valid else ''))
         raw_cents = _integer(row.get('totalCents'), 100_000_000_000)
+        if operation_version is not None:
+            _check(row.get('operationVersion') == operation_version)
+            nature_code = row.get('natureCode')
+            _check(isinstance(nature_code, str) and nature_code == normalize_operation_nature(nature_code) and
+                   isinstance(row.get('description'), str) and isinstance(row.get('recipientUf'), str) and
+                   row['recipientUf'] == normalize_uf(row['recipientUf']))
+            nature_operation = classify_operation_nature(nature_code)
+            _check(row.get('natureOperation') == nature_operation)
+            nature = nature_totals.setdefault(nature_code, {'natureCode': nature_code,
+                'operation': nature_operation, 'lines': 0, 'totalCents': 0})
+            nature['lines'] += 1
+            nature['totalCents'] = _integer(nature['totalCents'] + raw_cents)
         if difal is not None:
             _check(isinstance(row.get('recipientUf'), str) and row['recipientUf'] == normalize_uf(row['recipientUf']))
             _check(isinstance(row.get('natureCode'), str) and
@@ -330,6 +352,8 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             'reportingGroups': reporting_groups, 'managerialGroups': managerial_groups,
             'unconfirmed': unknown, 'components': components, 'operationTotals': list(operation_totals.values()) if sales else [], 'calculationVersion': version,
             'difal': difal,
+            'operationVersion': operation_version,
+            'natureTotals': [nature_totals[code] for code in sorted(nature_totals)] if operation_version else None,
             'quantityDisplay': quantity_text.replace('.', ','), 'generatedAt': utcnow(), 'sources': sorted(sources),
             'firstCheck': min(checks) if checks else None, 'lastCheck': max(checks) if checks else None}
 
@@ -340,6 +364,7 @@ def purchase_metadata(db, job, workspace):
     lines = db.purchaseLines.find(query, {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'index': 1, 'document': 1,
                                         'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'operation': 1, 'balanceCents': 1, 'totalCents': 1, 'valid': 1, 'kind': 1,
                                         'natureCode': 1, 'description': 1, 'recipientUf': 1, 'difal': 1,
+                                        'natureOperation': 1, 'operationVersion': 1,
                                         **{key: 1 for key in COMPONENT_FIELDS}})
     lines = lines.limit(50_001).batch_size(500).max_time_ms(20000)
     items = db.lookupItems.aggregate([
@@ -428,6 +453,19 @@ def purchase_story(meta, width, styles):
         for item in meta['operationTotals']:
             operation_rows.append([operation_labels.get(item['operation'], item['operation']), number(item['lines']), money(item['totalCents']), money(item['balanceCents'])])
         story += [p('Vendas, serviços, devoluções e outras', 'heading'), purchase_table(operation_rows, (.32,.12,.28,.28), width, styles), Spacer(1, 6)]
+    if meta.get('natureTotals') is not None:
+        nature_rows = [['Natureza', 'Operação', 'Linhas', 'Valor do arquivo', 'Destino na DRE']]
+        destinations = ({'VENDA': 'Receita de vendas', 'SERVICO_VENDA': 'Receita de serviços'} if sales else
+                        {'COMPRAS': 'Compras', 'SERVICO_COMPRA': 'Compras', 'DEVOLUCAO_VENDA': 'Abate a receita de vendas'})
+        for item in meta['natureTotals']:
+            nature_rows.append([item['natureCode'] or 'Ausente', NATURE_LABELS[item['operation']], number(item['lines']),
+                                money(item['totalCents']), destinations.get(item['operation'], 'Fora das bases da DRE')])
+        story += [p('Conferência das naturezas de operação', 'heading'),
+                  purchase_table(nature_rows, (.10, .26, .09, .22, .33), width, styles), Spacer(1, 5),
+                  p('Classificação pelos quatro primeiros dígitos, conforme a coluna D (OPERAÇÃO) do catálogo. '
+                    'Os totais deste relatório reconciliam o arquivo completo. Na DRE, as vendas e os serviços de venda '
+                    'compõem a receita; as devoluções de venda encontradas nas compras abatem essa receita. '
+                    'As compras consideradas incluem apenas operações de compra e serviços de natureza 8000.', 'small')]
     unknown = meta['unconfirmed']
     if sales:
         story.append(p(f'Já incluídos em Não optantes SN: não confirmados na fonte = {number(unknown["suppliers"])} CNPJs '
@@ -473,11 +511,11 @@ def purchase_story(meta, width, styles):
 def difal_story(difal, width, styles):
     """Keep the estimate separate from invoice totals and preserve missing-data states."""
     p = lambda value, style='body': purchase_paragraph(value, styles, style)
-    story = [p('DIFAL estimado (10%)', 'heading')]
+    story = [p('DIFAL sobre vendas (10%)', 'heading')]
     if difal is None:
         return story + [p('Indisponível neste histórico: o snapshot foi criado antes do cálculo de DIFAL. '
                           'Reimporte as vendas para calcular a estimativa com as UFs da operação.', 'small')]
-    rows = [['UF do emitente', 'Linhas elegíveis', 'Base elegível', 'DIFAL estimado (10%)'],
+    rows = [['UF do emitente', 'Linhas elegíveis', 'Base elegível', 'DIFAL sobre vendas (10%)'],
             [difal['issuerUf'] or 'Não informada', number(difal['eligibleLines']),
              money(difal['baseCents']), money(difal['amountCents'])]]
     story += [purchase_table(rows, (.20, .20, .30, .30), width, styles), Spacer(1, 4)]
@@ -488,8 +526,8 @@ def difal_story(difal, width, styles):
                    'Aplica-se somente a vendas de mercadoria elegíveis para CPF de outra UF; '
                    'base = total registrado da venda. Valores arredondados por linha e somados uma única vez. '
                    'Este relatório mostra o total do período importado, sem alterar o total de vendas. '
-                   'Nas novas simulações, a média mensal (total dividido pelas competências) e a projeção anual '
-                   '(média mensal multiplicada por 12) entram como DIFAL estimado na DRE.', 'small'))
+                   'Nas novas simulações, cada competência usa as vendas daquele mês, e o total anual soma '
+                   'as competências calculadas. O DIFAL sobre vendas aparece em linha própria na DRE.', 'small'))
     return story
 
 

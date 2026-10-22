@@ -6,6 +6,7 @@ import type { LookupActor } from './lookup-db.ts';
 import { VERSION } from './domain.ts';
 import {baselineMonth, calculateMonthlySimulation} from '../public/simulator-monthly.js';
 import {readRbt12Reference, rbt12InputSource} from './simulation-extrato.ts';
+import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import { generationSimulator } from './simulator-store.ts';
 import { assertGenerationNotDeleted, assertLookupNotDeleted } from './generation-deletion.ts';
@@ -198,8 +199,10 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   need(source.monthlyReports, 'Este relatório não conserva as competências da coluna H. Reimporte compras e vendas para usar valores mensais; o histórico anterior permanece disponível.',409,'SIMULATION_MONTHS');
   need(reportMonths===source.monthlyReports.length,'O período precisa corresponder às competências dos relatórios.',409,'SIMULATION_PERIOD');
   need(Array.isArray(validated.monthlyInputs), 'Atualize a página para enviar os valores de cada competência.',409,'SIMULATION_MONTHS');
-  const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports!,validated.monthlyInputs,source.sales.jobId);}catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
-  const {difalProjection,engineInput,result,projection,monthlyInputs}=computed;
+  const rbt12Schedule=rbt12Extraction?buildRbt12Schedule(rbt12Extraction,source.monthlyReports.map(row=>row.sourceMonth)):null;
+  need(!rbt12Schedule||rbt12Schedule.complete,`O quadro 2.2 não cobre todas as competências. ${rbt12Schedule?.rows.filter(row=>row.status!=='CONFIRMED').map(row=>`${row.sourceMonth}: faltam ${row.missingMonths.join(', ')}`).join('; ')||''}. Importe um extrato com o histórico necessário.`,409,'RBT12_MONTHS_MISSING');
+  const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports!,validated.monthlyInputs,source.sales.jobId,rbt12Schedule);}catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
+  const {difalProjection,anticipationProjection,engineInput,result,projection,monthlyInputs}=computed;
   const first=baselineMonth(source.monthlyReports[0]);
   const baselineMonthlyGroups=first.groups,baselineServiceRevenue=first.values.serviceRevenue;
   const allAdjustments=computed.adjustments;
@@ -210,11 +213,11 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
     ...(reprocessing ? {reprocessing: {version: reprocessing.version, originalId: reprocessing.originalId, completedAt: createdAt,
       ...(reprocessing.serviceRevenueMigration ? {serviceRevenueMigration:reprocessing.serviceRevenueMigration} : {})}} : {}),
     modelVersion: result.version, calculatorSourceCommit: CALCULATOR_SOURCE_COMMIT, taxSources: TAX_SOURCES,
-    source, projection, difalProjection, monthlyInputs, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
+    source, projection, difalProjection, anticipationProjection, monthlyInputs, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
     monthlyGroups, monthlyGroupsUnit: 'BRL', baselineMonthlyGroups,
     ...(baselineServiceRevenue === null ? {} : {baselineServiceRevenue}),
     manuallyAdjusted: allAdjustments.length > 0, adjustments: allAdjustments, draft, engineInput, result, parentSimulationId,
-    rbt12Source, rbt12Extraction, ...(rbt12Manual ? {rbt12Manual} : {}),
+    rbt12Source, rbt12Extraction, ...(rbt12Schedule ? {rbt12Schedule} : {}), ...(rbt12Manual ? {rbt12Manual} : {}),
     monthlyDre: buildMonthlyDre(result, draft.year, rbt12Extraction || rbt12Manual, source.period || null),
     year: draft.year, annualRevenue: result.annualRevenue, bestRegimeId: result.bestRegimeId,
     bestRegimeName: best?.name || null, bestAnnualProfit: best?.annualProfit ?? null};

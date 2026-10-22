@@ -141,7 +141,7 @@ test('serviços e DIFAL conciliam entre tela e CSV após reabrir histórico sem 
       for(const cell of await cells.allTextContents()) expect(cell).toContain(amount);
     }
     const annual=(await downloadText(page,'#export-dre-csv')).text;
-    const annualDifal=annual.split('\r\n').filter(line=>line.includes('DIFAL estimado (10%)'));
+    const annualDifal=annual.split('\r\n').filter(line=>line.includes('DIFAL sobre vendas (10%)'));
     expect(annualDifal).toHaveLength(1);
     expect(annualDifal[0].split(';').slice(5,9)).toEqual(Array(4).fill('-3600,00'));
     const annualServices=annual.split('\r\n').filter(line=>line.includes('"Receita de serviços"'));
@@ -150,7 +150,7 @@ test('serviços e DIFAL conciliam entre tela e CSV após reabrir histórico sem 
     await page.getByRole('button',{name:'Mensal',exact:true}).click();
     await page.getByRole('button',{name:'12 meses',exact:true}).click();
     const monthly=(await downloadText(page,'#export-dre-csv')).text;
-    const monthlyDifal=monthly.split('\r\n').filter(line=>line.includes('DIFAL estimado (10%)'));
+    const monthlyDifal=monthly.split('\r\n').filter(line=>line.includes('DIFAL sobre vendas (10%)'));
     expect(monthlyDifal).toHaveLength(4);
     const monthlyServices=monthly.split('\r\n').filter(line=>line.includes('"Receita de serviços"'));
     expect(monthlyServices).toHaveLength(4);

@@ -219,7 +219,7 @@ finally:
     await finalizeLookup(actor,zeroJob._id); const zeroSummary = await purchaseSummary(zeroJob._id);
     assert.equal(zeroSummary.reportingGroups[1].countPercent,100); assert(zeroSummary.reportingGroups.every(g=>g.valuePercent===0));
     const legacy = await createLookup(actor,{...input,importId:randomUUID(),expectedRows:1},PURCHASE_MODE);
-    await (await collection('lookupJobs')).updateOne(scope({_id:legacy._id}),{$unset:{calculationVersion:''}});
+    await (await collection('lookupJobs')).updateOne(scope({_id:legacy._id}),{$unset:{calculationVersion:'',operationVersion:''}});
     await uploadLookup(actor,legacy._id,{offset:0,rows:[{document:'12345678900',name:'Legado',quantity:'1',totalCents:12345}]});
     await finalizeLookup(actor,legacy._id); const legacySummary = await purchaseSummary(legacy._id);
     assert.equal(legacySummary.calculationVersion,'Q_V1'); assert.equal(legacySummary.formula,'Q'); assert.equal(legacySummary.components,null); assert.equal(legacySummary.totals.totalCents,12345);

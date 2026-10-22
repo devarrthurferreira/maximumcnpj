@@ -24,7 +24,7 @@ test('MongoDB: quatro competências -> valores mensais -> soma do período, hist
   const jobIds:string[]=[];
   for(const [attach,dates,cents]of[[attachGenerationPurchase,['2026-04-02','2026-05-04','2026-06-17','2026-07-29'],6000000],[attachGenerationSale,['2026-04-01','2026-05-15','2026-06-30','2026-07-31'],10000000]]as const){
    const {job}=await attach(actor,gen._id,{clientId,importId:randomUUID(),fileName:'synthetic.csv',expectedRows:4});jobIds.push(job._id);
-   await uploadLookup(actor,job._id,{offset:0,rows:dates.map(d=>row(d,cents))});await finalizeLookup(actor,job._id);
+   await uploadLookup(actor,job._id,{offset:0,rows:dates.map(d=>({...row(d,cents),natureCode:attach===attachGenerationPurchase?'1102':'5102',recipientUf:'SP'}))});await finalizeLookup(actor,job._id);
   }
   const lines=await collection('purchaseLines'),before=await lines.find(scope({jobId:{$in:jobIds}})).sort({_id:1}).toArray();
   const source=await generationSimulator(gen._id,clientId);assert.equal(source.reportMonths,4);
@@ -32,12 +32,14 @@ test('MongoDB: quatro competências -> valores mensais -> soma do período, hist
   const groups=Object.fromEntries(REPORT_GROUPS.map(k=>[k,source.monthlyReports![0].fields[k]/100]));
   const request={simulationId:randomUUID(),rbt12ExtractionId:randomUUID(),generationId:gen._id,clientId,reportMonths:4,periodConfirmed:true,monthlyGroups:groups,monthlyInputs:source.monthlyReports!.map(row=>({...baselineMonth(row,{salaries:15000,benefits:1000,adminExpenses:500,rent:3000,cardExpenses:400}),values:{...baselineMonth(row,{salaries:15000,benefits:1000,adminExpenses:500,rent:3000,cardExpenses:400}).values,serviceRevenue:2000}})),
    draft:{year:2027,salesAnnex:1,serviceAnnex:3,rbt12:888888.88,values:{serviceRevenue:2000,salesRevenue:100000,simplePurchases:0,regularPurchases:60000,salaries:15000,benefits:1000,adminExpenses:500,rent:3000,cardExpenses:400}}};
-  await (await collection('simplesExtractions')).insertOne({...scope(),_id:request.rbt12ExtractionId,clientId,parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result:section22(88888888)});
+  const extraction=section22(88888888);
+  extraction.priorRevenues=[...extraction.rbt12Window.slice(8).map(row=>({...row,month:row.month.replace('2026','2025'),period:row.period.replace('2026','2025'),usedInRbt12:false})),...extraction.priorRevenues];
+  await (await collection('simplesExtractions')).insertOne({...scope(),_id:request.rbt12ExtractionId,clientId,parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result:extraction});
   const saved=await createSimulation(actor,request);
   assert.equal(saved.projection.version,'REPORT_MONTHS_V1');assert.equal(saved.projection.reportMonths,4);assert.equal(saved.projection.timeline.length,4);
   assert.equal(saved.projection.totals.sales.totalCents,40000000);assert.equal(saved.projection.timeline[0].salesCents,10000000);
   assert.equal(saved.projection.totals.sales.annualCents,40000000);assert.equal(saved.projection.scenario.annual.revenueCents,40800000);
-  assert.equal(saved.result.annualRevenue,408000);assert.equal(saved.engineInput.rbt12,888888.88);assert.equal(saved.manuallyAdjusted,true);
+  assert.equal(saved.result.annualRevenue,408000);assert(saved.engineInput.months.every((row:any)=>row.input.rbt12===888888.88));assert.equal(saved.engineInput.rbt12Method,'RBT12_MONTHLY_SECTION_22_V1');assert.equal(saved.manuallyAdjusted,true);
   assert.deepEqual(await getSimulation(saved._id),saved);assert.deepEqual(await createSimulation(actor,request),saved);
   await assert.rejects(createSimulation(actor,{...request,simulationId:randomUUID(),reportMonths:5}),(e:any)=>e.code==='SIMULATION_PERIOD');
   await assert.rejects(createSimulation(actor,{...request,simulationId:randomUUID(),projection:{projectionMonths:16}}),(e:any)=>e.code==='VALIDATION');
@@ -72,8 +74,8 @@ test('MongoDB: serviços9000 e mercadorias com devolução alimentam DRE/DIFAL s
   const salesRows=[...dates.map(date=>row(date,300000,'6102')), ...dates.map((date,index)=>row(date,100001,['900000','900001','9.000.0199'][index])), row(dates[2],90000,'6202')];
   const sales=await attachGenerationSale(actor,gen._id,{clientId,importId:randomUUID(),fileName:'mixed-synthetic.csv',expectedRows:salesRows.length,issuerUf:'MG'});
   await uploadLookup(actor,sales.job._id,{offset:0,rows:salesRows});await finalizeLookup(actor,sales.job._id);
-  const purchases=await attachGenerationPurchase(actor,gen._id,{clientId,importId:randomUUID(),fileName:'purchases-synthetic.csv',expectedRows:3});
-  await uploadLookup(actor,purchases.job._id,{offset:0,rows:dates.map(date=>row(date,20000,''))});await finalizeLookup(actor,purchases.job._id);
+  const purchases=await attachGenerationPurchase(actor,gen._id,{clientId,importId:randomUUID(),fileName:'purchases-synthetic.csv',expectedRows:4});
+  await uploadLookup(actor,purchases.job._id,{offset:0,rows:[...dates.map(date=>row(date,20000,'1102')),row(dates[2],90000,'1202')]});await finalizeLookup(actor,purchases.job._id);
   const source=await generationSimulator(gen._id,clientId),p=source.projection!;
   assert.equal(source.fields.serviceRevenueCents,300003);assert.equal(source.fields.salesCpfCents,810000);
   assert.equal(source.sales.totalCents,1110003);assert.equal(p.timeline[0].salesCents,400001);

@@ -13,14 +13,14 @@ const manualFields=['serviceRevenue','salaries','benefits','adminExpenses','rent
 
 // The exported model's fixed positions are intentional. CPF-only data lets the
 // real persistence flow finish without any external CNPJ lookup or real reports.
-function syntheticReport(totalCents=450_000) {
+function syntheticReport(totalCents=450_000,natureCode='1102') {
   const header=Array(28).fill(''),row=Array(28).fill('');
-  for(const [column,label] of [[0,'CNPJ / CPF / CNO'],[7,'Data Escrituração/Serviço'],[8,'Razão Social'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']] as const)header[column]=label;
-  row[0]='123.456.789-00';row[7]='15/08/2026';row[8]='PESSOA SINTÉTICA';row[15]='1';row[16]=(totalCents/100).toFixed(2).replace('.',',');
+  for(const [column,label] of [[0,'CNPJ / CPF / CNO'],[7,'Data Escrituração/Serviço'],[8,'Razão Social'],[9,'Estado'],[11,'Natureza'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']] as const)header[column]=label;
+  row[0]='123.456.789-00';row[7]='15/08/2026';row[8]='PESSOA SINTÉTICA';row[9]='SP';row[11]=natureCode;row[15]='1';row[16]=(totalCents/100).toFixed(2).replace('.',',');
   for(const column of [24,25,26,27])row[column]='0,00';
   return [header,row];
 }
-const reportFile=(name:string,totalCents:number)=>({name,mimeType:'text/csv',buffer:Buffer.from(syntheticReport(totalCents).map(row=>row.join(';')).join('\r\n'),'latin1')});
+const reportFile=(name:string,totalCents:number)=>({name,mimeType:'text/csv',buffer:Buffer.from(syntheticReport(totalCents,name.includes('-sales')?'5102':'1102').map(row=>row.join(';')).join('\r\n'),'latin1')});
 
 async function screenshots(page:Page,info:TestInfo,name:string) {
   for(const width of [1440,390]){
@@ -59,7 +59,7 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
   expect(process.env.MONGODB_URI,'Use a disposable MongoDB').toBeTruthy();
   await post('/api/auth/login',{email:process.env.ADMIN_EMAIL,password:process.env.ADMIN_PASSWORD});
   const code=String(Number.parseInt(randomUUID().replaceAll('-','').slice(0,10),16)),name='Empresa sintética fluxo '+code;
-  const catalog=await post('/api/v4/clients/import',{rows:[{code,name}]});expect(catalog.success).toBe(1);const realClient=catalog.items[0].id;
+  const catalog=await post('/api/v4/clients/import',{rows:[{code,name,uf:'SP'}]});expect(catalog.success).toBe(1);const realClient=catalog.items[0].id;
   await page.goto('/generations.html');await page.locator('#generation-search').fill(code);
   await screenshots(page,info,'guided-company-search');await page.locator(`[data-select-company="${realClient}"]`).click();
   await screenshots(page,info,'guided-report-types');

@@ -1,7 +1,8 @@
-import { calculateDifal, summarizeDifal, normalizeUf, DIFAL_VERSION, DIFAL_ELIGIBLE_CFOPS } from '../src/difal.ts';
+import { calculateDifal, summarizeDifal, normalizeUf, DIFAL_VERSION, DIFAL_PREVIOUS_VERSION, DIFAL_ELIGIBLE_CFOPS } from '../src/difal.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compactPurchaseLine, calculationVersion, exactCents, percentage, signedPercentage, reconciledPercentages, reconciledSignedPercentages, purchaseCsv, moneyText, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus, reportPeriod, normalizeNatureCode, salesOperation } from '../src/purchase-domain.ts';
+import { OPERATION_CATALOG_VERSION } from '../src/operation-catalog.ts';
 
 const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', serviceDate: '2026-08-15', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050};
 test('Compras: valida componentes no servidor, centavos exatos e não multiplica P por Q', () => {
@@ -48,6 +49,32 @@ test('NET_V2 exige componentes, recalcula o total e não inclui Z; Q_V1 mantém 
   assert(csv.includes('"1,00";"";"";"";"";"1,00"'));
 });
 
+test('Compras preservam natureza e UF; catálogo é rederivado no servidor sem alterar Q-Y+AA-AB', () => {
+  const context = {issuerUf:'MG', operationVersion:OPERATION_CATALOG_VERSION};
+  for (const [natureCode, natureOperation] of [['1202001','DEVOLUCAO_VENDA'],['2102001','COMPRAS'],['8000','SERVICO_COMPRA'],['8000002','SERVICO_COMPRA'],['8000102','SERVICO_COMPRA'],['2214','OUTRAS'],['9999','NAO_CLASSIFICADA']]) {
+    const result = compactPurchaseLine({...row,natureCode,description:'Venda de serviço e devolução',recipientUf:' sp ',natureOperation:'VENDA',operationVersion:'FORGED',operation:'DEVOLUCAO',balanceCents:-1050}, 'NET_V2', PURCHASE_MODE, context);
+    assert.equal(result.natureCode,natureCode.slice(0,4)); assert.equal(result.natureOperation,natureOperation);
+    assert.equal(result.operationVersion,OPERATION_CATALOG_VERSION); assert.equal(result.recipientUf,'SP');
+    assert.equal(result.totalCents,1050); assert.equal(result.balanceCents,undefined); assert.equal(result.operation,undefined); assert.equal(result.difal,undefined);
+  }
+  const missing = compactPurchaseLine(row, 'NET_V2', PURCHASE_MODE, context);
+  assert.equal(missing.natureCode,''); assert.equal(missing.natureOperation,'NAO_CLASSIFICADA'); assert.equal(missing.recipientUf,'');
+  assert.throws(()=>compactPurchaseLine(row,'NET_V2',PURCHASE_MODE,{operationVersion:'UNKNOWN'}),/catálogo/);
+  assert.throws(()=>compactPurchaseLine({...row,description:'x'.repeat(2001)},'NET_V2',PURCHASE_MODE,context),/limite/);
+  const returned = compactPurchaseLine({...row,natureCode:'1202001',description:'Devolução de venda',recipientUf:'RJ'},'NET_V2',PURCHASE_MODE,context);
+  const csv = purchaseCsv({mode:PURCHASE_MODE,calculationVersion:'NET_V2',_id:'catalog',clientName:'Empresa',fileName:'compras.csv'},[{...returned,index:0,status:'NAO_OPTANTE'}]);
+  assert(csv.includes('"1202";"Devolução de venda";"DEVOLUCAO_VENDA"'));
+  assert(csv.includes('"RJ";"NATURE_OPERATIONS_2026_10_V1"')); assert(csv.includes('"10,50";"10,50"'));
+});
+
+test('Retomada de compras sem versão de catálogo preserva o payload histórico', () => {
+  const legacyContext = {issuerUf:undefined,difalVersion:undefined};
+  const legacy = compactPurchaseLine({...row,natureCode:'1202001',description:'Devolução',recipientUf:'SP',operationVersion:OPERATION_CATALOG_VERSION,natureOperation:'DEVOLUCAO_VENDA'},'NET_V2',PURCHASE_MODE,legacyContext);
+  for (const key of ['natureCode','description','recipientUf','natureOperation','operationVersion']) assert.equal(key in legacy,false);
+  const historic = compactPurchaseLine({...row,natureCode:'8000'},'Q_V1');
+  assert.equal(historic.operationVersion,undefined); assert.equal(historic.natureCode,undefined);
+});
+
 test('Vendas: comprador CLIENTE, natureza com 4 dígitos, quantidade opcional e mesma fórmula sem Z', () => {
   const sales = compactPurchaseLine({...row, quantity:undefined, kind:'FORNECEDOR', natureCode:'900001', description:'Venda de serviços'}, 'NET_V2', SALES_MODE);
   assert.equal(sales.kind, 'CLIENTE'); assert.equal(sales.quantity, '0'); assert.equal(sales.totalCents, 1050);
@@ -70,7 +97,7 @@ test('Vendas: comprador CLIENTE, natureza com 4 dígitos, quantidade opcional e 
   assert(csv.includes('Comprador (I)')); assert(csv.includes('Quantidade (P) — opcional'));
   assert(csv.includes('"10,50";"10,50";"Q - Y + AA - AB";"NET_V2";"NAO_OPTANTE";"NAO_CONFIRMADO"'));
   const returnCsv = purchaseCsv({mode:SALES_MODE,calculationVersion:'NET_V2',_id:'return',clientName:'Empresa',fileName:'vendas.csv'}, [{...returned,index:0,status:'NAO_CONFIRMADO'}]);
-  assert(returnCsv.includes('"5202";"Devolução";"DEVOLUCAO"'));
+  assert(returnCsv.includes('"5202";"Devolução";"DEVOLUCAO_COMPRA"'));
   assert(returnCsv.includes('"10,50";"\'-10,50";"Q - Y + AA - AB"'));
 });
 
@@ -145,14 +172,18 @@ test('DIFAL estimado: cenários de venda CPF interestadual, exclusões e recálc
   for (const [change, reason] of [
     [{document: '00.000.000/0001-91'}, 'NOT_CPF'], [{recipientUf: 'MG'}, 'SAME_UF'],
     [{natureCode: '9000', description: 'Prestação de serviços'}, 'NOT_SALE'],
-    [{description: 'Venda de serviços'}, 'NOT_SALE'], [{natureCode: '6202', description: 'Venda'}, 'NOT_SALE'],
-    [{natureCode: '6949', description: 'Venda'}, 'INELIGIBLE_NATURE'], [{natureCode: '5108'}, 'NOT_SALE'],
-    [{description: 'Remessa de mercadoria para venda'}, 'NOT_SALE'], [{operation: 'OUTRAS'}, 'NOT_SALE'],
+    [{natureCode: '6202', description: 'Venda'}, 'NOT_SALE'],
+    [{natureCode: '6949', description: 'Venda'}, 'NOT_SALE'], [{natureCode: '5108'}, 'NOT_SALE'],
+    [{operation: 'OUTRAS'}, 'NOT_SALE'],
     [{document: ''}, 'NOT_CPF'], [{document: '123456789012'}, 'NOT_CPF']
   ] as const) {
     assert.deepEqual(calculateDifal({...difalSale, ...change}), {eligible: false, baseCents: 0, amountCents: 0, reason});
   }
   assert.equal(calculateDifal({...difalSale, description: 'Venda de kit para conserto'}).eligible, true);
+  for (const description of ['Venda de serviços','Remessa de mercadoria para venda','Devolução']) {
+    assert.equal(calculateDifal({...difalSale,description}).eligible,true);
+    assert.equal(calculateDifal({...difalSale,description},DIFAL_PREVIOUS_VERSION).reason,'NOT_SALE');
+  }
   assert.equal(calculateDifal({...difalSale, totalCents: 100000}).amountCents, 10000);
   assert.equal(calculateDifal({...difalSale, totalCents: 999}).amountCents, 100);
   assert.equal(calculateDifal({...difalSale, totalCents: 5}).amountCents, 1);
@@ -166,7 +197,7 @@ test('DIFAL estimado: cenários de venda CPF interestadual, exclusões e recálc
   assert.equal(compact.totalCents, 15000); assert.equal(compact.grossCents, 16000); assert.equal(compact.discountCents, 1000); assert.equal(compact.accessoryCents, row.accessoryCents);
   assert.equal(compactPurchaseLine({...source, grossCents: 101000, totalCents: 100000}, 'NET_V2', SALES_MODE, {issuerUf: 'MG', difalVersion: DIFAL_VERSION}).difal?.amountCents, 10000);
   const purchase = compactPurchaseLine(source);
-  assert.equal(purchase.difal, undefined); assert.equal(purchase.recipientUf, undefined);
+  assert.equal(purchase.difal, undefined); assert.equal(purchase.recipientUf, 'SP');
 });
 test('DIFAL: pendências de UF, contexto legado e soma dos centavos por venda', () => {
   assert.equal(normalizeUf(' mg '), 'MG'); assert.equal(normalizeUf('XX'), '');
@@ -179,7 +210,7 @@ test('DIFAL: pendências de UF, contexto legado e soma dos centavos por venda', 
   const legacy = compactPurchaseLine(source, 'NET_V2', SALES_MODE, {issuerUf: undefined, difalVersion: undefined});
   assert.equal(legacy.operation, 'OUTRAS'); assert.equal(legacy.difal, undefined); assert.equal(legacy.recipientUf, undefined);
   const csv = purchaseCsv({mode: SALES_MODE, calculationVersion: 'NET_V2', difalVersion: DIFAL_VERSION, issuerUf: 'MG', _id: 'difal', clientName: 'Empresa', fileName: 'vendas.csv'}, [{...compactPurchaseLine({...row, ...difalSale, grossCents: 15000, discountCents: 0, freightCents: 0, abatementCents: 0}, 'NET_V2', SALES_MODE, {issuerUf: 'MG', difalVersion: DIFAL_VERSION}), index: 0}]);
-  assert(csv.includes('"MG";"SP";"10";"150,00";"15,00";"ELIGIBLE";"DIFAL_ESTIMATE_V2"'));
+  assert(csv.includes(`"MG";"SP";"10";"150,00";"15,00";"ELIGIBLE";"${DIFAL_VERSION}"`));
 });
 
 test('5102 usa CPF e UFs reais, conserva exclusões e a regra histórica V1', () => {
@@ -192,7 +223,9 @@ test('5102 usa CPF e UFs reais, conserva exclusões e a regra histórica V1', ()
       [{recipientUf:'MG'}, 'SAME_UF'], [{recipientUf:''}, 'MISSING_RECIPIENT_UF'],
       [{issuerUf:''}, 'MISSING_ISSUER_UF'], [{document:'00000000000191'}, 'NOT_CPF'],
       [{natureCode:'900001'}, 'NOT_SALE'], [{natureCode:'6202001'}, 'NOT_SALE'],
-      [{natureCode:'5949'}, 'NOT_SALE'], [{description:'Remessa para venda'}, 'NOT_SALE']
+      [{natureCode:'5949'}, 'NOT_SALE']
     ] as const) assert.equal(calculateDifal({...sale,...change}).reason, reason);
+    assert.equal(calculateDifal({...sale,description:'Remessa para venda'}).eligible,true);
+    assert.equal(calculateDifal({...sale,description:'Remessa para venda'},DIFAL_PREVIOUS_VERSION).reason,'NOT_SALE');
   }
 });

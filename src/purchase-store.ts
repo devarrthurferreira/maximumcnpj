@@ -1,4 +1,5 @@
 import { calculateDifal, salesOperation, normalizeUf, summarizeDifal, DIFAL_VERSION, isDifalVersion, type DifalSummary } from './difal.ts';
+import {OPERATION_CATALOG_VERSION, normalizeOperationNature, classifyOperationNature} from './operation-catalog.ts';
 import { collection, scope, audit } from './store.ts';
 import type { Doc } from './store.ts';
 import { getJob } from './lookup-db.ts';
@@ -38,13 +39,30 @@ async function financialPeriod(name: string, id: string, job: Doc) {
   need(rows.length === job.expectedRows, 'Período fiscal incompleto. Reimporte o relatório.', 409, 'REPORT_PERIOD');
   return reportPeriod(rows.map(row => row.serviceDate));
 }
+function validateOperationSnapshot(job: Doc, rows: Record<string,any>[]) {
+  need(rows.length===job.expectedRows&&typeof job.issuerUf==='string'&&job.issuerUf===normalizeUf(job.issuerUf),
+    'Linhas ou UF do catálogo de operações incompletas. Emissão bloqueada.',409,'OPERATION_SNAPSHOT');
+  for(const row of rows)need(row.operationVersion===job.operationVersion&&typeof row.natureCode==='string'&&
+    row.natureCode===normalizeOperationNature(row.natureCode)&&typeof row.description==='string'&&typeof row.recipientUf==='string'&&
+    row.recipientUf===normalizeUf(row.recipientUf)&&row.natureOperation===classifyOperationNature(row.natureCode),
+  'Natureza ou classificação divergente do snapshot. Emissão bloqueada.',409,'OPERATION_SNAPSHOT');
+}
 /** Recompute from source fields and compare every persisted estimate before exposing it. */
 async function financialDifal(name: string, id: string, job: Doc): Promise<DifalSummary | null> {
-  if (job.mode !== SALES_MODE || job.difalVersion === undefined) return null;
+  need(job.operationVersion===undefined||job.operationVersion===OPERATION_CATALOG_VERSION,
+    'Versão do catálogo de naturezas desconhecida. Emissão bloqueada.',409,'OPERATION_VERSION');
+  const catalog=job.operationVersion===OPERATION_CATALOG_VERSION;
+  if (job.mode !== SALES_MODE || job.difalVersion === undefined) {
+    if(catalog)validateOperationSnapshot(job,await (await collection(name)).find(scope({jobId:id}))
+      .project({natureCode:1,description:1,recipientUf:1,natureOperation:1,operationVersion:1}).maxTimeMS(20000).toArray());
+    return null;
+  }
   need(isDifalVersion(job.difalVersion), 'Versão do DIFAL desconhecida. Reimporte as vendas.', 409, 'DIFAL_VERSION');
   need(typeof job.issuerUf === 'string' && job.issuerUf === normalizeUf(job.issuerUf), 'UF do emitente divergente do snapshot.', 409, 'DIFAL_SNAPSHOT');
-  const rows = await (await collection(name)).find(scope({jobId: id})).project({totalCents: 1, natureCode: 1, description: 1, operation: 1, document: 1, recipientUf: 1, difal: 1}).maxTimeMS(20000).toArray();
+  const rows = await (await collection(name)).find(scope({jobId: id})).project({totalCents: 1, natureCode: 1, description: 1, operation: 1, document: 1, recipientUf: 1, difal: 1,
+    ...(catalog?{natureOperation:1,operationVersion:1}:{})}).maxTimeMS(20000).toArray();
   need(rows.length === job.expectedRows, 'Linhas do DIFAL incompletas. Reimporte as vendas.', 409, 'DIFAL_SNAPSHOT');
+  if(catalog)validateOperationSnapshot(job,rows);
   for (const row of rows) {
     const expected = calculateDifal({...row, totalCents: row.totalCents, issuerUf: job.issuerUf}, job.difalVersion);
     need(row.operation === salesOperation(row.natureCode, row.description, true, job.difalVersion) && typeof row.recipientUf === 'string' && row.recipientUf === normalizeUf(row.recipientUf) && row.difal &&
@@ -110,7 +128,7 @@ export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
   // Persist only approved financial components plus row/document identity. Never retain the uploaded workbook.
   await stage.aggregate([
     {$match: scope({jobId: id})},
-    {$project: {_id: 1, workspaceId: 1, jobId: 1, index: 1, document: 1, documentKind: 1, cnpj: 1, name: 1, serviceDate: 1, quantity: 1, natureCode: 1, description: 1, operation: 1, recipientUf: 1, difal: 1, totalCents: 1, balanceCents: 1, valid: 1, kind: 1, ...Object.fromEntries(COMPONENT_FIELDS.map(field => [field, 1]))}},
+    {$project: {_id: 1, workspaceId: 1, jobId: 1, index: 1, document: 1, documentKind: 1, cnpj: 1, name: 1, serviceDate: 1, quantity: 1, natureCode: 1, description: 1, operation: 1, natureOperation: 1, operationVersion: 1, recipientUf: 1, difal: 1, totalCents: 1, balanceCents: 1, valid: 1, kind: 1, ...Object.fromEntries(COMPONENT_FIELDS.map(field => [field, 1]))}},
     {$merge: {into: 'purchaseLines', on: '_id', whenMatched: 'keepExisting', whenNotMatched: 'insert'}}
   ], {maxTimeMS: 20000}).toArray();
   need(await rows.countDocuments(scope({jobId: id})) === count, 'Cópia financeira incompleta.', 409, 'RESULT_COUNT');
