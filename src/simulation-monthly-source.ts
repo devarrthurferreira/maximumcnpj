@@ -2,7 +2,7 @@ import {collection, scope} from './store.ts';
 import {need} from './security.ts';
 import {exactCents, exactSignedCents, financialReportingStatus, SALES_MODE, PURCHASE_MODE, reportPeriod} from './purchase-domain.ts';
 import {summarizeDifal, normalizeUf, salesOperation} from './difal.ts';
-import {ANTICIPATION_VERSION,summarizeAnticipation} from './icms-anticipation.ts';
+import {isAnticipationVersion,summarizeAnticipation} from './icms-anticipation.ts';
 import {OPERATION_CATALOG_VERSION, classifyOperationNature, normalizeOperationNature, type CatalogOperation} from './operation-catalog.ts';
 import {sameReportCompetences} from './report-competence.ts';
 import {MONTHLY_FIELDS, type MonthlyReport} from '../public/simulator-monthly.js';
@@ -134,6 +134,6 @@ export async function monthlyReportSource(purchases: any, sales: any, _currentSa
   need(!purchaseUf||!salesUf||purchaseUf===salesUf,'As UFs da empresa nos relatórios de compras e vendas divergem. Revise os arquivos.',409,'SIMULATION_OPERATIONS');
   // A versioned purchase estimate must retain its own confirmed UF, including
   // an explicitly missing UF. Sales cannot silently resolve its pending rows.
-  const anticipationUf=purchases.anticipation?.version===ANTICIPATION_VERSION||purchases.job.anticipationVersion===ANTICIPATION_VERSION?purchaseUf:purchaseUf||normalizeUf(issuerUf)||salesUf;
+  const anticipationUf=isAnticipationVersion(purchases.anticipation?.version)||isAnticipationVersion(purchases.job.anticipationVersion)?purchaseUf:purchaseUf||normalizeUf(issuerUf)||salesUf;
   return selectOperationMonths(p,s,normalizeUf(issuerUf)||salesUf,anticipationUf);
 }

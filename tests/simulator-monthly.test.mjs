@@ -68,7 +68,7 @@ test('RBT12 móvel do2.2 muda a alíquota e bloqueia antecipação no mês que a
  const history=Array.from({length:13},(_,i)=>({month:`${2024+Math.floor(i/12)}-${String(i%12+1).padStart(2,'0')}`,internalCents:i===0?29_000_000:30_000_000,externalCents:0,totalCents:i===0?29_000_000:30_000_000}));
  const extraction={pa:'02/2025',sourceSection:'2.2',parserVersion:'SIMPLES_SECTION_22_V2',priorRevenues:history.map(row=>({...row,period:row.month.slice(5)+'/'+row.month.slice(0,4)}))};
  const rows=[make(1,10000000,1000000,0,10000),make(2,10000000,1000000,0,10000)].map(row=>({...row,operationVersion:'NATURE_OPERATIONS_2026_10_V1',
-   anticipation:{version:'ICMS_ANTICIPATION_V2',ratePercent:7.32,issuerUf:'MG',amountCents:73200,baseCents:1000000,eligibleLines:1,pendingLines:0}}));
+   anticipation:{version:'ICMS_ANTICIPATION_V3',ratePercent:7.32,issuerUf:'MG',amountCents:73200,baseCents:1000000,eligibleLines:1,pendingLines:0}}));
  const schedule=buildRbt12Schedule(extraction,rows.map(row=>row.sourceMonth));
  const out=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales',schedule);
  assert.deepEqual(out.engineInput.months.map(row=>row.input.rbt12),[3590000,3600000]);
@@ -80,7 +80,7 @@ test('RBT12 móvel do2.2 muda a alíquota e bloqueia antecipação no mês que a
  }
  for(const id of ['presumed','actual'])close(out.result.regimes.find(row=>row.id===id).dre.icmsAnticipation,0);
  assert.equal(out.anticipationProjection.sourceAmountCents,146400);
- assert.equal(out.anticipationProjection.sourceVersion,'ICMS_ANTICIPATION_V2');
+ assert.equal(out.anticipationProjection.sourceVersion,'ICMS_ANTICIPATION_V3');
  close(out.result.memory.find(row=>row.id==='icmsAnticipation.base').value,20000);
  close(out.result.monthlyResults[0].result.memory.find(row=>row.id==='icmsAnticipation.source').value,732);
  assert(!out.result.memory.some(row=>row.id==='rbt12'));
@@ -91,7 +91,7 @@ test('RBT12 móvel do2.2 muda a alíquota e bloqueia antecipação no mês que a
 
 test('antecipação mensal preserva versão histórica explícita e impede misturar políticas',()=>{
  const summary={ratePercent:7.32,issuerUf:'MG',amountCents:732,baseCents:10000,eligibleLines:1,pendingLines:0};
- for(const version of ['ICMS_ANTICIPATION_V1','ICMS_ANTICIPATION_V2']){
+ for(const version of ['ICMS_ANTICIPATION_V1','ICMS_ANTICIPATION_V2','ICMS_ANTICIPATION_V3']){
   const rows=[{sourceMonth:'2025-01',month:1,anticipation:{...summary,version}},{sourceMonth:'2025-02',month:2,anticipation:{...summary,version}}];
   assert.equal(monthlyAnticipation(rows).sourceVersion,version);
   assert.equal(monthlyAnticipation(rows).annualCents,1464);

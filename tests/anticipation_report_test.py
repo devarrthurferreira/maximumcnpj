@@ -3,7 +3,7 @@ from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
-from reporting.anticipation import (ANTICIPATION_VERSION, ANTICIPATION_LEGACY_VERSION,
+from reporting.anticipation import (ANTICIPATION_VERSION, ANTICIPATION_CPF_VERSION, ANTICIPATION_LEGACY_VERSION,
                                     calculate_anticipation, summarize_anticipation)
 from reporting.core import ReportError
 from reporting.operation_catalog import OPERATION_CATALOG_VERSION, OPERATION_CATALOG_GROUPS, classify_operation_nature
@@ -61,16 +61,18 @@ class AnticipationReportTests(unittest.TestCase):
         row = {'totalCents': 1250, 'natureCode': '1102', 'recipientUf': 'SP', 'document': '12345678901'}
         self.assertEqual(summarize_anticipation([row, row], 'MG')['amountCents'], 184)
 
-    def test_only_cpf_is_eligible_and_other_documents_do_not_create_uf_pending(self):
+    def test_cpf_and_valid_cnpj_are_eligible_and_other_documents_do_not_create_uf_pending(self):
         row = {'totalCents': 10000, 'natureCode': '2102002', 'recipientUf': 'SP'}
-        for document in ('12345678901', '123.456.789-01'):
+        for document in ('12345678901', '123.456.789-01', '11222333000181', '11.222.333/0001-81',
+                         '12ABC34501DE35', '12.abc.345/01de-35'):
             self.assertTrue(calculate_anticipation({**row, 'document': document}, 'MG')['eligible'])
-        for document in ('11222333000181', '123456789012', '', None, 'INVALIDO', '1234567890A'):
+        for document in ('11222333000182', '12ABC34501DE36', '00000000000000', '11111111111111',
+                         '123456789012', '', None, 'INVALIDO', '1234567890A'):
             with self.subTest(document=document):
-                self.assertEqual(calculate_anticipation({**row, 'document': document}, 'MG')['reason'], 'NOT_CPF')
-                self.assertEqual(calculate_anticipation({**row, 'document': document}, '')['reason'], 'NOT_CPF')
+                self.assertEqual(calculate_anticipation({**row, 'document': document}, 'MG')['reason'], 'NOT_CPF_OR_CNPJ')
+                self.assertEqual(calculate_anticipation({**row, 'document': document}, '')['reason'], 'NOT_CPF_OR_CNPJ')
         meta = reconcile_purchase_snapshot(*anticipation_fixture(cnpj=True), WORKSPACE)
-        self.assertEqual(meta['anticipation']['amountCents'], 0)
+        self.assertEqual(meta['anticipation']['amountCents'], 732)
         self.assertEqual(meta['anticipation']['pendingLines'], 0)
 
     def test_catalog_purchase_and_service_prefixes_only(self):
@@ -93,13 +95,30 @@ class AnticipationReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             summarize_anticipation([{**row, 'totalCents': 9_007_199_254_740_991}]*2, 'MG')
 
-    def test_version_one_remains_frozen_without_cpf_gate(self):
-        job, rows, items = anticipation_fixture(cnpj=True, version=ANTICIPATION_LEGACY_VERSION)
+    def test_old_versions_are_validated_before_current_view_without_snapshot_changes(self):
+        for version, stored_amount in ((ANTICIPATION_LEGACY_VERSION, 732), (ANTICIPATION_CPF_VERSION, 0)):
+            job, rows, items = anticipation_fixture(cnpj=True, version=version)
+            frozen = deepcopy((job, rows, items))
+            self.assertEqual(rows[0]['anticipation']['amountCents'], stored_amount)
+            meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+            self.assertEqual(meta['job']['anticipationVersion'], version)
+            self.assertEqual(meta['anticipation']['version'], ANTICIPATION_VERSION)
+            self.assertEqual(meta['anticipation']['amountCents'], 732)
+            self.assertEqual(meta['anticipationOrigin'], 'DERIVED_FROM_SNAPSHOT')
+            self.assertIn('Calculado a partir dos dados salvos no relatório de origem', story_text(meta))
+            self.assertEqual((job, rows, items), frozen)
+            self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+        self.assertEqual(calculate_anticipation(rows[0], 'MG', ANTICIPATION_CPF_VERSION)['reason'], 'NOT_CPF')
+        for change in (lambda j, r: r['anticipation'].update(amountCents=732),
+                       lambda j, r: j['purchaseInput']['anticipation'].update(amountCents=732)):
+            job, rows, items = anticipation_fixture(cnpj=True, version=ANTICIPATION_CPF_VERSION)
+            change(job, rows[0])
+            with self.assertRaises(ReportError):
+                reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+        job, rows, items = anticipation_fixture(cnpj=True, nature='', version=ANTICIPATION_CPF_VERSION)
         meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
-        self.assertEqual(meta['anticipation']['amountCents'], 732)
-        self.assertIn('Regra histórica V1 preservada', story_text(meta))
-        self.assertNotIn('Somente compras interestaduais com fornecedor identificado por CPF', story_text(meta))
-        self.assertEqual(calculate_anticipation(rows[0], 'MG')['reason'], 'NOT_CPF')
+        self.assertIsNone(meta['anticipation'])
+        self.assertEqual(meta['anticipationOrigin'], 'UNAVAILABLE')
 
     def test_reconciliation_blocks_missing_tampered_estimates_and_summary(self):
         changes = [
@@ -129,7 +148,7 @@ class AnticipationReportTests(unittest.TestCase):
             meta = reconcile_purchase_snapshot(*anticipation_fixture(**options), WORKSPACE)
             text = story_text(meta)
             for phrase in ('Antecipação de ICMS (7,32%)', 'Base elegível', expected,
-                           'Somente compras interestaduais com fornecedor identificado por CPF de 11 dígitos',
+                           'Somente compras interestaduais com fornecedor identificado por CPF de 11 dígitos ou CNPJ válido',
                            'Simples puro e híbrido', 'sublimite estiver alcançado'):
                 self.assertIn(phrase, text)
             self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
@@ -138,7 +157,7 @@ class AnticipationReportTests(unittest.TestCase):
         self.assertEqual(legacy['anticipationOrigin'], 'UNAVAILABLE')
         self.assertIn('Indisponível neste histórico', story_text(legacy))
 
-    def test_old_complete_rows_derive_v2_without_changing_the_snapshot(self):
+    def test_old_complete_rows_derive_current_without_changing_the_snapshot(self):
         job, rows, items = derivable_fixture()
         frozen = deepcopy((job, rows, items))
         meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
@@ -198,7 +217,7 @@ class AnticipationReportTests(unittest.TestCase):
         for row in rows:
             row.update(natureCode='2102', recipientUf='SP')
         meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
-        self.assertEqual(meta['anticipation']['baseCents'], 20000)  # only the CPF line
+        self.assertEqual(meta['anticipation']['baseCents'], 100000)  # CPF plus all valid CNPJ lines
         rows[0].pop('recipientUf')
         self.assertIsNone(reconcile_purchase_snapshot(job, rows, items, WORKSPACE)['anticipation'])
         rows[0]['recipientUf'] = 'SP'
@@ -222,7 +241,9 @@ class AnticipationReportTests(unittest.TestCase):
             meta = generation_metadata(db, generations_report_test.GENERATION, WORKSPACE)
         self.assertEqual(meta['totalsByType']['PURCHASES']['anticipation'], {
             'baseCents': 30000, 'amountCents': 2196, 'eligibleLines': 2, 'pendingLines': 0,
-            'unavailableReports': 1, 'legacyReports': 1, 'derivedReports': 0})
+            'unavailableReports': 1, 'legacyReports': 1, 'derivedReports': 1, 'importedReports': 1,
+            'version': ANTICIPATION_VERSION, 'ratePercent': 7.32,
+            'sourceVersions': [ANTICIPATION_LEGACY_VERSION, ANTICIPATION_VERSION]})
         self.assertEqual(meta['totalsByType']['PURCHASES']['totalCents'], 130000)
         self.assertTrue(render_generation_pdf(meta).startswith(b'%PDF'))
 
@@ -233,7 +254,7 @@ class AnticipationReportTests(unittest.TestCase):
         with patch('reporting.generations.purchase_metadata', side_effect=lambda db, job, workspace:
                    reconcile_purchase_snapshot(*snapshots[job['_id']], workspace)):
             derived = generation_metadata(db, generations_report_test.GENERATION, WORKSPACE)
-        self.assertEqual(derived['totalsByType']['PURCHASES']['anticipation']['derivedReports'], 1)
+        self.assertEqual(derived['totalsByType']['PURCHASES']['anticipation']['derivedReports'], 2)
         self.assertEqual(derived['totalsByType']['PURCHASES']['anticipation']['amountCents'], 2196)
         self.assertTrue(render_generation_pdf(derived).startswith(b'%PDF'))
 

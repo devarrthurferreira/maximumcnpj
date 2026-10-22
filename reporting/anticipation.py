@@ -6,17 +6,19 @@ import re
 
 from .difal import normalize_uf
 from .operation_catalog import is_purchase_operation
+from .tax_documents import is_cpf_or_cnpj
 
-ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_V2'
+ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_V3'
+ANTICIPATION_CPF_VERSION = 'ICMS_ANTICIPATION_V2'
 ANTICIPATION_LEGACY_VERSION = 'ICMS_ANTICIPATION_V1'
-ANTICIPATION_VERSIONS = (ANTICIPATION_LEGACY_VERSION, ANTICIPATION_VERSION)
+ANTICIPATION_VERSIONS = (ANTICIPATION_LEGACY_VERSION, ANTICIPATION_CPF_VERSION, ANTICIPATION_VERSION)
 ANTICIPATION_RATE_PERCENT = 7.32
 ANTICIPATION_PENDING_REASONS = frozenset(('MISSING_ISSUER_UF', 'MISSING_RECIPIENT_UF'))
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
 
 def calculate_anticipation(row, issuer_uf, version=ANTICIPATION_VERSION):
-    """Mirror Node: eligible catalog purchase, CPF (V2), different known UFs."""
+    """Mirror Node: eligible purchase, CPF/CNPJ (V3), different known UFs."""
     if version not in ANTICIPATION_VERSIONS:
         raise ValueError('Versão da antecipação de ICMS desconhecida.')
 
@@ -30,7 +32,9 @@ def calculate_anticipation(row, issuer_uf, version=ANTICIPATION_VERSION):
         return excluded('INVALID_TOTAL')
     if not is_purchase_operation(row.get('natureCode')):
         return excluded('NOT_PURCHASE')
-    if version == ANTICIPATION_VERSION:
+    if version == ANTICIPATION_VERSION and not is_cpf_or_cnpj(row.get('document')):
+        return excluded('NOT_CPF_OR_CNPJ')
+    if version == ANTICIPATION_CPF_VERSION:
         document = re.sub(r'[./\-\s]', '', str(row.get('document') or '').strip())
         if not re.fullmatch(r'[0-9]{11}', document):
             return excluded('NOT_CPF')

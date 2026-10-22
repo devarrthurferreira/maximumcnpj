@@ -495,6 +495,52 @@ class PurchaseMongoTests(unittest.TestCase):
         self.assertEqual(incomplete['anticipationOrigin'], 'UNAVAILABLE')
         self.assertIsNone(incomplete['anticipation'])
 
+    def test_old_cnpj_tax_versions_render_current_pdf_without_database_writes(self):
+        import pymupdf
+        from anticipation_report_test import anticipation_fixture
+        from difal_report_test import difal_fixture
+        from reporting.anticipation import ANTICIPATION_CPF_VERSION, ANTICIPATION_VERSION
+        from reporting.difal import DIFAL_CPF_VERSION, DIFAL_VERSION
+        from reporting.purchases import purchase_metadata
+        cases = [
+            ('anticipation', anticipation_fixture(cnpj=True, version=ANTICIPATION_CPF_VERSION),
+             ANTICIPATION_VERSION, 732, 'R$ 7,32'),
+            ('difal', difal_fixture(cnpj=True, reason='NOT_CPF', version=DIFAL_CPF_VERSION),
+             DIFAL_VERSION, 1500, 'R$ 15,00'),
+        ]
+        for key, (job, lines, items), current_version, amount, amount_text in cases:
+            with self.subTest(tax=key):
+                job['_id'] = str(uuid.uuid4())
+                for row in lines:
+                    row.update(_id=f'{job["_id"]}:{row["index"]}', jobId=job['_id'])
+                for item in items:
+                    item.update(_id=f'{job["_id"]}:{item["cnpj"]}', jobId=job['_id'])
+                    item.pop('sourceState', None)
+                self.db.lookupJobs.insert_one(job)
+                self.db.purchaseLines.insert_many(lines)
+                self.db.lookupItems.insert_many(items)
+                frozen_job = self.db.lookupJobs.find_one({'_id': job['_id']})
+                frozen_row = self.db.purchaseLines.find_one({'_id': lines[0]['_id']})
+                self.assertEqual(frozen_row[key]['amountCents'], 0)
+                meta = purchase_metadata(self.db, frozen_job, WORKSPACE)
+                self.assertEqual(meta[key]['version'], current_version)
+                self.assertEqual(meta[key]['amountCents'], amount)
+                self.assertEqual(meta[f'{key}Origin'], 'DERIVED_FROM_SNAPSHOT')
+                with pymupdf.open(stream=render_purchase_pdf(meta), filetype='pdf') as pdf:
+                    text = '\n'.join(page.get_text() for page in pdf)
+                self.assertIn(amount_text, text)
+                self.assertIn('Calculado a partir dos dados salvos no relatório de origem', text)
+                self.assertIn('CPF ou CNPJ válido', text)
+                self.assertEqual(self.db.lookupJobs.find_one({'_id': job['_id']}), frozen_job)
+                self.assertEqual(self.db.purchaseLines.find_one({'_id': lines[0]['_id']}), frozen_row)
+                self.db.purchaseLines.update_one({'_id': lines[0]['_id']}, {'$set': {f'{key}.amountCents': amount}})
+                with self.assertRaises(ReportError):
+                    purchase_metadata(self.db, frozen_job, WORKSPACE)
+                self.db.purchaseLines.replace_one({'_id': lines[0]['_id']}, frozen_row)
+                self.db.lookupJobs.update_one({'_id': job['_id']}, {'$set': {f'purchaseInput.{key}.amountCents': amount}})
+                with self.assertRaises(ReportError):
+                    purchase_metadata(self.db, self.db.lookupJobs.find_one({'_id': job['_id']}), WORKSPACE)
+
     def test_large_bson_doubles_survive_database_read_and_pdf_render(self):
         from reporting.purchases import purchase_metadata
         from reporting.service import get_job

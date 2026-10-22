@@ -1,4 +1,4 @@
-export const MONTHLY_MODEL_VERSION: '1.4.2-entries-report';
+export const MONTHLY_MODEL_VERSION: '1.5.0-cpf-cnpj';
 import type {ReportFields} from './simulator-projection.js';
 import type {Rbt12Schedule} from './simulator-rbt12.js';
 export const MONTHLY_VERSION: 'REPORT_MONTHS_V1';

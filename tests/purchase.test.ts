@@ -170,12 +170,12 @@ const difalSale = {totalCents: 15000, natureCode: '6108', description: 'Camiseta
 test('DIFAL estimado: cenários de venda CPF interestadual, exclusões e recálculo sem alterar componentes', () => {
   assert.deepEqual(calculateDifal(difalSale), {eligible: true, baseCents: 15000, amountCents: 1500, reason: 'ELIGIBLE'});
   for (const [change, reason] of [
-    [{document: '00.000.000/0001-91'}, 'NOT_CPF'], [{recipientUf: 'MG'}, 'SAME_UF'],
+    [{document: '00.000.000/0001-92'}, 'NOT_CPF_OR_CNPJ'], [{recipientUf: 'MG'}, 'SAME_UF'],
     [{natureCode: '9000', description: 'Prestação de serviços'}, 'NOT_SALE'],
     [{natureCode: '6202', description: 'Venda'}, 'NOT_SALE'],
     [{natureCode: '6949', description: 'Venda'}, 'NOT_SALE'], [{natureCode: '5108'}, 'NOT_SALE'],
     [{operation: 'OUTRAS'}, 'NOT_SALE'],
-    [{document: ''}, 'NOT_CPF'], [{document: '123456789012'}, 'NOT_CPF']
+    [{document: ''}, 'NOT_CPF_OR_CNPJ'], [{document: '123456789012'}, 'NOT_CPF_OR_CNPJ']
   ] as const) {
     assert.deepEqual(calculateDifal({...difalSale, ...change}), {eligible: false, baseCents: 0, amountCents: 0, reason});
   }
@@ -204,7 +204,7 @@ test('DIFAL: pendências de UF, contexto legado e soma dos centavos por venda', 
   assert.equal(calculateDifal({...difalSale, issuerUf: ''}).reason, 'MISSING_ISSUER_UF');
   assert.equal(calculateDifal({...difalSale, recipientUf: 'XX'}).reason, 'MISSING_RECIPIENT_UF');
   const result = summarizeDifal([difalSale, {...difalSale, totalCents: 100000}, {...difalSale, recipientUf: ''}, {...difalSale, document: '00000000000191'}], 'MG');
-  assert.deepEqual(result, {version: DIFAL_VERSION, ratePercent: 10, issuerUf: 'MG', eligibleLines: 2, baseCents: 115000, amountCents: 11500, pendingLines: 1});
+  assert.deepEqual(result, {version: DIFAL_VERSION, ratePercent: 10, issuerUf: 'MG', eligibleLines: 3, baseCents: 130000, amountCents: 13000, pendingLines: 1});
   assert.equal(summarizeDifal([{...difalSale, totalCents: 5}, {...difalSale, totalCents: 5}], 'MG').amountCents, 2);
   const source = {...row, natureCode: '6108', description: 'Camiseta', recipientUf: 'SP'};
   const legacy = compactPurchaseLine(source, 'NET_V2', SALES_MODE, {issuerUf: undefined, difalVersion: undefined});
@@ -221,7 +221,7 @@ test('5102 usa CPF e UFs reais, conserva exclusões e a regra histórica V1', ()
     assert.equal(salesOperation(natureCode, sale.description, true, 'DIFAL_ESTIMATE_V1'), 'OUTRAS');
     for (const [change, reason] of [
       [{recipientUf:'MG'}, 'SAME_UF'], [{recipientUf:''}, 'MISSING_RECIPIENT_UF'],
-      [{issuerUf:''}, 'MISSING_ISSUER_UF'], [{document:'00000000000191'}, 'NOT_CPF'],
+      [{issuerUf:''}, 'MISSING_ISSUER_UF'], [{document:'00000000000192'}, 'NOT_CPF_OR_CNPJ'],
       [{natureCode:'900001'}, 'NOT_SALE'], [{natureCode:'6202001'}, 'NOT_SALE'],
       [{natureCode:'5949'}, 'NOT_SALE']
     ] as const) assert.equal(calculateDifal({...sale,...change}).reason, reason);

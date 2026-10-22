@@ -7,6 +7,7 @@ from reportlab.platypus import SimpleDocTemplate, Spacer, PageBreak
 
 from .core import require, utcnow, display_date, number
 from .anticipation import ANTICIPATION_VERSION
+from .difal import DIFAL_VERSION
 from .purchases import (PURCHASES_MODE, SALES_MODE, purchase_metadata, purchase_pdf_styles, purchase_story,
                         purchase_page_callback, purchase_paragraph, purchase_table, money, _check, _integer)
 
@@ -67,10 +68,12 @@ def generation_metadata(db, generation_id, workspace, part=1):
                                    'optantCents': 0, 'nonoptantCents': 0} for report_type in required}
     if 'SALES' in totals_by_type:
         totals_by_type['SALES']['difal'] = {'baseCents': 0, 'amountCents': 0, 'eligibleLines': 0,
-                                          'pendingLines': 0, 'unavailableReports': 0}
+            'pendingLines': 0, 'unavailableReports': 0, 'legacyReports': 0, 'derivedReports': 0,
+            'importedReports': 0, 'version': DIFAL_VERSION, 'ratePercent': 10, 'sourceVersions': []}
     if 'PURCHASES' in totals_by_type:
         totals_by_type['PURCHASES']['anticipation'] = {'baseCents': 0, 'amountCents': 0, 'eligibleLines': 0,
-            'pendingLines': 0, 'unavailableReports': 0, 'legacyReports': 0, 'derivedReports': 0}
+            'pendingLines': 0, 'unavailableReports': 0, 'legacyReports': 0, 'derivedReports': 0,
+            'importedReports': 0, 'version': ANTICIPATION_VERSION, 'ratePercent': 7.32, 'sourceVersions': []}
     for company in selected:
         reports = {}
         for report_type in required:
@@ -84,21 +87,19 @@ def generation_metadata(db, generation_id, workspace, part=1):
             for group in meta['reportingGroups']:
                 key = {'OPTANTE': 'optantCents', 'NAO_OPTANTE': 'nonoptantCents', 'CPF': 'cpfCents'}[group['status']]
                 totals[key] = _integer(totals[key] + group['totalCents'])
-            if report_type == 'SALES':
-                if meta.get('difal') is None:
-                    totals['difal']['unavailableReports'] += 1
-                else:
-                    for key in ('baseCents', 'amountCents', 'eligibleLines', 'pendingLines'):
-                        totals['difal'][key] = _integer(totals['difal'][key] + meta['difal'][key])
+            tax_key = 'difal' if report_type == 'SALES' else 'anticipation'
+            estimate, tax_totals = meta.get(tax_key), totals[tax_key]
+            source_version = meta['job'].get(f'{tax_key}Version')
+            if source_version and source_version not in tax_totals['sourceVersions']:
+                tax_totals['sourceVersions'] = sorted([*tax_totals['sourceVersions'], source_version])
+            if estimate is None:
+                tax_totals['unavailableReports'] += 1
             else:
-                estimate = meta.get('anticipation')
-                if estimate is None:
-                    totals['anticipation']['unavailableReports'] += 1
-                else:
-                    for key in ('baseCents', 'amountCents', 'eligibleLines', 'pendingLines'):
-                        totals['anticipation'][key] = _integer(totals['anticipation'][key] + estimate[key])
-                    totals['anticipation']['legacyReports'] += int(estimate['version'] != ANTICIPATION_VERSION)
-                    totals['anticipation']['derivedReports'] += int(meta.get('anticipationOrigin') == 'DERIVED_FROM_SNAPSHOT')
+                for key in ('baseCents', 'amountCents', 'eligibleLines', 'pendingLines'):
+                    tax_totals[key] = _integer(tax_totals[key] + estimate[key])
+                tax_totals['legacyReports'] += int(source_version is not None and source_version != tax_totals['version'])
+                tax_totals['derivedReports'] += int(meta.get(f'{tax_key}Origin') == 'DERIVED_FROM_SNAPSHOT')
+                tax_totals['importedReports'] += int(meta.get(f'{tax_key}Origin') == 'IMPORTED')
         sections.append({'company': company, 'reports': reports})
     # Keep the internal purchases list for consumers of older generation metadata.
     purchases = [section['reports']['PURCHASES'] for section in sections if 'PURCHASES' in section['reports']]
@@ -163,8 +164,8 @@ def render_generation_pdf(meta):
             difal = totals['difal']
             story += [p(f'DIFAL sobre vendas (10%) {scope}', 'heading')]
             if difal['unavailableReports'] == len(meta['sales']):
-                story.append(p('Indisponível: todos os relatórios de vendas desta parte são históricos '
-                               'anteriores ao cálculo do DIFAL.', 'small'))
+                story.append(p('Indisponível: os dados salvos nos relatórios de vendas desta parte não permitem '
+                               'conferir o DIFAL. Confira a necessidade de reimportação nas memórias individuais.', 'small'))
             else:
                 rows = [['Base elegível', 'DIFAL sobre vendas (10%)', 'Linhas elegíveis', 'Linhas pendentes por UF'],
                         [money(difal['baseCents']), money(difal['amountCents']), number(difal['eligibleLines']),
@@ -174,7 +175,11 @@ def render_generation_pdf(meta):
                     story.append(p(f'Estimativa parcial: {number(difal["unavailableReports"])} relatórios históricos '
                                    f'sem DIFAL disponível e {number(difal["pendingLines"])} linhas pendentes por UF. '
                                    'Os valores acima incluem somente operações elegíveis reconciliadas.', 'small'))
-            story.append(p('Parâmetro médio estimado, sem equivalência automática à alíquota legal. '
+                if difal['derivedReports']:
+                    story.append(p(f'{number(difal["derivedReports"])} relatórios com DIFAL calculado a partir '
+                                   'dos dados salvos na origem, após conferir a regra original, sem modificar os lotes ou as suas linhas.', 'small'))
+            story.append(p('Vendas interestaduais do catálogo para CPF ou CNPJ válido. '
+                           'Parâmetro médio estimado, sem equivalência automática à alíquota legal. '
                            'Exibido separadamente, sem alterar o total de vendas ou outros impostos.', 'small'))
         else:
             estimate = totals['anticipation']
@@ -191,13 +196,10 @@ def render_generation_pdf(meta):
                     story.append(p(f'Estimativa parcial: {number(estimate["unavailableReports"])} relatórios históricos '
                                    f'sem antecipação disponível e {number(estimate["pendingLines"])} linhas pendentes por UF. '
                                    'Os valores acima somam somente operações elegíveis reconciliadas.', 'small'))
-                if estimate['legacyReports']:
-                    story.append(p(f'{number(estimate["legacyReports"])} relatórios preservam a regra histórica V1, '
-                                   'anterior à restrição a CPF. Confira a versão nas memórias individuais.', 'small'))
                 if estimate['derivedReports']:
                     story.append(p(f'{number(estimate["derivedReports"])} relatórios com antecipação calculada a partir '
-                                   'dos dados salvos na origem, sem modificar os lotes ou as suas linhas.', 'small'))
-            story.append(p('Na regra V2, somente compras interestaduais com fornecedor CPF de 11 dígitos '
+                                   'dos dados salvos na origem, após conferir a regra original, sem modificar os lotes ou as suas linhas.', 'small'))
+            story.append(p('Somente compras interestaduais com fornecedor CPF de 11 dígitos ou CNPJ válido '
                            'e natureza de compra do catálogo ou serviço 8000. Parâmetro gerencial separado do total '
                            'de compras; as regras de regime e sublimite são aplicadas na DRE.', 'small'))
     story += [p('Como conferir esta geração', 'heading'),
