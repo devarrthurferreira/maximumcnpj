@@ -5,6 +5,7 @@ import {calculateSimulation} from '../public/simulator-engine.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import {buildDrePresentation,unifiedDreRows} from '../public/simulator-dre.js';
 import {buildDreCsv} from '../public/simulator-dre-export.js';
+import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
 const close=(a,b)=>assert(Math.abs(a-b)<1e-7,`${a} != ${b}`);
 const make=(month,sales,purchases,services,difal)=>({sourceMonth:`2025-${String(month).padStart(2,'0')}`,month,salesLines:2,purchaseLines:1,
  fields:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:sales,purchasesOptantCents:0,purchasesNonOptantCents:purchases,serviceRevenueCents:services},
@@ -62,4 +63,46 @@ test('doze competências com valores diferentes preservam centavos e soma exata 
  const calendar=buildMonthlyDre(out.result,2028);
  for(const regime of calendar.regimes)for(const row of regime.rows)close(row.annual,row.months.reduce((a,b)=>a+b,0));
  assert.equal(out.difalProjection.annualCents,126600);assert.notEqual(out.result.monthlyResults[0].result.annualRevenue,out.result.monthlyResults[11].result.annualRevenue);
+});
+test('RBT12 móvel do2.2 muda a alíquota e bloqueia antecipação no mês que alcança sublimite',()=>{
+ const history=Array.from({length:13},(_,i)=>({month:`${2024+Math.floor(i/12)}-${String(i%12+1).padStart(2,'0')}`,internalCents:i===0?29_000_000:30_000_000,externalCents:0,totalCents:i===0?29_000_000:30_000_000}));
+ const extraction={pa:'02/2025',sourceSection:'2.2',parserVersion:'SIMPLES_SECTION_22_V2',priorRevenues:history.map(row=>({...row,period:row.month.slice(5)+'/'+row.month.slice(0,4)}))};
+ const rows=[make(1,10000000,1000000,0,10000),make(2,10000000,1000000,0,10000)].map(row=>({...row,operationVersion:'NATURE_OPERATIONS_2026_10_V1',
+   anticipation:{version:'ICMS_ANTICIPATION_V1',ratePercent:7.32,issuerUf:'MG',amountCents:73200,baseCents:1000000,eligibleLines:1,pendingLines:0}}));
+ const schedule=buildRbt12Schedule(extraction,rows.map(row=>row.sourceMonth));
+ const out=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales',schedule);
+ assert.deepEqual(out.engineInput.months.map(row=>row.input.rbt12),[3590000,3600000]);
+ for(const id of ['pure','hybrid']){
+  const months=out.result.monthlyResults.map(row=>row.result.regimes.find(r=>r.id===id));
+  close(months[0].dre.icmsAnticipation,-732);close(months[1].dre.icmsAnticipation,0);
+  close(out.result.regimes.find(row=>row.id===id).dre.icmsAnticipation,-732);
+  assert.notEqual(months[0].dre.das,months[1].dre.das);
+ }
+ for(const id of ['presumed','actual'])close(out.result.regimes.find(row=>row.id===id).dre.icmsAnticipation,0);
+ assert.equal(out.anticipationProjection.sourceAmountCents,146400);
+ close(out.result.memory.find(row=>row.id==='icmsAnticipation.base').value,20000);
+ close(out.result.monthlyResults[0].result.memory.find(row=>row.id==='icmsAnticipation.source').value,732);
+ assert(!out.result.memory.some(row=>row.id==='rbt12'));
+ const partial=buildRbt12Schedule({...extraction,priorRevenues:extraction.priorRevenues.slice(1)},rows.map(row=>row.sourceMonth));
+ assert.throws(()=>calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales',partial),/2024-01/);
+ assert.throws(()=>calculateMonthlySimulation(draft,[rows[0],{...rows[1],anticipation:null}],rows.map(row=>baselineMonth(row)),'sales',schedule),/todas as competências/);
+});
+
+test('memória anual não atribui a todo período a parcela a deduzir de uma única faixa',()=>{
+ const rows=[make(1,1000000,100000,0,0),make(2,2000000,100000,0,0)];
+ const schedule={version:'RBT12_MONTHLY_SECTION_22_V1',source:'SIMPLES_SECTION_22',sourceSection:'2.2',pa:'02/2026',complete:true,
+  rows:rows.map((row,index)=>({sourceMonth:row.sourceMonth,status:'CONFIRMED',rbt12Cents:index?36000000:18000000}))};
+ const out=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales',schedule);
+ for(const [id,expected] of [['simples.sales.deduction',[0,5940]],['simples.services.deduction',[0,9360]]]){
+  assert.deepEqual(out.result.monthlyResults.map(row=>row.result.memory.find(item=>item.id===id).value),expected);
+  assert.equal(out.result.memory.some(item=>item.id===id),false);
+ }
+ assert.equal(out.result.memory.find(item=>item.id==='sublimit').value,3600000);
+ assert.equal(out.result.memory.find(item=>item.id==='simplesLimit').value,4800000);
+ const equalSchedule=structuredClone(schedule);equalSchedule.rows[1].rbt12Cents=18000000;
+ const sameBand=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales',equalSchedule);
+ assert.equal(sameBand.result.memory.find(item=>item.id==='simples.sales.deduction').value,0);
+ const manual=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales');
+ assert.equal(manual.result.memory.find(item=>item.id==='rbt12').value,draft.rbt12);
+ assert.equal(manual.result.memory.find(item=>item.id==='simples.sales.deduction').value,13860);
 });

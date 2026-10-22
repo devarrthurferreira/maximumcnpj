@@ -1,5 +1,4 @@
-import {readStatement,mockStatement} from './extrato-helper.ts';
-import {section22} from '../fixtures/section22.ts';
+import {readStatement,mockStatement,statementHistory} from './extrato-helper.ts';
 import {test,expect} from '@playwright/test';
 import {calculateSimulation,draftToInput,TAX_SOURCES,CALCULATOR_SOURCE_COMMIT,MODEL_VERSION} from '../../public/simulator-engine.js';
 const generation='00000000-0000-4000-8000-000000000001',client='00000000-0000-4000-8000-000000000002';
@@ -14,7 +13,7 @@ async function setup(page:any){
   await page.route('**/api/v4/simulations',(r:any)=>r.fulfill({status:201,json:snapshot(r.request().postDataJSON())}));
 }
 const url=`/simulator.html?generation=${generation}&client=${client}`;
-function snapshot(body:any){return {_id:body.simulationId,generationId:generation,clientId:client,company:source.company,title:'Simulação de teste',source,rbt12Source:'SIMPLES_SECTION_22',rbt12Extraction:{id:body.rbt12ExtractionId,...section22(Math.round(body.draft.rbt12*100))},draft:body.draft,result:calculateSimulation(body.draft),engineInput:draftToInput(body.draft),taxSources:TAX_SOURCES,monthlyGroups:body.monthlyGroups,monthlyGroupsUnit:'BRL',reportMonths:body.reportMonths,periodConfirmed:true,manuallyAdjusted:false,adjustments:[],createdAt:'2026-09-30T16:00:00Z',createdBy:{id:'operator',name:'Teste'},modelVersion:MODEL_VERSION,calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,parentSimulationId:body.parentSimulationId||null};}
+function snapshot(body:any){return {_id:body.simulationId,generationId:generation,clientId:client,company:source.company,title:'Simulação de teste',source,rbt12Source:'SIMPLES_SECTION_22',rbt12Extraction:{id:body.rbt12ExtractionId,...statementHistory(Math.round(body.draft.rbt12*100))},draft:body.draft,result:calculateSimulation(body.draft),engineInput:draftToInput(body.draft),taxSources:TAX_SOURCES,monthlyGroups:body.monthlyGroups,monthlyGroupsUnit:'BRL',reportMonths:body.reportMonths,periodConfirmed:true,manuallyAdjusted:false,adjustments:[],createdAt:'2026-09-30T16:00:00Z',createdBy:{id:'operator',name:'Teste'},modelVersion:MODEL_VERSION,calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,parentSimulationId:body.parentSimulationId||null};}
 async function complete(page:any, values:any={}){await page.locator('#period-confirm').check();await readStatement(page,Math.round((values.rbt12??150000)*100));for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill(String(values[id]??0));}
 
 test('Verified report values populate five categories and require monthly inputs before computing original engine',async({page},info)=>{
@@ -36,7 +35,7 @@ test('Verified report values populate five categories and require monthly inputs
   await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva no histórico');await expect(page.locator('.sim-regime')).toHaveCount(4);await expect(page.locator('.sim-dre')).toContainText('Indicador');
   await expect(page.locator('.sim-dre')).not.toContainText('NaN');
-  await page.getByRole('button',{name:'12 meses',exact:true}).click();
+  await page.getByRole('button',{name:'Anual',exact:true}).click();
   const cells=await page.locator('.sim-dre tr').filter({hasText:'Receita bruta total'}).locator('td').allTextContents();expect(cells.every(t=>t.includes('120.000,12'))).toBe(true);
   const shot=info.outputPath('simulador-desktop.png');await page.screenshot({path:shot,fullPage:true});await info.attach('Simulador completo',{path:shot,contentType:'image/png'});
   await expect(page.locator('#simulation-result details[open]')).toHaveCount(0);
@@ -130,7 +129,7 @@ test('Save is single-flight and failed retries preserve the exact immutable requ
   await page.goto(url);await complete(page);await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#serviceRevenue')).toBeDisabled();await expect(page.locator('#generate-simulation')).toBeDisabled();await expect(page.locator('#simulation-save-status')).toContainText('Salvando');expect(requests).toHaveLength(1);release();
   await expect(page.locator('#retry-save')).toBeVisible();await expect(page.locator('#simulation-save-status')).not.toContainText('Simulação salva');await expect(page.locator('#serviceRevenue')).toBeEnabled();
   await page.locator('#retry-save').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');expect(requests).toHaveLength(2);expect(requests[1]).toEqual(requests[0]);
-  await page.locator('#serviceRevenue').fill('100');await expect(page.locator('#simulation-result')).toBeEmpty();await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');expect(requests[2].simulationId).not.toBe(requests[0].simulationId);
+  await page.locator('#serviceRevenue').fill('100');await expect(page.locator('#simulation-result .sim-dre,#results-top')).toHaveCount(0);await expect(page.locator('#simulation-changes-notice')).toBeVisible();await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');expect(requests[2].simulationId).not.toBe(requests[0].simulationId);
 });
 test('Unavailable regimes and zero revenue never become misleading zero-valued comparisons',async({page})=>{
   await setup(page);await page.goto(url);await complete(page,{serviceRevenue:500000});await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');await expect(page.locator('.sim-chart-profit .sim-chart-unavailable')).toHaveCount(2);await expect(page.locator('.sim-regime').first()).toContainText('Indisponível');
@@ -141,7 +140,8 @@ test('Unavailable regimes and zero revenue never become misleading zero-valued c
 test('RBT12 vem somente da seção 2.2 e falha em PDF novo apaga a leitura anterior',async({page})=>{
  await setup(page);await page.goto(url);await complete(page);
  await expect(page.locator('#rbt12')).toHaveAttribute('readonly','');
- await expect(page.locator('#rbt12-details table')).toBeHidden();await page.locator('#rbt12-details summary').click();await expect(page.locator('#rbt12-details tbody tr')).toHaveCount(12);
+ await expect(page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) table')).toBeHidden();await page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) summary').click();await expect(page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) tbody tr')).toHaveCount(12);
+ await expect(page.locator('#rbt12-details .sim-extrato-history tbody tr')).toHaveCount(31);
  await expect(page.locator('#rbt12-details')).toContainText('08/2025');await expect(page.locator('#rbt12-details')).toContainText('07/2026');
  await page.route('**/api/simples?*',r=>r.fulfill({status:422,json:{message:'Seção 2.2 incompleta: competência ilegível.'}}));
  await page.locator('#rbt12-pdf').setInputFiles({name:'ilegivel.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-unreadable')});
@@ -154,19 +154,19 @@ test('RBT12 vem somente da seção 2.2 e falha em PDF novo apaga a leitura anter
 test('Conferência do PDF abre pelo teclado e mantém avisos visíveis no celular',async({page})=>{
  await setup(page);
  const warning='Confira os valores da seção 2.2 com a imagem original.';
- await page.route('**/api/simples?*',r=>r.fulfill({json:{...section22(15000000),
+ await page.route('**/api/simples?*',r=>r.fulfill({json:{...statementHistory(15000000),
    extractionId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',documentId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
    searchableStored:true,warnings:[warning]}}));
  await page.goto(url);
  for(const id of ['rbt12-pdf','serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await expect(page.locator('#'+id)).toBeVisible();
  await page.locator('#rbt12-pdf').setInputFiles({name:'sintetico.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic')});
  await page.locator('#rbt12-read').click();await expect(page.locator('#rbt12')).toHaveValue('150000.00');
- await expect(page.getByText(warning,{exact:true})).toBeVisible();await expect(page.locator('#rbt12-details table')).toBeHidden();
- await page.locator('#rbt12-details summary').focus();await page.keyboard.press('Enter');
- await expect(page.locator('#rbt12-details tbody tr')).toHaveCount(12);await expect(page.locator('#rbt12-details table')).toBeVisible();
+ await expect(page.getByText(warning,{exact:true})).toBeVisible();await expect(page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) table')).toBeHidden();
+ await page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) summary').focus();await page.keyboard.press('Enter');
+ await expect(page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) tbody tr')).toHaveCount(12);await expect(page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) table')).toBeVisible();
  for(const width of [390,320]){await page.setViewportSize({width,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);}
- await page.locator('#rbt12-details summary').focus();await page.keyboard.press('Enter');
- await expect(page.locator('#rbt12-details table')).toBeHidden();await expect(page.getByText(warning,{exact:true})).toBeVisible();
+ await page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) summary').focus();await page.keyboard.press('Enter');
+ await expect(page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) table')).toBeHidden();await expect(page.getByText(warning,{exact:true})).toBeVisible();
  await expect(page.locator('#rbt12-view-original')).toBeVisible();await expect(page.locator('#rbt12')).toHaveAttribute('readonly','');
 });
 test('Falha no upload não informa original armazenado nem oferece reprocessamento',async({page})=>{
@@ -198,7 +198,7 @@ test('OCR indisponível preserva original e reprocessa sem novo upload no endpoi
  await expect(page.locator('#rbt12-view-original')).toBeVisible();
  await expect(page.locator('#rbt12-reprocess')).toBeVisible();
  let release!:()=>void;const gate=new Promise<void>(resolve=>release=resolve);
- await page.route('**/api/simples?*',async r=>{reads++;await gate;return r.fulfill({json:{extractionId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',documentId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',searchableStored:true,...section22(15000000)}});});
+ await page.route('**/api/simples?*',async r=>{reads++;await gate;return r.fulfill({json:{extractionId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',documentId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',searchableStored:true,...statementHistory(15000000)}});});
  await page.locator('#rbt12-reprocess').click();
  await expect(page.locator('#rbt12-pdf')).toBeDisabled();
  await expect(page.locator('#rbt12-read')).toBeDisabled();
@@ -212,7 +212,7 @@ test('OCR indisponível preserva original e reprocessa sem novo upload no endpoi
 test('Leitura da seção 2.2 aguarda além de 55 segundos e informa as páginas preservadas',async({page})=>{
  await setup(page);await page.clock.install();
  let release!:()=>void;const gate=new Promise<void>(resolve=>release=resolve);
- await page.route('**/api/simples?*',async r=>{await gate;return r.fulfill({json:{...section22(15000000),
+ await page.route('**/api/simples?*',async r=>{await gate;return r.fulfill({json:{...statementHistory(15000000),
    extractionId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',documentId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
    searchableStored:true,extractionScope:'SECTION_22',searchablePdfScope:'SELECTED_PAGES',pageCount:8,processedPages:2,
    processedPageNumbers:[1,2],preservedPages:[3,4,5,6,7,8],ocrPages:[1,2],searchablePdfBase64:Buffer.from('%PDF-synthetic').toString('base64')}});});
@@ -227,14 +227,14 @@ test('Leitura da seção 2.2 aguarda além de 55 segundos e informa as páginas 
  } finally {release();}
  await expect(page.locator('#rbt12')).toHaveValue('150000.00');
  await expect(page.locator('#rbt12-status')).toContainText('Seção 2.2 conferida');
- await expect(page.locator('#rbt12-details table')).toBeHidden();await page.locator('#rbt12-details summary').click();
+ await expect(page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) table')).toBeHidden();await page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) summary').click();
  await expect(page.locator('#rbt12-details')).toContainText('2 de 8 páginas analisadas (páginas 1, 2)');
  await expect(page.locator('#rbt12-details')).toContainText('demais foram preservadas sem OCR adicional');
  await expect(page.locator('#rbt12-view-searchable')).toHaveText('Ver PDF com seção 2.2 pesquisável');
  await expect(page.locator('#rbt12-download')).toHaveText('Baixar PDF com seção 2.2 pesquisável');
  await readStatement(page);
  await expect(page.locator('#rbt12-status')).toContainText('Seção 2.2 conferida');
- await expect(page.locator('#rbt12-details table')).toBeHidden();await page.locator('#rbt12-details summary').click();
+ await expect(page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) table')).toBeHidden();await page.locator('#rbt12-details .sim-extrato-details:not(.sim-extrato-history) summary').click();
  await expect(page.locator('#rbt12-details')).toContainText('3 página(s) processada(s)');
  await expect(page.locator('#rbt12-view-searchable')).toHaveText('Ver PDF pesquisável');
 });

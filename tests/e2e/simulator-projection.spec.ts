@@ -1,5 +1,4 @@
-import {readStatement,mockStatement} from './extrato-helper.ts';
-import {section22} from '../fixtures/section22.ts';
+import {readStatement,mockStatement,statementHistory} from './extrato-helper.ts';
 import {test,expect,type Page} from '@playwright/test';
 import {annualizeReports,projectScenario} from '../../public/simulator-projection.js';
 import {calculateSimulation,createEmptyDraft,draftToInput,MODEL_VERSION,TAX_SOURCES,CALCULATOR_SOURCE_COMMIT} from '../../public/simulator-engine.js';
@@ -14,7 +13,7 @@ async function setup(page:Page){
  await mockStatement(page,88888888);
  await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'projection-tester',name:'Teste',role:'operator'}}}));
  await page.route('**/api/v4/generations/*/simulator?*',r=>r.fulfill({json:source}));
- await page.route('**/api/v4/simulations',r=>{const body=r.request().postDataJSON();return r.fulfill({status:201,json:{_id:body.simulationId,source,projection:{...source.projection,scenario:projectScenario(body.monthlyGroups,body.draft.values)},rbt12Source:'SIMPLES_SECTION_22',rbt12Extraction:{id:body.rbt12ExtractionId,...section22(88888888)},draft:body.draft,result:calculateSimulation(body.draft),engineInput:draftToInput(body.draft),monthlyGroups:body.monthlyGroups,reportMonths:4,periodBasis:'COLUMN_H',periodConfirmed:true,manuallyAdjusted:true,adjustments:[],generationId:generation,clientId:client,company:source.company,createdAt:'2026-10-01T15:00:00Z',createdBy:{id:'projection-tester',name:'Teste'},modelVersion:MODEL_VERSION,taxSources:TAX_SOURCES,calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT}});});
+ await page.route('**/api/v4/simulations',r=>{const body=r.request().postDataJSON();return r.fulfill({status:201,json:{_id:body.simulationId,source,projection:{...source.projection,scenario:projectScenario(body.monthlyGroups,body.draft.values)},rbt12Source:'SIMPLES_SECTION_22',rbt12Extraction:{id:body.rbt12ExtractionId,...statementHistory(88888888)},draft:body.draft,result:calculateSimulation(body.draft),engineInput:draftToInput(body.draft),monthlyGroups:body.monthlyGroups,reportMonths:4,periodBasis:'COLUMN_H',periodConfirmed:true,manuallyAdjusted:true,adjustments:[],generationId:generation,clientId:client,company:source.company,createdAt:'2026-10-01T15:00:00Z',createdBy:{id:'projection-tester',name:'Teste'},modelVersion:MODEL_VERSION,taxSources:TAX_SOURCES,calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT}});});
 }
 test('4 meses viram média e 12 meses iguais, com conferência responsiva e RBT12 independente',async({page},info)=>{
  await setup(page);const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));

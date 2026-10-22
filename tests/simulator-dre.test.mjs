@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildDreSummary} from '../public/simulator-dre-summary.js';
+import {buildDreSummary,buildDreEvolution} from '../public/simulator-dre-summary.js';
 import {buildDrePresentation,unifiedDreRows,DRE_PRESENTATION_VERSION} from '../public/simulator-dre.js';
 import {calculateSimulation,calculateTax,draftToInput} from '../public/simulator-engine.js';
 import {annualizeReports,projectDifal} from '../public/simulator-projection.js';
-import {buildMonthlyDre,DRE_ROWS} from '../public/simulator-calendar.js';
+import {buildMonthlyDre,dreRows} from '../public/simulator-calendar.js';
+import {renderAnnualDre,renderCompleteMonthlyDre,renderDrePrintDocument} from '../public/simulator-dre-view.js';
+import {baselineMonth,calculateMonthlySimulation} from '../public/simulator-monthly.js';
+import {buildDreCsv} from '../public/simulator-dre-export.js';
 
 const near=(a,b)=>assert(Math.abs(a-b)<1e-7,`${a} != ${b}`);
 const allRows=p=>[...p.sections.flatMap(section=>section.rows),...p.details.flatMap(section=>section.rows),...p.indicators];
@@ -22,10 +25,85 @@ function freeze(value){if(value&&typeof value==='object'){Object.freeze(value);f
 test('apresentação preserva linhas e resultados, sem mutar entradas ou recalcular tributos',()=>{
  const input=fixture(),before=structuredClone(input);freeze(input);
  const p=buildDrePresentation(input);assert.equal(p.version,DRE_PRESENTATION_VERSION);assert.equal(p.sections.length,5);
- for(const r of input.result.regimes)for(const [key] of DRE_ROWS){
+ for(const r of input.result.regimes)for(const [key] of dreRows(input.result)){
   assert.equal(find(p,key).values[r.id],r.dre[key]);near(find(p,key).monthlyValues[r.id][0],r.dre[key]/12);
  }
  for(const row of allRows(p)){assert.equal(row.monthlyValues.actual.length,12);assert(Array.isArray(row.notes));assert(Array.isArray(row.sourceRefs));}
+ assert.deepEqual(input,before);
+});
+
+test('DRE concilia antecipação de ICMS separada do DIFAL em anual, meses, subtotais e carga',()=>{
+ const input=fixture(),baseline=structuredClone(input.result),projection={version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73200,annualCents:878400};
+ input.result=calculateSimulation(input.draft,{version:'DIFAL_DRE_V1',monthlyCents:300,annualCents:3600,sourceAmountCents:900,reportMonths:3,pendingLines:0},projection);
+ input.calendar=buildMonthlyDre(input.result,2027);const before=structuredClone(input),p=buildDrePresentation(input);
+ assert.equal(find(p,'icmsAnticipation').label,'− Antecipação de ICMS');assert.equal(find(p,'difal').label,'− DIFAL sobre vendas (10%)');
+ for(const regime of input.result.regimes){
+  const amount=['pure','hybrid'].includes(regime.id)?-8784:0;
+  assert.equal(find(p,'icmsAnticipation').values[regime.id],amount);
+  assert(find(p,'icmsAnticipation').monthlyValues[regime.id].every(value=>value===amount/12));
+  near(find(p,'revenueDeductions').values[regime.id],regime.dre.netRevenue-regime.dre.revenue);
+  near(find(p,'totalTaxes').values[regime.id],regime.totalTaxes);
+  near(find(p,'totalTaxes').monthlyValues[regime.id][0],regime.totalTaxes/12);
+  assert.equal(buildDreSummary(p,{id:regime.id,mode:'annual'}).reconciled,true);
+ }
+ assert.deepEqual(input,before);assert.equal(find(buildDrePresentation({result:baseline}),'icmsAnticipation'),undefined);
+});
+
+test('DRE e impressão distinguem RBT12 por competência da referência fixa legada',()=>{
+ const input=fixture(),calendar=buildMonthlyDre(input.result,2027,{source:'MANUAL',confirmed:true,rbt12Cents:18000000});
+ const fixed=buildDrePresentation({...input,calendar});
+ assert.match(renderAnnualDre({presentation:fixed,calendar,year:2027}),/RBT12 fixa: R\$ 180.000,00/);
+ calendar.version='DRE_CALENDAR_V3';calendar.method='REPORT_MONTHS_ROLLING_RBT12';
+ calendar.rbt12Schedule={version:'RBT12_MONTHLY_SECTION_22_V1',source:'SIMPLES_SECTION_22',sourceSection:'2.2',pa:'02/2025',complete:true,rows:[
+  {sourceMonth:'2025-01',status:'CONFIRMED',rbt12Cents:18000000,startMonth:'2024-01',endMonth:'2024-12',missingMonths:[],window:[]},
+  {sourceMonth:'2025-02',status:'CONFIRMED',rbt12Cents:19000000,startMonth:'2024-02',endMonth:'2025-01',missingMonths:[],window:[]}]};
+ calendar.months[0]={...calendar.months[0],sourceMonth:'2025-01',rbt12Cents:18000000};
+ calendar.months[1]={...calendar.months[1],sourceMonth:'2025-02',rbt12Cents:19000000};
+ const before=structuredClone(calendar),p=buildDrePresentation({...input,calendar});
+ assert.deepEqual(p.rbt12Schedule,calendar.rbt12Schedule);assert.notEqual(p.rbt12Schedule,calendar.rbt12Schedule);
+ assert.equal(p.months[1].rbt12Cents,19000000);
+ for(const html of [renderAnnualDre({presentation:p,calendar,year:2027}),renderDrePrintDocument({presentation:p,calendar,year:2027,period:'monthly'})]){
+  assert.match(html,/RBT12 por competência/);assert.match(html,/2025-01: R\$ 180.000,00/);assert.match(html,/2025-02: R\$ 190.000,00/);assert(!html.includes('RBT12 fixa'));
+ }
+ const monthly=renderCompleteMonthlyDre({presentation:p,calendar,year:2027,month:1});
+ assert.match(monthly,/2025-02: R\$ 190.000,00 · receitas de 2024-02 a 2025-01/);assert.match(monthly,/12 meses anteriores do quadro 2.2/);assert(!monthly.includes('RBT12 permanece fixa'));
+ assert.deepEqual(calendar,before);
+});
+
+test('mês Simples disponível continua consultável quando outra competência impede o total anual',()=>{
+ const {draft}=fixture(),reports=[1,2].map(month=>({month,sourceMonth:`2025-0${month}`,salesLines:1,purchaseLines:1,
+  fields:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:1_000_000,serviceRevenueCents:0,purchasesOptantCents:100_000,purchasesNonOptantCents:0},
+  difal:{version:'DIFAL_ESTIMATE_V2',ratePercent:10,issuerUf:'MG',amountCents:10000,baseCents:100000,eligibleLines:1,pendingLines:0},
+  anticipation:{version:'ICMS_ANTICIPATION_V1',ratePercent:7.32,issuerUf:'MG',amountCents:7320,baseCents:100000,eligibleLines:1,pendingLines:0}}));
+ const schedule={version:'RBT12_MONTHLY_SECTION_22_V1',source:'SIMPLES_SECTION_22',sourceSection:'2.2',pa:'02/2026',complete:true,
+  rows:reports.map((row,index)=>({sourceMonth:row.sourceMonth,status:'CONFIRMED',rbt12Cents:index?360000001:18000000,startMonth:`2024-0${index+1}`,endMonth:index?'2025-01':'2024-12',missingMonths:[],window:[]}))};
+ const out=calculateMonthlySimulation(draft,reports,reports.map(row=>baselineMonth(row)),'source',schedule),calendar=buildMonthlyDre(out.result,2027),source={monthlyReports:reports};
+ const input={result:out.result,calendar,source},before=structuredClone(input),p=buildDrePresentation(input);
+ const captured=out.result.monthlyResults[0].result.regimes.find(row=>row.id==='pure');
+ assert.equal(out.result.regimes[0].available,false);assert.equal(calendar.regimes[0].available,false);
+ assert.equal(calendar.regimes[0].rows.find(row=>row.key==='netProfit').annual,null);
+ assert.equal(calendar.regimes[0].rows.find(row=>row.key==='netProfit').months[0],captured.dre.netProfit);
+ assert.deepEqual(p.regimes[0].monthlyAvailability,[true,...Array(11).fill(false)]);
+ for(const key of ['revenue','netRevenue','icmsAnticipation','netProfit','totalTaxes']){
+  const row=find(p,key);assert.equal(row.values.pure,null,key);assert.equal(row.calendarAnnualValues.pure,null,key);
+  near(row.monthlyValues.pure[0],key==='totalTaxes'?captured.totalTaxes:captured.dre[key]);assert(row.monthlyValues.pure.slice(1).every(value=>value===null));
+ }
+ assert.equal(buildDreSummary(p,{id:'pure',mode:'month',month:0}).reconciled,true);
+ assert.equal(buildDreSummary(p,{id:'pure',mode:'annual'}).result,null);
+ assert.equal(buildDreSummary(p,{id:'pure',mode:'month',month:1}).result,null);
+ assert.equal(buildDreEvolution(p,calendar,'pure',0).months[0].netProfit,captured.dre.netProfit);
+ assert.match(buildDreEvolution(p,calendar,'pure',1).reason,/indisponível na competência selecionada/);
+ const monthly=renderCompleteMonthlyDre({presentation:p,calendar,year:2027,regimeId:'pure',month:0});
+ assert.match(monthly,/<option value="pure" selected>Simples Puro<\/option>/);
+ const expanded=renderCompleteMonthlyDre({presentation:p,calendar,year:2027,regimeId:'pure',month:0,monthView:false});
+ assert(expanded.includes('data-dre-row="icmsAnticipation"'));assert.match(expanded,/>-R\$ 73,20<|>R\$ -73,20<|>R\$\s*73,20</);
+ assert.match(renderAnnualDre({presentation:p,calendar,year:2027,regimeId:'pure'}),/Simples Puro · total anual indisponível/);
+ const csv=buildDreCsv({presentation:p,period:'monthly'}),row=csv.split('\r\n').find(line=>line.startsWith('"Simples Puro"')&&line.includes('"Resultado líquido"')).split(';');
+ assert.equal(row[6],captured.dre.netProfit.toLocaleString('pt-BR',{useGrouping:false,minimumFractionDigits:2,maximumFractionDigits:2}));assert.equal(row[7],'"Não disponível"');assert.equal(row[18],'"Não disponível"');
+ const noCalendar=buildDrePresentation({result:out.result,source});assert.equal(find(noCalendar,'netProfit').monthlyValues.pure[0],captured.dre.netProfit);
+ const invalidCalendar=buildDrePresentation({...input,calendar:{...calendar,version:'UNKNOWN'}});assert(find(invalidCalendar,'netProfit').monthlyValues.pure.every(value=>value===null));
+ const missingRegime=structuredClone(out.result);missingRegime.monthlyResults[0].result.regimes=missingRegime.monthlyResults[0].result.regimes.filter(row=>row.id!=='pure');
+ assert.equal(find(buildDrePresentation({result:missingRegime,calendar,source}),'netProfit').monthlyValues.pure[0],null);
  assert.deepEqual(input,before);
 });
 
@@ -212,4 +290,41 @@ test('composição divergente ou incompleta preserva o resultado e impede gráfi
  assert.equal(buildDreSummary(p,{id:'actual',mode:'annual'}).complete,false);
  find(p,'revenue').monthlyValues.actual[1]=null;
  assert.equal(buildDreSummary(p,{id:'actual',mode:'month',month:1}).revenue,null);
+});
+
+function evolutionFixture(){
+ const values={revenue:[100,150,0],netProfit:[-20,10,-5],netMargin:[-.2,10/150,null],difal:[-10,-15,0]};
+ const presentation={method:'REPORT_MONTHS_V1',regimes:[{id:'actual',available:true}],sections:[{rows:Object.entries(values).map(([key,months])=>({key,monthlyValues:{actual:[...months,...Array(9).fill(null)]}}))}]};
+ const calendar={version:'DRE_CALENDAR_V3',months:Array.from({length:12},(_,i)=>({label:String(i+1),sourceMonth:i<3?`2025-0${i+1}`:null}))};
+ return {presentation,calendar};
+}
+test('evolução lê meses congelados, calcula pontos percentuais e mantém DIFAL como dedução sem alterar células',()=>{
+ const {presentation,calendar}=evolutionFixture(),before=structuredClone({presentation,calendar});freeze(presentation);freeze(calendar);
+ const data=buildDreEvolution(presentation,calendar,'actual',1),metric=key=>data.metrics.find(row=>row.key===key);
+ assert.equal(data.importedCount,3);assert.equal(data.reason,'');assert.equal(data.months[3].revenue,null);
+ assert.equal(metric('revenue').change,50);assert.equal(metric('revenue').ratio,.5);
+ assert.equal(metric('netProfit').change,30);assert.equal(metric('netProfit').ratio,null,'Prejuízo anterior não é denominador de crescimento percentual.');
+ near(metric('netMargin').change,10/150+.2);assert.equal(metric('netMargin').ratio,null);
+ assert.equal(metric('difal').value,15);assert.equal(metric('difal').previous,10);assert.equal(metric('difal').change,5);
+ assert.equal(data.months[1].difal,-15);assert.deepEqual({presentation,calendar},before);
+});
+test('evolução não compara projeção pela média, meses ausentes, janeiro ou origens não consecutivas',()=>{
+ const {presentation,calendar}=evolutionFixture();
+ assert.match(buildDreEvolution(presentation,calendar,'actual',0).reason,/fora deste calendário/);
+ const missing=buildDreEvolution(presentation,calendar,'actual',3);assert.match(missing.reason,/Sem dados importados/);assert(missing.metrics.every(row=>row.change===null));
+ calendar.months[0].sourceMonth=null;
+ assert.match(buildDreEvolution(presentation,calendar,'actual',1).reason,/imediatamente anterior/);
+ calendar.months[0].sourceMonth='2024-01';assert.match(buildDreEvolution(presentation,calendar,'actual',1).reason,/não são consecutivas/);
+ delete presentation.method;assert.equal(buildDreEvolution(presentation,calendar,'actual',1).available,false);
+ presentation.method='REPORT_MONTHS_V1';calendar.version='DRE_CALENDAR_V2';assert.equal(buildDreEvolution(presentation,calendar,'actual',1).available,false);
+});
+test('evolução distingue receita zero e DIFAL zero de ausentes e respeita regime indisponível',()=>{
+ const {presentation,calendar}=evolutionFixture();
+ const data=buildDreEvolution(presentation,calendar,'actual',2),metric=key=>data.metrics.find(row=>row.key===key);
+ assert.equal(metric('revenue').value,0);assert.equal(metric('revenue').change,-150);assert.equal(metric('revenue').ratio,-1);
+ assert.equal(metric('difal').value,0);assert.equal(metric('difal').change,-15);assert.equal(metric('netMargin').change,null);
+ presentation.sections[0].rows= presentation.sections[0].rows.filter(row=>row.key!=='difal');
+ assert(!buildDreEvolution(presentation,calendar,'actual',2).metrics.some(row=>row.key==='difal'));
+ presentation.regimes[0].available=false;
+ const unavailable=buildDreEvolution(presentation,calendar,'actual',1);assert.match(unavailable.reason,/indisponível/);assert(unavailable.metrics.every(row=>row.change===null&&row.value===null));
 });

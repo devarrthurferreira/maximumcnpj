@@ -1,4 +1,32 @@
-# Maximum CNPJ · v0.26.1
+# Maximum CNPJ · v0.28.0
+
+## Naturezas, antecipação de ICMS e RBT12 mensal — 22/10/2026
+
+Esta seção descreve o contrato atual. As entregas datadas abaixo documentam o comportamento das versões anteriores.
+
+- **Naturezas:** catálogo de 619 códigos da planilha fornecida, classificado pela coluna **D — OPERAÇÃO**. Nos relatórios financeiros, a natureza da coluna L é normalizada pelos quatro primeiros dígitos. Descrições e sufixos não mudam a classificação. A coluna D do cadastro não é uma coluna monetária: a base financeira continua **Q − Y + AA − AB**, com Z apenas informativa.
+- **Receita:** somente operações VENDA e serviços de venda 9000, abatendo as DEVOLUÇÕES DE VENDA encontradas no relatório de compras, na competência da coluna H. Devoluções de compra e outras operações do relatório de vendas ficam fora dessa base. O enquadramento do documento permanece o capturado na consulta.
+- **Compras consideradas:** operações COMPRAS e serviços de natureza 8000, inclusive `8000002` e `8000102`. Devoluções de venda reduzem a receita uma única vez e não integram as compras. A conferência discrimina inclusão, exclusão e conciliação com o total original por natureza.
+- **DIFAL sobre vendas:** 10% por linha VENDA a CPF com UFs brasileiras confirmadas e diferentes. Nova versão `DIFAL_ESTIMATE_V3` usa todas as naturezas de venda do catálogo. V1/V2 continuam com suas regras salvas. Serviços 9000 não geram DIFAL.
+- **Antecipação de ICMS:** 7,32% das compras interestaduais elegíveis, incluindo serviços 8000. Linha separada na DRE, deduzida uma única vez somente no Simples puro e híbrido; zero quando a RBT12 da competência alcança R$ 3,6 milhões (inclusive) ou há ICMS fora do DAS, conforme a regra gerencial solicitada para este simulador. Não cria crédito adicional e não altera Lucro Presumido/Real. UFs ausentes ficam pendentes; ajustes manuais do cenário não reescrevem a base importada.
+- **RBT12 móvel:** todas as receitas explícitas do quadro 2.2 são conservadas. Cada competência usa seus 12 meses anteriores, somando mercados interno e externo. O valor do PA é apenas referência; o ano projetado não desloca as competências de origem. Ausência de um mês bloqueia o cálculo, sem usar quadro 2.1, médias ou zeros inventados. A alternativa manual existente continua explícita e identificada como fixa.
+- **Histórico:** snapshots antigos permanecem imutáveis. A revisão `NATURES_RBT12_2026_10_V2` cria versões vinculadas com as novas bases. Compras antigas sem natureza/UF ou extratos sem meses suficientes ficam pendentes para reimportação. Relatórios brutos conservam seus totais; a DRE recebe `selectedTotalCents` e auditoria próprios.
+- **Contratos:** catálogo `NATURE_OPERATIONS_2026_10_V1`, antecipação `ICMS_ANTICIPATION_V1`, RBT12 `RBT12_MONTHLY_SECTION_22_V1` e modelo mensal `1.4.0-natures-rbt12`. JSON, CSV, PDF, tela e calendário preservam as evidências e competências correspondentes.
+
+Os percentuais de 10% e 7,32% são premissas gerenciais solicitadas, não uma consulta de alíquotas legais por operação. A composição do quadro 2.2 segue a descrição do [Manual PGDAS-D da Receita Federal](https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/MANUAL_PGDAS-D_2018_V4.pdf). O bloqueio gerencial de antecipação por RBT12 não substitui a apuração legal dos efeitos do sublimite por RBA/RBAA. A publicação e a revisão de dados de produção são etapas separadas desta entrega de código.
+
+Validação da v0.28.0: tipos, build, versão e diff conferidos; 216 testes de regras, 65 de integração/reprocessamento e 132 Python/PDF/OCR aprovados, sem skips. Navegador: 109/110 na execução completa; o arquivo sintético do caso restante recebeu natureza e UF, e os seis testes guiados passaram na reexecução, cobrindo os 110 fluxos únicos. O novo fluxo de ponta a ponta confere importação, devoluções, serviços 8000, RBT12 móvel, DRE, salvamento e reabertura. PDF e layouts desktop/mobile inspecionados.
+
+## Conferência e evolução das simulações — 22/10/2026
+
+- O histórico identifica o método salvo: soma das competências importadas ou projeção mensal legada. Cada card mostra o período de origem; os totais continuam exatamente como foram salvos.
+- Originais com revisão concluída oferecem acesso direto à versão atualizada, preservando a consulta e a exclusão independente de cada versão. Links só apontam para simulações existentes no mesmo workspace.
+- O acompanhamento da revisão mostra progresso e diferencia versões concluídas de pendências. Versões já criadas passam a aparecer mesmo quando o restante do lote é interrompido.
+- A DRE permite conferir a evolução entre competências usando seus valores salvos: receita, resultado, margem e DIFAL. Ausência de dados, referência anterior zero e projeções legadas recebem indicação própria; não se recalculam tributos ao navegar.
+- Ao gerar, um campo incompleto de outra competência leva ao mês e ao campo que precisam de correção. Ao editar valores de um resultado já gerado, um aviso oferece atualizar a simulação; a versão anterior permanece no histórico.
+- Correções de regressões do fluxo guiado validam despesas inicialmente em zero, total pela soma das competências e alternância anual com os controles atuais.
+
+A revisão do histórico ainda precisa da página Simulações aberta e visível com perfil administrador ou operador. Esta entrega não executa um lote sobre o banco de produção. Cálculos gerenciais, regras de DIFAL e snapshots permanecem preservados.
 
 ## DRE mensal ou anual — 20/10/2026
 

@@ -1,6 +1,34 @@
 import {test,expect} from '@playwright/test';
 import {baselineMonth,monthlyProjection,calculateMonthlySimulation} from '../../public/simulator-monthly.js';
 import {buildMonthlyDre} from '../../public/simulator-calendar.js';
+
+test('competência incompleta leva ao campo correto e alterações exigem nova simulação',async({page})=>{
+ let posts=0;
+ await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'tester',role:'operator',name:'Teste'}}}));
+ await page.route('**/api/v4/generations/*/simulator?*',r=>r.fulfill({json:source}));
+ await page.route('**/api/v4/simulations',route=>{
+  posts++;const body=route.request().postDataJSON(),computed=calculateMonthlySimulation(body.draft,reports,body.monthlyInputs,salesId);
+  return route.fulfill({json:{...body,_id:body.simulationId,...computed,source,company:source.company,createdAt:'2026-10-22T12:00:00Z',createdBy:{id:'tester',name:'Teste'},rbt12Source:'MANUAL',rbt12Manual:{source:'MANUAL',confirmed:true,rbt12Cents:50000000},monthlyDre:buildMonthlyDre(computed.result,2027,{source:'MANUAL',confirmed:true,rbt12Cents:50000000},source.period)}});
+ });
+ await page.goto(`/simulator.html?generation=${generation}&client=${client}`);
+ await page.locator('#rent').fill('');
+ await page.locator('#report-competence').selectOption('1');
+ await page.locator('#rbt12-manual').click();await page.locator('#rbt12').fill('500000');await page.locator('#rbt12-manual-confirm').check();
+ await page.locator('#generate-simulation').click();
+ await expect(page.locator('#report-competence')).toHaveValue('0');
+ await expect(page.locator('#simulator-error')).toContainText('Janeiro / 2025');
+ await expect(page.locator('#rent')).toBeFocused();expect(posts).toBe(0);
+ await page.locator('#rent').fill('100');await page.locator('#generate-simulation').click();
+ await expect(page.locator('#simulation-save-status')).toContainText('salva');expect(posts).toBe(1);
+ await page.locator('#rent').fill('200');
+ await expect(page.locator('#simulation-changes-notice')).toContainText('Valores alterados');
+ await expect(page.locator('#results-top')).toHaveCount(0);expect(posts).toBe(1);
+ await page.locator('#report-competence').selectOption('1');
+ await expect(page.locator('#simulation-changes-notice')).toBeVisible();
+ await page.locator('#regenerate-simulation').click();
+ await expect(page.locator('#simulation-save-status')).toContainText('salva');
+ await expect(page.locator('#simulation-changes-notice')).toHaveCount(0);expect(posts).toBe(2);
+});
 const generation='a1000000-0000-4000-8000-000000000001',client='a1000000-0000-4000-8000-000000000002',salesId='a1000000-0000-4000-8000-000000000003';
 const reports=Array.from({length:12},(_,i)=>({sourceMonth:`2025-${String(i+1).padStart(2,'0')}`,month:i+1,salesLines:1,purchaseLines:1,
  fields:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:100000+i*10000,purchasesOptantCents:0,purchasesNonOptantCents:20000+i*1000,serviceRevenueCents:5000+i*100},

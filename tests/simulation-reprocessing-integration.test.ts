@@ -56,6 +56,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
   const original:any=await simulations.findOne(scope({_id:id(index)}));
   if(legacy){
    original.modelVersion='LEGACY_SYNTHETIC';delete original.monthlyInputs;delete original.source.monthlyReports;
+   delete original.source.operationVersion;delete original.source.operationAudit;
    delete original.source.revenueSplit;delete original.source.fields.serviceRevenueCents;delete original.baselineServiceRevenue;
    original.source.fields.salesCpfCents+=5000;
    original.monthlyGroups.salesCpfCents+=50;original.baselineMonthlyGroups.salesCpfCents+=50;

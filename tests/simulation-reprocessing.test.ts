@@ -1,11 +1,12 @@
-import {calculateMonthlySimulation} from '../public/simulator-monthly.js';
+import {calculateMonthlySimulation,MONTHLY_MODEL_VERSION} from '../public/simulator-monthly.js';
+import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {planReprocessing,reprocessedSimulationId,SERVICE_REVENUE_MIGRATION_REVISION} from '../src/simulation-reprocessing.ts';
 import {annualizeReports,projectDifal,projectScenario} from '../public/simulator-projection.js';
 import {calculateSimulation,draftToInput,MODEL_VERSION} from '../public/simulator-engine.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
-import {section22} from './fixtures/section22.ts';
+import {section22Year2025} from './fixtures/section22.ts';
 
 function fixture(){
  const fields={salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:15000,purchasesOptantCents:0,purchasesNonOptantCents:1000};
@@ -16,7 +17,7 @@ function fixture(){
   draft:{year:2027,salesAnnex:1,serviceAnnex:3,rbt12:100000,values:{serviceRevenue:0,salesRevenue:160,simplePurchases:0,regularPurchases:12,salaries:1,benefits:2,adminExpenses:3,rent:4,cardExpenses:5}},
   rbt12Source:'MANUAL',rbt12Manual:{source:'MANUAL',confirmed:true,rbt12Cents:10000000,confirmedAt:'2026-10-10T12:00:00Z',confirmedBy:{id:'original-user',name:'Origem'}}};
  source.fields={...fields,salesCpfCents:10000,serviceRevenueCents:5000};source.revenueSplit={version:'SALES_SERVICES_V1'};
- Object.defineProperty(source,'monthlyReports',{enumerable:true,get(){const count=original.reportMonths,p=annualizeReports(source.fields,count);return Array.from({length:count},(_,index)=>({sourceMonth:`2026-${String(index+1).padStart(2,'0')}`,month:index+1,fields:Object.fromEntries(Object.entries(source.fields).map(([key,total])=>[key,index<count-1?p.monthlyGroupsCents[key]:Number(total)-p.monthlyGroupsCents[key]*(count-1)])),salesLines:2,purchaseLines:1,difal:source.sales.difal?{...source.sales.difal,amountCents:index<count-1?Math.floor(source.sales.difal.amountCents/count):source.sales.difal.amountCents-Math.floor(source.sales.difal.amountCents/count)*(count-1)}:null}));}});
+ Object.defineProperty(source,'monthlyReports',{enumerable:true,get(){const count=original.reportMonths,p=annualizeReports(source.fields,count);return Array.from({length:count},(_,index)=>({sourceMonth:`2025-${String(index+1).padStart(2,'0')}`,month:index+1,fields:Object.fromEntries(Object.entries(source.fields).map(([key,total])=>[key,index<count-1?p.monthlyGroupsCents[key]:Number(total)-p.monthlyGroupsCents[key]*(count-1)])),salesLines:2,purchaseLines:1,difal:source.sales.difal?{...source.sales.difal,amountCents:index<count-1?Math.floor(source.sales.difal.amountCents/count):source.sales.difal.amountCents-Math.floor(source.sales.difal.amountCents/count)*(count-1)}:null}));}});
  return {original,source};
 }
 test('migração preserva deltas e despesas em centavos, separa serviço e não modifica original',()=>{
@@ -88,14 +89,25 @@ test('totais/baseline divergentes, ajustes negativos, período trocado e DIFAL p
 });
 test('extrato congelado validado é reutilizado sem OCR ou confirmação manual inventada',()=>{
  const {original,source}=fixture();original.rbt12Source='SIMPLES_SECTION_22';delete original.rbt12Manual;
- original.rbt12Extraction={id:'10000000-0000-4000-8000-000000000006',...section22(10000000)};
+ original.rbt12Extraction={id:'10000000-0000-4000-8000-000000000006',...section22Year2025()};original.draft.rbt12=210000;
  const p=planReprocessing(original,source,'ws');assert.equal(p.input.rbt12ExtractionId,original.rbt12Extraction.id);assert.equal(p.context.rbt12Manual,null);
+ assert.equal(p.context.rbt12Extraction.priorRevenues.length,23);
+ const schedule=buildRbt12Schedule(p.context.rbt12Extraction,source.monthlyReports.map((row:any)=>row.sourceMonth));
+ const computed=calculateMonthlySimulation(p.input.draft,source.monthlyReports,p.input.monthlyInputs,source.sales.jobId,schedule);
+ assert.equal(computed.engineInput.months[0].input.rbt12,78000);assert.equal(p.input.draft.rbt12,210000);
  original.rbt12Extraction.rbt12Window[0].totalCents++;assert.throws(()=>planReprocessing(original,source,'ws'),(e:any)=>e.code==='RBT12_EXTRACTION');
+});
+test('recálculo bloqueia lacuna anterior à janela do PA sem completar a receita ou modificar o snapshot',()=>{
+ const {original,source}=fixture();original.rbt12Source='SIMPLES_SECTION_22';delete original.rbt12Manual;original.draft.rbt12=210000;
+ original.rbt12Extraction={id:'10000000-0000-4000-8000-000000000006',...section22Year2025()};
+ original.rbt12Extraction.priorRevenues.splice(0,1);const before=structuredClone(original);
+ assert.throws(()=>planReprocessing(original,source,'ws'),(error:any)=>error.code==='RBT12_MONTHS_MISSING'&&error.message.includes('2024-01'));
+ assert.deepEqual(original,before);
 });
 test('regra atual exige resultado, motor, projeção e calendário reconciliados, não apenas versão',()=>{
  const {original,source}=fixture();const p=planReprocessing(original,source,'ws');
  const computed=calculateMonthlySimulation(p.input.draft,source.monthlyReports,p.input.monthlyInputs,source.sales.jobId);
- const current:any={...original,source,modelVersion:'1.3.0-report-months',draft:p.input.draft,monthlyGroups:p.input.monthlyGroups,monthlyInputs:p.input.monthlyInputs,
+ const current:any={...original,source,modelVersion:MONTHLY_MODEL_VERSION,draft:p.input.draft,monthlyGroups:p.input.monthlyGroups,monthlyInputs:p.input.monthlyInputs,
   baselineMonthlyGroups:{...original.baselineMonthlyGroups,salesCpfCents:100},baselineServiceRevenue:50,...computed,
   monthlyDre:buildMonthlyDre(computed.result,2027,original.rbt12Manual)};
  assert.equal(planReprocessing(current,source,'ws').alreadyCurrent,true);

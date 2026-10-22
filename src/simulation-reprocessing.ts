@@ -9,6 +9,7 @@ import {getSimulation, createReprocessedSimulation} from './simulation-history.t
 import {rebuildSimulationSource} from './simulation-reprocessing-source.ts';
 import {assertGenerationNotDeleted} from './generation-deletion.ts';
 import {validateSection22} from './simulation-extrato.ts';
+import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
 import {annualizeReports, REPORT_GROUPS} from '../public/simulator-projection.js';
 import type {ReportGroup} from '../public/simulator-projection.js';
 
@@ -16,7 +17,7 @@ import {baselineMonth, calculateMonthlySimulation, MONTHLY_MODEL_VERSION as MODE
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 
 
-export const REPROCESS_VERSION = 'REPORT_MONTHS_2026_10_V1';
+export const REPROCESS_VERSION = 'NATURES_RBT12_2026_10_V2';
 export const SERVICE_REVENUE_MIGRATION_REVISION = 'LEGACY_ADDITIONAL_SERVICES_V1';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const PAGE_SIZE = 100;
@@ -134,6 +135,8 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   });
   // Versions already using monthly values retain every individual adjustment.
   if(original.monthlyInputs && original.result?.method==='REPORT_MONTHS_V1'){
+    pending(original.monthlyInputs.length===monthlyInputs.length&&Array.isArray(original.source.monthlyReports)&&
+      original.source.monthlyReports.length===monthlyInputs.length,'REPROCESS_PERIOD','A quantidade de competências antigas não corresponde aos relatórios.');
     for(let i=0;i<monthlyInputs.length;i++){
       const oldRow=original.source.monthlyReports?.[i],oldInput=original.monthlyInputs[i];
       pending(oldRow?.sourceMonth===monthlyInputs[i].sourceMonth&&oldInput?.sourceMonth===oldRow.sourceMonth,'REPROCESS_PERIOD','As competências antigas não reconciliam.');
@@ -145,9 +148,12 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   Object.assign(monthlyGroups,monthlyInputs[0].groups);
   draft.values={...monthlyInputs[0].values,salesRevenue:REPORT_GROUPS.slice(0,3).reduce((sum,key)=>sum+moneyCents(monthlyGroups[key],true),0)/100,
     simplePurchases:monthlyGroups.purchasesOptantCents,regularPurchases:monthlyGroups.purchasesNonOptantCents};
-  const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports,monthlyInputs,source.sales.jobId);}catch(error){throw new AppError(409,'REPROCESS_ADJUSTMENT',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
+  const rbt12Schedule=rbt12Extraction?buildRbt12Schedule(rbt12Extraction,source.monthlyReports.map((row:any)=>row.sourceMonth)):null;
+  pending(!rbt12Schedule||rbt12Schedule.complete,'RBT12_MONTHS_MISSING',`O extrato congelado não cobre todas as competências. Reimporte o extrato com as receitas mensais do quadro 2.2. ${rbt12Schedule?.rows.filter(row=>row.status!=='CONFIRMED').map(row=>`${row.sourceMonth}: faltam ${row.missingMonths.join(', ')}`).join('; ')||''}`);
+  const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports,monthlyInputs,source.sales.jobId,rbt12Schedule);}catch(error){throw new AppError(409,'REPROCESS_ADJUSTMENT',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
   pending(computed.difalProjection,'DIFAL_SOURCE_MISSING','O relatório original não possui os dados necessários para confirmar o DIFAL.');
   pending(computed.difalProjection.pendingLines===0,'DIFAL_UF_PENDING','Há linhas aguardando UF para confirmar o DIFAL.');
+  pending(!computed.anticipationProjection||computed.anticipationProjection.pendingLines===0,'ANTICIPATION_UF_PENDING','Há compras aguardando UF para confirmar a antecipação de ICMS.');
   const alreadyCurrent=modern&&isDeepStrictEqual(original.result,computed.result)&&isDeepStrictEqual(original.projection,computed.projection)&&
     isDeepStrictEqual(original.difalProjection,computed.difalProjection)&&isDeepStrictEqual(original.engineInput,computed.engineInput)&&
     isDeepStrictEqual(original.monthlyDre,buildMonthlyDre(computed.result,draft.year,rbt12Extraction||rbt12Manual,source.period||null));

@@ -25,7 +25,7 @@ test('MongoDB: comparação mensal libera o simulador sem alterar datas, valores
       const jobs: string[] = [];
       for (const [attach, dates, fileName] of [[attachGenerationPurchase, purchaseDates, 'compras.csv'], [attachGenerationSale, saleDates, 'vendas.csv']] as const) {
         const attached = await attach(actor, generation._id, {clientId, importId: randomUUID(), fileName, expectedRows: dates.length});
-        await uploadLookup(actor, attached.job._id, {offset: 0, rows: dates.map(row)});
+        await uploadLookup(actor, attached.job._id, {offset: 0, rows: dates.map(date=>({...row(date),natureCode:attach===attachGenerationPurchase?'1102':'5102',recipientUf:'SP'}))});
         await finalizeLookup(actor, attached.job._id); jobs.push(attached.job._id);
       }
       return {id: generation._id, jobs};

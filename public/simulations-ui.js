@@ -34,7 +34,32 @@ function layout(){
  const reprocess=document.createElement('div');reprocess.id='history-reprocess';$('#history-filters').before(reprocess);
  mountSimulationReprocess(reprocess,state.user,async()=>{if(state.deleting||dialog.open){state.reprocessRefreshPending=true;return;}await load();});
 }
-function card(item){return `<article class="history-item" data-simulation-id="${esc(item._id)}"><div class="history-company"><span class="history-company-symbol">${icon('companies')}</span><div><small>EMPRESA ${esc(item.company.code||'SEM CÓDIGO')}</small><h3>${esc(item.company.name)}</h3></div></div><p class="history-title">${esc(item.title||'Simulação tributária')}</p><div class="history-tags"><span class="history-tag">CENÁRIO ${esc(item.year)}</span><span class="history-tag">${esc(item.reportMonths)} ${item.reportMonths===1?'MÊS':'MESES'} NOS RELATÓRIOS</span>${item.manuallyAdjusted?'<span class="history-tag adjusted">VALORES AJUSTADOS</span>':''}</div><div class="history-financials"><div><span>Receita anual estimada</span><strong>${money(item.annualRevenue)}</strong><small>Referência mensal × 12</small></div><div class="best"><span>Maior resultado anual</span><strong>${money(item.bestAnnualProfit)}</strong><small>${esc(item.bestRegimeName||'Sem ranking neste cenário')}</small></div></div><div class="history-item-footer"><p>Salva em ${date(item.createdAt)}<br>Por ${esc(item.createdBy?.name||'Equipe Maximum')}</p><div class="history-item-actions"><a href="/simulator.html?${new URLSearchParams({simulation:item._id})}">Rever simulação →</a>${canDelete()?`<button type="button" class="history-delete" data-delete-simulation="${esc(item._id)}" aria-label="Excluir simulação de ${esc(item.company.name)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg>Excluir</button>`:''}</div></div></article>`;}
+const simulationId = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
+function reportPeriod(period) {
+ const month = value => /^(?:19\d{2}|20\d{2}|21\d{2}|2200)-(?:0[1-9]|1[0-2])$/.test(value || '') ? value.slice(5)+'/'+value.slice(0,4) : null;
+ const start=month(period?.startMonth),end=month(period?.endMonth);
+ return start && end ? start===end ? start : `${start} a ${end}` : null;
+}
+function card(item){
+ const monthly=item.calculationMethod==='REPORT_MONTHS_V1';
+ const projected=['AVERAGE_X12_V1','AVERAGE_X12_V2'].includes(item.calculationMethod);
+ const updated=simulationId(item.updatedSimulationId)&&item.updatedSimulationId!==item._id;
+ const revised=simulationId(item.reprocessing?.originalId);
+ const parent=simulationId(item.parentSimulationId)&&!item.parentSimulationDeleted;
+ const period=reportPeriod(item.reportPeriod);
+ const revenueLabel=monthly?'Receita do período':projected?'Receita anual projetada':'Receita registrada';
+ const revenueNote=monthly?`Soma de ${item.reportMonths} ${item.reportMonths===1?'competência':'competências'} · sem média`:projected?'Referência mensal × 12':'Conforme simulação salva';
+ return `<article class="history-item ${updated?'has-revision':''}" data-simulation-id="${esc(item._id)}">
+  <div class="history-company"><span class="history-company-symbol">${icon('companies')}</span><div><small>EMPRESA ${esc(item.company.code||'SEM CÓDIGO')}</small><h3>${esc(item.company.name)}</h3></div></div>
+  <p class="history-title">${esc(item.title||'Simulação tributária')}</p>
+  <div class="history-tags"><span class="history-tag">CENÁRIO ${esc(item.year)}</span><span class="history-tag">${esc(item.reportMonths)} ${item.reportMonths===1?'MÊS':'MESES'} NOS RELATÓRIOS</span>${monthly?'<span class="history-tag monthly">POR COMPETÊNCIA</span>':projected?'<span class="history-tag">PROJEÇÃO LEGADA</span>':''}${revised?'<span class="history-tag revised">REVISÃO AUTOMÁTICA</span>':parent?'<span class="history-tag">NOVA VERSÃO</span>':''}${item.manuallyAdjusted?'<span class="history-tag adjusted">VALORES AJUSTADOS</span>':''}</div>
+  ${period?`<p class="history-period">Relatórios de origem: <strong>${esc(period)}</strong></p>`:''}
+  ${updated?`<div class="history-revision"><strong>Há uma versão atualizada</strong><p>Os valores abaixo pertencem a esta versão salva. Abra a revisão para consultar os ajustes.</p><a href="/simulator.html?simulation=${encodeURIComponent(item.updatedSimulationId)}">Abrir versão atualizada →</a></div>`:''}
+  <div class="history-financials"><div><span>${revenueLabel}</span><strong>${money(item.annualRevenue)}</strong><small>${esc(revenueNote)}</small></div><div class="best"><span>${monthly?'Maior resultado no período':projected?'Maior resultado anual':'Maior resultado registrado'}</span><strong>${money(item.bestAnnualProfit)}</strong><small>${esc(item.bestRegimeName||'Sem ranking neste cenário')}</small></div></div>
+  ${revised?'<p class="history-version-note">Revisão criada a partir dos relatórios de origem, preservando a simulação anterior.</p>':''}
+  <div class="history-item-footer"><p>Salva em ${date(item.createdAt)}<br>Por ${esc(item.createdBy?.name||'Equipe Maximum')}${item.parentSimulationDeleted?'<br>Versão anterior excluída.':''}</p><div class="history-item-actions">${parent?`<a class="history-parent" href="/simulator.html?simulation=${encodeURIComponent(item.parentSimulationId)}">${revised?'Ver original':'Ver versão anterior'}</a>`:''}<a href="/simulator.html?${new URLSearchParams({simulation:item._id})}">${updated?'Rever esta versão':'Rever simulação'} →</a>${canDelete()?`<button type="button" class="history-delete" data-delete-simulation="${esc(item._id)}" aria-label="Excluir simulação de ${esc(item.company.name)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg>Excluir</button>`:''}</div></div>
+ </article>`;
+}
 function openDelete(id,trigger){
  const item=state.items.find(record=>record._id===id);
  if(!item||!canDelete()||state.deleting)return;

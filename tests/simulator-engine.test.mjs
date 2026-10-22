@@ -417,6 +417,58 @@ test('DIFAL context is distinct from editable draft, retains missing-source stat
  for(const value of[-1,'0',null,Infinity])assert.equal(taxInputSchema.safeParse({...EXAMPLE_INPUT,difalMonthly:value}).success,false);
 });
 
+test('antecipação de ICMS deduz 7,32% de compras interestaduais somente nos dois regimes Simples, sem crédito ou tributo duplicado',()=>{
+ const input={...example(),difalMonthly:100},baseline=calculateTax(input);
+ const anticipation={version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73_200}; // R$10.000 ×7,32%.
+ const result=calculateTax({...input,icmsAnticipation:anticipation});
+ assert.equal(result.version,'1.4.0-icms-anticipation');assert.equal(baseline.version,'1.2.0-services-difal');
+ assert.deepEqual(result.credits,baseline.credits);close(result.annualRevenue,baseline.annualRevenue);
+ for(const regime of result.regimes){
+  const old=baseline.regimes.find(row=>row.id===regime.id),d=regime.dre,charge=['pure','hybrid'].includes(regime.id)?8784:0;
+  close(d.icmsAnticipation,-charge);close(d.difal,old.dre.difal);
+  close(d.netRevenue,old.dre.netRevenue-charge);close(d.preTax,old.dre.preTax-charge);
+  close(d.netProfit,old.dre.netProfit-charge);close(regime.totalTaxes,old.totalTaxes+charge);
+  close(d.irpj,old.dre.irpj);close(d.csll,old.dre.csll);close(d.icmsUsed,old.dre.icmsUsed);close(d.cbsUsed,old.dre.cbsUsed);
+  close(d.netRevenue,d.revenue+d.das+d.cbsDebit+d.ibsDebit+d.icmsNet+d.iss+d.difal+d.icmsAnticipation);
+  close(regime.annualProfit,result.annualRevenue+d.cmv+d.salaries+d.benefits+d.administrative+d.rent+d.cards-regime.totalTaxes);
+ }
+ assert.equal(Object.hasOwn(baseline.regimes[0].dre,'icmsAnticipation'),false);
+ assert.equal(memory(result,'icmsAnticipation.annual'),8784);
+ close(memory(result,'actual.preTax'),baseline.regimes[3].dre.preTax);
+});
+
+test('antecipação é bloqueada no sublimite inclusive, acima dele e com ICMS fora do DAS',()=>{
+ const icmsAnticipation={version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73200};
+ for(const rbt12 of [3_599_999.99,3_600_000,3_600_000.01])for(const icmsOutside of [false,true]){
+  const input={...example(),rbt12,icmsOutside},old=calculateTax(input),result=calculateTax({...input,icmsAnticipation});
+  const charge=rbt12<3_600_000&&!icmsOutside?8784:0;
+  for(const [index,regime]of result.regimes.entries()){
+   assert.equal(regime.available,old.regimes[index].available);
+   close(regime.dre.icmsAnticipation,index<2?-charge:0);
+   close(regime.annualProfit,old.regimes[index].annualProfit-(index<2?charge:0));
+  }
+  close(memory(result,'icmsAnticipation.annual'),charge);
+ }
+ // Uma competência sazonal não deve acionar o bloqueio por sua receita multiplicada por12.
+ const seasonal=calculateTax({...example(),salesRevenue:310_000,serviceRevenue:0,rbt12:3_000_000,icmsAnticipation});
+ assert(seasonal.annualRevenue>3_600_000);assert(seasonal.regimes[0].available);close(seasonal.regimes[0].dre.icmsAnticipation,-8784);
+});
+
+test('antecipação usa contexto versionado, preserva fonte pendente e não aceita centavos ou versões inválidos',()=>{
+ const draft=createEmptyDraft();for(const key of Object.keys(draft.values))draft.values[key]=EXAMPLE_INPUT[key];draft.rbt12=180000;
+ const projection={version:'ICMS_ANTICIPATION_DRE_V1',ratePercent:7.32,monthlyCents:73200,annualCents:878400,sourceBaseCents:1_000_000,sourceAmountCents:73200,reportMonths:1,pendingLines:2};
+ const before=structuredClone({draft,projection}),input=draftToInput(draft,null,projection),result=calculateSimulation(draft,null,projection);
+ assert.deepEqual(input.icmsAnticipation,{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73200});
+ assert.equal(memory(result,'icmsAnticipation.base'),10_000);assert.equal(memory(result,'icmsAnticipation.source'),732);
+ assert(result.warnings.some(row=>row.code==='icms-anticipation-partial'));
+ assert.deepEqual({draft,projection},before);
+ assert.equal(Object.hasOwn(draftToInput(draft),'icmsAnticipation'),false);
+ for(const patch of [{version:'UNKNOWN'},{monthlyCents:-1},{monthlyCents:1.2},{monthlyCents:'73200'},{monthlyCents:Infinity},{annualCents:1},{ratePercent:10},{sourceBaseCents:-1},{sourceAmountCents:NaN},{pendingLines:1.1},{reportMonths:0}])assert.equal(draftToInput(draft,null,{...projection,...patch}),null,JSON.stringify(patch));
+ for(const invalid of [null,{}, {version:'UNKNOWN',monthlyCents:0},{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:1.2},{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:-1},{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:Number.MAX_SAFE_INTEGER},{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:0,extra:true}])assert.equal(taxInputSchema.safeParse({...example(),icmsAnticipation:invalid}).success,false);
+ const zero=calculateSimulation(draft,null,{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:0,annualCents:0});assert.equal(zero.regimes[0].dre.icmsAnticipation,0);
+ assert.equal(draftToInput({...draft,icmsAnticipation:input.icmsAnticipation}),null);
+});
+
 test('unsupported years, annexes, extra keys and out-of-range rates are rejected', () => {
   for (const patch of [{year: 2026}, {salesAnnex: 3}, {serviceAnnex: 1}, {icmsOutside: 'false'}, {unknown: 1}]) assert.equal(taxInputSchema.safeParse({...example(), ...patch}).success, false);
   const input = example(); input.rates.icms = 1.01;

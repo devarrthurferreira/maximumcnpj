@@ -21,3 +21,5 @@ __pycache__/
 tmp/
 
 public/difal.js
+public/operation-catalog.js
+public/icms-anticipation.js

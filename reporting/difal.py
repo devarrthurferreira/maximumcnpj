@@ -5,9 +5,12 @@ import math
 import re
 import unicodedata
 
-DIFAL_VERSION = 'DIFAL_ESTIMATE_V2'
+from .operation_catalog import OPERATION_CATALOG_GROUPS, classify_operation_nature
+
+DIFAL_VERSION = 'DIFAL_ESTIMATE_V3'
+DIFAL_PREVIOUS_VERSION = 'DIFAL_ESTIMATE_V2'
 DIFAL_LEGACY_VERSION = 'DIFAL_ESTIMATE_V1'
-DIFAL_VERSIONS = (DIFAL_LEGACY_VERSION, DIFAL_VERSION)
+DIFAL_VERSIONS = (DIFAL_LEGACY_VERSION, DIFAL_PREVIOUS_VERSION, DIFAL_VERSION)
 DIFAL_RATE_PERCENT = 10
 DIFAL_LEGACY_CFOPS = frozenset(('6101', '6102', '6103', '6104', '6105', '6106', '6107', '6108'))
 DIFAL_CFOPS = DIFAL_LEGACY_CFOPS | {'5102'}
@@ -25,12 +28,19 @@ def normalize_uf(value):
 def eligible_cfops(version):
     if version not in DIFAL_VERSIONS:
         raise ValueError('Versão do DIFAL desconhecida.')
+    if version == DIFAL_VERSION:
+        return OPERATION_CATALOG_GROUPS['VENDA']
     return DIFAL_LEGACY_CFOPS if version == DIFAL_LEGACY_VERSION else DIFAL_CFOPS
 
 
 def sales_operation(nature_code, description, version=DIFAL_VERSION):
     """Mirror the versioned Node/browser classification for stored sales rows."""
     code = re.sub(r'[^0-9]', '', str(nature_code or ''))[:4]
+    if version == DIFAL_VERSION:
+        # Column D of the supplied nature catalog controls the operation. Product
+        # descriptions neither include an unknown code nor exclude a catalog sale.
+        return {'VENDA': 'VENDA', 'SERVICO_VENDA': 'SERVICO',
+                'DEVOLUCAO_COMPRA': 'DEVOLUCAO'}.get(classify_operation_nature(code), 'OUTRAS')
     if code == '9000':
         return 'SERVICO'
     if code in OTHER_CFOPS:
@@ -63,11 +73,15 @@ def calculate_difal(row, issuer_uf, version=DIFAL_VERSION):
             not 0 <= total <= 9_007_199_254_740_991):
         return excluded('INVALID_TOTAL')
     code = re.sub(r'[^0-9]', '', str(row.get('natureCode') or ''))[:4]
-    if row.get('operation') != 'VENDA' or sales_operation(code, row.get('description'), version) != 'VENDA':
+    operation_matches = row.get('operation') == 'VENDA' or (version == DIFAL_VERSION and 'operation' not in row)
+    if not operation_matches or sales_operation(code, row.get('description'), version) != 'VENDA':
         return excluded('NOT_SALE')
     if code not in cfops:
         return excluded('INELIGIBLE_NATURE')
-    if not re.fullmatch(r'[0-9]{11}', str(row.get('document') or '')):
+    document = str(row.get('document') or '')
+    if version == DIFAL_VERSION:
+        document = re.sub(r'[./\-\s]', '', document.strip())
+    if not re.fullmatch(r'[0-9]{11}', document):
         return excluded('NOT_CPF')
     issuer, recipient = normalize_uf(issuer_uf), normalize_uf(row.get('recipientUf'))
     if not issuer:

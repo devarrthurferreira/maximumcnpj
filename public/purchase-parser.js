@@ -1,7 +1,8 @@
 /* Browser-only preview. The API validates every value again before persistence. */
 import {csvParse, MAX_ROWS, MAX_COLUMNS, normalizeCnpj} from './domain.js';
 import {documentKind} from './lookup-domain.js';
-import {calculateDifal, normalizeUf, salesOperation, normalizeNatureCode, summarizeDifal, DIFAL_VERSION, isDifalVersion} from './difal.js';
+import {calculateDifal, normalizeUf, salesOperation, summarizeDifal, DIFAL_VERSION, DIFAL_PREVIOUS_VERSION, isDifalVersion} from './difal.js';
+import {classifyOperationNature, normalizeOperationNature, OPERATION_CATALOG_VERSION} from './operation-catalog.js';
 
 export function decimal(value, places, field) {
   if (typeof value === 'number') {
@@ -79,7 +80,7 @@ const EXPORT_PREFIX_ANCHORS = ['Estado', 'Contribuinte ICMS', 'Natureza', 'Class
 const normalizedHeader = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const numericId = value => /^\d{1,18}$/.test(String(value ?? '').trim()) && /[1-9]/.test(String(value));
 
-const natureCode4 = normalizeNatureCode;
+const natureCode4 = normalizeOperationNature;
 
 function isDescriptionText(value) {
   if (typeof value !== 'string' || !/\p{L}/u.test(value) || !value.trim()) return false;
@@ -139,8 +140,10 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   if (!['PURCHASES', 'SALES'].includes(type) || !['NET_V2', 'Q_V1'].includes(version)) throw new Error('Formato de relatório inválido.');
   if (type === 'SALES' && version !== 'NET_V2') throw new Error('Relatório de vendas requer a fórmula Q - Y + AA - AB.');
   const net = version === 'NET_V2', difalEnabled = type === 'SALES' && options.difalVersion !== null;
-  const difalVersion = options.difalVersion ?? DIFAL_VERSION;
+  const difalVersion = options.difalVersion ?? (options.difalVersion === null ? DIFAL_PREVIOUS_VERSION : DIFAL_VERSION);
   if (difalEnabled && !isDifalVersion(difalVersion)) throw new Error('Versão do DIFAL desconhecida.');
+  const catalogEnabled = net && options.operationVersion !== null && !(type === 'SALES' && options.difalVersion === null && options.operationVersion === undefined);
+  if (catalogEnabled && options.operationVersion !== undefined && options.operationVersion !== OPERATION_CATALOG_VERSION) throw new Error('Versão do catálogo de naturezas desconhecida.');
   if (!Number.isInteger(headerIndex) || headerIndex < 0 || headerIndex > 20) throw new Error('Escolha a linha de cabeçalho entre 1 e 21.');
   const header = matrix[headerIndex] || [], required = net ? [0,7,8,16,24,25,26,27] : [0,8,16];
   if (header.length < (net ? 28 : 17) || required.some(index => !String(header[index] ?? '').trim())) throw new Error(`O relatório precisa conter cabeçalhos nas colunas ${net ? 'A, H, I, Q, Y, Z, AA e AB' : 'A, I e Q'}. Confira a aba e o cabeçalho.`);
@@ -179,7 +182,8 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       if (cents < 0) throw new Error('Q - Y + AA - AB resulta em total negativo. Revise os valores da linha.');
       if (cents > 100000000000) throw new Error('Total calculado acima do limite por linha.');
       if (!Number.isSafeInteger(totalCents + cents)) throw new Error('A soma dos valores excede o limite de precisão.');
-      const recipientUf = type === 'SALES' ? normalizeUf(raw[9]) : '';
+      const recipientUf = normalizeUf(raw[9]);
+      const natureFields = catalogEnabled ? {natureCode, description, recipientUf, natureOperation:classifyOperationNature(natureCode), operationVersion:OPERATION_CATALOG_VERSION} : {};
       const financial = net ? {grossCents,...adjustments,totalCents:cents} : {totalCents:cents};
       if (net && Object.keys(components).some(field => !Number.isSafeInteger(components[field] + financial[field]))) throw new Error('A soma dos componentes excede o limite de precisão.');
       totalCents += cents;
@@ -192,9 +196,9 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       const kind = documentKind(document);
       if (kind === 'CNPJ') unique.add(normalizeCnpj(document).cnpj); else nonCnpjLines++;
       rows.push(type === 'SALES'
-        ? {document, name, serviceDate, quantity, natureCode, description, operation, balanceCents:lineBalanceCents, ...financial,
+        ? {document, name, serviceDate, quantity, natureCode, description, operation, balanceCents:lineBalanceCents, ...financial, ...natureFields,
             ...(difalEnabled ? {recipientUf,difal:calculateDifal({document,natureCode,description,operation,recipientUf,issuerUf:options.issuerUf,totalCents:cents}, difalVersion)} : {})}
-        : {document, name, serviceDate, quantity, ...financial});
+        : {document, name, serviceDate, quantity, ...financial, ...natureFields});
       if (repaired) repairs.push({line:sourceLine, descriptionSeparators:repaired.descriptionSeparators,
         reason:'Separadores extras da descrição (O) recompostos; colunas P a AD realinhadas com os valores originais.'});
     } catch (error) { errors.push({line:sourceLine, message:error.message}); }

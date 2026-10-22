@@ -1,24 +1,13 @@
 import { getGeneration } from './generation-store.ts';
-import { purchaseSummary, currentSalesDifal } from './purchase-store.ts';
+import { purchaseSummary } from './purchase-store.ts';
 import { PURCHASE_MODE, SALES_MODE, exactCents, exactSignedCents } from './purchase-domain.ts';
 import { need } from './security.ts';
-import {monthlyProjection, MONTHLY_FIELDS} from '../public/simulator-monthly.js';
-import {monthlyReportSource} from './simulation-monthly-source.ts';
+import {monthlyProjection, monthlyDifal} from '../public/simulator-monthly.js';
+import {monthlyReportSource, aggregateOperationAudit, type OperationMonthlyReport} from './simulation-monthly-source.ts';
+import {OPERATION_CATALOG_VERSION} from './operation-catalog.ts';
 import { sameReportCompetences } from './report-competence.ts';
 
 type FinancialSummary = Awaited<ReturnType<typeof purchaseSummary>>;
-
-function valueFor(summary: FinancialSummary, status: string) {
-  const group = summary.reportingGroups.find(group => group.status === status);
-  need(group, 'Classificação financeira incompleta. Reimporte o relatório.', 409, 'SIMULATOR_INCONSISTENT');
-  return summary.job.mode === SALES_MODE ? exactSignedCents(group.totalCents) : exactCents(group.totalCents);
-}
-
-function goodsValueFor(summary: FinancialSummary, status: string) {
-  const services = summary.serviceGroups?.find(group => group.status === status);
-  need(services, 'Separação de vendas e serviços incompleta. Reimporte o relatório.', 409, 'SIMULATOR_INCONSISTENT');
-  return exactSignedCents(valueFor(summary, status) - exactCents(services.totalCents));
-}
 
 function sourceMetadata(summary: FinancialSummary) {
   return {jobId: summary.job._id, fileName: summary.job.fileName, totalCents: summary.totals.totalCents,
@@ -46,17 +35,16 @@ export async function generationSimulator(id: string, clientId: string) {
       summary.calculationVersion === 'NET_V2' && summary.job.completedAt,
     'Os relatórios não correspondem à empresa e à geração selecionadas.', 409, 'SIMULATOR_INCONSISTENT');
   }
-  const fields = {
-    salesOptantCents: goodsValueFor(sales, 'OPTANTE'), salesNonOptantCents: goodsValueFor(sales, 'NAO_OPTANTE'), salesCpfCents: goodsValueFor(sales, 'CPF'),
-    serviceRevenueCents: exactCents(sales.servicesTotalCents),
-    purchasesOptantCents: valueFor(purchases, 'OPTANTE'), purchasesNonOptantCents: valueFor(purchases, 'NAO_OPTANTE')
-  };
+  const monthlyReports = await monthlyReportSource(purchases, sales);
+  need(monthlyReports, 'Os relatórios não conservam as competências da coluna H. Reimporte compras e vendas para aplicar as naturezas por mês; o histórico permanece disponível.',409,'SIMULATION_MONTHS');
+  const projection = monthlyProjection(monthlyReports);
+  const fields = projection.annualGroupsCents as OperationMonthlyReport['fields'];
+  const operationAudit = aggregateOperationAudit(monthlyReports);
   const salesNetCents = exactSignedCents(fields.salesOptantCents + fields.salesNonOptantCents + fields.salesCpfCents);
   need(salesNetCents >= 0,
-    'As devoluções superam as vendas de mercadorias no período, após separar os serviços. Revise o relatório antes de projetar o simulador.', 409, 'SIMULATOR_NEGATIVE_SALES');
-  need(exactCents(salesNetCents + fields.serviceRevenueCents) === sales.totals.totalCents &&
-    exactCents(fields.purchasesOptantCents + fields.purchasesNonOptantCents) === purchases.totals.totalCents,
-  'Os campos do simulador divergem dos relatórios. Revise os arquivos.', 409, 'SIMULATOR_INCONSISTENT');
+    'As devoluções de venda do relatório de compras superam as vendas de mercadorias no período. Revise os relatórios antes de simular.',409,'SIMULATOR_NEGATIVE_SALES');
+  need(operationAudit.reportSalesCents===sales.totals.totalCents&&operationAudit.reportPurchasesCents===purchases.totals.totalCents,
+    'A seleção das naturezas diverge dos relatórios conciliados.',409,'SIMULATOR_INCONSISTENT');
   const purchaseOther = purchases.reportingGroups.find(group => group.status === 'NAO_OPTANTE')!;
   const saleOther = sales.reportingGroups.find(group => group.status === 'NAO_OPTANTE')!;
   const classification = {
@@ -83,11 +71,18 @@ export async function generationSimulator(id: string, clientId: string) {
   }
   if (classification.purchases.nonCnpjCount) warnings.push('As compras de CPF e outros documentos não consultáveis estão em Compras de empresas fora do Simples, com subtotal disponível para conferência.');
   if (classification.sales.otherDocumentsCount) warnings.push('As vendas com CNO, documentos inválidos ou ausentes estão em Vendas Não Optantes SN. Vendas identificadas como CPF têm campo próprio.');
-  if (sales.operationTotals?.some((item: any) => item.operation === 'DEVOLUCAO' && item.lines > 0)) warnings.push('Devoluções foram identificadas na aba de vendas e abatidas do saldo líquido antes do preenchimento dos campos do simulador.');
+  warnings.push('Receita: somente operações de venda do catálogo na coluna D, menos devoluções de venda identificadas no relatório de compras. Compras: somente operações de compra e serviços de natureza 8000. A classificação usa os quatro primeiros dígitos; a base monetária permanece Q - Y + AA - AB.');
+  if (operationAudit.salesReturnsCents) warnings.push('As devoluções de venda do relatório de compras foram abatidas da receita na competência da coluna H, preservando o enquadramento consultado de cada documento.');
+  if (operationAudit.excludedSalesCents || operationAudit.excludedPurchaseCents) warnings.push('Operações fora das naturezas elegíveis foram excluídas das bases do cenário e permanecem detalhadas na conferência por natureza, junto aos totais originais dos relatórios.');
+  if (operationAudit.unknownSalesLines || operationAudit.unknownPurchaseLines) warnings.push(`${operationAudit.unknownSalesLines + operationAudit.unknownPurchaseLines} linhas possuem natureza não cadastrada. Esses valores não entraram nas bases; revise as naturezas indicadas na conferência.`);
+  const anticipationPending=monthlyReports.reduce((sum,row)=>sum+row.anticipation.pendingLines,0);
+  if (anticipationPending) warnings.push(`${anticipationPending} compras elegíveis não possuem UF suficiente para confirmar a antecipação de ICMS; nenhum endereço foi presumido.`);
   if (fields.serviceRevenueCents > 0) warnings.push('Vendas de serviços foram separadas das mercadorias e preenchem a receita de serviços pela competência de cada linha, sem duplicar o faturamento. Naturezas iniciadas por 9000 são serviços, independentemente do sufixo.');
-  const monthlyReports = await monthlyReportSource(purchases, sales);
-  const projection = monthlyReports ? monthlyProjection(monthlyReports) : null;
-  if(projection)need(MONTHLY_FIELDS.every(key=>projection.annualGroupsCents[key]===fields[key as keyof typeof fields]),'Os valores por competência não conciliam com os totais dos relatórios.',409,'SIMULATOR_INCONSISTENT');
-  return {projection, monthlyReports, revenueSplit: {version: 'SALES_SERVICES_V1'}, generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
-    purchases: sourceMetadata(purchases), sales: sourceMetadata({...sales, difal: await currentSalesDifal(sales)}), fields, classification, warnings};
+  const difal = monthlyDifal(monthlyReports, sales.job._id);
+  const selectedSalesTotalCents=exactCents(salesNetCents+fields.serviceRevenueCents);
+  const selectedPurchasesTotalCents=exactCents(fields.purchasesOptantCents+fields.purchasesNonOptantCents);
+  return {projection, monthlyReports, operationVersion:OPERATION_CATALOG_VERSION, operationAudit, revenueSplit: {version: 'SALES_SERVICES_V1'}, generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
+    purchases: {...sourceMetadata(purchases),selectedTotalCents:selectedPurchasesTotalCents},
+    sales: {...sourceMetadata(sales),selectedTotalCents:selectedSalesTotalCents,difal:difal?{...monthlyReports[0].difal,amountCents:difal.sourceAmountCents,baseCents:difal.sourceBaseCents,eligibleLines:difal.eligibleLines,pendingLines:difal.pendingLines}:null},
+    fields, classification, warnings};
 }

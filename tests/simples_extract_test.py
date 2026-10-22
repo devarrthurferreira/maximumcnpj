@@ -66,6 +66,32 @@ def paged_pdf(*texts, scanned_tail=True):
 
 
 class SimplesExtractTests(unittest.TestCase):
+    def test_december_statement_keeps_all_23_months_for_monthly_rbt12_windows(self):
+        # Layout observed in a December statement, with only synthetic identifiers/amounts.
+        periods = [f'{i % 12 + 1:02d}/{2024 + i // 12}' for i in range(23)]
+        lines = ['Extrato do Simples Nacional',
+                 'CNPJ Básico: 12.345.678 Nome Empresarial: EMPRESA SINTETICA',
+                 'Período de Apuração (PA): 12/2025', '2.1 Discriminativo de Receitas',
+                 'RBT12 999.999.999,99 0,00 999.999.999,99',
+                 '2.2) Receitas Brutas Anteriores (R$)', '2.2.1) Mercado Interno']
+        lines += [' '.join(f'{periods[j]} {money((j + 1) * 100000)}'
+                          for j in range(i, min(i + 3, 23))) for i in range(0, 23, 3)]
+        lines += ['2.2.2) Mercado Externo']
+        lines += [' '.join(f'{periods[j]} 0,00'
+                          for j in range(i, min(i + 3, 23))) for i in range(0, 23, 3)]
+        lines += ['2.3) Folha de Salários Anteriores (R$)', '11/2025 999.999,99']
+        result = parse_statement_text('\n'.join(lines))
+        rows = result['priorRevenues']
+        self.assertEqual(len(rows), 23)
+        self.assertEqual((rows[0]['month'], rows[-1]['month']), ('2024-01', '2025-11'))
+        self.assertEqual([sum(row['totalCents'] for row in rows[start:start + 12])
+                          for start in range(12)],
+                         [7800000, 9000000, 10200000, 11400000, 12600000, 13800000,
+                          15000000, 16200000, 17400000, 18600000, 19800000, 21000000])
+        self.assertEqual(result['rbt12Cents'], 21000000)
+        self.assertEqual(result['rbt12Window'], rows[11:])
+        self.assertEqual(sum(row['usedInRbt12'] for row in rows), 12)
+
     def test_cnpj_punctuation_can_be_separate_tokens_without_changing_digits(self):
         for text in [sample().replace('12.345.678', '12 . 345 . 678'),
                      declaration_sample().replace('12.345.678/0001-00', '12 . 345 . 678 / 0001 - 00'),

@@ -1,9 +1,11 @@
+import {classifyOperationNature, normalizeOperationNature} from './operation-catalog.ts';
 /** Estimated managerial DIFAL, not a legal rate lookup. Keep this module browser-safe. */
-export const DIFAL_VERSION = 'DIFAL_ESTIMATE_V2';
+export const DIFAL_VERSION = 'DIFAL_ESTIMATE_V3';
+export const DIFAL_PREVIOUS_VERSION = 'DIFAL_ESTIMATE_V2';
 export const DIFAL_LEGACY_VERSION = 'DIFAL_ESTIMATE_V1';
-export type DifalVersion = typeof DIFAL_VERSION | typeof DIFAL_LEGACY_VERSION;
+export type DifalVersion = typeof DIFAL_VERSION | typeof DIFAL_PREVIOUS_VERSION | typeof DIFAL_LEGACY_VERSION;
 export function isDifalVersion(value: unknown): value is DifalVersion {
-  return value === DIFAL_VERSION || value === DIFAL_LEGACY_VERSION;
+  return value === DIFAL_VERSION || value === DIFAL_PREVIOUS_VERSION || value === DIFAL_LEGACY_VERSION;
 }
 export const DIFAL_RATE_PERCENT = 10;
 /** Explicit conservative sale-purpose configuration; an initial 6 alone is never sufficient. */
@@ -13,6 +15,7 @@ const LEGACY_CFOPS = ['6101', '6102', '6103', '6104', '6105', '6106', '6107', '6
 export const DIFAL_ELIGIBLE_CFOPS = ['5102', ...LEGACY_CFOPS] as const;
 function eligibleNature(code: string, version: DifalVersion): boolean {
   if (!isDifalVersion(version)) throw new TypeError('Versão do DIFAL desconhecida.');
+  if (version === DIFAL_VERSION) return classifyOperationNature(code) === 'VENDA';
   return (version === DIFAL_LEGACY_VERSION ? LEGACY_CFOPS : DIFAL_ELIGIBLE_CFOPS).some(value => value === code);
 }
 export const BRAZIL_UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'] as const;
@@ -24,12 +27,16 @@ export type SalesOperation = 'VENDA' | 'SERVICO' | 'DEVOLUCAO' | 'OUTRAS';
 const SALES_RETURN_CFOPS = new Set(['5201','5202','5208','5209','5210','5410','5411','5412','5413','5503','5553','5555','5556','5660','5661','5662','5921','6201','6202','6208','6209','6210','6410','6411','6412','6413','6503','6553','6556','6660','6661','6662','7201','7202','7210','7211','7212','7553','7556']);
 const SALES_OTHER_CFOPS = new Set(['5213','5214','5215','5216','5918','5919','6213','6214','6215','6216','6555','6918','6919','6921','7930']);
 const SALES_SERVICE_CFOPS = new Set(['9000']);
-export function normalizeNatureCode(value: unknown): string { return String(value ?? '').replace(/\D/g, '').slice(0, 4); }
+export const normalizeNatureCode = normalizeOperationNature;
 function normalizedOperationText(value: unknown) {
   return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 export function salesOperation(natureCode: unknown, description: unknown, configuredSales = true, version: DifalVersion = DIFAL_VERSION): SalesOperation {
   const code = normalizeNatureCode(natureCode);
+  if (version === DIFAL_VERSION) {
+    const operation = classifyOperationNature(code);
+    return operation === 'VENDA' ? 'VENDA' : operation === 'SERVICO_VENDA' ? 'SERVICO' : operation === 'DEVOLUCAO_COMPRA' ? 'DEVOLUCAO' : 'OUTRAS';
+  }
   if (SALES_SERVICE_CFOPS.has(code)) return 'SERVICO';
   if (SALES_OTHER_CFOPS.has(code)) return 'OUTRAS';
   if (SALES_RETURN_CFOPS.has(code)) return 'DEVOLUCAO';

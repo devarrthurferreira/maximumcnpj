@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {validateSection22,rbt12InputSource} from '../src/simulation-extrato.ts';
-import {section22} from './fixtures/section22.ts';
+import {section22,section22Year2025} from './fixtures/section22.ts';
 
 test('RBT12 provém de doze competências explícitas da seção 2.2, com ambos os mercados',()=>{
  const source=section22(16200000);source.rbt12Window[0].externalCents=123456;source.rbt12Window[0].totalCents+=123456;
@@ -31,6 +31,30 @@ test('Histórico conserva o escopo da leitura e distingue páginas analisadas da
  assert.notEqual((result as any).processedPageNumbers,source.processedPageNumbers);
  assert.equal(validateSection22(section22()).rbt12Cents,source.rbt12Cents);
  assert.equal('extractionScope' in validateSection22(section22()),false);
+});
+test('Validação conserva as 23 receitas do quadro 2.2 para as janelas de janeiro a dezembro',()=>{
+ const source=section22Year2025(),copy=structuredClone(source),result=validateSection22(source);
+ assert.equal(result.priorRevenues.length,23);assert.equal(result.rbt12Window.length,12);
+ assert.equal(result.priorRevenues[0].month,'2024-01');assert.equal(result.priorRevenues[22].month,'2025-11');
+ assert.deepEqual(result.priorRevenues,source.priorRevenues);assert.notEqual(result.priorRevenues,source.priorRevenues);
+ assert.notEqual(result.priorRevenues[0],source.priorRevenues[0]);assert.deepEqual(source,copy);
+});
+test('Histórico completo rejeita linhas antigas corrompidas ou divergência com a janela do PA',()=>{
+ for(const change of [
+  (v:any)=>v.priorRevenues[0].totalCents++,
+  (v:any)=>v.priorRevenues[0].internalCents=-1,
+  (v:any)=>v.priorRevenues[0].externalCents=NaN,
+  (v:any)=>v.priorRevenues[0].period='02/2024',
+  (v:any)=>v.priorRevenues.splice(1,0,{...v.priorRevenues[0]}),
+  (v:any)=>v.priorRevenues.reverse(),
+  (v:any)=>v.priorRevenues.push({...v.priorRevenues.at(-1),month:'2025-12',period:'12/2025'}),
+  (v:any)=>v.priorRevenues.splice(11,1),
+  (v:any)=>{v.priorRevenues=v.priorRevenues.map((row:any)=>({...row}));v.priorRevenues[11].internalCents++;v.priorRevenues[11].totalCents++;},
+ ]){const source=section22Year2025();change(source);assert.throws(()=>validateSection22(source),(e:any)=>e.code==='RBT12_EXTRACTION');}
+});
+test('Snapshot legado conserva apenas os doze meses existentes, sem recriar receitas ausentes',()=>{
+ const source:any=section22();delete source.priorRevenues;
+ const result=validateSection22(source);assert.equal(result.priorRevenues.length,12);assert.deepEqual(result.priorRevenues,source.rbt12Window);
 });
 test('RBT12 manual é explícita, confirmada e independente do OCR, inclusive zero e centavos',()=>{
  for(const value of [0,0.29,123.45,500000,1_000_000_000_000])assert.equal(rbt12InputSource('MANUAL',true,null,value),'MANUAL');

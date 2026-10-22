@@ -434,6 +434,28 @@ class PurchaseMongoTests(unittest.TestCase):
         with self.assertRaises(ReportError):
             purchase_metadata(self.db, job, WORKSPACE)
 
+    def test_catalog_metadata_survives_database_projection_and_rejects_tampering(self):
+        from operation_report_test import catalog_fixture
+        from reporting.purchases import purchase_metadata
+        job, lines, items = catalog_fixture()
+        job_id = str(uuid.uuid4())
+        job['_id'] = job_id
+        for line in lines:
+            line.update(_id=f'{job_id}:{line["index"]}', jobId=job_id)
+        for item in items:
+            item.update(_id=f'{job_id}:{item["cnpj"]}', jobId=job_id)
+            item.pop('sourceState', None)
+        self.db.lookupJobs.insert_one(job)
+        self.db.purchaseLines.insert_many(lines)
+        self.db.lookupItems.insert_many(items)
+        meta = purchase_metadata(self.db, job, WORKSPACE)
+        self.assertEqual(meta['totalCents'], 100000)
+        self.assertEqual(len(meta['natureTotals']), 5)
+        self.assertEqual(sum(row['totalCents'] for row in meta['natureTotals']), 100000)
+        self.db.purchaseLines.update_one({'_id': lines[0]['_id']}, {'$set': {'natureOperation': 'VENDA'}})
+        with self.assertRaises(ReportError):
+            purchase_metadata(self.db, job, WORKSPACE)
+
     def test_large_bson_doubles_survive_database_read_and_pdf_render(self):
         from reporting.purchases import purchase_metadata
         from reporting.service import get_job

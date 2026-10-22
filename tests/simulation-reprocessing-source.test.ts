@@ -7,6 +7,8 @@ import {importCatalog} from '../src/lookup-catalog.ts';
 import {createGeneration, attachGenerationPurchase, attachGenerationSale} from '../src/generation-store.ts';
 import {uploadLookup, finalizeLookup, processLookup} from '../src/lookup-jobs.ts';
 import {generationSimulator} from '../src/simulator-store.ts';
+import {purchaseSummary} from '../src/purchase-store.ts';
+import {PURCHASE_MODE,SALES_MODE} from '../src/purchase-domain.ts';
 import {rebuildSimulationSource} from '../src/simulation-reprocessing-source.ts';
 import {annualizeReports} from '../public/simulator-projection.js';
 
@@ -32,18 +34,54 @@ test('Recálculo reconstrói serviços, devoluções e DIFAL sobre linhas congel
     const purchases = (await attachGenerationPurchase(actor, generation._id, {
       importId: randomUUID(), clientId, fileName: 'compras-sinteticas.csv', expectedRows: 1
     })).job;
-    await uploadLookup(actor, purchases._id, {offset: 0, rows: [line(9000, '12345678900', '5102')]});
+    await uploadLookup(actor, purchases._id, {offset: 0, rows: [line(9000, '12345678900', '1102')]});
     await finalizeLookup(actor, purchases._id);
     const sales = (await attachGenerationSale(actor, generation._id, {
       importId: randomUUID(), clientId, fileName: 'vendas-sinteticas.csv', expectedRows: 5, issuerUf: 'MG'
     })).job;
     await uploadLookup(actor, sales._id, {offset: 0, rows: [
       line(40000, '00000000000191', '5102'), line(5000, '00000000000191', '900001'),
-      line(20000, '12345678900', '6108'), line(7000, '12345678900', '900000'), line(0, '12345678900', '')
+      line(20000, '12345678900', '6108'), line(7000, '12345678900', '900000'), line(0, '12345678900', '5901')
     ]});
     await finalizeLookup(actor, sales._id); await processLookup(actor, sales._id, transport);
     const current = await generationSimulator(generation._id, clientId);
+    await t.test('fontes já classificadas validam as bases selecionadas e a conferência congelada',async()=>{
+      const snapshot:any={_id:randomUUID(),generationId:generation._id,clientId,company:current.company,source:structuredClone(current),reportMonths:1,reportPeriod:current.period};
+      const rebuilt=await rebuildSimulationSource(snapshot);
+      assert.deepEqual(rebuilt.fields,current.fields);assert.deepEqual(rebuilt.operationAudit,current.operationAudit);
+      assert.equal(rebuilt.purchases.totalCents,current.purchases.totalCents);
+      const bad=structuredClone(snapshot);bad.source.fields.purchasesNonOptantCents++;
+      await assert.rejects(rebuildSimulationSource(bad),(error:any)=>error.code==='REPROCESS_SOURCE');
+      const badAudit=structuredClone(snapshot);badAudit.source.operationAudit.excludedSalesCents++;
+      await assert.rejects(rebuildSimulationSource(badAudit),(error:any)=>error.code==='REPROCESS_SOURCE');
+      const badMonth=structuredClone(snapshot);badMonth.source.monthlyReports[0].fields.salesCpfCents=0;
+      await assert.rejects(rebuildSimulationSource(badMonth),(error:any)=>error.code==='REPROCESS_SOURCE');
+      const badMonthAudit=structuredClone(snapshot);badMonthAudit.source.monthlyReports[0].operationAudit.excludedSalesCents++;
+      await assert.rejects(rebuildSimulationSource(badMonthAudit),(error:any)=>error.code==='REPROCESS_SOURCE');
+      const legacyMonthly=structuredClone(snapshot);delete legacyMonthly.source.operationVersion;delete legacyMonthly.source.operationAudit;
+      assert.deepEqual((await rebuildSimulationSource(legacyMonthly)).fields,current.fields);
+      legacyMonthly.source.monthlyReports[0].fields.salesCpfCents=0;
+      await assert.rejects(rebuildSimulationSource(legacyMonthly),(error:any)=>error.code==='REPROCESS_SOURCE');
+
+    });
+    await t.test('metadados de natureza adulterados bloqueiam relatório e simulador antes da emissão',async()=>{
+      const stored=await collection('purchaseLines'),jobs=await collection('lookupJobs');
+      for(const [job,mode] of [[purchases,PURCHASE_MODE],[sales,SALES_MODE]] as const){
+        const query=scope({jobId:job._id,index:0}),baseline=(await stored.findOne(query))!;
+        for(const patch of [{operationVersion:'INVALID'},{natureOperation:'OUTRAS'},{natureCode:'11.02'},{recipientUf:'sp'},{description:null}]){
+          await stored.updateOne(query,{$set:patch});
+          try{
+            await assert.rejects(purchaseSummary(job._id,true,mode),(error:any)=>error.code==='OPERATION_SNAPSHOT');
+            await assert.rejects(generationSimulator(generation._id,clientId),(error:any)=>error.code==='OPERATION_SNAPSHOT');
+          }finally{await stored.replaceOne(query,baseline);}
+        }
+        await jobs.updateOne(scope({_id:job._id}),{$set:{operationVersion:'UNKNOWN'}});
+        try{await assert.rejects(purchaseSummary(job._id,true,mode),(error:any)=>error.code==='OPERATION_VERSION');}
+        finally{await jobs.updateOne(scope({_id:job._id}),{$set:{operationVersion:current.operationVersion}});}
+      }
+    });
     const source: any = structuredClone(current);
+    delete source.operationVersion; delete source.operationAudit; delete source.monthlyReports;
     delete source.revenueSplit; delete source.fields.serviceRevenueCents;
     source.fields.salesOptantCents = 45000; source.fields.salesCpfCents = 27000;
     delete source.sales.difal; delete source.sales.servicesTotalCents; delete source.sales.operationTotals;
@@ -55,7 +93,7 @@ test('Recálculo reconstrói serviços, devoluções e DIFAL sobre linhas congel
     // document snapshot, nature and destination UF still available for reconstruction.
     await lines.updateMany(scope({jobId: sales._id}), {$unset: {operation: '', balanceCents: '', difal: ''}});
     await lines.updateOne(scope({jobId: sales._id, index: 1}), {$set: {natureCode: '9.000.01'}});
-    await jobs.updateOne(scope({_id: sales._id}), {$unset: {difalVersion: '', 'purchaseInput.difal': ''}});
+    await jobs.updateOne(scope({_id: sales._id}), {$unset: {operationVersion:'',difalVersion: '', 'purchaseInput.difal': ''}});
     const archivedRows = await lines.find(scope({jobId: sales._id})).sort({index: 1}).toArray();
     const archivedJob = await jobs.findOne(scope({_id: sales._id}));
     const archivedSnapshot = structuredClone(original);
@@ -95,17 +133,18 @@ test('Recálculo reconstrói serviços, devoluções e DIFAL sobre linhas congel
       try {assert.equal((await rebuildSimulationSource(original)).sales.difal?.pendingLines, 1);}
       finally {await lines.updateOne(scope({jobId: sales._id, index: 2}), {$set: {recipientUf: 'SP'}});}
     });
-    await t.test('devolução antes sem operação altera apenas o saldo reconstruído e registra o delta', async () => {
+    await t.test('devolução de compra na venda é excluída da receita e preserva o total do relatório', async () => {
       await lines.updateOne(scope({jobId: sales._id, index: 2}), {$set: {natureCode: '620201'}});
       try {
         const rebuilt = await rebuildSimulationSource(original);
-        assert.equal(rebuilt.fields.salesCpfCents, -20000); assert.equal(rebuilt.sales.totalCents, 32000);
+        assert.equal(rebuilt.fields.salesCpfCents, 0); assert.equal(rebuilt.sales.totalCents, 72000);
+        assert.equal(rebuilt.sales.selectedTotalCents,52000);assert.equal(rebuilt.operationAudit.excludedSalesCents,20000);
         assert.equal(rebuilt.reprocessingSource.originalSalesTotalCents, 72000);
-        assert.equal(rebuilt.reprocessingSource.salesBalanceChangeCents, -40000);
+        assert.equal(rebuilt.reprocessingSource.salesBalanceChangeCents, -20000);
         assert.equal(rebuilt.sales.difal?.amountCents, 0);
         assert(rebuilt.warnings.some((warning: string) => warning.includes('não é um ajuste manual')));
         await lines.updateOne(scope({jobId: sales._id, index: 0}), {$set: {natureCode: '6202'}});
-        await assert.rejects(rebuildSimulationSource(original), (error: any) => error.status === 409 && error.code === 'REPROCESS_SOURCE');
+        assert.equal((await rebuildSimulationSource(original)).sales.selectedTotalCents,12000);
       } finally {
         await lines.updateOne(scope({jobId: sales._id, index: 0}), {$set: {natureCode: '5102'}});
         await lines.updateOne(scope({jobId: sales._id, index: 2}), {$set: {natureCode: '6108'}});
@@ -114,11 +153,15 @@ test('Recálculo reconstrói serviços, devoluções e DIFAL sobre linhas congel
     await t.test('evidência de operação ausente é identificada para revisão, não inventa venda elegível', async () => {
       await lines.updateOne(scope({jobId: sales._id, index: 3}), {$unset: {natureCode: '', description: ''}});
       try {
-        const rebuilt = await rebuildSimulationSource(original);
-        assert.equal(rebuilt.reprocessingSource.missingOperationEvidenceLines, 1);
-        assert.equal(rebuilt.fields.serviceRevenueCents, 5000);
-        assert.equal(rebuilt.sales.difal?.amountCents, 2000);
+        await assert.rejects(rebuildSimulationSource(original),(error:any)=>error.code==='SIMULATION_OPERATIONS');
       } finally {await lines.updateOne(scope({jobId: sales._id, index: 3}), {$set: {natureCode: '9000', description: ''}});}
+    });
+    await t.test('compras antigas sem natureza bloqueiam a regra nova sem modificar o histórico',async()=>{
+      await lines.updateOne(scope({jobId:purchases._id,index:0}),{$unset:{natureCode:''}});
+      await jobs.updateOne(scope({_id:purchases._id}),{$unset:{operationVersion:''}});
+      try{await assert.rejects(rebuildSimulationSource(original),(error:any)=>error.code==='SIMULATION_OPERATIONS');}
+      finally{await lines.updateOne(scope({jobId:purchases._id,index:0}),{$set:{natureCode:'1102'}});await jobs.updateOne(scope({_id:purchases._id}),{$set:{operationVersion:current.operationVersion}});}
+      assert.deepEqual(original,archivedSnapshot);
     });
     await t.test('origem, competência, componentes e workspace divergentes bloqueiam antes do recálculo', async () => {
       for (const bad of [

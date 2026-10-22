@@ -2,6 +2,7 @@ import {test,expect} from '@playwright/test';
 import {calculateSimulation,draftToInput,TAX_SOURCES,MODEL_VERSION,CALCULATOR_SOURCE_COMMIT} from '../../public/simulator-engine.js';
 import {annualizeReports,projectDifal} from '../../public/simulator-projection.js';
 import {buildMonthlyDre} from '../../public/simulator-calendar.js';
+import {baselineMonth,monthlyProjection,calculateMonthlySimulation} from '../../public/simulator-monthly.js';
 const generation='88888888-8888-4888-8888-888888888881',client='88888888-8888-4888-8888-888888888882',id='88888888-8888-4888-8888-888888888883';
 function fixture(){
   const fields={salesOptantCents:200000,salesNonOptantCents:500000,salesCpfCents:300000,purchasesOptantCents:100000,purchasesNonOptantCents:350000,serviceRevenueCents:250000};
@@ -21,6 +22,46 @@ async function open(page:any,saved:any){
   await expect(page.locator('.dre-complete')).toBeVisible();
 }
 async function downloadText(page:any,selector:string){const pending=page.waitForEvent('download');await page.locator(selector).click();const download=await pending;const stream=await download.createReadStream();let text='';for await(const chunk of stream!)text+=chunk;return {text,name:download.suggestedFilename()};}
+test('evolução compara competências reais e informa ausência sem gravar ou alterar o histórico',async({page},info)=>{
+  const original=fixture(),draft=original.draft;
+  const reports=[100000,150000,0].map((sales,index)=>({sourceMonth:`2025-0${index+1}`,month:index+1,salesLines:sales?1:0,purchaseLines:1,
+    fields:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:sales,purchasesOptantCents:0,purchasesNonOptantCents:20000,serviceRevenueCents:0},
+    difal:{version:'DIFAL_ESTIMATE_V2',ratePercent:10,issuerUf:'MG',baseCents:sales,amountCents:sales/10,eligibleLines:sales?1:0,pendingLines:0}}));
+  const period={startMonth:'2025-01',endMonth:'2025-03',months:3},projection=monthlyProjection(reports),computed=calculateMonthlySimulation(draft,reports,reports.map(baselineMonth),original.source.sales.jobId);
+  const saved={...original,...computed,reportMonths:3,periodBasis:'COLUMN_H',source:{...original.source,reportMonths:3,period,monthlyReports:reports,projection,fields:projection.annualGroupsCents},
+    monthlyDre:buildMonthlyDre(computed.result,2027,original.rbt12Manual,period)};
+  const before=JSON.stringify(saved),writes:string[]=[],errors:string[]=[];
+  page.on('request',r=>{if(r.url().includes('/api/')&&!['GET','HEAD'].includes(r.method()))writes.push(r.method());});
+  page.on('pageerror',e=>errors.push(e.message));
+  await open(page,saved);await page.getByRole('button',{name:'Mensal',exact:true}).click();
+  await expect(page.locator('.dre-evolution')).toContainText('O mês anterior está fora deste calendário');
+  await page.locator('#dre-month').selectOption('1');await expect(page.locator('#dre-month')).toBeFocused();
+  await expect(page.locator('[data-dre-change="revenue"] strong')).toHaveText('+R$ 500,00');
+  await expect(page.locator('[data-dre-change="revenue"]')).toContainText('+50% sobre o valor do mês anterior');
+  await expect(page.locator('[data-dre-change="difal"] strong')).toHaveText('+R$ 50,00');
+  await expect(page.locator('[data-dre-change="netMargin"] strong')).toContainText('p.p.');
+  await page.locator('#dre-month').selectOption('2');
+  await expect(page.locator('[data-dre-change="revenue"] strong')).toHaveText('-R$ 1.500,00');
+  await expect(page.locator('[data-dre-change="netMargin"] strong')).toHaveText('—');
+  await page.locator('#dre-month').selectOption('3');
+  await expect(page.locator('.dre-evolution')).toContainText('Sem dados importados para o mês selecionado');
+  await expect(page.locator('[data-dre-change="revenue"] strong')).toHaveText('—');
+  await page.getByRole('button',{name:'Anual',exact:true}).click();
+  await expect(page.locator('#dre-evolution-year')).not.toHaveAttribute('open','');
+  await page.locator('#dre-evolution-year summary').click();await expect(page.locator('#dre-evolution-year')).toContainText('3 de 12 meses com dados importados');
+  await expect(page.locator('[data-dre-evolution-month]')).toHaveCount(12);
+  await expect(page.locator('[data-dre-evolution-month="2"]')).toContainText('R$ 0,00');
+  await expect(page.locator('[data-dre-evolution-month="3"]')).toContainText('Sem dados importados');
+  await page.locator('#dre-regime').selectOption('actual');await expect(page.locator('#dre-evolution-year')).toHaveAttribute('open','');
+  for(const width of [1440,390,320]){
+    await page.setViewportSize({width,height:960});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+    if(width===390)await page.locator('#dre-evolution-year').screenshot({path:info.outputPath('dre-evolucao-mobile.png')});
+  }
+  await page.getByRole('button',{name:'Mensal',exact:true}).click();await page.locator('#dre-month').selectOption('1');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await page.locator('.dre-evolution').screenshot({path:info.outputPath('dre-variacao-mobile.png')});
+  expect(writes).toEqual([]);expect(errors).toEqual([]);expect(JSON.stringify(saved)).toBe(before);
+});
 test('DRE única conserva composição, escolhas, exportação e impressão anual isolada',async({page},info)=>{
   const saved=fixture();saved.result.regimes[0].dre.netProfit=123456.78;saved.result.regimes[0].annualProfit=123456.78;
   await open(page,saved);
@@ -100,7 +141,7 @@ test('serviços e DIFAL conciliam entre tela e CSV após reabrir histórico sem 
       for(const cell of await cells.allTextContents()) expect(cell).toContain(amount);
     }
     const annual=(await downloadText(page,'#export-dre-csv')).text;
-    const annualDifal=annual.split('\r\n').filter(line=>line.includes('DIFAL estimado (10%)'));
+    const annualDifal=annual.split('\r\n').filter(line=>line.includes('DIFAL sobre vendas (10%)'));
     expect(annualDifal).toHaveLength(1);
     expect(annualDifal[0].split(';').slice(5,9)).toEqual(Array(4).fill('-3600,00'));
     const annualServices=annual.split('\r\n').filter(line=>line.includes('"Receita de serviços"'));
@@ -109,7 +150,7 @@ test('serviços e DIFAL conciliam entre tela e CSV após reabrir histórico sem 
     await page.getByRole('button',{name:'Mensal',exact:true}).click();
     await page.getByRole('button',{name:'12 meses',exact:true}).click();
     const monthly=(await downloadText(page,'#export-dre-csv')).text;
-    const monthlyDifal=monthly.split('\r\n').filter(line=>line.includes('DIFAL estimado (10%)'));
+    const monthlyDifal=monthly.split('\r\n').filter(line=>line.includes('DIFAL sobre vendas (10%)'));
     expect(monthlyDifal).toHaveLength(4);
     const monthlyServices=monthly.split('\r\n').filter(line=>line.includes('"Receita de serviços"'));
     expect(monthlyServices).toHaveLength(4);

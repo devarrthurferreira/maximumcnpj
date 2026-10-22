@@ -3,11 +3,11 @@ import {collection, scope} from './store.ts';
 import type {Doc} from './store.ts';
 import {need} from './security.ts';
 import {purchaseSummary} from './purchase-store.ts';
-import {PURCHASE_MODE, SALES_MODE, COMPONENT_FIELDS, exactCents, exactSignedCents, financialReportingStatus} from './purchase-domain.ts';
-import {normalizeNatureCode, normalizeUf, salesOperation, summarizeDifal} from './difal.ts';
-import type {SalesOperation} from './difal.ts';
-import {monthlyProjection, MONTHLY_FIELDS} from '../public/simulator-monthly.js';
-import {monthlyReportSource} from './simulation-monthly-source.ts';
+import {PURCHASE_MODE, SALES_MODE, COMPONENT_FIELDS, exactCents, exactSignedCents} from './purchase-domain.ts';
+import {normalizeNatureCode, normalizeUf, salesOperation} from './difal.ts';
+import {monthlyProjection, monthlyDifal, MONTHLY_FIELDS} from '../public/simulator-monthly.js';
+import {monthlyReportSource, aggregateOperationAudit, type OperationMonthlyReport} from './simulation-monthly-source.ts';
+import {OPERATION_CATALOG_VERSION} from './operation-catalog.ts';
 import type {generationSimulator} from './simulator-store.ts';
 
 type Source = Awaited<ReturnType<typeof generationSimulator>>;
@@ -22,7 +22,7 @@ const groupValue = (summary: Summary, status: string) => {
   return exactSignedCents(group!.totalCents);
 };
 
-function originalSource(snapshot: Doc, purchases: Summary, sales: Summary) {
+async function originalSource(snapshot: Doc, purchases: Summary, sales: Summary) {
   const source = snapshot.source;
   check(source && source.generationId === snapshot.generationId && source.clientId === snapshot.clientId,
     'A origem congelada não corresponde à empresa e geração da simulação.');
@@ -37,17 +37,45 @@ function originalSource(snapshot: Doc, purchases: Summary, sales: Summary) {
       'O total do relatório original diverge do total congelado na simulação.');
     if (saved.period) check(isDeepStrictEqual(saved.period, summary.period), 'O período fiscal original diverge do histórico.');
   }
-  check(source.fields && source.fields.purchasesOptantCents === groupValue(purchases, 'OPTANTE') &&
-    source.fields.purchasesNonOptantCents === groupValue(purchases, 'NAO_OPTANTE'),
-  'As compras congeladas divergem dos relatórios originais.');
-  const split = source.revenueSplit?.version === 'SALES_SERVICES_V1';
-  SALES_GROUPS.forEach((status, index) => {
-    const service = split ? sales.serviceGroups?.find(group => group.status === status)?.totalCents : 0;
-    check(typeof service === 'number' && source.fields[SALES_FIELDS[index]] === groupValue(sales, status) - service,
-      'Os grupos de receita congelados divergem do relatório original.');
-  });
-  if (split) check(source.fields.serviceRevenueCents === sales.servicesTotalCents,
-    'Os serviços congelados divergem do relatório original.');
+  if (source.operationVersion === OPERATION_CATALOG_VERSION) {
+    const months=await monthlyReportSource(purchases,sales,undefined,normalizeUf(source.sales.difal?.issuerUf));
+    check(months,'O histórico não conserva as competências mensais originais.');
+    const fields=monthlyProjection(months!).annualGroupsCents;
+    check(MONTHLY_FIELDS.every(key=>source.fields?.[key]===fields[key]),'As bases congeladas por natureza divergem dos relatórios originais.');
+    check(isDeepStrictEqual(source.operationAudit,aggregateOperationAudit(months!)),'A conferência congelada de naturezas diverge dos relatórios originais.');
+    const evidence=(row: any)=>({sourceMonth:row?.sourceMonth,month:row?.month,fields:row?.fields,
+      salesLines:row?.salesLines,purchaseLines:row?.purchaseLines,operationVersion:row?.operationVersion,operationAudit:row?.operationAudit});
+    check(Array.isArray(source.monthlyReports)&&isDeepStrictEqual(source.monthlyReports.map(evidence),months!.map(evidence)),
+      'As bases e evidências de cada competência divergem dos relatórios originais.');
+  } else {
+    check(source.operationVersion===undefined,'O histórico usa uma versão de naturezas desconhecida.');
+    check(source.fields && source.fields.purchasesOptantCents === groupValue(purchases, 'OPTANTE') &&
+      source.fields.purchasesNonOptantCents === groupValue(purchases, 'NAO_OPTANTE'),
+    'As compras congeladas divergem dos relatórios originais.');
+    const split = source.revenueSplit?.version === 'SALES_SERVICES_V1';
+    SALES_GROUPS.forEach((status, index) => {
+      const service = split ? sales.serviceGroups?.find(group => group.status === status)?.totalCents : 0;
+      check(typeof service === 'number' && source.fields[SALES_FIELDS[index]] === groupValue(sales, status) - service,
+        'Os grupos de receita congelados divergem do relatório original.');
+    });
+    if (split) check(source.fields.serviceRevenueCents === sales.servicesTotalCents,
+      'Os serviços congelados divergem do relatório original.');
+    if (source.monthlyReports!==undefined) {
+      check(Array.isArray(source.monthlyReports)&&source.monthlyReports.length===snapshot.reportMonths,
+        'O histórico não conserva todas as competências da base mensal.');
+      let frozenProjection: ReturnType<typeof monthlyProjection>;
+      try {frozenProjection=monthlyProjection(source.monthlyReports);}
+      catch {check(false,'Os valores mensais congelados são inválidos.');}
+      check(MONTHLY_FIELDS.every(key=>frozenProjection.annualGroupsCents[key]===source.fields[key]),
+        'As bases mensais congeladas não conciliam com os totais originais.');
+      const currentMonths=await monthlyReportSource(purchases,sales,undefined,normalizeUf(source.sales.difal?.issuerUf));
+      check(currentMonths&&currentMonths.length===source.monthlyReports.length&&currentMonths.every((row,index)=>
+        row.sourceMonth===source.monthlyReports[index].sourceMonth&&row.month===source.monthlyReports[index].month),
+      'As competências mensais congeladas divergem das datas dos relatórios originais.');
+      // Legacy financial fields keep their old classification; only their totals
+      // and chronological evidence reconcile here, before preserving manual deltas.
+    }
+  }
   if (source.periodBasis === 'COLUMN_H') {
     check(source.period && source.reportMonths === snapshot.reportMonths && source.period.months === snapshot.reportMonths &&
       isDeepStrictEqual(source.period, purchases.period) && sales.period &&
@@ -74,11 +102,8 @@ export async function rebuildSimulationSource(snapshot: Doc): Promise<Source & {
   const [purchases, sales] = await Promise.all([
     purchaseSummary(old.purchases.jobId, true, PURCHASE_MODE), purchaseSummary(old.sales.jobId, true, SALES_MODE)
   ]);
-  const original = originalSource(snapshot, purchases, sales);
-  const [rows, items] = await Promise.all([
-    (await collection('purchaseLines')).find(scope({jobId: sales.job._id})).sort({index: 1}).maxTimeMS(20000).toArray(),
-    (await collection('lookupItems')).find(scope({jobId: sales.job._id})).project({cnpj: 1, status: 1}).maxTimeMS(20000).toArray()
-  ]);
+  const original = await originalSource(snapshot, purchases, sales);
+  const rows=await (await collection('purchaseLines')).find(scope({jobId:sales.job._id})).sort({index:1}).maxTimeMS(20000).toArray();
   check(rows.length === sales.totals.lines && new Set(rows.map(row => row.index)).size === rows.length &&
     rows.every((row, index) => row.index === index), 'As linhas originais ficaram incompletas durante o recálculo.');
   const rawTotal = exactCents(rows.reduce((sum, row) => exactCents(sum + exactCents(row.totalCents)), 0));
@@ -87,69 +112,43 @@ export async function rebuildSimulationSource(snapshot: Doc): Promise<Source & {
     'As linhas originais mudaram durante a reconciliação.');
   for (const field of COMPONENT_FIELDS) check(exactCents(rows.reduce((sum, row) => exactCents(sum + exactCents(row[field])), 0)) === sales.components?.[field],
     'Os componentes originais mudaram durante a reconciliação.');
-  const statuses = new Map(items.map(item => [item.cnpj, item.status]));
-  const totals = new Map<string, number>(SALES_GROUPS.map(status => [status, 0]));
-  const services = new Map<string, number>(SALES_GROUPS.map(status => [status, 0]));
-  const operations = new Map<string, {operation: string; lines: number; totalCents: number; balanceCents: number}>();
-  const unconfirmed = new Set<string>(), otherDocuments = new Set<string>();
-  let unconfirmedCents = 0, otherDocumentsCents = 0, reclassifiedLines = 0, missingOperationEvidenceLines = 0;
-  const currentRows = rows.map(row => {
-    const status = row.valid ? statuses.get(row.cnpj) : undefined;
-    check(!row.valid || ['OPTANTE','NAO_OPTANTE','NAO_CONFIRMADO'].includes(status), 'O enquadramento congelado está ausente.');
-    const reportingStatus = financialReportingStatus({...row, status}, SALES_MODE);
-    const natureCode = normalizeNatureCode(row.natureCode), description = typeof row.description === 'string' ? row.description : '';
-    const missingEvidence = !natureCode && !description.trim();
-    const operation = missingEvidence && ['VENDA','SERVICO','DEVOLUCAO','OUTRAS'].includes(row.operation)
-      ? row.operation as SalesOperation : salesOperation(natureCode, description);
-    const balanceCents = operation === 'DEVOLUCAO' ? -row.totalCents : row.totalCents;
-    totals.set(reportingStatus, exactSignedCents(totals.get(reportingStatus)! + balanceCents));
-    if (operation === 'SERVICO') services.set(reportingStatus, exactCents(services.get(reportingStatus)! + row.totalCents));
-    const count = operations.get(operation) || {operation, lines: 0, totalCents: 0, balanceCents: 0};
-    count.lines++; count.totalCents = exactCents(count.totalCents + row.totalCents); count.balanceCents = exactSignedCents(count.balanceCents + balanceCents);
-    operations.set(operation, count);
-    if (row.valid && status === 'NAO_CONFIRMADO') {unconfirmed.add(row.cnpj); unconfirmedCents = exactSignedCents(unconfirmedCents + balanceCents);}
-    if (!row.valid && row.documentKind !== 'CPF') {
-      otherDocuments.add(row.document ? `${row.documentKind}:${row.document}` : `MISSING:${row.index}`);
-      otherDocumentsCents = exactSignedCents(otherDocumentsCents + balanceCents);
-    }
-    if (row.operation !== operation || row.natureCode !== natureCode || (row.balanceCents ?? row.totalCents) !== balanceCents) reclassifiedLines++;
-    if (missingEvidence && row.totalCents > 0) missingOperationEvidenceLines++;
-    return {...row, totalCents: row.totalCents, natureCode, description, operation, balanceCents, recipientUf: normalizeUf(row.recipientUf)};
-  });
+  const reclassifiedLines=rows.filter(row=>row.operation!==salesOperation(row.natureCode,row.description)||row.natureCode!==normalizeNatureCode(row.natureCode)).length;
   const originalIssuer = normalizeUf(sales.job.issuerUf), savedIssuer = normalizeUf(original.sales.difal?.issuerUf);
   check(!originalIssuer || !savedIssuer || originalIssuer === savedIssuer, 'As UFs congeladas do emitente são conflitantes.');
   const issuerUf = originalIssuer || savedIssuer;
-  const difal = summarizeDifal(currentRows, issuerUf);
-  const fields = {
-    salesOptantCents: exactSignedCents(totals.get('OPTANTE')! - services.get('OPTANTE')!),
-    salesNonOptantCents: exactSignedCents(totals.get('NAO_OPTANTE')! - services.get('NAO_OPTANTE')!),
-    salesCpfCents: exactSignedCents(totals.get('CPF')! - services.get('CPF')!),
-    serviceRevenueCents: exactCents([...services.values()].reduce((sum, value) => exactCents(sum + value), 0)),
-    purchasesOptantCents: exactCents(groupValue(purchases, 'OPTANTE')),
-    purchasesNonOptantCents: exactCents(groupValue(purchases, 'NAO_OPTANTE'))
-  };
-  const recalculatedSalesTotalCents = exactSignedCents([...totals.values()].reduce((sum, value) => exactSignedCents(sum + value), 0));
-  const salesBalanceChangeCents = exactSignedCents(recalculatedSalesTotalCents - sales.totals.totalCents);
-  check(fields.salesOptantCents+fields.salesNonOptantCents+fields.salesCpfCents>=0,'As devoluções superam as vendas de mercadorias reconstruídas.');
-  const monthlyReports=await monthlyReportSource(purchases,sales,currentRows,issuerUf);
-  const projection=monthlyReports?monthlyProjection(monthlyReports):null;
-  if(projection)check(MONTHLY_FIELDS.every(key=>projection.annualGroupsCents[key]===fields[key as keyof typeof fields]),'Os valores mensais reconstruídos não conciliam com os totais.');
-  const warnings = [...(Array.isArray(original.warnings) ? original.warnings : []),
-    'Recálculo sobre as linhas originais: natureza, descrição, valores e enquadramento da consulta foram preservados. Nenhum CNPJ foi consultado novamente.',
-    'Serviços identificados nas linhas originais foram separados das mercadorias antes de aplicar ajustes do cenário.'];
-  if (salesBalanceChangeCents) warnings.push('A classificação atual das operações alterou o saldo líquido do relatório reconstruído. A diferença está identificada na origem do recálculo; não é um ajuste manual.');
-  if (missingOperationEvidenceLines) warnings.push(`${missingOperationEvidenceLines} linhas não possuem natureza nem descrição para confirmar a classificação atual. O recálculo depende de revisão dessas evidências.`);
-  if (difal.pendingLines) warnings.push(`${difal.pendingLines} linhas elegíveis dependem de UF histórica do emitente ou destinatário; nenhum endereço atual foi utilizado para preencher a ausência.`);
-  return {...original, generationId: snapshot.generationId, clientId: snapshot.clientId,
-    company: structuredClone(snapshot.company || original.company), fields, revenueSplit: {version: 'SALES_SERVICES_V1'},
-    projection, monthlyReports,
-    purchases: {...original.purchases, totalCents: purchases.totals.totalCents},
-    sales: {...original.sales, totalCents: recalculatedSalesTotalCents, servicesTotalCents: fields.serviceRevenueCents,
-      operationTotals: [...operations.values()].sort((a, b) => a.operation.localeCompare(b.operation)), difal},
-    classification: {...original.classification, sales: {unconfirmedCount: unconfirmed.size, unconfirmedCents,
-      otherDocumentsCount: otherDocuments.size, otherDocumentsCents}}, warnings,
-    reprocessingSource: {version: 'FROZEN_LINES_CURRENT_RULES_V1', originalSalesTotalCents: sales.totals.totalCents,
-      originalPurchasesTotalCents: purchases.totals.totalCents, recalculatedSalesTotalCents, salesBalanceChangeCents,
-      reclassifiedLines, missingOperationEvidenceLines, issuerUfSource: originalIssuer ? 'ORIGINAL_JOB' : savedIssuer ? 'ORIGINAL_SIMULATION' : 'UNAVAILABLE'}
+  const monthlyReports=await monthlyReportSource(purchases,sales,undefined,issuerUf);
+  check(monthlyReports,'Os relatórios originais não conservam as competências da coluna H. Reimporte-os para aplicar o catálogo de naturezas.');
+  const projection=monthlyProjection(monthlyReports!);
+  const fields=projection.annualGroupsCents as OperationMonthlyReport['fields'];
+  const operationAudit=aggregateOperationAudit(monthlyReports!);
+  const difalMonths=monthlyDifal(monthlyReports!,sales.job._id);
+  const difal=difalMonths?{...monthlyReports![0].difal,amountCents:difalMonths.sourceAmountCents,baseCents:difalMonths.sourceBaseCents,
+    eligibleLines:difalMonths.eligibleLines,pendingLines:difalMonths.pendingLines}:null;
+  const goodsCents=exactSignedCents(fields.salesOptantCents+fields.salesNonOptantCents+fields.salesCpfCents);
+  check(goodsCents>=0,'As devoluções de venda do relatório de compras superam as vendas de mercadorias reconstruídas.');
+  const recalculatedSalesTotalCents=exactCents(goodsCents+fields.serviceRevenueCents);
+  const selectedPurchasesTotalCents=exactCents(fields.purchasesOptantCents+fields.purchasesNonOptantCents);
+  const salesBalanceChangeCents=exactSignedCents(recalculatedSalesTotalCents-sales.totals.totalCents);
+  const warnings=[
+    'Recálculo sobre as linhas originais: natureza, valores e enquadramento da consulta foram preservados. Nenhum CNPJ foi consultado novamente.',
+    'Receita inclui somente operações de venda e serviços 9000, menos devoluções de venda do relatório de compras. Compras incluem somente operações de compra e serviços 8000. Os quatro primeiros dígitos da natureza da coluna L dos relatórios são classificados pela coluna D (OPERAÇÃO) do catálogo; valores seguem Q - Y + AA - AB.',
+    'Totais originais dos relatórios e bases selecionadas do cenário estão separados na conferência por natureza.'
+  ];
+  if(salesBalanceChangeCents)warnings.push('A seleção atual das naturezas alterou a base de receita do cenário. A diferença está identificada na origem do recálculo; não é um ajuste manual.');
+  const unknown=operationAudit.unknownSalesLines+operationAudit.unknownPurchaseLines;
+  if(unknown)warnings.push(`${unknown} linhas com natureza não cadastrada foram excluídas das bases e permanecem identificadas para revisão na conferência.`);
+  if(difal?.pendingLines)warnings.push(`${difal.pendingLines} vendas elegíveis dependem de UF histórica do emitente ou destinatário; nenhum endereço atual foi utilizado para preencher a ausência.`);
+  const anticipationPending=monthlyReports!.reduce((sum,row)=>sum+row.anticipation.pendingLines,0);
+  if(anticipationPending)warnings.push(`${anticipationPending} compras elegíveis dependem de UF histórica para confirmar a antecipação de ICMS.`);
+  return {...original,generationId:snapshot.generationId,clientId:snapshot.clientId,
+    company:structuredClone(snapshot.company||original.company),fields,revenueSplit:{version:'SALES_SERVICES_V1'},
+    operationVersion:OPERATION_CATALOG_VERSION,operationAudit,projection,monthlyReports,
+    purchases:{...original.purchases,totalCents:purchases.totals.totalCents,selectedTotalCents:selectedPurchasesTotalCents},
+    sales:{...original.sales,totalCents:sales.totals.totalCents,selectedTotalCents:recalculatedSalesTotalCents,
+      servicesTotalCents:sales.servicesTotalCents,operationTotals:sales.operationTotals,difal},
+    classification:structuredClone(original.classification),warnings,
+    reprocessingSource:{version:'FROZEN_LINES_CURRENT_RULES_V2',originalSalesTotalCents:sales.totals.totalCents,
+      originalPurchasesTotalCents:purchases.totals.totalCents,recalculatedSalesTotalCents,salesBalanceChangeCents,
+      reclassifiedLines,missingOperationEvidenceLines:0,issuerUfSource:originalIssuer?'ORIGINAL_JOB':savedIssuer?'ORIGINAL_SIMULATION':'UNAVAILABLE'}
   };
 }

@@ -35,7 +35,6 @@ export function unifiedDreRows(presentation) {
 
 export function buildDrePresentation({result,monthlyGroups,projection,source,reportMonths,engineInput,reprocessing,calendar}={}) {
   const originals = Array.isArray(result?.regimes) ? result.regimes : [];
-  const regimes = originals.map(r=>({id:r.id,name:r.name,available:r.available===true}));
   const hasCalendar = calendar != null;
   const validCalendar = ['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3'].includes(calendar?.version) && Array.isArray(calendar.months) && calendar.months.length===12;
   const calendarYear = calendar?.year ?? engineInput?.year ?? null;
@@ -47,25 +46,31 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   };
   function frame(regime,kind,index=null) {
     const saved=validCalendar?unique(calendar.regimes,'id',regime.id):null;
-    const monthlyEntry=actual&&kind==='month'?result.monthlyResults.find(row=>row.month===index+1):null;
-    const available=regime.available===true && (kind==='annual'||!hasCalendar||saved?.available===true)&&(!actual||kind!=='month'||!!monthlyEntry);
-    const effective=monthlyEntry?.result.regimes.find(row=>row.id===regime.id)||regime;
+    const monthlyEntry=actual&&kind==='month'?result.monthlyResults?.find(row=>row.month===index+1):null;
+    const monthlyRegime=monthlyEntry?.result?.regimes?.find(row=>row.id===regime.id);
+    const effective=monthlyRegime||regime;
+    const available=actual&&kind==='month'?
+      !!monthlyRegime&&monthlyRegime.available===true&&(!hasCalendar||(validCalendar&&calendar.version==='DRE_CALENDAR_V3'&&!!saved&&calendar.months[index]?.sourceMonth===monthlyEntry.sourceMonth)):
+      regime.available===true&&(kind==='annual'||!hasCalendar||saved?.available===true);
     return {regime:effective,kind,index,available,monthlyEntry,monthResult:monthlyEntry?.result,scale:kind==='month'&&!actual?1/12:1,
       get(key) {
         if(!available)return null;
+        if(actual&&kind==='month'&&!hasCalendar){const value=effective.dre?.[key];return finite(value)?value:null;}
         if(kind==='annual'||!hasCalendar){const value=regime.dre?.[key];return finite(value)?value*(kind==='month'?1/12:1):null;}
         const row=unique(saved.rows,'key',key),value=kind==='month'?row?.months?.[index]:row?.annual;
         return finite(value)?value:null;
       }
     };
   }
+  const regimes = originals.map(r=>({id:r.id,name:r.name,available:r.available===true,
+    ...(actual?{monthlyAvailability:months.map((_,index)=>frame(r,'month',index).available)}:{})}));
   function checkedFrame(f,compute) {
-    if(!f.available)return missing(f.regime.available===true?'Calendário salvo não disponível para este regime.':'Regime indisponível neste cenário.');
+    if(!f.available)return missing(actual&&f.kind==='month'&&!f.monthlyEntry?'Sem dados importados para esta competência.':f.regime.available===true?'Calendário salvo não disponível para este regime.':f.regime.status&&!/^Disponível/.test(f.regime.status)?f.regime.status:'Regime indisponível neste cenário.');
     const cell=compute(f);
     return cell && (cell.value===null||finite(cell.value)) ? cell : missing();
   }
   function row(key,label,kind,compute,{unit='currency',notes=[],informative=false,parentKey,sourceRefs=[]}={}) {
-    const values={},monthlyValues={},calendarAnnualValues={},reasonByRegime={},calendarReasonByRegime={};
+    const values={},monthlyValues={},calendarAnnualValues={},reasonByRegime={},calendarReasonByRegime={},monthlyReasonByRegime={};
     const percentValues={},monthlyPercentValues={},calendarAnnualPercentValues={};
     const percent=(cell,f)=>cell.value===null?null:unit==='percent'?cell.value:finite(f.get('revenue'))&&f.get('revenue')>0?cell.value/f.get('revenue'):null;
     for(const regime of originals){
@@ -74,11 +79,12 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
       const monthFrames=months.map((_,index)=>frame(regime,'month',index)),monthly=monthFrames.map(f=>checkedFrame(f,compute));
       values[regime.id]=annual.value;calendarAnnualValues[regime.id]=calendarAnnual.value;monthlyValues[regime.id]=monthly.map(cell=>cell.value);
       reasonByRegime[regime.id]=annual.reason;calendarReasonByRegime[regime.id]=calendarAnnual.reason||monthly.find(cell=>cell.reason)?.reason||'';
+      monthlyReasonByRegime[regime.id]=monthly.map(cell=>cell.reason);
       percentValues[regime.id]=percent(annual,annualFrame);calendarAnnualPercentValues[regime.id]=percent(calendarAnnual,calendarFrame);
       monthlyPercentValues[regime.id]=monthly.map((cell,index)=>percent(cell,monthFrames[index]));
     }
     return {key,label,kind,unit,values,monthlyValues,calendarAnnualValues,percentValues,monthlyPercentValues,calendarAnnualPercentValues,
-      reasonByRegime,calendarReasonByRegime,notes:[...notes],informative,...(parentKey?{parentKey}:{}),sourceRefs:[...sourceRefs]};
+      reasonByRegime,calendarReasonByRegime,monthlyReasonByRegime,notes:[...notes],informative,...(parentKey?{parentKey}:{}),sourceRefs:[...sourceRefs]};
   }
   const baseRows=dreRows(result),labels=new Map(baseRows);
   const base=key=>row(key,labels.get(key),SUBTOTALS.has(key)?'subtotal':'line',f=>currency(f.get(key)),{sourceRefs:[`result.regimes[].dre.${key}`]});
@@ -88,7 +94,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   };
   const subtotal=(key,label,keys,parent,less)=>row(key,label,'subtotal',reconciledSum(keys,parent,less),{
     informative:true,notes:['Subtotal de conferência das linhas já incluídas no resultado; não somar novamente.'],sourceRefs:keys.map(key=>`result.regimes[].dre.${key}`)});
-  const deductions=['das','cbsDebit','ibsDebit','icmsNet','iss',...(labels.has('difal')?['difal']:[])];
+  const deductions=['das','cbsDebit','ibsDebit','icmsNet','iss',...['difal','icmsAnticipation'].filter(key=>labels.has(key))];
   const sections=[
     {key:'revenue',label:'Receitas',rows:['services','sales','revenue'].map(base)},
     {key:'deductions',label:'Tributos sobre a receita',rows:[...deductions.map(base),subtotal('revenueDeductions','Deduções tributárias da receita',deductions,'netRevenue','revenue'),base('netRevenue')]},
@@ -155,7 +161,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     {key:'irpjBreakdown',label:'Composição do IRPJ',parentKey:'irpj',rows:[detail('irpjBasic','− IRPJ normal','irpj',irpjDetail('basic'),{sourceRefs:['result.memory:presumed.irBasic','result.memory:actual.irBasic']}),detail('irpjAdditional','− Adicional de IRPJ','irpj',irpjDetail('additional'),{sourceRefs:['result.memory:presumed.irAdditional','result.memory:actual.irAdditional']})]}
   ];
   const taxes=f=>{
-    const pieces=['das','cbsDebit','ibsDebit','icmsNet','iss',...(labels.has('difal')?['difal']:[]),'payroll','irpj','csll','cbsUsed','ibsUsed'];
+    const pieces=[...deductions,'payroll','irpj','csll','cbsUsed','ibsUsed'];
     const net=sum(pieces.map(key=>f.get(key)));
     if(!finite(net))return missing('Os tributos e encargos não estão completos neste demonstrativo.');
     const value=-net;
@@ -182,6 +188,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     indicator('totalTaxes','Tributos e encargos totais',taxes,{unit:'currency',notes:['Inclui encargos sobre a folha. Créditos utilizados já foram abatidos; não deduzir novamente.']})
   ];
   return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,months,calendarYear,
+    ...(calendar?.rbt12Schedule?{rbt12Schedule:structuredClone(calendar.rbt12Schedule)}:{}),
     calendarReference:calendar?.rbt12Reference??null,calendarRounding:calendar?.rounding??'Valores completos preservados; exibição com duas casas decimais.',
     percentBasis:'Receita bruta total do cenário'};
 }

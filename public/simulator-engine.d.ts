@@ -1,5 +1,6 @@
 /** Types for the shared, dependency-free calculator used by browser and server. */
 export const MODEL_VERSION: string;
+export const ICMS_ANTICIPATION_VERSION: 'ICMS_ANTICIPATION_DRE_V1';
 export const CALCULATOR_SOURCE_COMMIT: string;
 export const TAX_SOURCES: ReadonlyArray<{label: string; url: string}>;
 export const SIMULATION_VALUE_FIELDS: readonly SimulationValueField[];
@@ -13,6 +14,13 @@ export type SimulationDraft = {
   rbt12?: number;
   values: Record<SimulationValueField, number>;
 };
+/** Server-owned estimate from confirmed interstate purchases; never inferred from edited CMV. */
+export type IcmsAnticipationProjection = {
+  version: 'ICMS_ANTICIPATION_DRE_V1'; monthlyCents: number; annualCents: number;
+  sourceBaseCents?: number; sourceAmountCents?: number; reportMonths?: number;
+  pendingLines?: number; eligibleLines?: number; ratePercent?: 7.32;
+  sourceJobId?: string; sourceVersion?: string; issuerUf?: string;
+};
 export type SimulationRegime = {
   id: string; name: string; available: boolean; status: string; annualProfit: number; monthlyProfit: number;
   margin: number | null; totalTaxes: number; taxBurden: number | null; dre: Record<string, number>;
@@ -24,5 +32,5 @@ export type SimulationResult = {
   memory: Array<{id: string; section: string; label: string; formula: string; value: number | string; unit: string}>;
   bestRegimeId: string | null; difference: number;
 };
-export function draftToInput(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null): Record<string, unknown> | null;
-export function calculateSimulation(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null): SimulationResult;
+export function draftToInput(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null): Record<string, unknown> | null;
+export function calculateSimulation(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null): SimulationResult;

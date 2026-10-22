@@ -11,3 +11,13 @@ export function section22(totalCents=15_000_000) {
   rbt12Window:rows,priorRevenues:rows,rbt12Basis:{section:'2.2',startMonth:'2025-08',endMonth:'2026-07',months:12,internalCents:totalCents,externalCents:0,totalCents},
   processedPages:3,pageCount:3,ocrUsed:true,ocrPages:[1,2,3],ocrEngine:'MOCK',warnings:[]};
 }
+
+/** December PA layout: 23 explicit revenues support every monthly window of that year. */
+export function section22Year2025() {
+ const rows=Array.from({length:23},(_,i)=>{
+  const absolute=2024*12+i,year=Math.floor(absolute/12),month=String(absolute%12+1).padStart(2,'0'),value=(i+1)*100_000;
+  return {period:`${month}/${year}`,month:`${year}-${month}`,internalCents:value,externalCents:0,totalCents:value,usedInRbt12:i>=11};
+ });
+ return {...section22(21_000_000),pa:'12/2025',rbt12Window:rows.slice(11),priorRevenues:rows,
+  rbt12Basis:{section:'2.2',startMonth:'2024-12',endMonth:'2025-11',months:12,internalCents:21_000_000,externalCents:0,totalCents:21_000_000}};
+}

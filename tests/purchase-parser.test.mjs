@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {amountCents, decimal, decodePurchaseCsv, parsePurchaseMatrix, fiscalDate} from '../public/purchase-parser.js';
+import {OPERATION_CATALOG_VERSION} from '../public/operation-catalog.js';
+import {DIFAL_VERSION} from '../public/difal.js';
 
 const header = Array(28).fill('');
 for (const [index,label] of [[0,'Documento'],[7,'Data Escrituração/Serviço'],[8,'Razão social'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']]) header[index] = label;
@@ -276,7 +278,7 @@ test('DIFAL preview uses registered sale total, recipient UF and the shared isol
   assert.equal(adjusted.components.accessoryCents,90000);
 });
 
-test('DIFAL missing UF stays pending; purchases never gain sales metadata', () => {
+test('DIFAL missing UF stays pending; purchases preserve nature and UF without sales DIFAL', () => {
   const input=row('123.456.789-00','Comprador sintético','1','150,00');
   input[9]='SP'; input[11]='6108'; input[14]='Venda de mercadoria';
   const missingIssuer=parsePurchaseMatrix([header,input],0,{type:'SALES'});
@@ -288,8 +290,29 @@ test('DIFAL missing UF stays pending; purchases never gain sales metadata', () =
   assert.equal(missingRecipient.rows[0].difal.reason,'MISSING_RECIPIENT_UF');
   assert.equal(missingRecipient.difal.pendingLines,1);
   const purchase=parsePurchaseMatrix([header,input]);
-  for (const key of ['difal','recipientUf','natureCode','operation']) assert.equal(key in purchase.rows[0],false);
+  for (const key of ['difal','operation']) assert.equal(key in purchase.rows[0],false);
+  assert.equal(purchase.rows[0].natureCode,'6108'); assert.equal(purchase.rows[0].natureOperation,'VENDA');
+  assert.equal(purchase.rows[0].recipientUf,''); assert.equal(purchase.rows[0].operationVersion,OPERATION_CATALOG_VERSION);
   assert.equal('difal' in purchase,false);
+});
+
+test('compras usam catálogo e primeiros quatro dígitos sem mudar total ou inferir pela descrição', () => {
+  const inputs = ['2102001','1202001','8000','8000002','8000102','2214','9999'].map(code=>{
+    const input=row('11222333000181','Fornecedor','1','100,00');
+    input[9]=' sp '; input[11]=code; input[14]='Venda e devolução de serviço';
+    input[24]='10,00'; input[25]='900,00'; input[26]='2,00'; input[27]='1,00';
+    return input;
+  });
+  const parsed=parsePurchaseMatrix([header,...inputs]);
+  assert.deepEqual(parsed.errors,[]);
+  assert.deepEqual(parsed.rows.map(value=>value.natureCode),['2102','1202','8000','8000','8000','2214','9999']);
+  assert.deepEqual(parsed.rows.map(value=>value.natureOperation),['COMPRAS','DEVOLUCAO_VENDA','SERVICO_COMPRA','SERVICO_COMPRA','SERVICO_COMPRA','OUTRAS','NAO_CLASSIFICADA']);
+  assert(parsed.rows.every(value=>value.operationVersion===OPERATION_CATALOG_VERSION&&value.recipientUf==='SP'&&value.totalCents===9100));
+  assert.equal(parsed.totalCents,63700); assert.equal(parsed.balanceCents,63700);
+  const historic=parsePurchaseMatrix([header,...inputs],0,{operationVersion:null});
+  for (const value of historic.rows) for (const key of ['natureCode','description','recipientUf','natureOperation','operationVersion']) assert.equal(key in value,false);
+  assert.equal(historic.totalCents,63700);
+  assert.throws(()=>parsePurchaseMatrix([header,...inputs],0,{operationVersion:'UNKNOWN'}),/catálogo/);
 });
 
 
@@ -313,7 +336,7 @@ test('5102 inclui todas as competências e linhas repetidas do mesmo CPF; retoma
   });
   const current = parsePurchaseMatrix([header,...inputs,inputs[0]],0,{type:'SALES',issuerUf:'MG'});
   assert.deepEqual(current.errors,[]); assert.equal(current.period.months,12); assert.equal(current.period.observedMonths,12);
-  assert.equal(current.difal.version,'DIFAL_ESTIMATE_V2'); assert.equal(current.difal.eligibleLines,13);
+  assert.equal(current.difal.version,DIFAL_VERSION); assert.equal(current.difal.eligibleLines,13);
   assert.equal(current.difal.baseCents,13*9400); assert.equal(current.difal.amountCents,13*940);
   assert(current.rows.every(row=>row.operation==='VENDA' && row.difal.amountCents===940));
   const legacy = parsePurchaseMatrix([header,...inputs],0,{type:'SALES',issuerUf:'MG',difalVersion:'DIFAL_ESTIMATE_V1'});

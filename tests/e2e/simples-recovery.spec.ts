@@ -41,7 +41,7 @@ test('Ler novamente invalida a simulação antes da rede e não reaplica extraç
  const pending=gate();
  await page.route('**/api/v4/simples-documents/*/process-urls',async r=>{await pending.promise;await r.fulfill({status:503,json:{message:'Não foi possível preparar a nova leitura.'}});});
  await page.getByRole('button',{name:'Ler novamente',exact:true}).click();
- await expect(page.locator('#rbt12')).toHaveValue('');await expect(page.locator('#simulation-result')).toBeEmpty();await expect(page.locator('#generate-simulation')).toBeDisabled();
+ await expect(page.locator('#rbt12')).toHaveValue('');await expect(page.locator('#simulation-result .sim-dre,#results-top')).toHaveCount(0);await expect(page.locator('#simulation-changes-notice')).toBeVisible();await expect(page.locator('#generate-simulation')).toBeDisabled();
  const draft=await savedDraft(page);expect(draft.rbt12ExtractionId).toBeNull();expect(draft.fields.rbt12).toBe('');expect(draft.rbt12Document.documentId).toBe(documentId);
  pending.release();await expect(page.locator('#rbt12-status')).toContainText('preparar a nova leitura');await expect(page.locator('#rbt12-view-original')).toBeVisible();
  let extractionGets=0;

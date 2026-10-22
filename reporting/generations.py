@@ -148,12 +148,12 @@ def render_generation_pdf(meta):
                     f'Não optante = {money(totals["unconfirmedCents"])}.', 'small')]
         if report_type == 'SALES':
             difal = totals['difal']
-            story += [p(f'DIFAL estimado (10%) {scope}', 'heading')]
+            story += [p(f'DIFAL sobre vendas (10%) {scope}', 'heading')]
             if difal['unavailableReports'] == len(meta['sales']):
                 story.append(p('Indisponível: todos os relatórios de vendas desta parte são históricos '
                                'anteriores ao cálculo do DIFAL.', 'small'))
             else:
-                rows = [['Base elegível', 'DIFAL estimado (10%)', 'Linhas elegíveis', 'Linhas pendentes por UF'],
+                rows = [['Base elegível', 'DIFAL sobre vendas (10%)', 'Linhas elegíveis', 'Linhas pendentes por UF'],
                         [money(difal['baseCents']), money(difal['amountCents']), number(difal['eligibleLines']),
                          number(difal['pendingLines'])]]
                 story += [purchase_table(rows, (.30, .30, .20, .20), width, styles), Spacer(1, 4)]

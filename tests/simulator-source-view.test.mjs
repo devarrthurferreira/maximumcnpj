@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {renderOperationAudit,renderRbt12Schedule,renderAnticipationSource} from '../public/simulator-source-view.js';
+import {renderSection22} from '../public/simulator-extrato-view.js';
+
+test('reconciliation presents sales returns separately and does not include them in purchases',()=>{
+  const html=renderOperationAudit({grossSalesCents:1_000_000,serviceSalesCents:50_000,salesReturnsCents:100_000,purchaseGoodsCents:300_000,purchaseServicesCents:20_000,excludedSalesCents:90_000,excludedPurchaseCents:10_000,unknownSalesLines:1,unknownPurchaseLines:0,
+    natures:[{side:'PURCHASES',natureCode:'1202',operation:'DEVOLUCAO_VENDA',lines:1,sourceCents:100_000,salesCents:0,purchasesCents:0,salesReturnsCents:100_000,excludedCents:0}]});
+  assert.match(html,/coluna D \(OPERAÇÃO\)/);
+  assert.match(html,/Receita considerada · vendas \+ serviços − devoluções<\/span><strong>R\$\s9\.500,00/);
+  assert.match(html,/Compras consideradas · compras \+ serviços<\/span><strong>R\$\s3\.200,00/);
+  assert.match(html,/1 linhas de vendas e 0 linhas de compras/);
+  assert.match(html,/Devolução de venda/);
+  assert.equal(renderOperationAudit(null),'');
+});
+
+test('incomplete RBT12 window is explicitly pending and never displayed as zero',()=>{
+  const html=renderRbt12Schedule({version:'RBT12_MONTHLY_SECTION_22_V1',complete:false,rows:[
+    {sourceMonth:'2025-01',status:'CONFIRMED',rbt12Cents:7_800_000,startMonth:'2024-01',endMonth:'2024-12',missingMonths:[]},
+    {sourceMonth:'2025-02',status:'MISSING_MONTHS',rbt12Cents:null,startMonth:'2024-02',endMonth:'2025-01',missingMonths:['2024-02']}
+  ]});
+  assert.match(html,/R\$\s78\.000,00/);assert.match(html,/Faltam: 02\/2024/);assert.doesNotMatch(html,/R\$\s0,00/);
+  assert.match(html,/nenhuma lacuna será tratada como zero/);
+  assert.equal(renderRbt12Schedule(null),'');
+});
+
+test('anticipation shows source estimate distinctly from the amount applied by regime and sublimit',()=>{
+  const reports=[{sourceMonth:'2025-01',anticipation:{issuerUf:'MG',baseCents:320_000,amountCents:23424,eligibleLines:2,pendingLines:0}},
+    {sourceMonth:'2025-02',anticipation:{issuerUf:'MG',baseCents:0,amountCents:0,eligibleLines:0,pendingLines:1}}];
+  const html=renderAnticipationSource({reports,row:reports[1],adjusted:true});
+  assert.match(html,/data-anticipation-monthly>Pendente/);assert.match(html,/Estimativa do período importado/);
+  assert.match(html,/R\$\s234,24/);assert.match(html,/Simples puro e híbrido/);assert.match(html,/sublimite alcançado/);
+  assert.match(html,/Estimativa parcial: 1 linhas aguardam UF/);assert.match(html,/data-anticipation-adjusted/);
+  assert.equal(renderAnticipationSource({reports:[{sourceMonth:'2025-01'}]}),'');
+});
+
+test('full section 2.2 history remains inspectable alongside the PA window',()=>{
+  const priorRevenues=Array.from({length:23},(_,i)=>({period:`${String(i%12+1).padStart(2,'0')}/${2024+Math.floor(i/12)}`,internalCents:(i+1)*100_000,externalCents:0,totalCents:(i+1)*100_000}));
+  const html=renderSection22({parserVersion:'SIMPLES_SECTION_22_V2',sourceSection:'2.2',pa:'12/2025',rbt12Cents:21_000_000,
+    companyName:'Empresa <teste>',cnpjBasico:'12345678',priorRevenues,rbt12Window:priorRevenues.slice(11),
+    rbt12Basis:{internalCents:21_000_000,externalCents:0}});
+  assert.match(html,/23 receitas mensais disponíveis/);assert.match(html,/01\/2024/);assert.match(html,/11\/2025/);
+  assert.match(html,/RBT12 do PA 12\/2025/);assert.match(html,/Empresa &lt;teste&gt;/);assert.doesNotMatch(html,/<teste>/);
+  assert.equal((html.match(/<th scope="row">/g)||[]).length,36);
+});

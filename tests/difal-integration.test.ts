@@ -14,7 +14,7 @@ import { createGeneration, attachGenerationSale, attachGenerationPurchase, getGe
 import { generationSimulator } from '../src/simulator-store.ts';
 import { digits } from '../src/domain.ts';
 import { createSimulation, getSimulation } from '../src/simulation-history.ts';
-import { reprocessSimulations, reprocessedSimulationId } from '../src/simulation-reprocessing.ts';
+import { reprocessSimulations, reprocessedSimulationId, REPROCESS_VERSION } from '../src/simulation-reprocessing.ts';
 import { projectDifal } from '../public/simulator-projection.js';
 import { calculateSimulation, draftToInput } from '../public/simulator-engine.js';
 import { buildMonthlyDre } from '../public/simulator-calendar.js';
@@ -90,7 +90,7 @@ test('DIFAL MongoDB: origem imutável, CPF, reconciliação, reimportação, leg
     await uploadLookup(actor, missing._id, {offset: 0, rows: [sale()]}); await finalizeLookup(actor, missing._id);
     assert.equal((await purchaseSummary(missing._id, true, SALES_MODE)).difal?.pendingLines, 1);
     const legacy = await createLookup(actor, {...input, importId: randomUUID(), expectedRows: 2}, SALES_MODE);
-    await (await collection('lookupJobs')).updateOne(scope({_id: legacy._id}), {$unset: {difalVersion: '', issuerUf: ''}});
+    await (await collection('lookupJobs')).updateOne(scope({_id: legacy._id}), {$unset: {operationVersion:'',difalVersion: '', issuerUf: ''}});
     await uploadLookup(actor, legacy._id, {offset: 0, rows: rows.slice(0, 2)});
     await uploadLookup(actor, legacy._id, {offset: 0, rows: rows.slice(0, 2)});
     await finalizeLookup(actor, legacy._id); await (await collection('providerControl')).deleteMany({}); await processLookup(actor, legacy._id, transport);
@@ -106,7 +106,8 @@ test('DIFAL MongoDB: origem imutável, CPF, reconciliação, reimportação, leg
     await assert.rejects(attachGenerationSale(actor, generation._id, {...attachment, issuerUf: 'SP'}));
     await uploadLookup(actor, attached.job._id, {offset: 0, rows: [sale()]}); await finalizeLookup(actor, attached.job._id);
     const purchases = await attachGenerationPurchase(actor, generation._id, {...attachment, importId: randomUUID()});
-    await uploadLookup(actor, purchases.job._id, {offset: 0, rows: [sale()]}); await finalizeLookup(actor, purchases.job._id);
+    await uploadLookup(actor, purchases.job._id, {offset: 0, rows: [sale({natureCode:'1102'})]}); await finalizeLookup(actor, purchases.job._id);
+    assert.equal(purchases.job.issuerUf,'MG','A UF explícita da compra conserva a mesma origem histórica da venda após editar o cadastro.');
     assert.equal((await getGeneration(generation._id)).companies[0].sales.issuerUf, 'MG');
     const simulator = await generationSimulator(generation._id, clientId);
     assert.deepEqual(simulator.sales.difal, (await purchaseSummary(attached.job._id, true, SALES_MODE)).difal);
@@ -139,7 +140,7 @@ test('5102 histórico V1: todas as competências, prefill atual, nova DRE, expor
     await uploadLookup(actor,sales._id,{offset:0,rows}); await finalizeLookup(actor,sales._id);
     const purchases=(await attachGenerationPurchase(actor,generation._id,{clientId,importId:randomUUID(),
       fileName:'compras-sinteticas.csv',expectedRows:rows.length})).job;
-    await uploadLookup(actor,purchases._id,{offset:0,rows}); await finalizeLookup(actor,purchases._id);
+    await uploadLookup(actor,purchases._id,{offset:0,rows:rows.map(row=>({...row,natureCode:'1102'}))}); await finalizeLookup(actor,purchases._id);
     const archived=await purchaseSummary(sales._id,true,SALES_MODE);
     assert.equal(archived.difal?.version,'DIFAL_ESTIMATE_V1'); assert.equal(archived.difal?.amountCents,0);
     const oldJob=await (await collection('lookupJobs')).findOne(scope({_id:sales._id}));
@@ -155,6 +156,7 @@ test('5102 histórico V1: todas as competências, prefill atual, nova DRE, expor
       reportMonths:12,periodConfirmed:true,monthlyGroups,monthlyInputs:source.monthlyReports!.map(row=>baselineMonth(row,draft.values)),draft,rbt12Source:'MANUAL',rbt12ManualConfirmed:true});
     const simulations=await collection('simulations'), original=(await simulations.findOne(scope({_id:simulationId})))!;
     original.projection=annualizeReports(source.fields,12);delete original.monthlyInputs;delete original.source.monthlyReports;
+    delete original.source.operationVersion;delete original.source.operationAudit;delete original.anticipationProjection;
     original.source.sales.difal=archived.difal;
     original.difalProjection=projectDifal(archived.difal,12,sales._id);
     original.engineInput=draftToInput(original.draft,original.difalProjection);
@@ -165,9 +167,9 @@ test('5102 histórico V1: todas as competências, prefill atual, nova DRE, expor
       reprocessing:{version:'SERVICES_DIFAL_2026_10_V1',originalId:simulationId}};
     await simulations.insertOne(oldChild);
     const result=await reprocessSimulations(actor,{});
-    assert.equal(result.version,'REPORT_MONTHS_2026_10_V1'); assert.equal(result.total,1); assert.equal(result.counts.ok,1);
+    assert.equal(result.version,REPROCESS_VERSION); assert.equal(result.total,1); assert.equal(result.counts.ok,1);
     const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,simulationId));
-    assert.equal(child.difalProjection.sourceVersion,'DIFAL_ESTIMATE_V2');
+    assert.equal(child.difalProjection.sourceVersion,DIFAL_VERSION);
     assert(child.difalProjection.months.every((row:any)=>row.amountCents===940)); assert.equal(child.difalProjection.annualCents,11280);
     assert(child.result.regimes.every((regime:any)=>Math.abs(regime.dre.difal+112.8)<1e-9));
     assert.deepEqual(child.draft,original.draft); assert.deepEqual(child.rbt12Manual,original.rbt12Manual);
@@ -182,7 +184,7 @@ test('5102 histórico V1: todas as competências, prefill atual, nova DRE, expor
       expectedRows:rows.length,issuerUf:'MG'},SALES_MODE);
     await uploadLookup(actor,fresh._id,{offset:0,rows}); await finalizeLookup(actor,fresh._id);
     assert.equal((await purchaseSummary(fresh._id,true,SALES_MODE)).difal?.amountCents,11280);
-    assert((await purchaseExport(fresh._id,'ALL',1,SALES_MODE)).content.includes('"94,00";"9,40";"ELIGIBLE";"DIFAL_ESTIMATE_V2"'));
+    assert((await purchaseExport(fresh._id,'ALL',1,SALES_MODE)).content.includes(`"94,00";"9,40";"ELIGIBLE";"${DIFAL_VERSION}"`));
   } finally {
     await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
     if(oldDb===undefined)delete process.env.MONGODB_DB;else process.env.MONGODB_DB=oldDb;
@@ -221,7 +223,8 @@ test('Serviços 9000: totais por enquadramento, separação de mercadorias e pre
     await uploadLookup(actor, sales.job._id, {offset: 0, rows: salesRows}); await finalizeLookup(actor, sales.job._id);
     await (await collection('providerControl')).deleteMany({}); await processLookup(actor, sales.job._id, transport);
     assert.equal(providerCalls, 3);
-    const purchaseRows = [row('12345678900', '', 2000, '2026-06-30'), row('12345678900', '', 2500, '2026-08-01')];
+    const purchaseRows = [row('12345678900', '1102', 2000, '2026-06-30'), row('12345678900', '1102', 2500, '2026-08-01'),
+      row('12345678900','1202001',1000,'2026-06-30')];
     const purchases = await attachGenerationPurchase(actor, generation._id, {clientId, importId: randomUUID(), fileName: 'compras-sinteticas.csv', expectedRows: purchaseRows.length});
     await uploadLookup(actor, purchases.job._id, {offset: 0, rows: purchaseRows}); await finalizeLookup(actor, purchases.job._id);
 
@@ -235,6 +238,9 @@ test('Serviços 9000: totais por enquadramento, separação de mercadorias e pre
     assert.deepEqual(source.fields, {salesOptantCents: 10000, salesNonOptantCents: 20500, salesCpfCents: 39000, serviceRevenueCents: 210021,
       purchasesOptantCents: 0, purchasesNonOptantCents: 4500});
     assert.equal(source.sales.servicesTotalCents, 210021); assert.deepEqual(source.sales.operationTotals, summary.operationTotals);
+    assert.equal(source.operationAudit.salesReturnsCents,1000,'A receita deduz a devolução de venda 1202 do relatório de compras.');
+    assert.equal(source.operationAudit.excludedSalesCents,1000,'A devolução de compra 6202 no relatório de vendas não compõe a receita.');
+    assert.equal(source.purchases.totalCents,5500);assert.equal(source.purchases.selectedTotalCents,4500);
     assert.equal(source.sales.totalCents, 279521); assert.equal(source.projection?.totals.sales.totalCents, 279521);
     assert.equal(source.projection?.totals.sales.totalCents, 279521);
     assert.equal(source.projection?.groups.reduce((sum, group) => sum + (group.key.startsWith('sales') || group.key === 'serviceRevenueCents' ? group.totalCents : 0), 0), 279521);
@@ -245,8 +251,8 @@ test('Serviços 9000: totais por enquadramento, separação de mercadorias e pre
     await uploadLookup(actor, negativeSales.job._id, {offset: 0, rows: [row('12345678900', '900001', 5000), row('12345678900', '6202', 1000)]});
     await finalizeLookup(actor, negativeSales.job._id);
     const negativePurchases = await attachGenerationPurchase(actor, negative._id, {clientId, importId: randomUUID(), fileName: 'compras-sinteticas.csv', expectedRows: 1});
-    await uploadLookup(actor, negativePurchases.job._id, {offset: 0, rows: [row('12345678900', '', 0)]}); await finalizeLookup(actor, negativePurchases.job._id);
-    await assert.rejects(generationSimulator(negative._id, clientId), (error: any) => error.code === 'SIMULATOR_NEGATIVE_SALES' && /mercadorias.*serviços/.test(error.message));
+    await uploadLookup(actor, negativePurchases.job._id, {offset: 0, rows: [row('12345678900', '1202', 1000)]}); await finalizeLookup(actor, negativePurchases.job._id);
+    await assert.rejects(generationSimulator(negative._id, clientId), (error: any) => error.code === 'SIMULATOR_NEGATIVE_SALES' && /devoluções.*mercadorias/.test(error.message));
   } finally {
     await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
     if (oldDb === undefined) delete process.env.MONGODB_DB; else process.env.MONGODB_DB = oldDb;

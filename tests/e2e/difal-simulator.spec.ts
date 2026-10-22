@@ -89,7 +89,7 @@ test('DIFAL projetado entra na DRE anual e mensal sem alterar a receita importad
   await page.locator('#rbt12-manual').click();await page.locator('#rbt12').fill('15600');await page.locator('#rbt12-manual-confirm').check();
   for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill('0');
   await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
-  const annual=page.locator('.sim-dre tbody tr').filter({hasText:'DIFAL estimado'});
+  const annual=page.locator('.sim-dre tbody tr').filter({hasText:'DIFAL sobre vendas'});
   await expect(annual).toHaveCount(1);for(const cell of await annual.locator('td').allTextContents())expect(cell).toContain('90,00');
   await expect(page.locator('#annual-revenue')).toContainText('7.800,00');expect(posted.draft.values.salesRevenue).toBe(650);
   await page.getByRole('button',{name:'Mensal',exact:true}).click();const monthly=page.locator('[data-dre-row="difal"]');
@@ -105,6 +105,6 @@ test('histórico novo conserva a projeção DIFAL salva em vez de recalcular a e
   await setup(page);await page.route('**/api/v4/simulations/'+saved._id,r=>r.fulfill({json:saved}));
   await page.goto('/simulator.html?simulation='+saved._id);
   await expect(page.locator('[data-difal-monthly]')).toContainText('15,00');await expect(page.locator('[data-difal-annual]')).toContainText('180,00');
-  await expect(page.locator('.sim-dre')).toContainText('DIFAL estimado');await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');
+  await expect(page.locator('.sim-dre')).toContainText('DIFAL sobre vendas');await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');
   await page.getByRole('button',{name:'Mensal',exact:true}).click();await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('999,00');
 });
