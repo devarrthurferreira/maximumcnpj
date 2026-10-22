@@ -25,12 +25,15 @@ test('incomplete RBT12 window is explicitly pending and never displayed as zero'
 });
 
 test('anticipation shows source estimate distinctly from the amount applied by regime and sublimit',()=>{
-  const reports=[{sourceMonth:'2025-01',anticipation:{issuerUf:'MG',baseCents:320_000,amountCents:23424,eligibleLines:2,pendingLines:0}},
-    {sourceMonth:'2025-02',anticipation:{issuerUf:'MG',baseCents:0,amountCents:0,eligibleLines:0,pendingLines:1}}];
+  const reports=[{sourceMonth:'2025-01',anticipation:{version:'ICMS_ANTICIPATION_V2',issuerUf:'MG',baseCents:320_000,amountCents:23424,eligibleLines:2,pendingLines:0}},
+    {sourceMonth:'2025-02',anticipation:{version:'ICMS_ANTICIPATION_V2',issuerUf:'MG',baseCents:0,amountCents:0,eligibleLines:0,pendingLines:1}}];
   const html=renderAnticipationSource({reports,row:reports[1],adjusted:true});
   assert.match(html,/data-anticipation-monthly>Pendente/);assert.match(html,/Estimativa do período importado/);
   assert.match(html,/R\$\s234,24/);assert.match(html,/Simples puro e híbrido/);assert.match(html,/sublimite alcançado/);
   assert.match(html,/Estimativa parcial: 1 linhas aguardam UF/);assert.match(html,/data-anticipation-adjusted/);
+  assert.match(html,/compras interestaduais com CPF/);
+  const legacy=renderAnticipationSource({reports:reports.map(row=>({...row,anticipation:{...row.anticipation,version:'ICMS_ANTICIPATION_V1'}}))});
+  assert.match(legacy,/regra histórica salva/);assert.doesNotMatch(legacy,/compras interestaduais com CPF/);
   assert.equal(renderAnticipationSource({reports:[{sourceMonth:'2025-01'}]}),'');
 });
 

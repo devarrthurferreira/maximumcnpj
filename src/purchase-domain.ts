@@ -1,3 +1,4 @@
+import {calculateAnticipation,isAnticipationVersion,isPendingAnticipation,ANTICIPATION_RATE_PERCENT,type AnticipationResult} from './icms-anticipation.ts';
 import { calculateDifal, isPendingDifal, normalizeUf, normalizeNatureCode, salesOperation, DIFAL_VERSION, DIFAL_PREVIOUS_VERSION, isDifalVersion, DIFAL_RATE_PERCENT, type SalesOperation, type DifalResult } from './difal.ts';
 import { normalizeCnpj, csvEncode } from './domain.ts';
 import { documentKind } from './lookup-domain.ts';
@@ -56,10 +57,10 @@ export function sameReportPeriod(left: any, right: any) {
 }
 export type PurchaseLine = Partial<Omit<PurchaseComponents, 'totalCents'>> & {
   document: string; documentKind: string; cnpj: string; name: string; serviceDate: string | null; quantity: string;
-  totalCents: number; balanceCents?: number; natureCode?: string; description?: string; operation?: SalesOperation; natureOperation?: CatalogOperation; operationVersion?: typeof OPERATION_CATALOG_VERSION; recipientUf?: string; difal?: DifalResult; valid: boolean; kind: 'FORNECEDOR' | 'CLIENTE'; uf: ''; reason: string | null; documentHint: string;
+  totalCents: number; balanceCents?: number; natureCode?: string; description?: string; operation?: SalesOperation; natureOperation?: CatalogOperation; operationVersion?: typeof OPERATION_CATALOG_VERSION; recipientUf?: string; difal?: DifalResult; anticipation?: AnticipationResult; valid: boolean; kind: 'FORNECEDOR' | 'CLIENTE'; uf: ''; reason: string | null; documentHint: string;
 };
 /** Browser parsing is only a convenience: the server validates the reduced financial payload. */
-export function compactPurchaseLine(input: any, version: PurchaseCalculationVersion = PURCHASE_CALCULATION_VERSION, mode: FinancialMode = PURCHASE_MODE, difalContext?: {issuerUf?: unknown; difalVersion?: unknown; operationVersion?: unknown}): PurchaseLine {
+export function compactPurchaseLine(input: any, version: PurchaseCalculationVersion = PURCHASE_CALCULATION_VERSION, mode: FinancialMode = PURCHASE_MODE, difalContext?: {issuerUf?: unknown; difalVersion?: unknown; operationVersion?: unknown; anticipationVersion?: unknown}): PurchaseLine {
   need(isFinancialMode(mode), 'Tipo de relatório inválido.');
   need(mode !== SALES_MODE || version === 'NET_V2', 'Relatório de vendas requer a fórmula Q - Y + AA - AB.', 409, 'PURCHASE_VERSION');
   need(input && typeof input === 'object' && !Array.isArray(input), 'Linha financeira inválida.');
@@ -90,6 +91,11 @@ export function compactPurchaseLine(input: any, version: PurchaseCalculationVers
     // Only the server's job version selects this contract. Never accept a browser-supplied classification.
     Object.assign(salesFields, {natureCode, description, recipientUf: normalizeUf(input.recipientUf),
       natureOperation: classifyOperationNature(natureCode), operationVersion: OPERATION_CATALOG_VERSION});
+  }
+  if(mode===PURCHASE_MODE&&difalContext?.anticipationVersion!==undefined){
+    need(version==='NET_V2'&&isAnticipationVersion(difalContext.anticipationVersion),'Versão da antecipação de ICMS desconhecida.',409,'ANTICIPATION_VERSION');
+    const natureCode=normalizeOperationNature(input.natureCode),recipientUf=normalizeUf(input.recipientUf);
+    Object.assign(salesFields,{natureCode,recipientUf,anticipation:calculateAnticipation({...input,natureCode,recipientUf,issuerUf:difalContext.issuerUf},difalContext.anticipationVersion)});
   }
   if (mode === SALES_MODE) {
     const rawNatureCode = String(input.natureCode ?? '').trim(), natureCode = normalizeNatureCode(rawNatureCode), description = String(input.description ?? '').trim();
@@ -175,11 +181,11 @@ export function moneyText(cents: number): string {
 export function purchaseCsv(job: any, rows: any[]): string {
   const version = calculationVersion(job), net = version === 'NET_V2', sales = job.mode === SALES_MODE;
   return csvEncode([
-    ['Código da empresa', 'Empresa', 'Consulta', 'Arquivo', 'Conclusão', 'Linha importada', 'Data Escrituração/Serviço (H)', sales ? 'Documento do comprador (A)' : 'Documento do fornecedor (A)', 'Tipo de documento', sales ? 'Comprador (I)' : 'Razão social informada (I)', 'Natureza / CFOP', 'Descrição da operação', 'Operação', sales ? 'Quantidade (P) — opcional' : 'Quantidade (P)', 'Valor bruto Q (R$)', 'Desconto Y (R$)', 'Despesa acessória Z — informativa (R$)', 'Frete AA (R$)', 'Abatimento AB (R$)', 'Total calculado (R$)', 'Saldo da operação (R$)', 'Fórmula', 'Versão do cálculo', 'Grupo gerencial', 'Situação Simples na fonte', 'Data da consulta', 'Fonte', ...(sales ? ['UF emitente', 'UF destinatário (J)', 'DIFAL estimado — alíquota média (%)', 'Base DIFAL (R$)', 'DIFAL estimado (R$)', 'Situação DIFAL', 'Versão DIFAL'] : ['UF fornecedor (J)']), 'Versão do catálogo de naturezas'],
+    ['Código da empresa', 'Empresa', 'Consulta', 'Arquivo', 'Conclusão', 'Linha importada', 'Data Escrituração/Serviço (H)', sales ? 'Documento do comprador (A)' : 'Documento do fornecedor (A)', 'Tipo de documento', sales ? 'Comprador (I)' : 'Razão social informada (I)', 'Natureza / CFOP', 'Descrição da operação', 'Operação', sales ? 'Quantidade (P) — opcional' : 'Quantidade (P)', 'Valor bruto Q (R$)', 'Desconto Y (R$)', 'Despesa acessória Z — informativa (R$)', 'Frete AA (R$)', 'Abatimento AB (R$)', 'Total calculado (R$)', 'Saldo da operação (R$)', 'Fórmula', 'Versão do cálculo', 'Grupo gerencial', 'Situação Simples na fonte', 'Data da consulta', 'Fonte', ...(sales ? ['UF emitente', 'UF destinatário (J)', 'DIFAL estimado — alíquota média (%)', 'Base DIFAL (R$)', 'DIFAL estimado (R$)', 'Situação DIFAL', 'Versão DIFAL'] : ['UF estabelecimento comprador', 'UF fornecedor (J)', 'Antecipação de ICMS — alíquota média (%)', 'Base antecipação de ICMS (R$)', 'Antecipação de ICMS (R$)', 'Situação antecipação de ICMS', 'Versão antecipação de ICMS']), 'Versão do catálogo de naturezas'],
     ...rows.map(row => [job.clientCode || '', job.clientName, job._id, job.fileName, job.completedAt?.toISOString?.() || job.completedAt || '', row.index + 1, row.serviceDate || '',
       row.document, row.documentKind, row.name, row.natureCode || '', row.description || '', row.natureOperation || row.operation || '', row.quantity, moneyText(net ? row.grossCents : row.totalCents),
       ...['discountCents', 'accessoryCents', 'freightCents', 'abatementCents'].map(field => net ? moneyText(row[field]) : ''),
       moneyText(row.totalCents), moneyText(row.balanceCents ?? row.totalCents), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,
-      row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado', ...(sales ? (isDifalVersion(job.difalVersion) ? [job.issuerUf || '', row.recipientUf || '', DIFAL_RATE_PERCENT, isPendingDifal(row.difal) ? '' : moneyText(row.difal.baseCents), isPendingDifal(row.difal) ? '' : moneyText(row.difal.amountCents), isPendingDifal(row.difal) ? (row.difal.reason === 'MISSING_ISSUER_UF' ? 'Pendente — UF do emitente ausente' : 'Pendente — UF do destinatário ausente') : row.difal.reason, job.difalVersion] : ['', '', '', '', '', 'Indisponível — reimporte as vendas', '']) : [row.recipientUf || '']), row.operationVersion || ''])
+      row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado', ...(sales ? (isDifalVersion(job.difalVersion) ? [job.issuerUf || '', row.recipientUf || '', DIFAL_RATE_PERCENT, isPendingDifal(row.difal) ? '' : moneyText(row.difal.baseCents), isPendingDifal(row.difal) ? '' : moneyText(row.difal.amountCents), isPendingDifal(row.difal) ? (row.difal.reason === 'MISSING_ISSUER_UF' ? 'Pendente — UF do emitente ausente' : 'Pendente — UF do destinatário ausente') : row.difal.reason, job.difalVersion] : ['', '', '', '', '', 'Indisponível — reimporte as vendas', '']) : (isAnticipationVersion(job.anticipationVersion) ? [job.issuerUf || '', row.recipientUf || '', ANTICIPATION_RATE_PERCENT, isPendingAnticipation(row.anticipation) ? '' : moneyText(row.anticipation.baseCents), isPendingAnticipation(row.anticipation) ? '' : moneyText(row.anticipation.amountCents), isPendingAnticipation(row.anticipation) ? (row.anticipation.reason === 'MISSING_ISSUER_UF' ? 'Pendente — UF do estabelecimento ausente' : 'Pendente — UF do fornecedor ausente') : row.anticipation.reason, job.anticipationVersion] : [job.issuerUf || '', row.recipientUf || '', '', '', '', 'Indisponível — reimporte as compras', ''])), row.operationVersion || ''])
   ]);
 }

@@ -456,6 +456,23 @@ class PurchaseMongoTests(unittest.TestCase):
         with self.assertRaises(ReportError):
             purchase_metadata(self.db, job, WORKSPACE)
 
+    def test_anticipation_survives_database_projection_and_rejects_tampering(self):
+        from anticipation_report_test import anticipation_fixture
+        from reporting.purchases import purchase_metadata
+        job, lines, _ = anticipation_fixture()
+        job['_id'] = str(uuid.uuid4())
+        for row in lines:
+            row.update(_id=f'{job["_id"]}:{row["index"]}', jobId=job['_id'])
+        self.db.lookupJobs.insert_one(job)
+        self.db.purchaseLines.insert_many(lines)
+        meta = purchase_metadata(self.db, job, WORKSPACE)
+        self.assertEqual(meta['anticipation']['amountCents'], 732)
+        self.assertEqual(meta['totalCents'], 10000)
+        self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+        self.db.purchaseLines.update_one({'_id': lines[0]['_id']}, {'$set': {'anticipation.amountCents': 733}})
+        with self.assertRaises(ReportError):
+            purchase_metadata(self.db, job, WORKSPACE)
+
     def test_large_bson_doubles_survive_database_read_and_pdf_render(self):
         from reporting.purchases import purchase_metadata
         from reporting.service import get_job

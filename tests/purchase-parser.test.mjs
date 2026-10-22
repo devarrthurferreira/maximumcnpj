@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {amountCents, decimal, decodePurchaseCsv, parsePurchaseMatrix, fiscalDate} from '../public/purchase-parser.js';
 import {OPERATION_CATALOG_VERSION} from '../public/operation-catalog.js';
 import {DIFAL_VERSION} from '../public/difal.js';
+import {ANTICIPATION_VERSION, ANTICIPATION_LEGACY_VERSION} from '../public/icms-anticipation.js';
 
 const header = Array(28).fill('');
 for (const [index,label] of [[0,'Documento'],[7,'Data Escrituração/Serviço'],[8,'Razão social'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']]) header[index] = label;
@@ -313,6 +314,32 @@ test('compras usam catálogo e primeiros quatro dígitos sem mudar total ou infe
   for (const value of historic.rows) for (const key of ['natureCode','description','recipientUf','natureOperation','operationVersion']) assert.equal(key in value,false);
   assert.equal(historic.totalCents,63700);
   assert.throws(()=>parsePurchaseMatrix([header,...inputs],0,{operationVersion:'UNKNOWN'}),/catálogo/);
+});
+
+test('antecipação de compras usa 7,32% somente para CPF interestadual e deixa pendências explícitas', () => {
+  const purchase=(document='123.456.789-00',uf='SP',nature='2102001')=>{
+    const input=row(document,'Fornecedor sintético','1','150,00'); input[9]=uf; input[11]=nature;
+    input[24]='10,00'; input[25]='900,00'; input[26]='2,00'; input[27]='1,00'; return input;
+  };
+  const inputs=[purchase(),purchase('11222333000181'),purchase('123456789012'),purchase(''),purchase('12345678900','MG'),
+    purchase('12345678900','','2102'),purchase('12345678900','SP','1202'),purchase('12345678900','SP','8000102')];
+  const report=parsePurchaseMatrix([header,...inputs],0,{issuerUf:'MG'});
+  assert.deepEqual(report.errors,[]);
+  assert.deepEqual(report.rows.map(value=>value.anticipation.reason),['ELIGIBLE','NOT_CPF','NOT_CPF','NOT_CPF','SAME_UF','MISSING_RECIPIENT_UF','NOT_PURCHASE','ELIGIBLE']);
+  assert.equal(report.rows[0].totalCents,14100); assert.equal(report.rows[0].anticipation.amountCents,1032);
+  assert.equal(report.totalCents,112800); assert.equal(report.components.accessoryCents,720000);
+  assert.deepEqual(report.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:2,baseCents:28200,amountCents:2064,pendingLines:1});
+  const missing=parsePurchaseMatrix([header,purchase()],0,{});
+  assert.equal(missing.anticipation.pendingLines,1); assert.equal(missing.rows[0].anticipation.reason,'MISSING_ISSUER_UF');
+  assert.equal(parsePurchaseMatrix([header,purchase('11222333000181')]).anticipation.pendingLines,0);
+  const historical=parsePurchaseMatrix([header,purchase('11222333000181')],0,{issuerUf:'MG',anticipationVersion:ANTICIPATION_LEGACY_VERSION});
+  assert.equal(historical.rows[0].anticipation.amountCents,1032); assert.equal(historical.anticipation.version,ANTICIPATION_LEGACY_VERSION);
+  const legacy=parsePurchaseMatrix([header,purchase()],0,{issuerUf:'MG',anticipationVersion:null});
+  assert.equal(legacy.anticipation,null); assert.equal('anticipation' in legacy.rows[0],false);
+  const legacyCatalog=parsePurchaseMatrix([header,purchase()],0,{issuerUf:'MG',operationVersion:null});
+  assert.equal(legacyCatalog.anticipation,null); assert.equal('anticipation' in legacyCatalog.rows[0],false);
+  assert.equal('anticipation' in parsePurchaseMatrix([header,purchase()],0,{type:'SALES'}),false);
+  assert.throws(()=>parsePurchaseMatrix([header,purchase()],0,{anticipationVersion:'UNKNOWN'}),/antecipação/);
 });
 
 

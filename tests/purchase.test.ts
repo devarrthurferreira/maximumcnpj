@@ -64,7 +64,7 @@ test('Compras preservam natureza e UF; catálogo é rederivado no servidor sem a
   const returned = compactPurchaseLine({...row,natureCode:'1202001',description:'Devolução de venda',recipientUf:'RJ'},'NET_V2',PURCHASE_MODE,context);
   const csv = purchaseCsv({mode:PURCHASE_MODE,calculationVersion:'NET_V2',_id:'catalog',clientName:'Empresa',fileName:'compras.csv'},[{...returned,index:0,status:'NAO_OPTANTE'}]);
   assert(csv.includes('"1202";"Devolução de venda";"DEVOLUCAO_VENDA"'));
-  assert(csv.includes('"RJ";"NATURE_OPERATIONS_2026_10_V1"')); assert(csv.includes('"10,50";"10,50"'));
+  assert(csv.includes('"RJ"'));assert(csv.includes('Indisponível — reimporte as compras'));assert(csv.includes('"NATURE_OPERATIONS_2026_10_V1"')); assert(csv.includes('"10,50";"10,50"'));
 });
 
 test('Retomada de compras sem versão de catálogo preserva o payload histórico', () => {

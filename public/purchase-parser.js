@@ -3,6 +3,7 @@ import {csvParse, MAX_ROWS, MAX_COLUMNS, normalizeCnpj} from './domain.js';
 import {documentKind} from './lookup-domain.js';
 import {calculateDifal, normalizeUf, salesOperation, summarizeDifal, DIFAL_VERSION, DIFAL_PREVIOUS_VERSION, isDifalVersion} from './difal.js';
 import {classifyOperationNature, normalizeOperationNature, OPERATION_CATALOG_VERSION} from './operation-catalog.js';
+import {ANTICIPATION_VERSION, isAnticipationVersion, calculateAnticipation, summarizeAnticipation} from './icms-anticipation.js';
 
 export function decimal(value, places, field) {
   if (typeof value === 'number') {
@@ -144,6 +145,9 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   if (difalEnabled && !isDifalVersion(difalVersion)) throw new Error('Versão do DIFAL desconhecida.');
   const catalogEnabled = net && options.operationVersion !== null && !(type === 'SALES' && options.difalVersion === null && options.operationVersion === undefined);
   if (catalogEnabled && options.operationVersion !== undefined && options.operationVersion !== OPERATION_CATALOG_VERSION) throw new Error('Versão do catálogo de naturezas desconhecida.');
+  const anticipationEnabled = type === 'PURCHASES' && catalogEnabled && options.anticipationVersion !== null;
+  const anticipationVersion = options.anticipationVersion ?? ANTICIPATION_VERSION;
+  if (anticipationEnabled && !isAnticipationVersion(anticipationVersion)) throw new Error('Versão da antecipação de ICMS desconhecida.');
   if (!Number.isInteger(headerIndex) || headerIndex < 0 || headerIndex > 20) throw new Error('Escolha a linha de cabeçalho entre 1 e 21.');
   const header = matrix[headerIndex] || [], required = net ? [0,7,8,16,24,25,26,27] : [0,8,16];
   if (header.length < (net ? 28 : 17) || required.some(index => !String(header[index] ?? '').trim())) throw new Error(`O relatório precisa conter cabeçalhos nas colunas ${net ? 'A, H, I, Q, Y, Z, AA e AB' : 'A, I e Q'}. Confira a aba e o cabeçalho.`);
@@ -198,7 +202,8 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       rows.push(type === 'SALES'
         ? {document, name, serviceDate, quantity, natureCode, description, operation, balanceCents:lineBalanceCents, ...financial, ...natureFields,
             ...(difalEnabled ? {recipientUf,difal:calculateDifal({document,natureCode,description,operation,recipientUf,issuerUf:options.issuerUf,totalCents:cents}, difalVersion)} : {})}
-        : {document, name, serviceDate, quantity, ...financial, ...natureFields});
+        : {document, name, serviceDate, quantity, ...financial, ...natureFields,
+            ...(anticipationEnabled ? {anticipation:calculateAnticipation({document,natureCode,recipientUf,issuerUf:options.issuerUf,totalCents:cents}, anticipationVersion)} : {})});
       if (repaired) repairs.push({line:sourceLine, descriptionSeparators:repaired.descriptionSeparators,
         reason:'Separadores extras da descrição (O) recompostos; colunas P a AD realinhadas com os valores originais.'});
     } catch (error) { errors.push({line:sourceLine, message:error.message}); }
@@ -207,7 +212,7 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   if (!errors.length && rows.length && net) {
     try { period = fiscalPeriod(rows); } catch (error) { errors.push({line:headerIndex + 1, message:error.message}); }
   }
-  return {...(type === 'SALES' ? {difal:difalEnabled ? summarizeDifal(rows, options.issuerUf, difalVersion) : null} : {}), rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, balanceCents:type === 'SALES' ? balanceCents : totalCents, operations:type === 'SALES' ? operations : null, components, period, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
+  return {...(type === 'SALES' ? {difal:difalEnabled ? summarizeDifal(rows, options.issuerUf, difalVersion) : null} : {anticipation:anticipationEnabled ? summarizeAnticipation(rows, options.issuerUf, anticipationVersion) : null}), rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, balanceCents:type === 'SALES' ? balanceCents : totalCents, operations:type === 'SALES' ? operations : null, components, period, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
 }
 
 export function decodePurchaseCsv(buffer, encoding = 'auto') {

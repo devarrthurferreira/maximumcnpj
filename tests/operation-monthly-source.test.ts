@@ -19,7 +19,7 @@ test('catálogo seleciona receita e compras, devolução de venda vem somente de
   assert.equal(months.length,2);assert(months.every(month=>month.operationVersion===OPERATION_CATALOG_VERSION));
   assert.deepEqual(months[0].fields,{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:95000,purchasesOptantCents:0,purchasesNonOptantCents:58000,serviceRevenueCents:20000});
   assert.equal(months[1].fields.purchasesNonOptantCents,10001);
-  assert.deepEqual(months[0].anticipation,{version:'ICMS_ANTICIPATION_V1',ratePercent:7.32,issuerUf:'MG',eligibleLines:2,baseCents:50000,amountCents:3660,pendingLines:1});
+  assert.deepEqual(months[0].anticipation,{version:'ICMS_ANTICIPATION_V2',ratePercent:7.32,issuerUf:'MG',eligibleLines:2,baseCents:50000,amountCents:3660,pendingLines:1});
   assert.equal(months[1].anticipation.amountCents,732);
   assert.equal(months[0].difal.amountCents,10000,'Operação antiga OUTRAS não substitui VENDA do catálogo.');
   assert.equal(months[0].difal.eligibleLines,1);
@@ -44,8 +44,23 @@ test('devoluções mantêm CPF e enquadramento consultado, sem converter ausênc
   const month=selectOperationMonths(purchases,sales,'MG')![0];
   assert.equal(month.fields.salesOptantCents,17000);assert.equal(month.fields.salesNonOptantCents,3000);
   assert.equal(month.fields.salesCpfCents,10000);assert.equal(month.fields.purchasesNonOptantCents,1000);
+  assert.equal(month.anticipation.amountCents,0);assert.equal(month.anticipation.eligibleLines,0);
   assert.equal(statuses.get('11111111000191'),'NAO_CONFIRMADO');
   assert.throws(()=>selectOperationMonths({...purchases,statuses:new Map()},sales,'MG'),(error:any)=>error.code==='SIMULATION_MONTHS');
+});
+
+test('compras sem CPF conservam custos, mas não compõem a antecipação nem pendências de UF',()=>{
+  const purchases=report([
+    row('2102',10000),row('8000102',20000,{document:'123.456.789-00'}),
+    row('2102',30000,{document:'00000000000191',cnpj:'00000000000191',documentKind:'CNPJ',valid:true,recipientUf:''}),
+    ...['123456789012','','12345'].map(document=>row('2102',1000,{document,documentKind:'INVALID',recipientUf:''})),
+    row('2102',2000,{recipientUf:''}),row('2102',4000,{recipientUf:'MG'}),row('2202',500)
+  ],new Map([['00000000000191','OPTANTE']]));
+  const month=selectOperationMonths(purchases,report([row('6102',100000)]),'MG')![0];
+  assert.equal(month.fields.purchasesOptantCents+month.fields.purchasesNonOptantCents,69000);
+  assert.equal(month.fields.salesCpfCents,99500);
+  assert.deepEqual(month.anticipation,{version:'ICMS_ANTICIPATION_V2',ratePercent:7.32,issuerUf:'MG',eligibleLines:2,baseCents:30000,amountCents:2196,pendingLines:1});
+  assert.equal(month.difal.amountCents,10000);
 });
 
 test('natureza ausente bloqueia cálculo novo e UFs ausentes permanecem pendentes',()=>{

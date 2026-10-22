@@ -22,6 +22,8 @@ from .brand import draw_brand_header
 from .core import VERSION, display_date, number, percent, require, utcnow, snapshot_source
 from .difal import DIFAL_VERSIONS, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
 from .operation_catalog import OPERATION_CATALOG_VERSION, classify_operation_nature, normalize_operation_nature
+from .anticipation import (ANTICIPATION_VERSION, ANTICIPATION_VERSIONS, ANTICIPATION_RATE_PERCENT,
+                           ANTICIPATION_PENDING_REASONS, calculate_anticipation)
 
 PURCHASES_MODE = 'PURCHASES_V1'
 SALES_MODE = 'SALES_V1'
@@ -158,12 +160,19 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     _check(operation_version is None or operation_version == OPERATION_CATALOG_VERSION)
     summary, financial = job.get('summary') or {}, job.get('purchaseInput') or {}
     difal = None
+    anticipation = None
     if sales and 'difalVersion' in job:
         _check(job['difalVersion'] in DIFAL_VERSIONS)
         issuer_uf = job.get('issuerUf')
         _check(isinstance(issuer_uf, str) and issuer_uf == normalize_uf(issuer_uf))
         difal = {'version': job['difalVersion'], 'ratePercent': DIFAL_RATE_PERCENT, 'issuerUf': issuer_uf,
                  'eligibleLines': 0, 'baseCents': 0, 'amountCents': 0, 'pendingLines': 0}
+    if not sales and 'anticipationVersion' in job:
+        _check(job['anticipationVersion'] in ANTICIPATION_VERSIONS)
+        issuer_uf = job.get('issuerUf')
+        _check(isinstance(issuer_uf, str) and issuer_uf == normalize_uf(issuer_uf))
+        anticipation = {'version': job['anticipationVersion'], 'ratePercent': ANTICIPATION_RATE_PERCENT,
+                        'issuerUf': issuer_uf, 'eligibleLines': 0, 'baseCents': 0, 'amountCents': 0, 'pendingLines': 0}
     components = {key: 0 for key in (*COMPONENT_FIELDS, 'totalCents')} if version == 'NET_V2' else None
     expected = _integer(job.get('expectedRows'), 50_000)
     _check(expected > 0 and _integer(job.get('uploaded')) == expected)
@@ -222,6 +231,19 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
                 difal[key] = _integer(difal[key] + expected_difal[key])
             difal['eligibleLines'] += int(expected_difal['eligible'])
             difal['pendingLines'] += int(expected_difal['reason'] in PENDING_REASONS)
+        if anticipation is not None:
+            _check(isinstance(row.get('recipientUf'), str) and row['recipientUf'] == normalize_uf(row['recipientUf']) and
+                   isinstance(row.get('natureCode'), str) and row['natureCode'] == normalize_operation_nature(row['natureCode']))
+            expected_anticipation = calculate_anticipation(row, anticipation['issuerUf'], anticipation['version'])
+            stored_anticipation = row.get('anticipation')
+            _check(isinstance(stored_anticipation, dict) and type(stored_anticipation.get('eligible')) is bool and
+                   stored_anticipation['eligible'] == expected_anticipation['eligible'] and
+                   stored_anticipation.get('reason') == expected_anticipation['reason'])
+            for key in ('baseCents', 'amountCents'):
+                _check(_integer(stored_anticipation.get(key)) == expected_anticipation[key])
+                anticipation[key] = _integer(anticipation[key] + expected_anticipation[key])
+            anticipation['eligibleLines'] += int(expected_anticipation['eligible'])
+            anticipation['pendingLines'] += int(expected_anticipation['reason'] in ANTICIPATION_PENDING_REASONS)
         operation = row.get('operation') if sales else None
         if sales:
             operation = operation if operation in operation_totals else 'OUTRAS'
@@ -275,6 +297,13 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
                stored_difal.get('issuerUf') == difal['issuerUf'])
         for key in ('ratePercent', 'eligibleLines', 'baseCents', 'amountCents', 'pendingLines'):
             _check(_integer(stored_difal.get(key)) == difal[key])
+    if anticipation is not None:
+        stored_anticipation = financial.get('anticipation')
+        _check(isinstance(stored_anticipation, dict) and stored_anticipation.get('version') == anticipation['version'] and
+               stored_anticipation.get('issuerUf') == anticipation['issuerUf'] and
+               stored_anticipation.get('ratePercent') == ANTICIPATION_RATE_PERCENT)
+        for key in ('eligibleLines', 'baseCents', 'amountCents', 'pendingLines'):
+            _check(_integer(stored_anticipation.get(key)) == anticipation[key])
     groups = {status: {'status': status, 'label': label, 'suppliers': 0, 'lines': 0, 'totalCents': 0}
               for status, label in GROUP_LABELS.items()}
     seen, checks, sources = set(), [], set()
@@ -352,6 +381,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             'reportingGroups': reporting_groups, 'managerialGroups': managerial_groups,
             'unconfirmed': unknown, 'components': components, 'operationTotals': list(operation_totals.values()) if sales else [], 'calculationVersion': version,
             'difal': difal,
+            'anticipation': anticipation,
             'operationVersion': operation_version,
             'natureTotals': [nature_totals[code] for code in sorted(nature_totals)] if operation_version else None,
             'quantityDisplay': quantity_text.replace('.', ','), 'generatedAt': utcnow(), 'sources': sorted(sources),
@@ -364,7 +394,7 @@ def purchase_metadata(db, job, workspace):
     lines = db.purchaseLines.find(query, {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'index': 1, 'document': 1,
                                         'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'operation': 1, 'balanceCents': 1, 'totalCents': 1, 'valid': 1, 'kind': 1,
                                         'natureCode': 1, 'description': 1, 'recipientUf': 1, 'difal': 1,
-                                        'natureOperation': 1, 'operationVersion': 1,
+                                        'natureOperation': 1, 'operationVersion': 1, 'anticipation': 1,
                                         **{key: 1 for key in COMPONENT_FIELDS}})
     lines = lines.limit(50_001).batch_size(500).max_time_ms(20000)
     items = db.lookupItems.aggregate([
@@ -447,6 +477,8 @@ def purchase_story(meta, width, styles):
     story += [purchase_table(rows, (.24, .12, .16, .08, .24, .16), width, styles, True), Spacer(1, 6)]
     if sales:
         story += difal_story(meta.get('difal'), width, styles)
+    else:
+        story += anticipation_story(meta.get('anticipation'), width, styles)
     if sales and meta.get('operationTotals'):
         operation_labels = {'VENDA':'Vendas','SERVICO':'Vendas de serviços','DEVOLUCAO':'Devoluções','OUTRAS':'Outras'}
         operation_rows = [['Operação','Linhas','Valor antes do sinal','Impacto no saldo']]
@@ -528,6 +560,34 @@ def difal_story(difal, width, styles):
                    'Este relatório mostra o total do período importado, sem alterar o total de vendas. '
                    'Nas novas simulações, cada competência usa as vendas daquele mês, e o total anual soma '
                    'as competências calculadas. O DIFAL sobre vendas aparece em linha própria na DRE.', 'small'))
+    return story
+
+
+def anticipation_story(anticipation, width, styles):
+    """Show the reconciled purchase estimate without changing the purchase base."""
+    p = lambda value, style='body': purchase_paragraph(value, styles, style)
+    story = [p('Antecipação de ICMS (7,32%)', 'heading')]
+    if anticipation is None:
+        return story + [p('Indisponível neste histórico: o snapshot foi criado antes do cálculo da antecipação de ICMS. '
+                          'Reimporte as compras para calcular a estimativa com o documento e as UFs da operação.', 'small')]
+    rows = [['UF da empresa', 'Linhas elegíveis', 'Base elegível', 'Antecipação de ICMS (7,32%)'],
+            [anticipation['issuerUf'] or 'Não informada', number(anticipation['eligibleLines']),
+             money(anticipation['baseCents']), money(anticipation['amountCents'])]]
+    story += [purchase_table(rows, (.20, .20, .30, .30), width, styles), Spacer(1, 4)]
+    if anticipation['pendingLines']:
+        story.append(p(f'Estimativa parcial: {number(anticipation["pendingLines"])} linhas pendentes por UF da empresa '
+                       'ou do fornecedor ausente. Essas linhas não integram a base nem o valor acima.', 'small'))
+    if anticipation['version'] == ANTICIPATION_VERSION:
+        story.append(p('Somente compras interestaduais com fornecedor identificado por CPF de 11 dígitos. '
+                       'CNPJs, CNOs, documentos ausentes ou inválidos não integram esta base. '
+                       'Naturezas consideradas: operações de compra do catálogo e serviços de prefixo 8000.', 'small'))
+    else:
+        story.append(p('Regra histórica V1 preservada: compras interestaduais do catálogo e serviços 8000, '
+                       'sem a restrição posterior a CPF. Este snapshot não foi recalculado.', 'small'))
+    story.append(p('Parâmetro gerencial de 7,32%, sem equivalência automática à alíquota legal. '
+                   'Base = total registrado da compra; arredondamento por linha em centavos e soma uma única vez. '
+                   'Este valor fica separado do total de compras. Na DRE, a antecipação é aplicada somente ao Simples puro '
+                   'e híbrido, sem cobrança nas competências em que o sublimite estiver alcançado.', 'small'))
     return story
 
 
