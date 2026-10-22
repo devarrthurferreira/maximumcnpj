@@ -473,6 +473,28 @@ class PurchaseMongoTests(unittest.TestCase):
         with self.assertRaises(ReportError):
             purchase_metadata(self.db, job, WORKSPACE)
 
+    def test_old_purchase_report_derives_anticipation_without_writing_the_database(self):
+        from anticipation_report_test import derivable_fixture
+        from reporting.purchases import purchase_metadata
+        job, lines, _ = derivable_fixture()
+        job['_id'] = str(uuid.uuid4())
+        for row in lines:
+            row.update(_id=f'{job["_id"]}:{row["index"]}', jobId=job['_id'])
+        self.db.lookupJobs.insert_one(job)
+        self.db.purchaseLines.insert_many(lines)
+        frozen_job = self.db.lookupJobs.find_one({'_id': job['_id']})
+        frozen_row = self.db.purchaseLines.find_one({'_id': lines[0]['_id']})
+        meta = purchase_metadata(self.db, frozen_job, WORKSPACE)
+        self.assertEqual(meta['anticipationOrigin'], 'DERIVED_FROM_SNAPSHOT')
+        self.assertEqual(meta['anticipation']['amountCents'], 732)
+        self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
+        self.assertEqual(self.db.lookupJobs.find_one({'_id': job['_id']}), frozen_job)
+        self.assertEqual(self.db.purchaseLines.find_one({'_id': lines[0]['_id']}), frozen_row)
+        self.db.purchaseLines.update_one({'_id': lines[0]['_id']}, {'$unset': {'recipientUf': ''}})
+        incomplete = purchase_metadata(self.db, frozen_job, WORKSPACE)
+        self.assertEqual(incomplete['anticipationOrigin'], 'UNAVAILABLE')
+        self.assertIsNone(incomplete['anticipation'])
+
     def test_large_bson_doubles_survive_database_read_and_pdf_render(self):
         from reporting.purchases import purchase_metadata
         from reporting.service import get_job

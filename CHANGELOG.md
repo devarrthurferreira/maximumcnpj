@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.28.2] — 2026-10-22
+
+- Compras/entradas identificam explicitamente o DIFAL de entrada — Antecipação de ICMS na tela, prévia, CSV e PDF.
+- Relatórios NET_V2 antigos sem versão da antecipação calculam 7,32% sobre compras interestaduais elegíveis com CPF ao abrir, quando as evidências necessárias já estão salvas. Não é preciso reimportar esses relatórios.
+- O cálculo derivado informa sua origem e não altera snapshots, totais, enquadramentos, consultas ou retomadas. Dados não armazenados continuam indisponíveis; UFs vazias ficam pendentes.
+- Resumo, linhas, exportações e fonte mensal da DRE mantêm a mesma base e UF das compras. Nova revisão vinculada preserva os históricos anteriores.
+
+- Validação: 220 testes de regras, 71 de integração/reprocessamento e 145 Python/PDF/OCR aprovados; 118 fluxos únicos de navegador conferidos após corrigir a leitura de células vazias no teste de CSV.
+
 ## [0.28.1] — 2026-10-22
 
 - Antecipação de ICMS de compras restrita a CPF nas operações interestaduais elegíveis, mantendo 7,32% e serviços 8000. CNPJ, CNO e documentos ausentes ou fora do formato CPF não geram valor nem pendência de UF.

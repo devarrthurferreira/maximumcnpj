@@ -70,7 +70,7 @@ def generation_metadata(db, generation_id, workspace, part=1):
                                           'pendingLines': 0, 'unavailableReports': 0}
     if 'PURCHASES' in totals_by_type:
         totals_by_type['PURCHASES']['anticipation'] = {'baseCents': 0, 'amountCents': 0, 'eligibleLines': 0,
-            'pendingLines': 0, 'unavailableReports': 0, 'legacyReports': 0}
+            'pendingLines': 0, 'unavailableReports': 0, 'legacyReports': 0, 'derivedReports': 0}
     for company in selected:
         reports = {}
         for report_type in required:
@@ -98,6 +98,7 @@ def generation_metadata(db, generation_id, workspace, part=1):
                     for key in ('baseCents', 'amountCents', 'eligibleLines', 'pendingLines'):
                         totals['anticipation'][key] = _integer(totals['anticipation'][key] + estimate[key])
                     totals['anticipation']['legacyReports'] += int(estimate['version'] != ANTICIPATION_VERSION)
+                    totals['anticipation']['derivedReports'] += int(meta.get('anticipationOrigin') == 'DERIVED_FROM_SNAPSHOT')
         sections.append({'company': company, 'reports': reports})
     # Keep the internal purchases list for consumers of older generation metadata.
     purchases = [section['reports']['PURCHASES'] for section in sections if 'PURCHASES' in section['reports']]
@@ -177,10 +178,10 @@ def render_generation_pdf(meta):
                            'Exibido separadamente, sem alterar o total de vendas ou outros impostos.', 'small'))
         else:
             estimate = totals['anticipation']
-            story += [p(f'Antecipação de ICMS (7,32%) {scope}', 'heading')]
+            story += [p(f'DIFAL de entrada — Antecipação de ICMS (7,32%) {scope}', 'heading')]
             if estimate['unavailableReports'] == len(meta['purchases']):
-                story.append(p('Indisponível: todos os relatórios de compras desta parte são históricos '
-                               'anteriores ao cálculo da antecipação de ICMS.', 'small'))
+                story.append(p('Indisponível: os dados salvos nos relatórios de compras desta parte não permitem '
+                               'conferir a antecipação de ICMS. Confira a necessidade de reimportação nas memórias individuais.', 'small'))
             else:
                 rows = [['Base elegível', 'Antecipação de ICMS (7,32%)', 'Linhas elegíveis', 'Linhas pendentes por UF'],
                         [money(estimate['baseCents']), money(estimate['amountCents']), number(estimate['eligibleLines']),
@@ -193,13 +194,16 @@ def render_generation_pdf(meta):
                 if estimate['legacyReports']:
                     story.append(p(f'{number(estimate["legacyReports"])} relatórios preservam a regra histórica V1, '
                                    'anterior à restrição a CPF. Confira a versão nas memórias individuais.', 'small'))
-            story.append(p('Nas novas importações, somente compras interestaduais com fornecedor CPF de 11 dígitos '
+                if estimate['derivedReports']:
+                    story.append(p(f'{number(estimate["derivedReports"])} relatórios com antecipação calculada a partir '
+                                   'dos dados salvos na origem, sem modificar os lotes ou as suas linhas.', 'small'))
+            story.append(p('Na regra V2, somente compras interestaduais com fornecedor CPF de 11 dígitos '
                            'e natureza de compra do catálogo ou serviço 8000. Parâmetro gerencial separado do total '
                            'de compras; as regras de regime e sublimite são aplicadas na DRE.', 'small'))
     story += [p('Como conferir esta geração', 'heading'),
               p('As próximas páginas apresentam, por empresa e tipo de relatório, os grupos gerenciais, as bases dos percentuais '
                 'e os valores usados no cálculo. Fórmula atual: Q - Y + AA - AB. A despesa acessória Z é informativa. '
-                'Compras anteriores preservam Q e exibem o aviso de reimportação.', 'small'),
+                'Compras no formato antigo Q_V1 preservam Q e exibem o aviso de reimportação.', 'small'),
               p('Compras e vendas têm totais e percentuais próprios. Cada documento conta uma vez dentro de cada relatório; '
                 'os percentuais não são somados entre empresas ou entre compras e vendas. A situação original dos não '
                 'confirmados continua identificada no subtotal individual. Em vendas, CPFs têm grupo próprio; '

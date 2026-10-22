@@ -201,7 +201,8 @@ class DifalReportTests(unittest.TestCase):
         self.assertIsNone(meta['difal'])
         self.assertIn('Indisponível neste histórico', story_text(meta))
         purchase = reconcile_purchase_snapshot(*net_fixture(), WORKSPACE)
-        self.assertNotIn('DIFAL', story_text(purchase))
+        self.assertIn('DIFAL de entrada — Antecipação de ICMS', story_text(purchase))
+        self.assertIn('Indisponível neste histórico', story_text(purchase))
 
     def test_consolidation_sums_difal_once_and_marks_legacy_reports(self):
         helper = generations_report_test.GenerationReportTests()
