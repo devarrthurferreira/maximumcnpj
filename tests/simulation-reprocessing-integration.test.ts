@@ -34,7 +34,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
  const rows=(totalCents:number,natureCode:string)=>({document:'12345678900',name:'Pessoa sintética',quantity:'1',
   serviceDate:'2026-08-15',natureCode,description:natureCode.startsWith('9000')?'Serviço sintético':'Mercadoria sintética',
   recipientUf:'SP',totalCents,grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0});
- async function fixture(){
+ async function fixture(recipientUf='SP'){
   const clientId=(await importCatalog(actor,[{code:'990',name:'Empresa sintética',uf:'MG'}])).items[0].id;
   const generation=await createGeneration(actor,{generationId:randomUUID(),clientIds:[clientId]});
   for(const [attach,fileName,entries] of [
@@ -42,7 +42,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    [attachGenerationSale,'vendas-sinteticas.csv',[rows(10000,'6102'),rows(5000,'900001')]]
   ] as const){
    const {job}=await attach(actor,generation._id,{clientId,importId:randomUUID(),fileName,expectedRows:entries.length,issuerUf:'MG'});
-   await uploadLookup(actor,job._id,{offset:0,rows:entries});await finalizeLookup(actor,job._id);
+   await uploadLookup(actor,job._id,{offset:0,rows:entries.map(row=>({...row,recipientUf}))});await finalizeLookup(actor,job._id);
   }
   const monthlyGroups={salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:110,purchasesOptantCents:0,purchasesNonOptantCents:12};
   const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:100000,values:{serviceRevenue:50,salesRevenue:110,
@@ -77,7 +77,8 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
  try{
   await t.test('lote limitado preserva originais, deltas e RBT12 congelada; distingue atual e pendências',async()=>{
    switchWorkspace('batch');const input=await fixture();
-   const safe=await save(input,1),additional=await save(input,2,true,o=>{o.draft.values.serviceRevenue=25;});
+   const policy={version:'DIFAL_SCENARIOS_V1',enabled:{pure:false,hybrid:true,presumed:true,actual:false}};
+   const safe=await save({...input,draft:{...input.draft,difalPolicy:policy}},1),additional=await save(input,2,true,o=>{o.draft.values.serviceRevenue=25;});
    const current=await save(input,3,false),inconsistent=await save(input,4,true,o=>{o.baselineMonthlyGroups.salesCpfCents=149;});
    const extractionId=randomUUID();
    await (await collection('simplesExtractions')).insertOne({...scope(),_id:extractionId,clientId:input.clientId,
@@ -101,6 +102,8 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    for(const original of originals)assert.deepEqual(await (await collection('simulations')).findOne(scope({_id:original._id})),original);
    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,safe._id));
    assert.equal(child.parentSimulationId,safe._id);assert.equal(child.draft.values.salesRevenue,110);
+   assert.deepEqual(child.draft.difalPolicy,policy);
+   for(const regime of child.result.regimes)assert.equal(regime.difalApplication.enabled,policy.enabled[regime.id as keyof typeof policy.enabled]);
    assert.equal(child.draft.values.serviceRevenue,50);assert.equal(child.draft.values.regularPurchases,12);
    for(const field of ['salaries','benefits','adminExpenses','rent','cardExpenses'])assert.equal(child.draft.values[field],safe.draft.values[field]);
    assert.deepEqual(child.rbt12Manual,safe.rbt12Manual);assert.equal(child.rbt12Manual.confirmedBy.id,actor._id);
@@ -119,6 +122,30 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.equal(await (await collection('simulations')).countDocuments(scope({reprocessing:{$exists:true}})),3);
    const again=await reprocessSimulations(operator,{});assert.deepEqual(again.counts,done.counts);
    assert.equal(await (await collection('simulationReprocessItems')).countDocuments(scope()),5,'Filhos não entram no inventário.');
+  });
+
+  await t.test('UF pendente mantém a fonte conferida, mas só impede a revisão de imposto aplicável',async()=>{
+   switchWorkspace('difal-policy-pending');const input=await fixture('');
+   const off={version:'DIFAL_SCENARIOS_V1',enabled:{pure:false,hybrid:false,presumed:false,actual:false}};
+   const excluded=await save({...input,draft:{...input.draft,difalPolicy:off}},70);
+   const enabled=await save(input,71);
+   const atSublimit=await save({...input,draft:{...input.draft,rbt12:3_600_000,
+    difalPolicy:{...off,enabled:{...off.enabled,pure:true,hybrid:true}}}},72);
+   const jobs=await collection('lookupJobs'),lines=await collection('purchaseLines');
+   const sourceBefore={jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({_id:1}).toArray()};
+   await reprocessSimulations(actor,{});const done=await finish();
+   assert.deepEqual(done.counts,{queued:0,processing:0,ok:2,pending:1,failed:0});
+   const outcomes=new Map(done.items.map((item:any)=>[item.originalId,item]));
+   assert.equal(outcomes.get(enabled._id)!.code,'DIFAL_UF_PENDING');
+   for(const original of [excluded,atSublimit]){
+    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id));
+    assert.deepEqual(child.draft.difalPolicy,original.draft.difalPolicy);
+    assert(child.source.monthlyReports[0].difal.pendingLines>0);
+    assert(child.source.monthlyReports[0].anticipation.pendingLines>0);
+    for(const regime of child.result.regimes){assert.equal(regime.dre.difal,0);assert.equal(regime.dre.icmsAnticipation,0);}
+   }
+   for(const original of [excluded,enabled,atSublimit])assert.deepEqual(await (await collection('simulations')).findOne(scope({_id:original._id})),original);
+   assert.deepEqual({jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({_id:1}).toArray()},sourceBefore);
   });
 
   await t.test('revisão retoma somente a antiga pendência de serviços uma vez, preserva OK e não ressuscita exclusões',async()=>{

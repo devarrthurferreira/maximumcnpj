@@ -63,6 +63,10 @@ test('UF pendente aparece como estimativa parcial e nova importação atualiza o
 
 test('histórico conserva o DIFAL capturado e resultados sem reler relatórios ou recalcular tributos',async({page})=>{
   const snapshot=savedSnapshot();snapshot.result.regimes[0].annualProfit=123456.78;
+  // This snapshot predates scenario options; the current engine adds metadata that did not exist then.
+  delete snapshot.result.difalPolicy;
+  for(const regime of snapshot.result.regimes)delete regime.difalApplication;
+  snapshot.result.memory=snapshot.result.memory.filter(row=>!row.id.startsWith('difal.'));
   await setup(page);let sourceReads=0;
   await page.route('**/api/v4/generations/*/simulator?*',r=>{sourceReads++;return r.fulfill({status:500,json:{message:'Não reler a origem'}});});
   await page.route('**/api/v4/simulations/'+snapshot._id,r=>r.fulfill({json:snapshot}));

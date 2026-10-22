@@ -1,5 +1,5 @@
 /** Exports the presentation already prepared for the screen; never runs the calculator. */
-import {unifiedDreRows} from './simulator-dre.js';
+import {unifiedDreRows,dreDifalNotes} from './simulator-dre.js';
 
 const BOM = '\uFEFF';
 const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -82,6 +82,7 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   textLine(['Unidades', 'Valores monetários em BRL (R$); percentuais em %.']);
   textLine(['Critério', presentation.method==='REPORT_MONTHS_V1'?'Valores por competência dos relatórios. Total anual é a soma dos meses importados; meses fora do período sem dados.':'Valores da simulação preservados. Projeção mensal, não lançamentos históricos.']);
   textLine(['Arredondamento', 'Exibição com duas casas decimais; a soma dos meses exibidos pode diferir por centavos do total anual preservado.']);
+  for(const note of dreDifalNotes(presentation))textLine(['DIFAL nos cenários',note]);
   if (showPercent) textLine(['Análise vertical', presentation.percentBasis || 'Receita bruta total do cenário']);
   lines.push('');
 

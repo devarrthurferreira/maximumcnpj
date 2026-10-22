@@ -20,6 +20,75 @@ function fixture(){
  Object.defineProperty(source,'monthlyReports',{enumerable:true,get(){const count=original.reportMonths,p=annualizeReports(source.fields,count);return Array.from({length:count},(_,index)=>({sourceMonth:`2025-${String(index+1).padStart(2,'0')}`,month:index+1,fields:Object.fromEntries(Object.entries(source.fields).map(([key,total])=>[key,index<count-1?p.monthlyGroupsCents[key]:Number(total)-p.monthlyGroupsCents[key]*(count-1)])),salesLines:2,purchaseLines:1,difal:source.sales.difal?{...source.sales.difal,amountCents:index<count-1?Math.floor(source.sales.difal.amountCents/count):source.sales.difal.amountCents-Math.floor(source.sales.difal.amountCents/count)*(count-1)}:null}));}});
  return {original,source};
 }
+const difalPolicy=(enabled:Record<string,boolean>={})=>({version:'DIFAL_SCENARIOS_V1',enabled:{pure:true,hybrid:true,presumed:true,actual:true,...enabled}});
+const anticipation={version:'ICMS_ANTICIPATION_V3',ratePercent:7.32,issuerUf:'MG',eligibleLines:0,baseCents:0,amountCents:0,pendingLines:1};
+
+test('recálculo preserva escolhas explícitas e ausência histórica sem modificar o original',()=>{
+ const {original,source}=fixture();
+ assert.equal(Object.hasOwn(planReprocessing(original,source,'ws').input.draft,'difalPolicy'),false);
+ original.draft.difalPolicy=difalPolicy({pure:false,presumed:false});
+ const before=structuredClone(original),planned=planReprocessing(original,source,'ws');
+ assert.deepEqual(planned.input.draft.difalPolicy,before.draft.difalPolicy);assert.deepEqual(original,before);
+ planned.input.draft.difalPolicy.enabled.hybrid=false;
+ assert.equal(original.draft.difalPolicy.enabled.hybrid,true,'A revisão não compartilha o objeto de opções do original.');
+ for(const invalid of [null,{...difalPolicy(),version:'UNKNOWN'},difalPolicy({pure:'false' as any}),{...difalPolicy(),extra:true}]){
+  original.draft.difalPolicy=invalid;
+  assert.throws(()=>planReprocessing(original,source,'ws'),(error:any)=>error.code==='REPROCESS_ADJUSTMENT');
+ }
+});
+
+test('pendências de UF só bloqueiam impostos potencialmente usados por algum regime',()=>{
+ const {original,source}=fixture();
+ original.draft.difalPolicy=difalPolicy({pure:false,hybrid:false,presumed:false,actual:false});
+ source.sales.difal.pendingLines=1;
+ const current={...source,monthlyReports:source.monthlyReports.map((row:any)=>({...row,anticipation:{...anticipation}}))};
+ const before=structuredClone(original);
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'));
+ assert.deepEqual(original,before);
+ current.monthlyReports[0].difal=null;
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Uma estimativa excluída não exige dados de UF para seu valor.');
+ original.draft.difalPolicy.enabled.presumed=true;
+ assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='DIFAL_SOURCE_MISSING');
+ current.monthlyReports[0].difal={...source.sales.difal,pendingLines:0};
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Lucro Presumido não aplica antecipação de compras.');
+ original.draft.difalPolicy.enabled.pure=true;
+ assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING');
+ original.draft.rbt12=3_600_000;original.rbt12Manual.rbt12Cents=360_000_000;
+ original.draft.difalPolicy.enabled.presumed=false;original.draft.difalPolicy.enabled.hybrid=true;
+ current.monthlyReports[0].difal.pendingLines=1;
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'No sublimite exato, os cenários Simples não aplicam vendas nem entradas.');
+ original.draft.difalPolicy.enabled.actual=true;
+ assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='DIFAL_UF_PENDING','Lucro Real ativo ainda exige a UF da venda.');
+ current.purchases={...current.purchases,totalCents:999};
+ original.draft.difalPolicy=difalPolicy({pure:false,hybrid:false,presumed:false,actual:false});
+ assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='REPROCESS_SOURCE_TOTAL','Excluir o imposto não dispensa a conciliação das fontes.');
+});
+
+test('UF pendente no mês bloqueado não impede o mês aplicável com RBT12 móvel confirmada',()=>{
+ const {original,source}=fixture();original.reportMonths=2;
+ original.projection=annualizeReports(original.source.fields,2);
+ original.baselineMonthlyGroups=Object.fromEntries(Object.entries(original.projection.monthlyGroupsCents).map(([key,value])=>[key,Number(value)/100]));
+ original.monthlyGroups={...original.baselineMonthlyGroups};
+ original.draft.values.salesRevenue=75;original.draft.values.regularPurchases=5;
+ original.draft.difalPolicy=difalPolicy({presumed:false,actual:false});
+ original.rbt12Source='SIMPLES_SECTION_22';delete original.rbt12Manual;
+ const extraction=section22Year2025();
+ extraction.priorRevenues=extraction.priorRevenues.map((row,index)=>({...row,internalCents:index===0?29_999_999:30_000_000,totalCents:index===0?29_999_999:30_000_000}));
+ extraction.rbt12Window=extraction.priorRevenues.slice(11);
+ extraction.rbt12Cents=extraction.rbt12CalculatedCents=360_000_000;
+ extraction.rbt12Basis.internalCents=extraction.rbt12Basis.totalCents=360_000_000;
+ original.draft.rbt12=3_600_000;original.rbt12Extraction={id:'10000000-0000-4000-8000-000000000006',...extraction};
+ const current={...source,monthlyReports:source.monthlyReports.map((row:any,index:number)=>({...row,
+  difal:{...row.difal,pendingLines:index},anticipation:{...anticipation,pendingLines:index}}))};
+ const before=structuredClone(original),planned=planReprocessing(original,current,'ws');
+ assert.deepEqual(buildRbt12Schedule(planned.context.rbt12Extraction,current.monthlyReports.map((row:any)=>row.sourceMonth)).rows.map(row=>row.rbt12Cents),[359_999_999,360_000_000]);
+ assert.deepEqual(original,before);
+ current.monthlyReports[0].difal.pendingLines=1;
+ assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='DIFAL_UF_PENDING'&&error.message.includes('2025-01'));
+ current.monthlyReports[0].difal.pendingLines=0;current.monthlyReports[0].anticipation.pendingLines=1;
+ assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING'&&error.message.includes('2025-01'));
+});
+
 test('migração preserva deltas e despesas em centavos, separa serviço e não modifica original',()=>{
  const {original,source}=fixture(),before=structuredClone(original),p=planReprocessing(original,source,'ws');
  assert.equal(p.input.monthlyGroups.salesCpfCents,110);assert.equal(p.input.monthlyGroups.purchasesNonOptantCents,12);

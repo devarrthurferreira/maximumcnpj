@@ -1,5 +1,17 @@
 # Histórico de alterações
 
+## [0.30.0] — 2026-10-22
+
+- Opção independente de DIFAL para Simples puro, Simples híbrido, Lucro Presumido e Lucro Real, persistida em `draft.difalPolicy` com o contrato `DIFAL_SCENARIOS_V1` e mapa booleano `enabled`.
+- Nos cenários Simples, a escolha inclui ou exclui o DIFAL das vendas e a antecipação aplicável às compras. Ambos ficam zerados automaticamente na competência com RBT12 igual ou superior a R$ 3,6 milhões ou ICMS fora do DAS, prevalecendo sobre a opção marcada.
+- Lucro Presumido e Real permitem incluir ou excluir o DIFAL das vendas sem os bloqueios do Simples; antecipação de compras permanece zero.
+- Tela, memória, CSV e impressão apresentam a aplicação e os motivos por competência. Relatórios importados, fontes, bases elegíveis e estimativas originais permanecem preservados.
+- Motores `1.6.0-difal-scenarios` e revisão `DIFAL_SCENARIOS_2026_10_V6`: novas versões vinculadas conservam escolhas existentes sem sobrescrever históricos; retomadas de salvamento preservam pedidos legados sem o campo de opções.
+- Conferência da seção 2.2 começa pelo histórico completo de receitas, aberto, com os dois mercados; RBT12 por competência inicia aberta e detalha as 12 receitas anteriores de cada mês, sem repetir o total do PA nem misturar receita mensal, quadro 2.1 ou projeção por 12.
+- Validador compartilhado `reconcileSection22Extraction` concilia total, janela, base e histórico no navegador e no servidor antes da confirmação; divergências bloqueiam a leitura.
+- PDF fornecido conferido privadamente: as 23 competências dos dois mercados coincidiram com o leitor existente. Versão do parser preservada; nova regressão sintética cobre receitas em queda e mercado externo não zero, sem incluir documentos ou dados reais no repositório.
+- Validação: tipos, build, versão e diff conferidos; 232 testes de regras, 98 de integração, 150 Python/PDF/OCR e 127 casos únicos de navegador aprovados, incluindo reexecuções após corrigir uma expectativa de centavos e a fixture legada. Tabelas reconferidas em 320 e 390 px. Os 65 testes dirigidos após a nova conciliação e a matriz independente de 2.112 resultados também passaram. PDF fornecido conferido privadamente, sem incluir seus dados no repositório.
+
 ## [0.29.0] — 2026-10-22
 
 - DIFAL de vendas inclui CPF e CNPJ válido nas naturezas elegíveis entre UFs diferentes, mantendo 10%.

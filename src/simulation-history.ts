@@ -11,7 +11,7 @@ import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import { generationSimulator } from './simulator-store.ts';
 import { assertGenerationNotDeleted, assertLookupNotDeleted } from './generation-deletion.ts';
 import { CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
-  SIMULATION_VALUE_FIELDS } from '../public/simulator-engine.js';
+  SIMULATION_VALUE_FIELDS, parseDifalPolicy } from '../public/simulator-engine.js';
 import type { SimulationDraft } from '../public/simulator-engine.js';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -59,12 +59,19 @@ function request(input: unknown) {
   const title = input.title === undefined ? null : text(input.title, 160);
   object(input.monthlyGroups, GROUPS);
   const monthlyGroups = Object.fromEntries(GROUPS.map((key, index) => [key, index < 3 ? signedSalesMoney(input.monthlyGroups[key]) : money(input.monthlyGroups[key])])) as MonthlyGroups;
-  object(input.draft, ['year', 'salesAnnex', 'serviceAnnex', 'values'], ['rbt12']);
+  object(input.draft, ['year', 'salesAnnex', 'serviceAnnex', 'values'], ['rbt12', 'difalPolicy']);
   need([2027, 2028].includes(input.draft.year) && [1, 2].includes(input.draft.salesAnnex) && [3, 4, 5].includes(input.draft.serviceAnnex),
     'Ano ou anexo inválido para o modelo da calculadora.');
   object(input.draft.values, SIMULATION_VALUE_FIELDS);
+  let difalPolicy: SimulationDraft['difalPolicy'];
+  if (Object.hasOwn(input.draft, 'difalPolicy')) {
+    try { difalPolicy = parseDifalPolicy(input.draft.difalPolicy); }
+    catch (error) { throw new AppError(400, 'VALIDATION', error instanceof Error ? error.message : 'Opções de DIFAL inválidas.'); }
+  }
   const draft: SimulationDraft = {year: input.draft.year, salesAnnex: input.draft.salesAnnex, serviceAnnex: input.draft.serviceAnnex,
     ...(Object.hasOwn(input.draft, 'rbt12') ? {rbt12: money(input.draft.rbt12)} : {}),
+    // Keep omission and the normalized request hash unchanged for historical retries.
+    ...(difalPolicy ? {difalPolicy} : {}),
     values: Object.fromEntries(SIMULATION_VALUE_FIELDS.map(key => [key, money(input.draft.values[key])])) as SimulationDraft['values']};
   need(!rbt12ExtractionId || draft.rbt12 !== undefined, 'A extração de RBT12 precisa acompanhar o valor usado na simulação.');
   const rbt12Source = rbt12InputSource(input.rbt12Source, input.rbt12ManualConfirmed, rbt12ExtractionId, draft.rbt12);

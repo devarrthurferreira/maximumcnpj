@@ -6,7 +6,8 @@ export type DrePresentationRow = {
   reasonByRegime:Record<string,string>;calendarReasonByRegime:Record<string,string>;monthlyReasonByRegime?:Record<string,string[]>;notes:string[];informative:boolean;parentKey?:string;sourceRefs:string[];
 };
 export type DrePresentation = {
-  version:'DRE_PRESENTATION_V1';method?:string|null;regimes:Array<{id:string;name:string;available:boolean;monthlyAvailability?:boolean[]}>;
+  version:'DRE_PRESENTATION_V1';method?:string|null;regimes:Array<{id:string;name:string;available:boolean;monthlyAvailability?:boolean[];difalApplication?:import('./simulator-engine.js').SimulationRegime['difalApplication']}>;
+  difalPolicy?:import('./simulator-engine.js').DifalPolicy;
   sections:Array<{key:string;label:string;rows:DrePresentationRow[]}>;
   details:Array<{key:string;label:string;parentKey:string;rows:DrePresentationRow[]}>;indicators:DrePresentationRow[];
   months:Array<{number:number;label:string;period:string|null;sourceMonth?:string|null;rbt12Cents?:number|null}>;
@@ -15,3 +16,4 @@ export type DrePresentation = {
 };
 export function buildDrePresentation(input:{result:any;monthlyGroups?:any;projection?:any;source?:any;reportMonths?:number;engineInput?:any;reprocessing?:any;calendar?:any}):DrePresentation;
 export function unifiedDreRows(presentation:DrePresentation):DrePresentationRow[];
+export function dreDifalNotes(presentation:DrePresentation,options?:{sourceMonth?:string|null}):string[];

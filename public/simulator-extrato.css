@@ -1,4 +1,13 @@
 .sim-extrato-review{margin:16px 0;min-width:0}
+.sim-extrato-monthly{border:1px solid #e5dade;background:#fff;border-radius:12px;padding:18px;min-width:0;margin-bottom:14px}
+.sim-extrato-monthly-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.sim-extrato-monthly-heading h3{font-size:17px;line-height:1.4;margin:0 0 6px;color:#4c2834}
+.sim-extrato-monthly-heading p{font-size:12px;line-height:1.5;margin:0;color:#74686e}
+.sim-extrato-monthly-heading>span{font-size:11px;line-height:1.4;background:#f6eef0;color:#750207;border-radius:6px;padding:6px 9px;white-space:nowrap}
+.sim-extrato-monthly .sim-help{font-size:.8rem;line-height:1.7}
+.sim-extrato-monthly .sim-extrato-history table{min-width:560px}
+.sim-extrato-month-total{font-weight:700;color:#4c2834;background:#fcf9fa}
+.sim-extrato-year-start>th,.sim-extrato-year-start>td{border-top:2px solid #d8c9d0}
 .sim-extrato-details{border:1px solid #e5dade;background:#fff;border-radius:12px;min-width:0;overflow:hidden}
 .sim-extrato-details summary{display:flex;align-items:center;gap:16px;padding:15px 18px;cursor:pointer;color:#750207;font-weight:600;line-height:1.4;list-style:none}
 .sim-extrato-details summary::-webkit-details-marker,.sim-dre-method summary::-webkit-details-marker{display:none}
@@ -6,8 +15,8 @@
 .sim-extrato-details summary small{display:block;margin-top:3px;color:#74686e;font-size:.78rem;font-weight:400}
 .sim-extrato-details summary strong{font-size:.95rem;font-variant-numeric:tabular-nums;white-space:nowrap}
 .sim-extrato-details summary::after,.sim-dre-method summary::after{content:"";width:6px;height:6px;flex:none;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);margin-left:2px}
-.sim-extrato-details[open] summary::after,.sim-dre-method[open] summary::after{transform:rotate(225deg)}
-.sim-extrato-details[open] summary{border-bottom:1px solid #eee7ea}
+.sim-extrato-details[open]>summary::after,.sim-dre-method[open]>summary::after{transform:rotate(225deg)}
+.sim-extrato-details[open]>summary{border-bottom:1px solid #eee7ea}
 .sim-extrato-content{padding:4px 18px 12px}
 .sim-extrato-content p{line-height:1.6;overflow-wrap:anywhere}
 .sim-extrato-company{margin:14px 0 10px;font-size:.9rem}
@@ -44,6 +53,19 @@
 #rbt12-status{line-height:1.6;display:block;margin-top:10px}
 .sim-extrato-table-wrap:focus-visible,.sim-calendar .sim-table-wrap:focus-visible,.sim-extrato-details summary:focus-visible,.sim-dre-method summary:focus-visible{outline:2px solid #750207;outline-offset:2px}
 @media(max-width:640px){
+  .sim-extrato-monthly{padding:14px}
+  .sim-extrato-monthly-heading{display:block}
+  .sim-extrato-monthly-heading>span{display:inline-block;margin-top:10px}
+  .sim-extrato-monthly-heading h3{font-size:15px}
+  .sim-extrato-monthly .sim-extrato-history table{min-width:496px;table-layout:fixed}
+  .sim-extrato-monthly .sim-extrato-history th,.sim-extrato-monthly .sim-extrato-history td{padding:10px 8px;font-size:.75rem}
+  .sim-extrato-monthly .sim-extrato-history thead th{font-size:.65rem;white-space:normal;line-height:1.4}
+  .sim-extrato-monthly .sim-extrato-history thead th:first-child{width:88px}
+  .sim-extrato-monthly .sim-extrato-history thead th:nth-child(2){width:136px}
+  .sim-rbt12-schedule>.sim-extrato-content>.projection-table-wrap table{min-width:414px;table-layout:fixed}
+  .sim-rbt12-schedule>.sim-extrato-content>.projection-table-wrap th:first-child{min-width:0;width:80px}
+  .sim-rbt12-schedule>.sim-extrato-content>.projection-table-wrap th:nth-child(2){width:140px;white-space:normal}
+  .sim-rbt12-schedule>.sim-extrato-content>.projection-table-wrap th,.sim-rbt12-schedule>.sim-extrato-content>.projection-table-wrap td{padding:10px 8px}
   .sim-extrato-details summary{padding:14px;gap:10px;font-size:.85rem}
   .sim-extrato-details summary strong{font-size:.85rem}
   .sim-extrato-details summary small{font-size:.72rem}

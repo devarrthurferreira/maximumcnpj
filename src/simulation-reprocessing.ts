@@ -15,9 +15,10 @@ import type {ReportGroup} from '../public/simulator-projection.js';
 
 import {baselineMonth, calculateMonthlySimulation, MONTHLY_MODEL_VERSION as MODEL_VERSION} from '../public/simulator-monthly.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
+import {resolveDifalApplication} from '../public/simulator-engine.js';
 
 
-export const REPROCESS_VERSION = 'CPF_CNPJ_2026_10_V5';
+export const REPROCESS_VERSION = 'DIFAL_SCENARIOS_2026_10_V6';
 export const SERVICE_REVENUE_MIGRATION_REVISION = 'LEGACY_ADDITIONAL_SERVICES_V1';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const PAGE_SIZE = 100;
@@ -151,9 +152,20 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   const rbt12Schedule=rbt12Extraction?buildRbt12Schedule(rbt12Extraction,source.monthlyReports.map((row:any)=>row.sourceMonth)):null;
   pending(!rbt12Schedule||rbt12Schedule.complete,'RBT12_MONTHS_MISSING',`O extrato congelado não cobre todas as competências. Reimporte o extrato com as receitas mensais do quadro 2.2. ${rbt12Schedule?.rows.filter(row=>row.status!=='CONFIRMED').map(row=>`${row.sourceMonth}: faltam ${row.missingMonths.join(', ')}`).join('; ')||''}`);
   const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports,monthlyInputs,source.sales.jobId,rbt12Schedule);}catch(error){throw new AppError(409,'REPROCESS_ADJUSTMENT',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
-  pending(computed.difalProjection,'DIFAL_SOURCE_MISSING','O relatório original não possui os dados necessários para confirmar o DIFAL.');
-  pending(computed.difalProjection.pendingLines===0,'DIFAL_UF_PENDING','Há linhas aguardando UF para confirmar o DIFAL.');
-  pending(!computed.anticipationProjection||computed.anticipationProjection.pendingLines===0,'ANTICIPATION_UF_PENDING','Há compras aguardando UF para confirmar a antecipação de ICMS.');
+  for (const [index, report] of source.monthlyReports.entries()) {
+    const input = computed.engineInput.months[index].input;
+    const applications = computed.result.monthlyResults[index].result.regimes.filter((regime: any) => regime.available).map((regime: any) => resolveDifalApplication({
+      policy: draft.difalPolicy, regimeId: regime.id, rbt12: input.rbt12, icmsOutside: input.icmsOutside
+    }));
+    // A pending estimate matters only in a month and regime that can apply it.
+    // Eligibility is independent of its amount: pending rows can have zero cents.
+    if (applications.some((application: any) => application.salesDifal)) {
+      pending(report.difal, 'DIFAL_SOURCE_MISSING', `O relatório original não possui os dados necessários para confirmar o DIFAL em ${report.sourceMonth}.`);
+      pending(report.difal.pendingLines === 0, 'DIFAL_UF_PENDING', `Há linhas aguardando UF para confirmar o DIFAL em ${report.sourceMonth}.`);
+    }
+    if (applications.some((application: any) => application.purchaseAnticipation))
+      pending(!report.anticipation || report.anticipation.pendingLines === 0, 'ANTICIPATION_UF_PENDING', `Há compras aguardando UF para confirmar a antecipação de ICMS em ${report.sourceMonth}.`);
+  }
   const alreadyCurrent=modern&&isDeepStrictEqual(original.result,computed.result)&&isDeepStrictEqual(original.projection,computed.projection)&&
     isDeepStrictEqual(original.difalProjection,computed.difalProjection)&&isDeepStrictEqual(original.engineInput,computed.engineInput)&&
     isDeepStrictEqual(original.monthlyDre,buildMonthlyDre(computed.result,draft.year,rbt12Extraction||rbt12Manual,source.period||null));

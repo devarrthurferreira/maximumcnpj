@@ -106,3 +106,25 @@
   .sim-month-nav,.sim-month-overview { display:none!important; }
   .sim-difal-card { break-inside:avoid; }
 }
+
+.sim-difal-options { margin-top:24px; padding-top:22px; border-top:1px solid var(--sim-line,#e3dce0); }
+.sim-difal-options h3 { margin:0 0 8px; font-size:18px; }
+.sim-difal-options-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:16px 0; }
+.sim-difal-option { min-width:0; border:1px solid var(--sim-line,#e3dce0); border-radius:12px; padding:15px; background:#fff; }
+.sim-difal-option label { display:flex; align-items:center; gap:10px; cursor:pointer; min-height:28px; font-weight:700; line-height:1.4; }
+.sim-difal-option input[type=checkbox] { width:20px; height:20px; flex:none; accent-color:#750207; margin:0; }
+.sim-difal-option input:focus-visible { outline:3px solid #b57b35; outline-offset:3px; }
+.sim-difal-option .sim-difal-scope { margin:9px 0; color:#6e6268; font-size:12px; line-height:1.5; }
+.sim-difal-option-state { margin:0; font-size:12px; line-height:1.6; }
+.sim-difal-option[data-state=SUBLIMIT],.sim-difal-option[data-state=ICMS_OUTSIDE_DAS] { background:#fff8ed; border-color:#dfc393; }
+.sim-difal-option[data-state=USER_EXCLUDED] { background:#f7f4f5; }
+.sim-difal-options.is-readonly { padding:22px; }
+.sim-difal-options h4 { margin:0 0 8px; font-size:14px; }
+.sim-difal-choice { font-size:12px; }
+@media (max-width:1100px) { .sim-difal-options-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:500px) {
+  .sim-difal-options-grid { grid-template-columns:1fr; gap:10px; }
+  .sim-difal-options.is-readonly { padding:16px; }
+  .sim-difal-option { padding:13px; }
+}
+@media print { .sim-difal-options { break-inside:avoid; } }

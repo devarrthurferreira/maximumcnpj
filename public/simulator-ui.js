@@ -1,5 +1,5 @@
 import {monthlyProjection, monthlyDifal, baselineMonth, calculateMonthlySimulation} from './simulator-monthly.js';
-import {buildRbt12Schedule} from './simulator-rbt12.js';
+import {buildRbt12Schedule, reconcileSection22Extraction} from './simulator-rbt12.js';
 import {renderOperationAudit,renderRbt12Schedule,renderAnticipationSource} from './simulator-source-view.js';
 import {buildMonthlyDre} from './simulator-calendar.js';
 import {renderSection22,renderMonthlyDre,isSection22} from './simulator-extrato-view.js';
@@ -10,7 +10,7 @@ import {renderAnnualDre,renderDrePrintCalendar,renderDrePrintDocument} from './s
 import {buildDreCsv,buildDreExportPayload} from './simulator-dre-export.js';
 import {mountNavigation} from './navigation.js';
 import {renderSimulationCharts} from './simulation-charts.js';
-import {createEmptyDraft, calculateSimulation, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES} from './simulator-engine.js';
+import {createEmptyDraft, calculateSimulation, defaultDifalPolicy, parseDifalPolicy, resolveDifalApplication, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES} from './simulator-engine.js';
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = value => value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('pt-BR', {style:'currency',currency:'BRL'});
@@ -21,6 +21,7 @@ const competenceLabel = value => /^\d{4}-(0[1-9]|1[0-2])$/.test(value||'') ? `${
 const sumMoney = values => values.every(Number.isFinite)?values.reduce((total,value)=>total+Math.round(value*100),0)/100:null;
 const IMPORTED = ['salesOptantCents','salesNonOptantCents','salesCpfCents','purchasesOptantCents','purchasesNonOptantCents'];
 const MANUAL = ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'];
+const DIFAL_REGIMES=[['pure','Simples puro'],['hybrid','Simples híbrido'],['presumed','Lucro Presumido'],['actual','Lucro Real']];
 const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,rbt12DocumentConfirmed:false,rbt12DocumentRetryable:false,rbt12Sequence:0,pdfOperation:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales',guided:false,guidedStage:false,guidedResume:false,rbt12Mode:'PDF',serviceMigration:null,draftMigrationNotice:null,dreShowPercent:false,dreMonthView:true,dreMonth:0,dreContext:null,detailStates:new Map(),monthlyInputs:[],entry:0};
 const hasImportedServices = () => S.source?.revenueSplit?.version === 'SALES_SERVICES_V1' && Number.isSafeInteger(S.source.fields?.serviceRevenueCents);
 const isImportedField = key => IMPORTED.includes(key) || (key === 'serviceRevenue' && hasImportedServices());
@@ -36,6 +37,40 @@ function updateAnticipationSource(){
 }
 function updateRbt12Schedule(){
   const host=$('#rbt12-schedule');if(host)host.innerHTML=renderRbt12Schedule(rbt12Schedule());
+}
+function savedDifalPolicy(snapshot){
+  const value=snapshot?.draft?.difalPolicy||snapshot?.result?.difalPolicy;
+  if(!value)return null;
+  try{return parseDifalPolicy(value);}catch{return null;}
+}
+function difalOptions(snapshot=null){
+  const readonly=!!snapshot,policy=readonly?savedDifalPolicy(snapshot):S.difalPolicy;
+  const intro=readonly?'Escolhas registradas nesta versão. Os valores e os estados de aplicação permanecem como foram salvos.':'Escolha os regimes em que deseja incluir o DIFAL. A opção vale para todas as competências desta simulação.';
+  return `<section id="sim-difal-options" class="sim-difal-options${readonly?' card is-readonly':''}" aria-labelledby="sim-difal-options-title"><h3 id="sim-difal-options-title">DIFAL nos cenários</h3><p class="sim-help">${intro}</p>${policy?`<div class="sim-difal-options-grid">${DIFAL_REGIMES.map(([id,name])=>`<article class="sim-difal-option" data-difal-option="${id}">${readonly?`<h4>${name}</h4><strong class="sim-difal-choice">${policy.enabled[id]?'Incluído por escolha':'Não incluído por escolha'}</strong>`:`<label for="difal-enabled-${id}"><input id="difal-enabled-${id}" data-difal-regime="${id}" type="checkbox" aria-label="Incluir DIFAL no ${name}" ${policy.enabled[id]?'checked':''}><span>${name}</span></label>`}<p class="sim-difal-scope">${['pure','hybrid'].includes(id)?'Vendas e antecipação de entradas':'Vendas'}</p><p class="sim-difal-option-state" data-difal-state="${id}" role="status"></p></article>`).join('')}</div><p class="sim-help" id="difal-options-context"></p>${readonly?'':'<p class="sim-help">No Simples, o DIFAL fica zerado quando a RBT12 da competência alcança R$ 3,6 milhões ou o ICMS está fora do DAS. Sua escolha permanece salva para os meses em que a aplicação é permitida.</p>'}`:'<p class="sim-help" data-difal-legacy>Esta versão não registrava opções de DIFAL por regime. Consulte os valores preservados na DRE; o histórico não foi recalculado.</p>'}</section>`;
+}
+function updateDifalOptions(){
+  const host=$('#sim-difal-options');if(!host||host.querySelector('[data-difal-legacy]'))return;
+  let sourceMonth,rbt12=null,regimes=null;
+  if(S.readonly){
+    const monthly=S.snapshot.result?.method==='REPORT_MONTHS_V1';
+    const entry=monthly?S.snapshot.result.monthlyResults.find(row=>row.month===S.dreMonth+1):null;
+    sourceMonth=entry?.sourceMonth;regimes=monthly?entry?.result?.regimes:S.snapshot.result?.regimes;
+  }else{
+    sourceMonth=actualMonths()?S.source.monthlyReports[S.entry]?.sourceMonth:null;
+    const reference=sourceMonth&&S.rbt12Mode==='PDF'?rbt12Schedule()?.rows.find(row=>row.sourceMonth===sourceMonth):null;
+    rbt12=sourceMonth&&S.rbt12Mode==='PDF'?(reference?.status==='CONFIRMED'?reference.rbt12Cents/100:null):value('rbt12');
+  }
+  host.querySelector('#difal-options-context').textContent=sourceMonth?`Aplicação em ${competenceLabel(sourceMonth)}${rbt12===null?'':` · RBT12 ${money(rbt12)}`}.`:(S.readonly?'Aplicação preservada desta versão.':'Aplicação conforme a RBT12 informada.');
+  for(const [id] of DIFAL_REGIMES){
+    const application=S.readonly?regimes?.find(row=>row.id===id)?.difalApplication:rbt12===null?null:resolveDifalApplication({policy:S.difalPolicy,regimeId:id,rbt12});
+    const status=host.querySelector(`[data-difal-state="${id}"]`),option=host.querySelector(`[data-difal-option="${id}"]`);
+    status.textContent=application?.message||(S.readonly?'Estado de aplicação não registrado nesta competência.':'Informe a RBT12 para conferir a aplicação.');
+    option.dataset.state=application?.reason||'UNAVAILABLE';
+  }
+}
+function applyDifalPolicy(policy){
+  try{S.difalPolicy=policy===undefined?defaultDifalPolicy():parseDifalPolicy(policy);}catch{S.difalPolicy=defaultDifalPolicy();}
+  for(const [id] of DIFAL_REGIMES){const input=$(`#difal-enabled-${id}`);if(input)input.checked=S.difalPolicy.enabled[id];}
 }
 function captureMonth(){if(!actualMonths()||S.readonly||!S.monthlyInputs[S.entry])return;const row=S.monthlyInputs[S.entry];row.groups=Object.fromEntries(IMPORTED.map(key=>[key,value(key)]));row.values=Object.fromEntries(MANUAL.map(key=>[key,value(key)]));}
 function showMonth(){const row=S.monthlyInputs[S.entry];for(const key of IMPORTED)$('#'+key).value=typeof row.groups[key]==='number'?row.groups[key].toFixed(2):'';for(const key of MANUAL)$('#'+key).value=typeof row.values[key]==='number'?row.values[key].toFixed(2):'';const select=$('#report-competence');if(select)select.value=String(S.entry);}
@@ -107,13 +142,14 @@ function section(number,title,subtitle,content,id) {
 function display(prefill=null) {
   S.readonly=false; S.result=null; S.snapshot=null; S.pending=null; S.rbt12Mode='PDF'; S.serviceMigration=servicesMigration(prefill)?{previousServices:Number(prefill.draft.values.serviceRevenue)||0}:null;S.draftMigrationNotice=null;clearRbt12();
   S.entry=0;S.monthlyInputs=[];
+  S.difalPolicy=defaultDifalPolicy();
   const automaticPeriod=S.source.periodBasis==='COLUMN_H'&&Number.isInteger(S.source.reportMonths);
   if(automaticPeriod)S.months=S.source.reportMonths;
   const periodText=automaticPeriod ? `<details class="card sim-source sim-period-details"><summary>Período confirmado · ${S.months} ${S.months===1?'mês':'meses'}<span>${esc(S.source.period.startMonth)} a ${esc(S.source.period.endMonth)}</span></summary><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months" disabled><option value="${S.months}">${S.months} ${S.months===1?'mês':'meses'}</option></select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" checked disabled>Confirmado pela coluna H. Compras e vendas podem ter dias diferentes na mesma competência.</label></div><p id="period-explanation" class="sim-help"></p></details>` :
     `<section class="card sim-source sim-period-manual"><h2>Confirme o período dos relatórios</h2><p class="sim-help">Informe quantos meses estão incluídos nos dois arquivos.</p><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1} ${i?'meses':'mês'}</option>`).join('')}</select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" required>Compras e vendas correspondem ao mesmo período.</label></div><p id="period-explanation" class="sim-help"></p></section>`;
   $('#simulator-app').innerHTML = `<div id="simulator-intro">${hero(false)}</div><div class="sim-context">${sourceCard()}<div id="simulation-notices"></div></div>
     <form id="simulator-form"><fieldset id="simulation-fields"><p class="sim-form-guidance">Valores em reais (R$). Campos com * são obrigatórios; informe 0 quando não houver valor.</p><div id="simulator-projection"></div>${periodText}
-    ${section('01','Extrato e cenário','Leia o PDF para preencher a RBT12.',`<div class="sim-pdf-grid"><div class="sim-field sim-pdf-upload"><label for="rbt12-pdf">Extrato ou declaração do Simples Nacional (PDF)</label><div class="sim-upload-controls"><input id="rbt12-pdf" type="file" accept="application/pdf,.pdf"><button type="button" id="rbt12-read">Ler RBT12</button></div><small id="rbt12-status" role="status" aria-live="polite">Selecione o extrato ou a declaração PGDAS-D em PDF para conferir a seção 2.2. Até 8 MiB.</small><div class="sim-pdf-actions"><button type="button" id="rbt12-view-original" hidden>Ver PDF original</button><button type="button" id="rbt12-view-searchable" hidden>Ver PDF pesquisável</button><button type="button" id="rbt12-reprocess" hidden>Ler novamente</button><button type="button" id="rbt12-check-status" hidden>Verificar leitura</button><a id="rbt12-download" hidden>Baixar PDF pesquisável</a></div></div>${moneyField('rbt12','RBT12 do PA · seção 2.2','Referência do PA do extrato. O cálculo mensal usa a janela de cada competência.',false,true)}</div><div id="rbt12-details"></div><div id="rbt12-schedule"></div><div class="sim-rbt12-mode"><button type="button" id="rbt12-manual">Informar RBT12 sem o extrato</button><button type="button" id="rbt12-use-pdf" hidden>Usar extrato em PDF</button><div id="rbt12-manual-notice" hidden><p class="sim-help">Informe a receita bruta efetiva dos 12 meses anteriores ao período de apuração. O valor ficará identificado como manual e será mantido fixo nas competências do cenário; não é a projeção das vendas.</p><label class="sim-confirm" for="rbt12-manual-confirm"><input id="rbt12-manual-confirm" type="checkbox">Confirmo que informei a receita bruta dos 12 meses anteriores ao período de apuração.</label></div></div><div class="sim-fields sim-scenario-fields"><div class="sim-field"><label for="simulation-year">Ano da simulação</label><select id="simulation-year"><option>2027</option><option>2028</option></select></div><div class="sim-field"><label for="sales-annex">Atividade das vendas</label><select id="sales-annex"><option value="1">Comércio · Anexo I</option><option value="2">Indústria · Anexo II</option></select></div><div class="sim-field"><label for="service-annex">Categoria dos serviços</label><select id="service-annex"><option value="3">Anexo III</option><option value="4">Anexo IV</option><option value="5">Anexo V</option></select></div></div>`,'sim-section-extrato')}
+    ${section('01','Extrato e cenário','Leia o PDF para preencher a RBT12.',`<div class="sim-pdf-grid"><div class="sim-field sim-pdf-upload"><label for="rbt12-pdf">Extrato ou declaração do Simples Nacional (PDF)</label><div class="sim-upload-controls"><input id="rbt12-pdf" type="file" accept="application/pdf,.pdf"><button type="button" id="rbt12-read">Ler RBT12</button></div><small id="rbt12-status" role="status" aria-live="polite">Selecione o extrato ou a declaração PGDAS-D em PDF para conferir a seção 2.2. Até 8 MiB.</small><div class="sim-pdf-actions"><button type="button" id="rbt12-view-original" hidden>Ver PDF original</button><button type="button" id="rbt12-view-searchable" hidden>Ver PDF pesquisável</button><button type="button" id="rbt12-reprocess" hidden>Ler novamente</button><button type="button" id="rbt12-check-status" hidden>Verificar leitura</button><a id="rbt12-download" hidden>Baixar PDF pesquisável</a></div></div>${moneyField('rbt12','RBT12 do PA · seção 2.2','Referência do PA do extrato. O cálculo mensal usa a janela de cada competência.',false,true)}</div><div id="rbt12-details"></div><div id="rbt12-schedule"></div><div class="sim-rbt12-mode"><button type="button" id="rbt12-manual">Informar RBT12 sem o extrato</button><button type="button" id="rbt12-use-pdf" hidden>Usar extrato em PDF</button><div id="rbt12-manual-notice" hidden><p class="sim-help">Informe a receita bruta efetiva dos 12 meses anteriores ao período de apuração. O valor ficará identificado como manual e será mantido fixo nas competências do cenário; não é a projeção das vendas.</p><label class="sim-confirm" for="rbt12-manual-confirm"><input id="rbt12-manual-confirm" type="checkbox">Confirmo que informei a receita bruta dos 12 meses anteriores ao período de apuração.</label></div></div><div class="sim-fields sim-scenario-fields"><div class="sim-field"><label for="simulation-year">Ano da simulação</label><select id="simulation-year"><option>2027</option><option>2028</option></select></div><div class="sim-field"><label for="sales-annex">Atividade das vendas</label><select id="sales-annex"><option value="1">Comércio · Anexo I</option><option value="2">Indústria · Anexo II</option></select></div><div class="sim-field"><label for="service-annex">Categoria dos serviços</label><select id="service-annex"><option value="3">Anexo III</option><option value="4">Anexo IV</option><option value="5">Anexo V</option></select></div></div>${difalOptions()}`,'sim-section-extrato')}
     ${actualMonths()?monthWorkspace():''}
     ${section('02','Vendas e serviços','Valores mensais · confira as vendas e os serviços dos relatórios.',`<div class="sim-fields">${moneyField('serviceRevenue','Vendas de serviços',actualMonths()?'Serviços desta competência, separados das mercadorias.':hasImportedServices()?'Média mensal dos serviços do relatório. Natureza 9000 e seus complementos entram aqui, sem repetir nos grupos de mercadorias.':'Informe o valor mensal. Use 0 se não houver.',hasImportedServices())}${moneyField('salesRevenue','Receita de vendas','Soma dos três grupos abaixo.',false,true)}</div><div class="sim-fields sales">${moneyField('salesOptantCents','Vendas a optantes SN','Opção pelo Simples confirmada. Devoluções podem reduzir este grupo abaixo de zero.',true,false,true)}${moneyField('salesNonOptantCents','Vendas a não optantes SN','Inclui não confirmados; exclui CPFs. Devoluções podem reduzir este grupo abaixo de zero.',true,false,true)}${moneyField('salesCpfCents','Vendas a CPFs','Clientes identificados por CPF. Devoluções podem reduzir este grupo abaixo de zero.',true,false,true)}</div><div id="simulator-difal"></div>${S.serviceMigration?`<div class="sim-note" id="sim-service-migration"><h3>Confira a separação de serviços nesta nova versão</h3><p>Os valores importados foram restaurados pela classificação atual. A receita de serviços agora fica separada das mercadorias. O valor mensal de serviços informado na versão anterior era <strong>${money(S.serviceMigration.previousServices)}</strong>; ele pode já estar incluído nas vendas antigas. Confira o campo Vendas de serviços antes de simular.</p>${S.serviceMigration.previousServices>0?'<label class="sim-confirm"><input id="service-migration-confirm" type="checkbox" required>Revisei os serviços importados e o valor anterior, sem duplicar receitas.</label>':''}</div>`:''}<div class="sim-totals"><article><span>Faturamento mensal</span><strong id="monthly-revenue">Preencha as receitas</strong></article><article><span>${actualMonths()?'Soma das competências':'Projeção anual'}</span><strong id="annual-revenue">Calculada automaticamente</strong></article></div><details class="sim-inline-help"><summary>Sobre os valores de faturamento</summary><p>${actualMonths()?'As receitas usam os valores de cada competência dos relatórios e podem ser ajustadas nesse mês.':'As receitas usam a média mensal dos relatórios e podem ser ajustadas.'} Serviços identificados ficam separados das vendas de mercadorias; naturezas iniciadas por 9000 são serviços. Confira serviços adicionais sem repetir valores já importados. ${actualMonths()?'O total é a soma dos meses importados.':'A projeção é (vendas + serviços) × 12.'} A RBT12 é composta separadamente, pelas receitas do quadro 2.2 nos 12 meses anteriores a cada competência.</p></details>`,'sim-section-revenue')}
     ${section('03','Compras','Valores mensais · preenchidos pelos relatórios e editáveis.',`<div class="sim-fields">${moneyField('purchasesOptantCents','Compras de empresas do Simples','Fornecedores optantes pelo Simples.',true)}${moneyField('purchasesNonOptantCents','Compras de empresas fora do Simples','Inclui não confirmados e outros documentos.',true)}</div><div id="simulator-anticipation"></div>`,'sim-section-purchases')}
@@ -127,6 +163,7 @@ function display(prefill=null) {
   }
   $('#simulator-form').oninput = event => {
     if(S.saving||event.target.id==='report-competence')return;
+    if(event.target.dataset.difalRegime)S.difalPolicy.enabled[event.target.dataset.difalRegime]=event.target.checked;
     if (isImportedField(event.target.id)) S.edited=true;
     if(event.target.id==='serviceRevenue'&&$('#service-migration-confirm'))$('#service-migration-confirm').checked=false;
     if(event.target.id==='rbt12'){if(S.rbt12Mode==='MANUAL')$('#rbt12-manual-confirm').checked=false;else clearRbt12();}
@@ -196,7 +233,7 @@ function updateDifalSource() {
     host.innerHTML=`<section class="sim-difal-card${projected.pendingLines?' is-pending':''}" aria-labelledby="sim-difal-title">
       <header class="sim-difal-header"><div><span class="eyebrow">RELATÓRIO DE VENDAS / SAÍDAS</span><h3 id="sim-difal-title">DIFAL por competência</h3></div><span class="sim-state-badge${projected.pendingLines?' is-adjusted':''}">${projected.pendingLines?'UFs pendentes':'Estimativa gerencial · 10%'}</span></header>
       <div class="sim-difal-metrics"><article class="sim-difal-current"><span>${row?esc(competenceLabel(row.sourceMonth)):'Mês sem dados importados'}</span><strong data-difal-monthly>${!current?'—':current.pendingLines&&!current.eligibleLines?'Pendente':money(current.amountCents/100)}</strong><small>${current?.pendingLines?'Valor parcial · confira as UFs':'DIFAL do mês'}</small></article><article><span>Base elegível do mês</span><strong>${current?money(current.baseCents/100):'—'}</strong><small>${current?`${current.eligibleLines} ${current.eligibleLines===1?'linha elegível':'linhas elegíveis'} · emitente ${esc(current.issuerUf||'sem UF')}`:'Fora do período dos relatórios'}</small></article><article><span>Total do período importado</span><strong data-difal-annual data-difal-amount>${money(projected.annualCents/100)}</strong><small>Soma de ${reports.length} ${reports.length===1?'competência':'competências'}</small></article></div>
-      <p class="sim-difal-explanation">10% sobre vendas interestaduais ${projected.sourceVersion==='DIFAL_ESTIMATE_V4'?'para CPF ou CNPJ válido':'para pessoa física (CPF)'}, conforme as naturezas de venda. Cada mês entra uma única vez na DRE; serviços ficam fora da base.</p>
+      <p class="sim-difal-explanation">10% sobre vendas interestaduais ${projected.sourceVersion==='DIFAL_ESTIMATE_V4'?'para CPF ou CNPJ válido':'para pessoa física (CPF)'}, conforme as naturezas de venda. A aplicação na DRE segue as opções de cada cenário e o sublimite do Simples; serviços ficam fora da base.</p>
       ${projected.pendingLines?`<p class="sim-difal-warning" data-difal-pending role="status">Estimativa parcial: ${projected.pendingLines} linhas aguardam UF. Confira e reimporte as vendas.</p>`:''}
       <details data-difal-disclosure ${open?'open':''}><summary>Conferir DIFAL de todos os meses<span aria-hidden="true">+</span></summary><div class="projection-table-wrap" role="region" aria-label="DIFAL de todas as competências" tabindex="0"><table><thead><tr><th scope="col">Competência</th><th scope="col">Base elegível</th><th scope="col">DIFAL estimado</th></tr></thead><tbody>${reports.map(item=>`<tr${item===row?' class="is-current"':''}><th scope="row">${esc(competenceLabel(item.sourceMonth))}${item===row?'<small>Selecionada</small>':''}</th><td>${money(item.difal.baseCents/100)}</td><td>${money(item.difal.amountCents/100)}${item.difal.pendingLines?' · parcial':''}</td></tr>`).join('')}</tbody></table></div></details>
       ${adjusted?'<p class="sim-difal-explanation" data-difal-adjusted>O DIFAL usa as linhas importadas. Para alterar sua base, corrija e reimporte as vendas.</p>':''}</section>`;return;
@@ -216,7 +253,7 @@ function updateDifalSource() {
   const noCalculatedLines=pending&&!difal.eligibleLines;
   host.innerHTML=`<section class="sim-note" aria-labelledby="sim-difal-title"><h3 id="sim-difal-title">DIFAL estimado · relatório e DRE</h3>
     <div class="sim-detail-grid"><article><span>Total importado · ${esc(difal.ratePercent)}%</span><strong data-difal-amount>${noCalculatedLines?'Pendente':money(difal.amountCents/100)}</strong></article><article><span>Base das vendas elegíveis</span><strong>${money(difal.baseCents/100)}</strong></article><article><span>Vendas elegíveis no arquivo</span><strong>${esc(difal.eligibleLines)}</strong><small>UF do emitente: ${esc(difal.issuerUf||'não informada')}</small></article>${projected?`<article><span>DIFAL mensal na DRE</span><strong data-difal-monthly>${noCalculatedLines?'Pendente':money(projected.monthlyCents/100)}</strong><small>Total importado ÷ ${S.months} ${S.months===1?'mês':'meses'}</small></article><article><span>DIFAL anual na DRE</span><strong data-difal-annual>${noCalculatedLines?'Pendente':money(projected.annualCents/100)}</strong><small>Média mensal × 12</small></article>`:''}</div>
-    <p>Alíquota média estimada de ${esc(difal.ratePercent)}%, que não corresponde necessariamente à alíquota legal de cada operação. ${projected?'A mesma estimativa gerencial é deduzida na DRE e incluída nos tributos dos regimes comparados. O total importado é dividido pelo período confirmado e projetado em 12 meses. Serviços, inclusive natureza 9000, não integram a base elegível.':'Esta versão histórica preserva o DIFAL como referência separada; seus tributos e resultados não foram recalculados.'}</p>
+    <p>Alíquota média estimada de ${esc(difal.ratePercent)}%, que não corresponde necessariamente à alíquota legal de cada operação. ${projected?'A inclusão na DRE e nos tributos segue a escolha de cada regime e o sublimite do Simples. O total importado é dividido pelo período confirmado e projetado em 12 meses. Serviços, inclusive natureza 9000, não integram a base elegível.':'Esta versão histórica preserva o DIFAL como referência separada; seus tributos e resultados não foram recalculados.'}</p>
     ${pending?`<p data-difal-pending>Estimativa parcial: ${esc(difal.pendingLines)} ${difal.pendingLines===1?'linha depende':'linhas dependem'} de UF para verificar a aplicação do DIFAL. ${projected?'A DRE considera apenas as linhas calculadas e pode subestimar o valor. ':''}Confira e reimporte as vendas.</p>`:''}
     ${adjusted?'<p data-difal-adjusted role="status">As vendas mensais foram ajustadas. O DIFAL permanece vinculado às operações importadas; para atualizar sua base, valor ou elegibilidade, corrija e reimporte as vendas com os dados de cada operação.</p>':''}
   </section>`;
@@ -232,7 +269,7 @@ function updateRevenue() {
   captureMonth();
   const revenueTotal=actualMonths()?sumMoney(S.monthlyInputs.flatMap(row=>[...IMPORTED.slice(0,3).map(key=>row.groups[key]),row.values.serviceRevenue])):total===null?null:total*12;
   $('#annual-revenue').textContent=revenueTotal===null?(actualMonths()?'Confira as receitas de todos os meses':'Calculada automaticamente'):money(revenueTotal);
-  updateMonthWorkspace(); updateProjection(); updateDifalSource(); updateAnticipationSource();
+  updateMonthWorkspace(); updateProjection(); updateDifalSource(); updateAnticipationSource(); updateDifalOptions();
 }
 function invalidate() {
   const hadResult=!!S.result;
@@ -266,18 +303,20 @@ function draft() {
   const d=createEmptyDraft(); d.year=Number($('#simulation-year').value);d.salesAnnex=Number($('#sales-annex').value);d.serviceAnnex=Number($('#service-annex').value);
   MANUAL.forEach(key=>d.values[key]=value(key));
   d.rbt12=value('rbt12');
+  d.difalPolicy=parseDifalPolicy(S.difalPolicy);
   d.values.salesRevenue=salesTotal();d.values.simplePurchases=value('purchasesOptantCents');d.values.regularPurchases=value('purchasesNonOptantCents');
   return d;
 }
 function saveDraft() {
   captureMonth();
-  const data={monthlyInputs:actualMonths()?S.monthlyInputs:undefined,entry:S.entry,projectionVersion:actualMonths()?'REPORT_MONTHS_V1':hasImportedServices()?'AVERAGE_X12_V2':'AVERAGE_X12_V1',operationVersion:S.source.operationVersion||null,revenueSplitVersion:S.source.revenueSplit?.version||null,serviceMigrationConfirmed:$('#service-migration-confirm')?.checked===true,months:S.months,edited:S.edited,confirmed:$('#period-confirm').checked,rbt12ExtractionId:S.rbt12ExtractionId,rbt12Document:S.rbt12DocumentId?{documentId:S.rbt12DocumentId,sourceKey:rbt12SourceKey()}:null,rbt12Mode:S.rbt12Mode,rbt12ManualConfirmed:S.rbt12Mode==='MANUAL'&&$('#rbt12-manual-confirm').checked,fields:Object.fromEntries([...IMPORTED,...MANUAL,'rbt12'].map(key=>{const field=$('#'+key);return [key,field.value!==''&&field.validity.valid?Number(field.value).toFixed(2):field.value];})),year:$('#simulation-year').value,salesAnnex:$('#sales-annex').value,serviceAnnex:$('#service-annex').value};
+  const data={difalPolicy:parseDifalPolicy(S.difalPolicy),monthlyInputs:actualMonths()?S.monthlyInputs:undefined,entry:S.entry,projectionVersion:actualMonths()?'REPORT_MONTHS_V1':hasImportedServices()?'AVERAGE_X12_V2':'AVERAGE_X12_V1',operationVersion:S.source.operationVersion||null,revenueSplitVersion:S.source.revenueSplit?.version||null,serviceMigrationConfirmed:$('#service-migration-confirm')?.checked===true,months:S.months,edited:S.edited,confirmed:$('#period-confirm').checked,rbt12ExtractionId:S.rbt12ExtractionId,rbt12Document:S.rbt12DocumentId?{documentId:S.rbt12DocumentId,sourceKey:rbt12SourceKey()}:null,rbt12Mode:S.rbt12Mode,rbt12ManualConfirmed:S.rbt12Mode==='MANUAL'&&$('#rbt12-manual-confirm').checked,fields:Object.fromEntries([...IMPORTED,...MANUAL,'rbt12'].map(key=>{const field=$('#'+key);return [key,field.value!==''&&field.validity.valid?Number(field.value).toFixed(2):field.value];})),year:$('#simulation-year').value,salesAnnex:$('#sales-annex').value,serviceAnnex:$('#service-annex').value};
   try { sessionStorage.setItem(S.key,JSON.stringify(data)); $('#draft-status').textContent='Rascunho salvo nesta aba. Após alterar valores, gere a simulação novamente.'; }
   catch { $('#draft-status').textContent='Não foi possível guardar o rascunho nesta aba. Mantenha a página aberta até concluir.'; }
 }
 function restoreDraft() {
   try {
     const data=JSON.parse(sessionStorage.getItem(S.key)||'null'); if(!data || !Number.isInteger(data.months) || data.months<1 || data.months>12) return;
+    if(Object.hasOwn(data,'difalPolicy'))applyDifalPolicy(data.difalPolicy);
     if(S.source.periodBasis!=='COLUMN_H')S.months=data.months; $('#period-months').value=String(S.months);applyReports();
     const matchingMonths=data.months===S.months;
     const matchingMonthly=!actualMonths()||data.projectionVersion==='REPORT_MONTHS_V1';
@@ -369,6 +408,7 @@ function finishGuidedRbt12(manual) {
     if(S.manualDraft){$('#rbt12').value=S.manualDraft.value;$('#rbt12-manual-confirm').checked=S.manualDraft.confirmed;}
   }
   S.manualDraft=null;saveDraft();renderNotices();
+  updateDifalOptions();
   const params=new URLSearchParams(location.search);params.set('step','dados');history.replaceState(null,'','/simulator.html?'+params);
   const form=$('#simulator-form');
   (form.querySelector('input:invalid')||$('#generate-simulation')).focus();
@@ -389,6 +429,7 @@ function clearRbt12(keepDocument=false) {
   if($('label[for="rbt12"]')&&S.rbt12Mode!=='MANUAL')$('label[for="rbt12"]').textContent='RBT12 do PA · seção 2.2';
   if($('#rbt12-status'))$('#rbt12-status').textContent='Selecione o extrato ou a declaração PGDAS-D em PDF para conferir a seção 2.2. Até 8 MiB.';
   updateGuidedRbt12();
+  if($('#simulator-form')&&S.difalPolicy)updateDifalOptions();
 }
 function setReadingPdf(reading) {
   S.readingPdf=reading;
@@ -397,13 +438,15 @@ function setReadingPdf(reading) {
   updateGuidedRbt12();
 }
 function applyRbt12(data) {
-  if(!isSection22(data)||!(data.extractionId||data.id))throw new Error('Leitura incompleta da seção 2.2. Leia novamente o extrato.');
+  if(!(data?.extractionId||data?.id))throw new Error('Leitura incompleta da seção 2.2. Leia novamente o extrato.');
+  data={...data,...reconcileSection22Extraction(data)};
   S.rbt12ExtractionId=data.extractionId||data.id;S.rbt12Data=data;S.rbt12DocumentId=data.documentId||null;S.rbt12DocumentConfirmed=!!S.rbt12DocumentId;S.rbt12DocumentRetryable=!!S.rbt12DocumentId;
   $('#rbt12').value=(data.rbt12Cents/100).toFixed(2);
   $('label[for="rbt12"]').textContent=`RBT12 do PA ${data.pa}`;
   $('#rbt12-details').innerHTML=renderSection22(data);
   updateRbt12Schedule();
   if(actualMonths()&&S.monthlyInputs.length)updateMonthWorkspace();
+  updateDifalOptions();
   const historyCount=Array.isArray(data.priorRevenues)?data.priorRevenues.length:data.rbt12Window.length;
   $('#rbt12-status').textContent=`Seção 2.2 conferida · PA ${data.pa}. ${historyCount} receitas mensais disponíveis; confira a composição da RBT12 de cada competência abaixo.`;
   const searchableLabel=data.searchablePdfScope==='SELECTED_PAGES'?'PDF com seção 2.2 pesquisável':'PDF pesquisável';
@@ -596,6 +639,7 @@ function renderNotices() {
   host.innerHTML=`<details class="sim-notices" ${open?'open':''}><summary><span>${unique.length} ${unique.length===1?'aviso':'avisos'} e premissas</span><span class="sim-notices-toggle">Detalhes <span aria-hidden="true">⌄</span></span></summary><div class="sim-notices-content">${unique.map(w=>`<article><strong>${esc(w.title)}</strong><p>${esc(w.detail)}</p></article>`).join('')}</div></details>`;
 }
 function fillSnapshot(snapshot) {
+  applyDifalPolicy(savedDifalPolicy(snapshot)||undefined);
   S.months=S.source.periodBasis==='COLUMN_H'?S.source.reportMonths:snapshot.reportMonths; $('#period-months').value=String(S.months); applyReports();
   if(actualMonths()){
     const split=snapshot.source?.revenueSplit?.version==='SALES_SERVICES_V1';
@@ -701,7 +745,7 @@ function renderResult() {
   $('#print-dre').onclick=printDre;
   $('#dre-show-percent').onchange=event=>{S.dreShowPercent=event.target.checked;renderResult();$('#dre-show-percent').focus({preventScroll:true});};
   document.querySelectorAll('[data-dre-month-view]').forEach(button=>button.onclick=()=>{S.dreMonthView=button.dataset.dreMonthView==='single';renderResult();document.querySelector(`[data-dre-month-view="${S.dreMonthView?'single':'all'}"]`).focus({preventScroll:true});});
-  const monthSelect=$('#dre-month');if(monthSelect)monthSelect.onchange=()=>{S.dreMonth=Number(monthSelect.value);renderResult();if(S.readonly){updateDifalSource();updateAnticipationSource();}$('#dre-month').focus({preventScroll:true});};
+  const monthSelect=$('#dre-month');if(monthSelect)monthSelect.onchange=()=>{S.dreMonth=Number(monthSelect.value);renderResult();if(S.readonly){updateDifalSource();updateAnticipationSource();updateDifalOptions();}$('#dre-month').focus({preventScroll:true});};
   document.querySelectorAll('[data-period]').forEach(button=>button.onclick=()=>{S.viewPeriod=button.dataset.period;renderResult();document.querySelector(`[data-period="${S.viewPeriod}"]`)?.focus({preventScroll:true});});
   const regimeSelect=$('#dre-regime');if(regimeSelect)regimeSelect.onchange=()=>{S.calendarRegime=regimeSelect.value;renderResult();$('#dre-regime').focus({preventScroll:true});};
   document.querySelectorAll('[data-dre-jump]').forEach(button=>button.onclick=()=>{
@@ -734,8 +778,8 @@ function fieldLabel(key) { return {serviceRevenue:'Vendas de serviços',serviceR
 function showSnapshot(snapshot) {
   if(snapshot.result?.method==='REPORT_MONTHS_V1'){S.entry=0;S.viewPeriod='monthly';S.dreMonth=snapshot.source.monthlyReports[0].month-1;}
   S.snapshot=snapshot;S.source=snapshot.source;S.months=snapshot.reportMonths;S.edited=snapshot.manuallyAdjusted;S.readonly=true;S.pending=null;S.result={input:snapshot.draft,result:snapshot.result,monthlyGroups:snapshot.monthlyGroups,projection:snapshot.projection,difalProjection:snapshot.difalProjection,rbt12Schedule:snapshot.rbt12Schedule||snapshot.result?.rbt12Schedule||null,anticipationProjection:snapshot.anticipationProjection||null};
-  $('#simulator-app').innerHTML=`<div id="simulator-intro">${hero(true)}</div>${capturedFields(snapshot)}<div id="simulation-result"></div><h2 class="sim-evidence-title">Conferência dos relatórios de origem</h2><div id="simulator-projection"></div><div id="simulator-difal"></div><div id="simulator-anticipation"></div>${renderSection22(snapshot.rbt12Extraction)}<div id="rbt12-schedule">${renderRbt12Schedule(snapshot.rbt12Schedule||snapshot.result?.rbt12Schedule)}</div>${sourceCard()}<div id="simulation-notices"></div>`;
-  updateProjection();updateDifalSource();updateAnticipationSource();renderNotices();renderResult();
+  $('#simulator-app').innerHTML=`<div id="simulator-intro">${hero(true)}</div>${capturedFields(snapshot)}${difalOptions(snapshot)}<div id="simulation-result"></div><h2 class="sim-evidence-title">Conferência dos relatórios de origem</h2><div id="simulator-projection"></div><div id="simulator-difal"></div><div id="simulator-anticipation"></div>${renderSection22(snapshot.rbt12Extraction)}<div id="rbt12-schedule">${renderRbt12Schedule(snapshot.rbt12Schedule||snapshot.result?.rbt12Schedule)}</div>${sourceCard()}<div id="simulation-notices"></div>`;
+  updateProjection();updateDifalSource();updateAnticipationSource();updateDifalOptions();renderNotices();renderResult();
   const button=$('#create-version');if(button)button.onclick=()=>void openSnapshotVersion(snapshot);
 }
 async function openSnapshotVersion(snapshot) {

@@ -26,6 +26,31 @@ export function section22RevenueHistory(extraction){
   });
 }
 
+/** Reconcile a complete extraction before calling it confirmed, on browser and server alike. */
+export function reconcileSection22Extraction(extraction){
+  const error='A seção 2.2 está incompleta ou inconsistente. Leia novamente o extrato.';
+  const priorRevenues=section22RevenueHistory(extraction),byMonth=new Map(priorRevenues.map(row=>[row.month,row]));
+  const paNumber=monthNumber(`${extraction.pa.slice(3)}-${extraction.pa.slice(0,2)}`);
+  const expected=Array.from({length:12},(_,index)=>monthKey(paNumber-12+index));
+  check(Array.isArray(extraction.rbt12Window)&&extraction.rbt12Window.length===12,error);
+  const rbt12Window=expected.map((month,index)=>{
+    const prior=byMonth.get(month),row=extraction.rbt12Window[index];
+    check(prior&&row?.month===month&&row.period===prior.period&&row.internalCents===prior.internalCents&&
+      row.externalCents===prior.externalCents&&row.totalCents===prior.totalCents,error);
+    return {...prior,usedInRbt12:true};
+  });
+  const internalCents=rbt12Window.reduce((total,row)=>total+row.internalCents,0);
+  const externalCents=rbt12Window.reduce((total,row)=>total+row.externalCents,0);
+  const totalCents=internalCents+externalCents,basis=extraction.rbt12Basis;
+  check(validCents(totalCents)&&validCents(extraction.rbt12Cents)&&extraction.rbt12Cents===totalCents,error);
+  check(basis?.section==='2.2'&&basis.months===12&&basis.startMonth===expected[0]&&basis.endMonth===expected[11]&&
+    basis.internalCents===internalCents&&basis.externalCents===externalCents&&basis.totalCents===totalCents,error);
+  check(extraction.rbt12CalculatedCents===undefined||extraction.rbt12CalculatedCents===totalCents,error);
+  check(extraction.rbt12Reconciled===undefined||extraction.rbt12Reconciled===true,error);
+  return {priorRevenues,rbt12Window,rbt12Cents:totalCents,
+    rbt12Basis:{section:'2.2',months:12,startMonth:expected[0],endMonth:expected[11],internalCents,externalCents,totalCents}};
+}
+
 /** Each source competence uses its own twelve preceding months, exclusively from 2.2. */
 export function buildRbt12Schedule(extraction,sourceMonths){
   const history=section22RevenueHistory(extraction),byMonth=new Map(history.map(row=>[row.month,row]));

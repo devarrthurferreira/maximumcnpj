@@ -1,4 +1,4 @@
-import {unifiedDreRows} from './simulator-dre.js';
+import {unifiedDreRows,dreDifalNotes} from './simulator-dre.js';
 import {readDreValue,buildDreSummary,buildDreEvolution} from './simulator-dre-summary.js';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=value=>value==null||!Number.isFinite(value)?'—':value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}).replace(/\u00a0/g,' ');
@@ -29,6 +29,10 @@ function legend(){return '<p class="dre-legend">As linhas de composição detalh
 function footnotes(presentation){
   const notes=[...new Set(unifiedDreRows(presentation).flatMap(row=>row.notes||[]))].filter(note=>note!=='Subtotal de conferência das linhas já incluídas no resultado; não somar novamente.');
   return notes.length?`<div class="dre-footnotes">${notes.map(note=>`<p>${esc(note)}</p>`).join('')}</div>`:'';
+}
+function difalNotes(presentation,sourceMonth=null){
+  const notes=dreDifalNotes(presentation,{sourceMonth});
+  return notes.length?`<div class="dre-difal-notes"><h3>DIFAL nos cenários</h3>${notes.map(note=>`<p>${esc(note)}</p>`).join('')}</div>`:'';
 }
 function referenceLine(calendar,sourceMonth=null){
   const schedule=calendar?.method==='REPORT_MONTHS_ROLLING_RBT12'?calendar.rbt12Schedule:null;
@@ -80,7 +84,7 @@ function annualEvolution(presentation,calendar,regimeId){
     <ol class="dre-evolution-months">${data.months.map((month,index)=>`<li data-dre-evolution-month="${index}" class="${!month.sourceMonth?'is-missing':''}"><h4>${esc(month.label)}</h4>${month.sourceMonth?`<small>Origem: ${esc(month.sourceMonth)}</small><dl><div><dt>Receita</dt><dd>${money(month.revenue)}</dd></div><div><dt>Resultado</dt><dd class="${month.netProfit<0?'is-loss':''}">${money(month.netProfit)}</dd></div><div><dt>Margem</dt><dd>${percent(month.netMargin)}</dd></div></dl>`:'<p>Sem dados importados</p>'}</li>`).join('')}</ol></details>`;
 }
 function readingNote(showPercent){return `<p class="dre-reading-note">R$ · valores negativos são deduções · composições detalham valores já incluídos · — indica indisponível.${showPercent?' Percentuais sobre a receita bruta do mesmo período e regime.':''}</p>`;}
-function contextFooter(presentation,calendar,year,sourceMonth=null){return `<footer class="dre-reading-footer"><h3>Referências deste demonstrativo</h3>${referenceLine(calendar,sourceMonth)}${footnotes(presentation)}${calendar?methodology({calendar,year}):''}</footer>`;}
+function contextFooter(presentation,calendar,year,sourceMonth=null){return `<footer class="dre-reading-footer"><h3>Referências deste demonstrativo</h3>${referenceLine(calendar,sourceMonth)}${difalNotes(presentation,sourceMonth)}${footnotes(presentation)}${calendar?methodology({calendar,year}):''}</footer>`;}
 export function renderAnnualDre({presentation,calendar,year,regimeId,showPercent=false}){
   const columns=presentation.regimes.map(annualColumn),regime=selectRegime(presentation,regimeId);
   return `<section class="card sim-dre dre-complete dre-visual" id="dre-demonstrativo"><div class="dre-heading"><div><span class="eyebrow">DEMONSTRAÇÃO DO RESULTADO</span><h2>DRE anual</h2><p>Consolidado de ${esc(year)} · ${presentation.method==='REPORT_MONTHS_V1'?'soma das competências importadas':'projeção anual salva'}</p></div>${regimeControl(presentation,regime,true)}</div>
@@ -122,5 +126,5 @@ export function renderDrePrintDocument({presentation,calendar,year,regimeId,show
   const context=monthly?monthlyContext({presentation,calendar,year,regimeId}):null;
   const columns=monthly?context.columns:presentation.regimes.map(annualColumn);
   const regimeLabel=monthly?context.regime.name:presentation.regimes.map(regime=>regime.name).join(' · ');
-  return `<section id="dre-print-document" class="sim-dre dre-complete dre-print-document ${monthly?'dre-print-monthly':'dre-print-annual'}"><header class="dre-print-identification"><div class="eyebrow">MAXIMUM CNPJ · DRE</div><h1>Demonstração do Resultado</h1><h2>${esc(company.name||'Empresa')}</h2><p>${company.code?'Código '+esc(company.code)+' · ':''}${company.cnpj?'CNPJ '+esc(company.cnpj)+' · ':''}Cenário ${esc(year)} · ${monthly?'Janeiro a dezembro':'Comparação anual'}</p><p>${esc(regimeLabel)}</p>${referenceLine(calendar)}</header>${legend()}${showPercent?'<p class="dre-denominator">Percentuais sobre a receita bruta do mesmo regime e período; sem receita positiva, o percentual não se aplica.</p>':''}${table({presentation,columns,showPercent,label:monthly?'DRE mensal completa':'DRE anual completa'})}${footnotes(presentation)}${monthly?methodology({calendar,year}):''}</section>`;
+  return `<section id="dre-print-document" class="sim-dre dre-complete dre-print-document ${monthly?'dre-print-monthly':'dre-print-annual'}"><header class="dre-print-identification"><div class="eyebrow">MAXIMUM CNPJ · DRE</div><h1>Demonstração do Resultado</h1><h2>${esc(company.name||'Empresa')}</h2><p>${company.code?'Código '+esc(company.code)+' · ':''}${company.cnpj?'CNPJ '+esc(company.cnpj)+' · ':''}Cenário ${esc(year)} · ${monthly?'Janeiro a dezembro':'Comparação anual'}</p><p>${esc(regimeLabel)}</p>${referenceLine(calendar)}</header>${legend()}${showPercent?'<p class="dre-denominator">Percentuais sobre a receita bruta do mesmo regime e período; sem receita positiva, o percentual não se aplica.</p>':''}${table({presentation,columns,showPercent,label:monthly?'DRE mensal completa':'DRE anual completa'})}${difalNotes(presentation)}${footnotes(presentation)}${monthly?methodology({calendar,year}):''}</section>`;
 }
