@@ -21,7 +21,7 @@ test('Resumo guiado mostra serviços9000, composição e DIFAL; relatório compl
  await page.goto(`/purchases.html?type=SALES&generation=${generation}&client=${clientId}&job=${jobId}&guided=1`);
  await expect(page.getByRole('heading',{name:'Resumo de vendas',exact:true})).toBeVisible();
  const services=page.locator('.purchase-operation-card').filter({hasText:'Vendas de serviços'});
- await expect(services).toBeVisible();await expect(services).toContainText('200,00');await expect(page.getByRole('heading',{name:'Como chegamos ao novo total'})).toBeVisible();
+ await expect(services).toBeVisible();await expect(services).toContainText('200,00');await expect(page.getByRole('heading',{name:'Composição dos valores das linhas'})).toBeVisible();
  await expect(page.locator('[data-difal-amount]')).toContainText('10,00');
  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
  const shot=info.outputPath('servicos-resumo-guiado.png');await page.screenshot({path:shot,fullPage:true});await info.attach('Resumo com vendas de serviços',{path:shot,contentType:'image/png'});

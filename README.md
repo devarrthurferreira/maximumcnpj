@@ -1,4 +1,21 @@
-# Maximum CNPJ · v0.32.1
+# Maximum CNPJ · v0.32.2
+
+## Fechamento da receita bruta e das devoluções — 23/10/2026
+
+O fechamento passa a demonstrar **receita bruta de vendas e serviços − devoluções de venda = receita após devoluções**. O saldo do arquivo de vendas e a receita considerada na simulação têm identificações distintas. No fluxo mensal atual, as devoluções já eram abatidas antes do motor; o valor resultante deixava de ser explicado e aparecia incorretamente como receita bruta.
+
+- **Ao final do demonstrativo:** a DRE apresenta o fechamento de cada competência e do período. Ajustes manuais ficam em uma linha própria, seguida da receita efetivamente utilizada. As devoluções são deduzidas uma única vez; tributos e resultado preservam a base já calculada. No celular, os valores ficam empilhados para o regime e período selecionados; desktop e impressão conservam a tabela completa.
+- **Base da receita bruta:** soma das operações VENDA e dos serviços de venda 9000, usando o valor financeiro de cada linha (`Q − Y + AA − AB`), antes das devoluções de venda. Não é a coluna Q isolada nem a soma de todas as operações do arquivo. Devoluções de compra e outras operações permanecem fora dessa base.
+- **Devoluções:** as operações DEVOLUCAO_VENDA do relatório de compras reduzem a receita na competência da coluna H. A fonte conserva seus valores e enquadramentos originais; o fechamento mostra a dedução separadamente.
+- **Edição e percentuais:** os campos de vendas deixam explícito que já estão após as devoluções. Diferenças informadas manualmente aparecem como ajustes da simulação. Margens, carga tributária e análise vertical continuam usando a receita utilizada, com o denominador identificado corretamente.
+- **Relatórios e exportações:** o fechamento usa o par confiável de compras e vendas da mesma empresa e geração. O CSV específico de fechamento é separado do CSV das linhas originais, com valores monetários numéricos, inclusive devoluções negativas, e metadados protegidos contra fórmulas. PDFs individuais e consolidados apresentam a composição ao final, distinguindo dados disponíveis e pendentes; o consolidado soma cada empresa uma única vez.
+- **Histórico:** simulações salvas usam somente a fonte capturada e a DRE preservada. Ausência de composição suficiente não vira devolução zero; relatórios avulsos ou sem par válido informam indisponibilidade. Totais originais, alíquotas, escolhas de DIFAL e contratos de cálculo permanecem preservados.
+
+O contrato de apresentação `REVENUE_RECONCILIATION_V1` usa `AVAILABLE`, `PENDING` e `UNAVAILABLE`, sem valores monetários inventados nos dois últimos estados. O resumo financeiro acrescenta `revenueReconciliation`. `GET /api/v4/generations/{id}/revenue?clientId=...` consulta o fechamento de uma empresa sob demanda, sem ampliar a leitura do histórico. `POST /api/v4/{purchases|sales}/{jobId}/revenue-csv` exporta o fechamento em `{fileName, content, mimeType}`, com os mesmos controles de sessão, origem e workspace dos relatórios existentes.
+
+O problema foi reproduzido no navegador com dados sintéticos: R$ 2.200,00 de receita bruta e R$ 400,00 de devoluções geravam corretamente R$ 1.800,00 na DRE, mas a tela chamava esse valor de receita bruta e não mostrava o fechamento. A regressão cobre importação de duas competências, salvamento, reabertura em sessão nova, CSV e criação de uma versão com ajuste manual de R$ 100,00. O cenário original, as linhas importadas e a escolha de excluir DIFAL permanecem preservados.
+
+Validação da v0.32.2: tipos, build, versão/documentação e diff conferidos; **261 testes de regras**, **111 verificações nas suítes de integração/projeção/competências**, **171 testes Python/PDF/OCR** e **164 testes de navegador** aprovados, sem saltos. A regressão nova usa conta sintética própria, conservando os limites de login e a autenticação real nas duas sessões. Fechamentos em desktop, 390/320 px e páginas finais dos PDFs individual e consolidado também foram inspecionados visualmente.
 
 ## Correção: saída desmarcada respeitada em toda a apresentação — 23/10/2026
 

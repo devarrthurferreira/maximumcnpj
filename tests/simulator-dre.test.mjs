@@ -10,7 +10,7 @@ import {baselineMonth,calculateMonthlySimulation} from '../public/simulator-mont
 import {buildDreCsv} from '../public/simulator-dre-export.js';
 
 const near=(a,b)=>assert(Math.abs(a-b)<1e-7,`${a} != ${b}`);
-const allRows=p=>[...p.sections.flatMap(section=>section.rows),...p.details.flatMap(section=>section.rows),...p.indicators];
+const allRows=p=>[...p.sections.flatMap(section=>section.rows),...p.details.flatMap(section=>section.rows),...p.indicators,...(p.revenueReconciliation?.rows||[])];
 const find=(p,key)=>allRows(p).find(row=>row.key===key);
 function fixture(){
  const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:180000,values:{salesRevenue:12000,serviceRevenue:3000,simplePurchases:1000,regularPurchases:2000,salaries:300,benefits:10,adminExpenses:200,rent:100,cardExpenses:50}};
@@ -295,10 +295,11 @@ test('DRE única inclui cada linha uma vez, composição junto ao total e indica
  const input=fixture(),p=buildDrePresentation({...input,calendar:buildMonthlyDre(input.result,2027)}),before=structuredClone(p);
  freeze(p);const rows=unifiedDreRows(p),keys=rows.map(row=>row.key);
  assert.equal(rows.length,allRows(p).length);assert.equal(new Set(keys).size,rows.length);
- assert.deepEqual(rows.filter(row=>row.kind!=='detail'&&row.kind!=='indicator').map(row=>row.key),p.sections.flatMap(section=>section.rows.map(row=>row.key)));
+ assert.deepEqual(rows.filter(row=>row.kind!=='detail'&&row.kind!=='indicator').map(row=>row.key),[...p.sections.flatMap(section=>section.rows.map(row=>row.key)),...p.revenueReconciliation.rows.map(row=>row.key)]);
  for(const group of p.details){const parent=keys.indexOf(group.parentKey);assert(parent>=0);assert.deepEqual(keys.slice(parent+1,parent+1+group.rows.length),group.rows.map(row=>row.key));}
- assert.deepEqual(rows.slice(-p.indicators.length),p.indicators);
- assert.equal(keys[keys.length-p.indicators.length-1],'netProfit');
+ assert.deepEqual(rows.slice(-p.indicators.length-p.revenueReconciliation.rows.length,-p.revenueReconciliation.rows.length),p.indicators);
+ assert.deepEqual(rows.slice(-p.revenueReconciliation.rows.length),p.revenueReconciliation.rows);
+ assert.equal(keys[keys.length-p.indicators.length-p.revenueReconciliation.rows.length-1],'netProfit');
  for(const row of rows)assert.equal(row,find(p,row.key),'A ordenação não copia nem transforma os valores anuais ou mensais.');
  assert.deepEqual(p,before);
 });
@@ -312,7 +313,8 @@ test('DRE única mantém legado, detalhes indisponíveis e extensões sem repeti
  assert.equal(keys.includes('difal'),false);assert.equal(keys.filter(key=>key==='salesCpfCents').length,1);
  assert.equal(rows.find(row=>row.key==='serviceReport').values.actual,null);
  assert.equal(rows.find(row=>row.key==='extraDetail'),extension);
- assert.equal(new Set(keys).size,keys.length);assert.deepEqual(rows.slice(-p.indicators.length),p.indicators);
+ assert.equal(new Set(keys).size,keys.length);assert.deepEqual(rows.slice(-p.indicators.length-p.revenueReconciliation.rows.length,-p.revenueReconciliation.rows.length),p.indicators);
+ assert.deepEqual(rows.slice(-p.revenueReconciliation.rows.length),p.revenueReconciliation.rows);
 });
 
 
@@ -387,4 +389,130 @@ test('evolução distingue receita zero e DIFAL zero de ausentes e respeita regi
  assert(!buildDreEvolution(presentation,calendar,'actual',2).metrics.some(row=>row.key==='difal'));
  presentation.regimes[0].available=false;
  const unavailable=buildDreEvolution(presentation,calendar,'actual',1);assert.match(unavailable.reason,/indisponível/);assert(unavailable.metrics.every(row=>row.change===null&&row.value===null));
+});
+
+function revenueReturnsFixture(adjustment=0){
+ const {draft}=fixture();
+ const reports=[[100000,20000,15000],[80000,20000,25000]].map(([gross,services,returns],index)=>({
+  sourceMonth:`2025-0${index+1}`,month:index+1,operationVersion:'NATURE_OPERATIONS_2026_10_V1',
+  operationAudit:{grossSalesCents:gross,serviceSalesCents:services,salesReturnsCents:returns},
+  fields:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:gross-returns,serviceRevenueCents:services,purchasesOptantCents:0,purchasesNonOptantCents:30000}
+ }));
+ const source={monthlyReports:reports,fields:Object.fromEntries(Object.keys(reports[0].fields).map(key=>[key,reports.reduce((sum,row)=>sum+row.fields[key],0)])),
+  operationAudit:{grossSalesCents:180000,serviceSalesCents:40000,salesReturnsCents:40000},sales:{jobId:'saved-sales',selectedTotalCents:180000},purchases:{jobId:'saved-purchases'}};
+ const inputs=reports.map(row=>baselineMonth(row));inputs[0].groups.salesCpfCents+=adjustment;
+ const calculation=calculateMonthlySimulation(draft,reports,inputs,'saved-sales');
+ return {result:calculation.result,source,calendar:buildMonthlyDre(calculation.result,2027),draft};
+}
+
+test('fechamento expõe bruto menos devoluções uma vez, com competências distintas e tributos preservados',()=>{
+ const input=revenueReturnsFixture(),before=structuredClone(input);freeze(input);
+ const p=buildDrePresentation(input),keys=['revenueSourceGross','revenueSalesReturns','revenueAfterReturns','revenueManualAdjustment','revenueUsed'];
+ assert.deepEqual(p.revenueReconciliation.rows.map(row=>row.key),keys);
+ for(const regime of input.result.regimes){
+  assert.deepEqual(keys.map(key=>find(p,key).values[regime.id]),[2200,-400,1800,0,1800]);
+  assert.deepEqual(keys.map(key=>find(p,key).monthlyValues[regime.id][0]),[1200,-150,1050,0,1050]);
+  assert.deepEqual(keys.map(key=>find(p,key).monthlyValues[regime.id][1]),[1000,-250,750,0,750]);
+  assert.deepEqual(keys.map(key=>find(p,key).calendarAnnualValues[regime.id]),[2200,-400,1800,0,1800]);
+  for(const key of keys)assert(find(p,key).monthlyValues[regime.id].slice(2).every(value=>value===null),'Mês fora do período continua sem dados.');
+  assert.equal(find(p,'revenue').values[regime.id],1800);
+  near(find(p,'netMargin').values[regime.id],regime.dre.netProfit/1800);
+  near(find(p,'taxBurden').values[regime.id],regime.totalTaxes/1800);
+  assert.equal(buildDreSummary(p,{id:regime.id,mode:'annual'}).reconciled,true);
+ }
+ assert.equal(find(p,'revenue').label,'Receita total utilizada');assert.equal(find(p,'netRevenue').label,'Receita após deduções tributárias');
+ assert.match(p.percentBasis,/Receita utilizada/);assert.deepEqual(input,before);
+});
+
+test('ajuste de receita fica separado da fonte em cada mês, com a devolução já abatida',()=>{
+ for(const adjustment of [100,-100]){
+  const input=revenueReturnsFixture(adjustment),before=structuredClone(input);freeze(input);
+  const p=buildDrePresentation(input);
+  for(const regime of input.result.regimes){
+   assert.equal(find(p,'revenueSourceGross').values[regime.id],2200);
+   assert.equal(find(p,'revenueSalesReturns').values[regime.id],-400);
+   assert.equal(find(p,'revenueAfterReturns').values[regime.id],1800);
+   assert.equal(find(p,'revenueManualAdjustment').values[regime.id],adjustment);
+   assert.equal(find(p,'revenueManualAdjustment').monthlyValues[regime.id][0],adjustment);
+   assert.equal(find(p,'revenueManualAdjustment').monthlyValues[regime.id][1],0);
+   assert.equal(find(p,'revenueUsed').values[regime.id],1800+adjustment);
+   assert.equal(find(p,'revenueUsed').monthlyValues[regime.id][0],1050+adjustment);
+   assert.equal(find(p,'revenueUsed').monthlyValues[regime.id][1],750);
+  }
+  assert.deepEqual(input,before);
+ }
+});
+
+test('fechamento fica aberto ao final da DRE anual, mensal e impressão e termina o CSV',()=>{
+ const input=revenueReturnsFixture(100),p=buildDrePresentation(input),keys=p.revenueReconciliation.rows.map(row=>row.key);
+ for(const html of [renderAnnualDre({presentation:p,calendar:input.calendar,year:2027}),
+  renderCompleteMonthlyDre({presentation:p,calendar:input.calendar,year:2027,regimeId:'pure',month:1}),
+  renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027,period:'annual'}),
+  renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027,period:'monthly',regimeId:'pure'})]){
+  assert.equal((html.match(/data-revenue-reconciliation="dre"/g)||[]).length,1);
+  const closing=html.slice(html.indexOf('data-revenue-reconciliation="dre"'));
+  assert(!closing.includes('<details'));assert.match(closing,/<h3>Fechamento da receita<\/h3>/);
+  assert(html.indexOf('data-revenue-reconciliation="dre"')>html.indexOf('data-dre-row="totalTaxes"'));
+  for(const key of keys)assert.equal((html.match(new RegExp(`data-dre-row="${key}"`,'g'))||[]).length,1);
+  assert.match(closing,/já estão abatidas/);assert.match(closing,/não altera nem deduz novamente/);
+  assert.doesNotMatch(html,/Percentuais sobre a receita bruta/);
+ }
+ const annual=buildDreCsv({presentation:p}),lines=annual.trim().split('\r\n');
+ const closing=lines.filter(line=>line.startsWith('"Conferência da receita"'));
+ assert.equal(closing.length,5);assert.deepEqual(lines.slice(-5),closing);
+ assert.match(closing[0],/;2200,00;2200,00;2200,00;2200,00;/);
+ assert.match(closing[1],/;-400,00;-400,00;-400,00;-400,00;/);
+ assert.match(closing[2],/;1800,00;1800,00;1800,00;1800,00;/);
+ assert.match(closing[3],/;100,00;100,00;100,00;100,00;/);
+ assert.match(closing[4],/;1900,00;1900,00;1900,00;1900,00;/);
+ const monthly=buildDreCsv({presentation:p,period:'monthly'}).split('\r\n').filter(line=>line.startsWith('"Simples Puro";"Conferência da receita"'));
+ assert.equal(monthly.length,5);assert.match(monthly[1],/;-150,00;-250,00;"Não disponível"/);assert.match(monthly[4],/;1150,00;750,00;"Não disponível"/);
+});
+
+test('legado ou fonte divergente não inventa bruto, devolução zero ou ajuste; receita salva continua intacta',()=>{
+ for(const change of [input=>delete input.source,input=>delete input.source.monthlyReports[0].operationAudit,
+  input=>input.source.monthlyReports[0].operationAudit.salesReturnsCents++,input=>input.source.monthlyReports.pop()]){
+  const input=revenueReturnsFixture();change(input);const before=structuredClone(input);freeze(input);
+  const p=buildDrePresentation(input);
+  for(const key of ['revenueSourceGross','revenueSalesReturns','revenueAfterReturns','revenueManualAdjustment']){
+   assert.equal(find(p,key).values.pure,null);assert(find(p,key).reasonByRegime.pure);
+  }
+  assert.equal(find(p,'revenueUsed').values.pure,1800);assert.equal(find(p,'revenueUsed').monthlyValues.pure[0],1050);
+  assert.deepEqual(input,before);
+ }
+ const legacy=fixture(),before=structuredClone(legacy),p=buildDrePresentation(legacy);
+ assert.equal(find(p,'revenueSourceGross').values.pure,null);assert.match(find(p,'revenueSourceGross').reasonByRegime.pure,/projeção histórica/);
+ assert.equal(find(p,'revenueUsed').values.pure,legacy.result.regimes[0].dre.revenue);assert.deepEqual(legacy,before);
+ const html=renderAnnualDre({presentation:p,year:2027});assert.match(html,/Valor preservado nesta DRE/);assert(!html.includes('Vendas + serviços após devoluções e ajustes'));
+});
+
+test('calendário divergente preserva a célula salva sem atribuir a diferença a ajuste manual',()=>{
+ const input=revenueReturnsFixture(),saved=input.calendar.regimes[0].rows.find(row=>row.key==='revenue');
+ saved.months[0]=1075;saved.annual=1825;
+ const before=structuredClone(input);freeze(input);const p=buildDrePresentation(input);
+ assert.equal(find(p,'revenueUsed').values.pure,1800);
+ assert.equal(find(p,'revenueUsed').calendarAnnualValues.pure,1825);
+ assert.equal(find(p,'revenueUsed').monthlyValues.pure[0],1075);
+ assert.equal(find(p,'revenueManualAdjustment').calendarAnnualValues.pure,null);
+ assert.equal(find(p,'revenueManualAdjustment').monthlyValues.pure[0],null);
+ assert.match(find(p,'revenueManualAdjustment').monthlyReasonByRegime.pure[0],/não concilia/);
+ assert.equal(find(p,'revenueManualAdjustment').monthlyValues.pure[1],0);assert.deepEqual(input,before);
+});
+
+test('fechamento móvel usa o regime e a competência selecionados, conservando a tabela de impressão',()=>{
+ const input=revenueReturnsFixture(100),p=buildDrePresentation(input);
+ const annual=renderAnnualDre({presentation:p,calendar:input.calendar,year:2027,regimeId:'actual'});
+ const month=renderCompleteMonthlyDre({presentation:p,calendar:input.calendar,year:2027,regimeId:'hybrid',month:1});
+ assert.match(annual,/Lucro Real · Total anual \/ 2027/);
+ const value=(html,key)=>html.split(`data-revenue-mobile-row="${key}"`)[1].split('</dd>')[0];
+ assert.match(value(annual,'revenueSourceGross'),/data-revenue-mobile-value>R\$ 2.200,00/);
+ assert.match(value(annual,'revenueManualAdjustment'),/data-revenue-mobile-value>R\$ 100,00/);
+ assert.match(value(annual,'revenueUsed'),/data-revenue-mobile-value>R\$ 1.900,00/);
+ assert.match(month,/Simples Híbrido · Fevereiro \/ 2027/);
+ assert.match(value(month,'revenueSourceGross'),/data-revenue-mobile-value>R\$ 1.000,00/);
+ assert.match(value(month,'revenueSalesReturns'),/data-revenue-mobile-value>-R\$ 250,00/);
+ assert.match(value(month,'revenueUsed'),/data-revenue-mobile-value>R\$ 750,00/);
+ assert.match(value(month,'revenueUsed'),/data-revenue-mobile-annual>Total anual: R\$ 1.900,00/);
+ const print=renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027,period:'monthly',regimeId:'hybrid'});
+ assert(!print.includes('data-revenue-mobile'));assert(print.includes('data-dre-row="revenueSourceGross"'));assert(print.includes('R$ 2.200,00'));
 });

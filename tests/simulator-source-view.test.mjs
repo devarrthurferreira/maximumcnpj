@@ -6,6 +6,43 @@ import {defaultDifalPolicy} from '../public/simulator-engine.js';
 import {renderSection22} from '../public/simulator-extrato-view.js';
 import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
 import {section22Year2025} from './fixtures/section22.ts';
+import {renderRevenueReconciliationEditor} from '../public/simulator-revenue-view.js';
+
+function editorRevenueSource(){
+  return {monthlyReports:[{sourceMonth:'2025-01',operationVersion:'NATURE_OPERATIONS_2026_10_V1',
+    operationAudit:{grossSalesCents:100000,serviceSalesCents:20000,salesReturnsCents:15000},
+    fields:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:85000,serviceRevenueCents:20000}}]};
+}
+
+test('editor mostra receita após devoluções e ajuste em separado sem alterar a fonte',()=>{
+  const source=editorRevenueSource(),before=structuredClone(source);
+  for(const [used,adjusted] of [[105000,'R$ 0,00'],[115000,'R$ 100,00'],[95000,'-R$ 100,00']]){
+    const html=renderRevenueReconciliationEditor({source,sourceMonth:'2025-01',scenarioRevenueCents:used});
+    assert.match(html,/data-revenue-status="AVAILABLE"/);
+    assert(html.includes('data-revenue-value="grossRevenueCents">R$ 1.200,00'));
+    assert(html.includes('data-revenue-value="salesReturnsCents">-R$ 150,00'));
+    assert(html.includes('data-revenue-value="revenueAfterReturnsCents">R$ 1.050,00'));
+    assert(html.includes(`data-revenue-value="manualAdjustmentCents">${adjusted}`));
+    assert(html.includes(`data-revenue-value="usedRevenueCents">${(used/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}).replace(/\u00a0/g,' ')}`));
+    assert.match(html,/informe as vendas após devoluções/);assert.match(html,/nenhuma devolução será descontada novamente/);assert(!html.includes('<details'));
+  }
+  assert.deepEqual(source,before);
+});
+
+test('editor distingue devolução zero confirmada de origem indisponível e projeção antiga',()=>{
+  const source=editorRevenueSource();source.monthlyReports[0].operationAudit.salesReturnsCents=0;source.monthlyReports[0].fields.salesCpfCents=100000;
+  const zero=renderRevenueReconciliationEditor({source,sourceMonth:'2025-01',scenarioRevenueCents:120000});
+  assert(zero.includes('data-revenue-value="salesReturnsCents">R$ 0,00'));
+  for(const input of [{source:null},{source,sourceMonth:'2025-02'},{source,projected:true}]){
+    const html=renderRevenueReconciliationEditor({...input,scenarioRevenueCents:120000});
+    assert.match(html,/data-revenue-status="UNAVAILABLE"/);
+    assert(html.includes('data-revenue-value="grossRevenueCents">—'));
+    assert(html.includes('data-revenue-value="salesReturnsCents">—'));
+    assert(html.includes('data-revenue-value="manualAdjustmentCents">—'));
+    assert(html.includes('data-revenue-value="usedRevenueCents">R$ 1.200,00'));
+    assert.match(html,/data-revenue-unavailable/);assert(!html.includes('R$ 0,00'));
+  }
+});
 
 test('reconciliation presents sales returns separately and does not include them in purchases',()=>{
   const html=renderOperationAudit({grossSalesCents:1_000_000,serviceSalesCents:50_000,salesReturnsCents:100_000,purchaseGoodsCents:300_000,purchaseServicesCents:20_000,excludedSalesCents:90_000,excludedPurchaseCents:10_000,unknownSalesLines:1,unknownPurchaseLines:0,

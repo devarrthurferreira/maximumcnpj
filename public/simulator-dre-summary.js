@@ -9,7 +9,7 @@ export function readDreValue(row, {id,mode,month}) {
 export function buildDreSummary(presentation,column) {
   const rows=unifiedDreRows(presentation),get=key=>readDreValue(rows.find(row=>row.key===key),column);
   const movements=[
-    ['revenue','Receita bruta','revenue'],
+    ['revenue','Receita utilizada','revenue'],
     ['revenueDeductions','Tributos sobre a receita','deduction'],
     ['cmvNetCredits','Compras e custos após créditos','deduction'],
     ['operatingExpenses','Despesas operacionais','deduction'],
@@ -26,7 +26,7 @@ export function buildDreSummary(presentation,column) {
 }
 
 const evolutionMetrics = [
-  ['revenue','Receita bruta','currency'],
+  ['revenue','Receita utilizada','currency'],
   ['netProfit','Resultado líquido','currency'],
   ['netMargin','Margem líquida','percent'],
   ['difal','DIFAL estimado','currency']

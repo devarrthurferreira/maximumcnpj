@@ -7,7 +7,7 @@ import { lookupCnpj, SourceError } from './lookup-provider.ts';
 import { withJob, getJob, write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { isFinancialMode } from './purchase-domain.ts';
-import { purchaseSummary } from './purchase-store.ts';
+import { reconciledPurchaseSummary as purchaseSummary } from './purchase-store.ts';
 import { boundedWorkers, lookupPolicy, LOOKUP_TIMEOUT_MS, LOOKUP_BATCH_MS, LOOKUP_BATCH_SIZE } from './lookup-policy.ts';
 
 const CONTROL = 'minhareceita-global';

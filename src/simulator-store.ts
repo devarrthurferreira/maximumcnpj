@@ -1,5 +1,5 @@
 import { getGeneration } from './generation-store.ts';
-import { purchaseSummary } from './purchase-store.ts';
+import { reconciledPurchaseSummary as purchaseSummary } from './purchase-store.ts';
 import { PURCHASE_MODE, SALES_MODE, exactCents, exactSignedCents } from './purchase-domain.ts';
 import { need } from './security.ts';
 import {monthlyProjection, monthlyDifal} from '../public/simulator-monthly.js';

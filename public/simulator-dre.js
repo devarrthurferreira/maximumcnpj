@@ -1,4 +1,5 @@
 import {dreRows, MONTH_NAMES} from './simulator-calendar.js';
+import {buildRevenueReconciliation} from './revenue-reconciliation.js';
 
 /** Read-only presentation: no tax engine, source hydration or snapshot mutation. */
 export const DRE_PRESENTATION_VERSION = 'DRE_PRESENTATION_V1';
@@ -51,6 +52,7 @@ export function unifiedDreRows(presentation) {
   // Retain any extension whose parent is absent instead of hiding an available detail.
   for(const {row} of details)append(row);
   for(const row of presentation?.indicators||[])append(row);
+  for(const row of presentation?.revenueReconciliation?.rows||[])append(row);
   return rows;
 }
 
@@ -141,7 +143,9 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     (reportMonths==null||projection.reportMonths===reportMonths) ? projection.monthlyGroupsCents.serviceRevenueCents/100*12:null;
   const servicesDetail=adjustment=>f=>{
     if(actual){
-      const baseline=f.monthlyEntry?source.monthlyReports.find(row=>row.sourceMonth===f.monthlyEntry.sourceMonth)?.fields.serviceRevenueCents/100:sum(source.monthlyReports.map(row=>row.fields.serviceRevenueCents))/100;
+      const reports=source?.monthlyReports;
+      const sourceCents=!Array.isArray(reports)?null:f.monthlyEntry?reports.find(row=>row.sourceMonth===f.monthlyEntry.sourceMonth)?.fields?.serviceRevenueCents:sum(reports.map(row=>row.fields?.serviceRevenueCents));
+      const baseline=finite(sourceCents)?sourceCents/100:null;
       return finite(baseline)&&finite(f.get('services'))?good(adjustment?f.get('services')-baseline:baseline):missing();
     }
     const annual=f.regime.dre?.services;
@@ -177,7 +181,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
       good(-(part==='basic'?basic:additional)*f.scale):missing('A memória do IRPJ não está disponível ou não concilia com o total salvo.');
   };
   const details=[
-    {key:'salesBreakdown',label:'Composição da receita de vendas',parentKey:'sales',rows:GROUPS.map((key,index)=>detail(key,['Vendas a optantes do Simples','Vendas a não optantes do Simples','Vendas a CPFs'][index],'sales',salesDetail(index),{notes:['Componentes das vendas do cenário; valores líquidos podem incluir devoluções.'],sourceRefs:[`monthlyGroups.${key}`]}))},
+    {key:'salesBreakdown',label:'Composição das vendas utilizadas',parentKey:'sales',rows:GROUPS.map((key,index)=>detail(key,['Vendas a optantes do Simples','Vendas a não optantes do Simples','Vendas a CPFs'][index],'sales',salesDetail(index),{notes:['Valores utilizados no cenário. O fechamento ao final separa a receita da fonte, as devoluções já abatidas e os ajustes manuais quando há evidência capturada.'],sourceRefs:[`monthlyGroups.${key}`]}))},
     {key:'serviceBreakdown',label:'Composição da receita de serviços',parentKey:'services',rows:[detail('serviceReport',actual?'Serviços dos relatórios · por competência':'Serviços dos relatórios · média projetada','services',servicesDetail(false),{sourceRefs:['projection.monthlyGroupsCents.serviceRevenueCents']}),detail('serviceAdjustment','Ajuste de serviços no cenário','services',servicesDetail(true),{notes:[reprocessing?.serviceRevenueMigration?.warning||'Diferença entre os serviços do cenário e a base importada; pode ser positiva, negativa ou zero.'],sourceRefs:['result.regimes[].dre.services','projection.monthlyGroupsCents.serviceRevenueCents']})]},
     ...creditDetails,
     {key:'irpjBreakdown',label:'Composição do IRPJ',parentKey:'irpj',rows:[detail('irpjBasic','− IRPJ normal','irpj',irpjDetail('basic'),{sourceRefs:['result.memory:presumed.irBasic','result.memory:actual.irBasic']}),detail('irpjAdditional','− Adicional de IRPJ','irpj',irpjDetail('additional'),{sourceRefs:['result.memory:presumed.irAdditional','result.memory:actual.irAdditional']})]}
@@ -192,26 +196,56 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   };
   const ratio=(numerator,{negative=false,stored}={})=>f=>{
     const revenue=f.get('revenue');
-    if(!finite(revenue)||revenue<=0)return missing('Percentual não aplicável sem receita bruta positiva.');
+    if(!finite(revenue)||revenue<=0)return missing('Percentual não aplicável sem receita utilizada positiva.');
     const amount=typeof numerator==='function'?numerator(f):currency(f.get(numerator));
     if(amount.value===null)return amount;
     const value=amount.value*(negative?-1:1)/revenue;
     if(stored&&f.kind==='annual')return close(f.regime[stored],value)?good(f.regime[stored]):missing('O indicador não está disponível ou não concilia com o resultado salvo.');
     return good(value);
   };
-  const indicator=(key,label,compute,options={})=>row(key,label,'indicator',compute,{unit:'percent',informative:true,notes:['Percentual sobre a receita bruta total do cenário.'],...options});
+  const indicator=(key,label,compute,options={})=>row(key,label,'indicator',compute,{unit:'percent',informative:true,notes:['Percentual sobre a receita utilizada no mesmo cenário e período. O fechamento separa devoluções e ajustes quando há evidência capturada.'],...options});
   const indicators=[
-    indicator('grossMargin','Margem bruta sobre receita total',ratio('grossProfit')),
-    indicator('preTaxMargin','Margem antes de IRPJ/CSLL sobre receita total',ratio('preTax')),
+    indicator('grossMargin','Margem bruta sobre receita utilizada',ratio('grossProfit')),
+    indicator('preTaxMargin','Margem antes de IRPJ/CSLL sobre receita utilizada',ratio('preTax')),
     indicator('netMargin','Margem líquida',ratio('netProfit',{stored:'margin'})),
-    indicator('taxBurden','Tributos e encargos sobre receita',ratio(taxes,{stored:'taxBurden'})),
-    indicator('cmvBurden','Compras/CMV sobre receita',ratio('cmv',{negative:true})),
-    indicator('operatingExpenseBurden','Despesas operacionais sobre receita',ratio(reconciledSum(['personnel','administrative','rent','cards'],'preTax','grossProfit'),{negative:true})),
+    indicator('taxBurden','Tributos e encargos sobre receita utilizada',ratio(taxes,{stored:'taxBurden'})),
+    indicator('cmvBurden','Compras/CMV sobre receita utilizada',ratio('cmv',{negative:true})),
+    indicator('operatingExpenseBurden','Despesas operacionais sobre receita utilizada',ratio(reconciledSum(['personnel','administrative','rent','cards'],'preTax','grossProfit'),{negative:true})),
     indicator('totalTaxes','Tributos e encargos totais',taxes,{unit:'currency',notes:['Inclui encargos sobre a folha. Créditos utilizados já foram abatidos; não deduzir novamente.']})
   ];
-  return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,months,calendarYear,
+  // The source is already net of returns. This bridge explains the captured amount;
+  // it must never become another deduction or invoke the calculator on historical data.
+  const revenueFrames=new Map();
+  const reconcileRevenue=f=>{
+    if(!actual)return {available:false,reason:'A separação entre receita bruta e devoluções não está comprovada nesta projeção histórica.'};
+    const revenue=f.get('revenue'),scenarioRevenueCents=finite(revenue)?Math.round(revenue*100):null;
+    if(!Number.isSafeInteger(scenarioRevenueCents)||!close(scenarioRevenueCents/100,revenue))return {available:false,reason:'A receita utilizada não está disponível em centavos nesta versão.'};
+    if(!close(revenue,f.regime.dre?.revenue)||!close(sum([f.get('sales'),f.get('services')]),revenue))return {available:false,reason:'A composição da receita não concilia com a DRE e o calendário preservados nesta versão.'};
+    const sourceMonth=f.monthlyEntry?.sourceMonth||null,key=`${sourceMonth||'annual'}:${scenarioRevenueCents}`;
+    if(!revenueFrames.has(key)){
+      const reconciliation=buildRevenueReconciliation({source,sourceMonth,scenarioRevenueCents});
+      const capturedMonths=(result.monthlyResults||[]).map(entry=>entry.sourceMonth);
+      const matches=sourceMonth||!reconciliation.available||(capturedMonths.length===reconciliation.monthly.length&&new Set(capturedMonths).size===capturedMonths.length&&reconciliation.monthly.every(entry=>capturedMonths.includes(entry.sourceMonth)));
+      revenueFrames.set(key,matches?reconciliation:{available:false,reason:'As competências da fonte não correspondem às competências da DRE salva.'});
+    }
+    return revenueFrames.get(key);
+  };
+  const revenueCell=(field,negative=false)=>f=>{
+    const reconciliation=reconcileRevenue(f),amount=reconciliation[field];
+    return reconciliation.available&&Number.isSafeInteger(amount)?good((negative&&amount!==0?-amount:amount)/100):missing(reconciliation.reason||'Conferência da receita indisponível nesta versão.');
+  };
+  const revenueReconciliation={key:'revenueReconciliation',label:'Fechamento da receita',
+    note:'Receita bruta de vendas e serviços menos devoluções de venda = receita após devoluções. Os ajustes manuais explicam a diferença até a receita utilizada. Quando a origem está conciliada, as devoluções já estão abatidas; este fechamento não altera nem deduz novamente os valores da DRE.',
+    rows:[
+      row('revenueSourceGross','Receita bruta de vendas e serviços','line',revenueCell('grossRevenueCents'),{informative:true,sourceRefs:['source.monthlyReports[].operationAudit.grossSalesCents','source.monthlyReports[].operationAudit.serviceSalesCents']}),
+      row('revenueSalesReturns','− Devoluções de vendas','line',revenueCell('salesReturnsCents',true),{informative:true,notes:['Devoluções de venda identificadas nas entradas, já abatidas na receita da competência; não deduzir novamente.'],sourceRefs:['source.monthlyReports[].operationAudit.salesReturnsCents']}),
+      row('revenueAfterReturns','= Receita após devoluções','subtotal',revenueCell('revenueAfterReturnsCents'),{informative:true,sourceRefs:['source.monthlyReports[].fields']}),
+      row('revenueManualAdjustment','Ajustes manuais do cenário (+/−)','line',revenueCell('manualAdjustmentCents'),{informative:true,notes:['Diferença entre a receita utilizada no cenário e a receita da fonte após devoluções. Não modifica os relatórios de origem.'],sourceRefs:['source.monthlyReports[].fields','result.regimes[].dre.revenue']}),
+      row('revenueUsed','= Receita utilizada na simulação','subtotal',f=>currency(f.get('revenue')),{informative:true,notes:['Valor preservado na DRE. A base dos tributos, margens e percentuais permanece a mesma.'],sourceRefs:['result.regimes[].dre.revenue']})
+    ]};
+  return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,revenueReconciliation,months,calendarYear,
     ...(capturedDifalVersion(result?.difalPolicy)?{difalPolicy:structuredClone(result.difalPolicy)}:{}),
     ...(calendar?.rbt12Schedule?{rbt12Schedule:structuredClone(calendar.rbt12Schedule)}:{}),
     calendarReference:calendar?.rbt12Reference??null,calendarRounding:calendar?.rounding??'Valores completos preservados; exibição com duas casas decimais.',
-    percentBasis:'Receita bruta total do cenário'};
+    percentBasis:'Receita utilizada na simulação, no mesmo período e regime'};
 }

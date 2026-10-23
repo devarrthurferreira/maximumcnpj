@@ -36,7 +36,7 @@ test('Verified report values populate five categories and require monthly inputs
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva no histórico');await expect(page.locator('.sim-regime')).toHaveCount(4);await expect(page.locator('.sim-dre')).toContainText('Indicador');
   await expect(page.locator('.sim-dre')).not.toContainText('NaN');
   await page.getByRole('button',{name:'Anual',exact:true}).click();
-  const cells=await page.locator('.sim-dre tr').filter({hasText:'Receita bruta total'}).locator('td').allTextContents();expect(cells.every(t=>t.includes('120.000,12'))).toBe(true);
+  const cells=await page.locator('.sim-dre [data-dre-row="revenue"]').locator('td').allTextContents();expect(cells.every(t=>t.includes('120.000,12'))).toBe(true);
   const shot=info.outputPath('simulador-desktop.png');await page.screenshot({path:shot,fullPage:true});await info.attach('Simulador completo',{path:shot,contentType:'image/png'});
   await expect(page.locator('#simulation-result details[open]')).toHaveCount(0);
   await expect(page.locator('.sim-charts')).toBeHidden();
@@ -83,7 +83,7 @@ test('Dashboard shows five charts, scales every monetary view and expands every 
   await expect(page.locator('.sim-chart-purchases .sim-chart-composition-summary strong')).toContainText('4.500,01');
   await expect(page.locator('.sim-chart-expense-total strong')).toContainText('15.700,00');
   await page.getByRole('button',{name:'12 meses',exact:true}).click();
-  const cells=await page.locator('.sim-dre tr').filter({hasText:'Receita bruta total'}).locator('td').allTextContents();expect(cells).toHaveLength(13);expect(cells.slice(0,12).every(t=>t.includes('11.000,01'))).toBe(true);expect(cells[12]).toContain('132.000,12');await expect(page.locator('.sim-calendar .dre-calendar-screen thead th')).toHaveCount(14);
+  const cells=await page.locator('.sim-dre [data-dre-row="revenue"]').locator('td').allTextContents();expect(cells).toHaveLength(13);expect(cells.slice(0,12).every(t=>t.includes('11.000,01'))).toBe(true);expect(cells[12]).toContain('132.000,12');await expect(page.locator('.sim-calendar .dre-calendar-screen thead th')).toHaveCount(14);
   const parse=(v:string)=>Number(v.replace(/[^0-9,-]/g,'').replace(',','.'));
   const monthly=await page.locator('.sim-chart-profit .sim-chart-row-head strong').allTextContents();monthly.forEach((v,i)=>expect(parse(v)).toBeCloseTo(parse(annual[i])/12,2));
   expect(await page.locator('#simulation-result').innerText()).not.toMatch(/NaN|Infinity/);

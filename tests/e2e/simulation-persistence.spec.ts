@@ -125,10 +125,10 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   // while Playwright's default toHaveText reads the underlying textContent.
   const originalDre = await page.locator('.sim-dre tbody tr > *').allTextContents();
   await expect(page.locator('#dre-month')).toHaveValue('7');
-  await expect(page.locator('.sim-dre tr').filter({hasText: 'Receita bruta total'}).locator('td')).toHaveText(['R$ 13.250,50','R$ 13.250,50']);
+  await expect(page.locator('.sim-dre [data-dre-row="revenue"]').locator('td')).toHaveText(['R$ 13.250,50','R$ 13.250,50']);
   await page.getByRole('button',{name:'12 meses',exact:true}).click();
   // Only August is imported; other months are unavailable, not an extrapolated average.
-  await expect(page.locator('.sim-dre tr').filter({hasText: 'Receita bruta total'}).locator('td')).toHaveText([
+  await expect(page.locator('.sim-dre [data-dre-row="revenue"]').locator('td')).toHaveText([
     ...Array(7).fill('—'),'R$ 13.250,50',...Array(4).fill('—'),'R$ 13.250,50'
   ]);
   await page.getByRole('button',{name:'Um mês por vez',exact:true}).click();

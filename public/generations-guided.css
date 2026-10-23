@@ -105,3 +105,4 @@
  .generation-selector .generation-create-bar .hint{margin-top:8px}
 }
 @media(prefers-reduced-motion:reduce){.generation-reports-dialog[aria-busy=true] #generation-reports-status::before{animation:none}.generation-company-pick,.generation-report-choices label{transition:none}}
+.generation-revenue-slot{margin-top:22px;padding-top:20px;border-top:1px solid var(--line)}.generation-revenue-slot .revenue-reconciliation{padding:0;margin:0;border:0;box-shadow:none}.generation-revenue-slot .revenue-reconciliation h3{font-size:18px}.generation-revenue-slot .revenue-reconciliation-values dd{font-size:20px}
