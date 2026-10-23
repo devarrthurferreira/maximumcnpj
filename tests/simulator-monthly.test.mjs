@@ -18,7 +18,7 @@ test('competências distintas, mês sem movimento e período parcial: nenhuma m�
  const {result,projection,difalProjection}=calculateMonthlySimulation(draft,reports,inputs,'sales');
  assert.equal(difalProjection.annualCents,50001);assert.deepEqual(difalProjection.months.map(row=>row.amountCents),[10000,0,40001]);
  close(result.annualRevenue,5400.20);assert.equal(projection.scenario.annual.revenueCents,540020);
- for(const regime of result.regimes){close(regime.dre.sales,5000.10);close(regime.dre.services,400.10);close(regime.dre.difal,-500.01);close(regime.dre.cmvRegular,-1500);close(regime.dre.rent,-20);}
+ for(const regime of result.regimes){close(regime.dre.sales,5000.10);close(regime.dre.services,400.10);close(regime.dre.difal,['pure','hybrid'].includes(regime.id)?-500.01:0);close(regime.dre.cmvRegular,-1500);close(regime.dre.rent,-20);}
  assert.equal(result.memory.find(row=>row.id==='simplesLimit').value,4800000);assert.equal(result.memory.find(row=>row.id==='rbt12').value,500000);
  for(const month of result.monthlyResults){assert.equal(month.result.memory.find(row=>row.id==='simplesLimit').value,4800000);assert.equal(month.result.memory.find(row=>row.id==='months').value,1);}
  const calendar=buildMonthlyDre(result,2027,{source:'MANUAL',confirmed:true,rbt12Cents:50000000},{startMonth:'2025-01',endMonth:'2025-03',months:3});
@@ -42,7 +42,7 @@ test('tributos e DIFAL são calculados separadamente; ajuste em um mês não mud
  close(out.result.monthlyResults[2].result.annualRevenue,4300.16);
  for(const month of out.result.monthlyResults){
   const baseline=calculateSimulation({...draft,values:month.values});
-  for(const regime of month.result.regimes){const before=baseline.regimes.find(row=>row.id===regime.id);const d=reports.find(row=>row.month===month.month).difal.amountCents/100;
+  for(const regime of month.result.regimes){const before=baseline.regimes.find(row=>row.id===regime.id);const d=['pure','hybrid'].includes(regime.id)?reports.find(row=>row.month===month.month).difal.amountCents/100:0;
    close(regime.dre.netRevenue,before.dre.netRevenue/12-d);close(regime.dre.preTax,before.dre.preTax/12-d);
   }
  }
@@ -100,11 +100,11 @@ test('opções DIFAL persistem por competência e anual soma somente deduções 
  const policy=defaultDifalPolicy();policy.enabled.hybrid=false;policy.enabled.actual=false;
  const selected={...draft,difalPolicy:policy},inputs=rows.map(row=>baselineMonth(row)),before=structuredClone({selected,rows,inputs});
  const out=calculateMonthlySimulation(selected,rows,inputs,'sales');
- assert.equal(out.result.version,'1.6.0-difal-scenarios');assert.deepEqual(out.result.difalPolicy,policy);
+ assert.equal(out.result.version,'1.7.0-difal-directions');assert.deepEqual(out.result.difalPolicy,policy);
  for(const entry of out.engineInput.months)assert.deepEqual(entry.input.difalPolicy,policy);
  for(const id of ['hybrid','actual']){
   const regime=out.result.regimes.find(row=>row.id===id);assert.equal(regime.dre.difal,0);assert.equal(regime.dre.icmsAnticipation,0);
-  assert(regime.difalApplication.months.every(row=>row.reason==='USER_EXCLUDED'));
+  assert(regime.difalApplication.months.every(row=>row.reason===(id==='hybrid'?'USER_EXCLUDED':'NOT_APPLICABLE')));
  }
  const pure=out.result.regimes.find(row=>row.id==='pure');close(pure.dre.difal,-500.01);close(pure.dre.icmsAnticipation,-2196);
  for(const regime of out.result.regimes)for(const key of ['difal','icmsAnticipation','netProfit','irpj','csll'])close(regime.dre[key],out.result.monthlyResults.reduce((total,month)=>total+month.result.regimes.find(row=>row.id===regime.id).dre[key],0));
@@ -112,6 +112,26 @@ test('opções DIFAL persistem por competência e anual soma somente deduções 
  assert.deepEqual({selected,rows,inputs},before);
  const calendar=buildMonthlyDre(out.result,2027),presentation=buildDrePresentation({result:out.result,calendar,source:{monthlyReports:rows,revenueSplit:{version:'SALES_SERVICES_V1'}},projection:out.projection});
  const difal=unifiedDreRows(presentation).find(row=>row.key==='difal');assert.equal(difal.values.hybrid,0);assert.equal(difal.monthlyValues.hybrid[3],null);
+});
+
+test('entrada no Puro e saída no Híbrido seguem as competências, bloqueios e total anual sem cruzar direções',()=>{
+ const rows=reports.map((row,index)=>({...row,anticipation:{version:'ICMS_ANTICIPATION_V3',ratePercent:7.32,issuerUf:'MG',amountCents:(index+1)*732,baseCents:(index+1)*10000,eligibleLines:1,pendingLines:0}}));
+ const policy=defaultDifalPolicy();policy.operations.pure.exit=false;policy.operations.hybrid.entry=false;
+ const schedule={version:'RBT12_MONTHLY_SECTION_22_V1',sourceSection:'2.2',rows:rows.map((row,index)=>({sourceMonth:row.sourceMonth,status:'CONFIRMED',rbt12Cents:index===2?360000000:359999999}))};
+ const selected={...draft,difalPolicy:policy},inputs=rows.map(row=>baselineMonth(row)),before=structuredClone({selected,rows,inputs,schedule});
+ const out=calculateMonthlySimulation(selected,rows,inputs,'sales',schedule),pure=out.result.regimes[0],hybrid=out.result.regimes[1];
+ close(pure.dre.difal,0);close(pure.dre.icmsAnticipation,-21.96);close(hybrid.dre.difal,-100);close(hybrid.dre.icmsAnticipation,0);
+ assert.deepEqual(pure.difalApplication.operations,{entry:true,exit:false});assert.deepEqual(hybrid.difalApplication.operations,{entry:false,exit:true});
+ assert.deepEqual(pure.difalApplication.months.map(row=>row.reason),['ENABLED','ENABLED','SUBLIMIT']);
+ for(const month of out.result.monthlyResults){
+  assert.equal(month.result.regimes[0].dre.difal,0);assert.equal(month.result.regimes[1].dre.icmsAnticipation,0);
+  for(const regime of month.result.regimes.slice(2)){assert.equal(regime.dre.difal,0);assert.equal(regime.dre.icmsAnticipation,0);}
+ }
+ for(const [id,expected]of [['pure','Entrada'],['hybrid','Saída'],['presumed','Não aplicável'],['actual','Não aplicável']])assert.equal(out.result.memory.find(row=>row.id===`difal.operations.${id}`).value,expected);
+ assert.equal(out.difalProjection.sourceAmountCents,50001);assert.equal(out.anticipationProjection.sourceAmountCents,4392);
+ assert.deepEqual({selected,rows,inputs,schedule},before);
+ const withoutSource=calculateMonthlySimulation({...selected,difalPolicy:policy},rows.map(row=>({...row,difal:null})),inputs,'sales',schedule);
+ assert.equal(withoutSource.difalProjection,null);assert.equal(Object.hasOwn(withoutSource.result.regimes[1].dre,'difal'),false,'Sem fonte continua indisponível, sem inventar uma dedução.');
 });
 
 test('antecipação mensal preserva versão histórica explícita e impede misturar políticas',()=>{

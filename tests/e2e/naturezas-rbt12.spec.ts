@@ -109,7 +109,8 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
   const result=section22Year2025(),extractionId=randomUUID(),mongo=new MongoClient(process.env.MONGODB_URI!);
   try{await mongo.connect();await mongo.db(process.env.MONGODB_DB).collection('simplesExtractions').insertOne({_id:extractionId as any,clientId,workspaceId:process.env.WORKSPACE_ID||'maximum',parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result});}finally{await mongo.close();}
   await statement(page,clientId,extractionId,result);await expect(page.locator('#guided-rbt12-continue')).toBeEnabled();await page.locator('#guided-rbt12-continue').click();
-  for(const regime of ['pure','hybrid','presumed','actual'])await expect(page.locator(`#difal-enabled-${regime}`)).toBeChecked();
+  for(const regime of ['pure','hybrid'])await expect(page.locator(`#difal-enabled-${regime}`)).toBeChecked();
+  await expect(page.locator('[data-difal-regime]')).toHaveCount(2);await expect(page.locator('[data-difal-operation]')).toHaveCount(4);
   await expect(page.locator('label[for="rbt12"]')).toHaveText('RBT12 do PA 12/2025');await expect(page.locator('#rbt12')).toHaveValue('210000.00');
   await expect(page.locator('#salesCpfCents')).toHaveValue('5000.00');await expect(page.locator('#salesNonOptantCents')).toHaveValue('4000.00');await expect(page.locator('#serviceRevenue')).toHaveValue('500.00');await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('3200.00');
   await expect(page.locator('#month-context')).toContainText('78.000,00');
@@ -126,11 +127,11 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
   expect(saved.rbt12Schedule.rows.map((row:any)=>row.rbt12Cents)).toEqual([7_800_000,9_000_000]);
   expect(saved.source.operationAudit).toMatchObject({salesReturnsCents:150_000,purchaseServicesCents:50_000,excludedSalesCents:150_000,excludedPurchaseCents:20_000});
   expect(saved.result.annualRevenue).toBe(21_700);
-  expect(saved.draft.difalPolicy).toEqual({version:'DIFAL_SCENARIOS_V1',enabled:{pure:true,hybrid:true,presumed:true,actual:true}});
+  expect(saved.draft.difalPolicy).toEqual({version:'DIFAL_SCENARIOS_V2',enabled:{pure:true,hybrid:true,presumed:false,actual:false},operations:{pure:{entry:true,exit:true},hybrid:{entry:true,exit:true}}});
   expect(saved.difalProjection.annualCents).toBe(220_000);
   expect(saved.difalProjection.sourceVersion).toBe('DIFAL_ESTIMATE_V4');
   expect(saved.anticipationProjection.sourceVersion).toBe('ICMS_ANTICIPATION_V3');
-  expect(saved.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([-2200,-2200,-2200,-2200]);
+  expect(saved.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([-2200,-2200,0,0]);
   expect(saved.result.monthlyResults.map((row:any)=>row.engineInput.rbt12)).toEqual([78_000,90_000]);
   expect(saved.result.regimes.filter((regime:any)=>['pure','hybrid'].includes(regime.id)).map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([-549,-549]);
   expect(saved.result.regimes.filter((regime:any)=>['presumed','actual'].includes(regime.id)).map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([0,0]);
@@ -150,26 +151,27 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
     await reopened.locator('#create-version').click();await expect(reopened.locator('#simulator-form')).toBeVisible();
     await expect(reopened.locator('#difal-enabled-pure')).toBeChecked();
     await reopened.locator('.sim-difal-review > summary').click();
-    await reopened.locator('#difal-enabled-pure').uncheck();await reopened.locator('#difal-enabled-actual').uncheck();
+    await reopened.locator('#difal-enabled-pure').uncheck();await reopened.locator('#difal-entry-hybrid').uncheck();
     await reopened.locator('#rbt12-manual').click();await reopened.locator('#rbt12').fill('100000');await reopened.locator('#rbt12-manual-confirm').check();
     const childSaving=reopened.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/simulations'&&response.request().method()==='POST');
     await reopened.locator('#generate-simulation').click();const childResponse=await childSaving;expect(childResponse.ok(),await childResponse.text()).toBe(true);const child=await childResponse.json();
-    expect(child.parentSimulationId).toBe(saved._id);expect(child.draft.difalPolicy.enabled).toEqual({pure:false,hybrid:true,presumed:true,actual:false});
-    expect(child.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,-2200,-2200,0]);
-    expect(child.result.regimes.map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([0,-549,0,0]);
+    expect(child.parentSimulationId).toBe(saved._id);expect(child.draft.difalPolicy.enabled).toEqual({pure:false,hybrid:true,presumed:false,actual:false});
+    expect(child.draft.difalPolicy.operations.hybrid).toEqual({entry:false,exit:true});
+    expect(child.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,-2200,0,0]);
+    expect(child.result.regimes.map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([0,0,0,0]);
     expect(child.difalProjection).toEqual(saved.difalProjection);expect(child.source.fields).toEqual(saved.source.fields);
     await reopened.goto(`/simulator.html?simulation=${child._id}`);
     await expect(reopened.locator('[data-difal-option="pure"]')).toContainText('Não incluído por escolha');
     await expect(reopened.locator('[data-difal-state="pure"]')).toContainText('Excluído deste cenário');
     expect(await (await fresh.request.get(`/api/v4/simulations/${child._id}`)).json()).toEqual(child);
     expect(await (await fresh.request.get(`/api/v4/simulations/${saved._id}`)).json()).toEqual(saved);
-    await reopened.locator('#create-version').click();await expect(reopened.locator('#difal-enabled-pure')).not.toBeChecked();await expect(reopened.locator('#difal-enabled-actual')).not.toBeChecked();
+    await reopened.locator('#create-version').click();await expect(reopened.locator('#difal-enabled-pure')).not.toBeChecked();await expect(reopened.locator('#difal-enabled-actual')).toHaveCount(0);await expect(reopened.locator('#difal-entry-hybrid')).not.toBeChecked();
   }finally{await fresh.close();}
   await page.locator('#rbt12-manual').click();await page.locator('#rbt12').fill('3600000');await page.locator('#rbt12-manual-confirm').check();
   const atSublimit=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/simulations'&&response.request().method()==='POST');
   await page.locator('#generate-simulation').click();const sublimitResponse=await atSublimit;expect(sublimitResponse.ok(),await sublimitResponse.text()).toBe(true);const sublimit=await sublimitResponse.json();
   expect(sublimit.result.regimes.map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([0,0,0,0]);
-  expect(sublimit.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,0,-2200,-2200]);
+  expect(sublimit.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,0,0,0]);
   expect(sublimit.draft.difalPolicy.enabled).toEqual(saved.draft.difalPolicy.enabled);
   for(const regime of ['pure','hybrid']){await expect(page.locator(`#difal-enabled-${regime}`)).toBeChecked();await expect(page.locator(`[data-difal-option="${regime}"]`)).toHaveAttribute('data-state','SUBLIMIT');}
   expect(sublimit.source.fields).toEqual(saved.source.fields);expect(sublimit.difalProjection).toEqual(saved.difalProjection);

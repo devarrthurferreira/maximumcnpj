@@ -92,16 +92,17 @@ test('MongoDB: serviços9000 e mercadorias com devolução alimentam DRE/DIFAL s
   assert.equal(saved.engineInput.months[0].input.difalMonthly,300);
   for(const regime of saved.result.regimes){
    const prior=baseline.regimes.find(item=>item.id===regime.id)!;
-   close(regime.dre.services,3000.03);close(regime.dre.sales,8100);close(regime.dre.difal,-900);
-   close(regime.dre.netRevenue,prior.dre.netRevenue-900);close(regime.dre.preTax,prior.dre.preTax-900);
-   if(regime.id!=='actual'){close(regime.totalTaxes,prior.totalTaxes+900);close(regime.annualProfit,prior.annualProfit-900);}
+   close(regime.dre.services,3000.03);close(regime.dre.sales,8100);close(regime.dre.difal,['pure','hybrid'].includes(regime.id)?-900:0);
+   const applied=['pure','hybrid'].includes(regime.id)?900:0;
+   close(regime.dre.netRevenue,prior.dre.netRevenue-applied);close(regime.dre.preTax,prior.dre.preTax-applied);
+   close(regime.totalTaxes,prior.totalTaxes+applied);close(regime.annualProfit,prior.annualProfit-applied);
   }
   const actual=saved.result.regimes.find(item=>item.id==='actual')!;
   close(actual.dre.csll,-Math.max(0,actual.dre.preTax)*.09);
   close(saved.result.memory.find(item=>item.id==='actual.preTax')!.value as number,actual.dre.preTax);
   assert.deepEqual(saved.result.credits,baseline.credits);
   assert.equal(saved.monthlyDre.version,'DRE_CALENDAR_V3');
-  assert(saved.monthlyDre.regimes.every((regime:any)=>regime.rows.find((row:any)=>row.key==='difal').months.slice(5,8).every((value:number)=>value===-300)));
+  assert(saved.monthlyDre.regimes.every((regime:any)=>regime.rows.find((row:any)=>row.key==='difal').months.slice(5,8).every((value:number)=>value===(['pure','hybrid'].includes(regime.id)?-300:0))));
   for(const addition of[{difalProjection:{monthlyCents:0}},{difalMonthly:0},{source:{sales:{difal:{amountCents:0}}}}]){
    await assert.rejects(createSimulation(actor,{...request,...addition,simulationId:randomUUID()}),(error:any)=>error.code==='VALIDATION');
   }

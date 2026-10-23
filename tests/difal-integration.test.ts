@@ -172,7 +172,10 @@ test('5102 histórico V1: todas as competências, prefill atual, nova DRE, expor
     const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,simulationId));
     assert.equal(child.difalProjection.sourceVersion,DIFAL_VERSION);
     assert(child.difalProjection.months.every((row:any)=>row.amountCents===940)); assert.equal(child.difalProjection.annualCents,11280);
-    assert(child.result.regimes.every((regime:any)=>Math.abs(regime.dre.difal+112.8)<1e-9));
+    for (const regime of child.result.regimes) {
+      const expectedDifal = ['pure', 'hybrid'].includes(regime.id) ? -112.8 : 0;
+      assert(Math.abs(regime.dre.difal - expectedDifal) < 1e-9, `${regime.id}: DIFAL somente no Simples puro e híbrido.`);
+    }
     assert.deepEqual(child.draft,original.draft); assert.deepEqual(child.rbt12Manual,original.rbt12Manual);
     await reprocessSimulations(actor,{}); assert.equal(await simulations.countDocuments(scope()),3);
     assert.deepEqual(await simulations.findOne(scope({_id:simulationId})),original);

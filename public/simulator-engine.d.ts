@@ -1,19 +1,25 @@
 /** Types for the shared, dependency-free calculator used by browser and server. */
 export const MODEL_VERSION: string;
 export const ICMS_ANTICIPATION_VERSION: 'ICMS_ANTICIPATION_DRE_V1';
-export const DIFAL_POLICY_VERSION: 'DIFAL_SCENARIOS_V1';
+export const DIFAL_POLICY_VERSION: 'DIFAL_SCENARIOS_V2';
 export type SimulationRegimeId = 'pure' | 'hybrid' | 'presumed' | 'actual';
-export type DifalPolicy = {version:'DIFAL_SCENARIOS_V1';enabled:Record<SimulationRegimeId,boolean>};
+export type DifalOperations = {entry:boolean;exit:boolean};
+export type LegacyDifalPolicy = {version:'DIFAL_SCENARIOS_V1';enabled:Record<SimulationRegimeId,boolean>};
+export type CurrentDifalPolicy = {version:'DIFAL_SCENARIOS_V2';enabled:{pure:boolean;hybrid:boolean;presumed:false;actual:false};operations:Record<'pure'|'hybrid',DifalOperations>};
+export type DifalPolicy = LegacyDifalPolicy | CurrentDifalPolicy;
 export type DifalApplication = {
-  version:'DIFAL_SCENARIOS_V1'; enabled:boolean; blocked:boolean;
-  reason:'SUBLIMIT'|'ICMS_OUTSIDE_DAS'|'USER_EXCLUDED'|'ENABLED'; message:string;
+  version:'DIFAL_SCENARIOS_V1'|'DIFAL_SCENARIOS_V2'; enabled:boolean; blocked:boolean;
+  /** V1 historical applications predate independent directions. */
+  operations?:DifalOperations;
+  reason:'SUBLIMIT'|'ICMS_OUTSIDE_DAS'|'USER_EXCLUDED'|'ENABLED'|'NOT_APPLICABLE'|'NO_OPERATIONS'; message:string;
   rbt12:number; icmsOutside:boolean;
   /** Potential permission, independent of missing sources, pending lines or zero amounts. */
   salesDifal:boolean; purchaseAnticipation:boolean;
 };
-export function defaultDifalPolicy(): DifalPolicy;
+export function defaultDifalPolicy(): CurrentDifalPolicy;
 export function parseDifalPolicy(value:unknown): DifalPolicy;
-export function resolveDifalApplication(input:{policy?:DifalPolicy;regimeId:SimulationRegimeId;rbt12:number;icmsOutside?:boolean}): DifalApplication;
+export function upgradeDifalPolicy(value?:unknown): CurrentDifalPolicy;
+export function resolveDifalApplication(input:{policy?:DifalPolicy;regimeId:SimulationRegimeId;rbt12:number;icmsOutside?:boolean}): DifalApplication & {version:'DIFAL_SCENARIOS_V2';operations:DifalOperations};
 export const CALCULATOR_SOURCE_COMMIT: string;
 export const TAX_SOURCES: ReadonlyArray<{label: string; url: string}>;
 export const SIMULATION_VALUE_FIELDS: readonly SimulationValueField[];
@@ -38,7 +44,7 @@ export type IcmsAnticipationProjection = {
 export type SimulationRegime = {
   id: string; name: string; available: boolean; status: string; annualProfit: number; monthlyProfit: number;
   margin: number | null; totalTaxes: number; taxBurden: number | null; dre: Record<string, number>;
-  difalApplication?: DifalApplication | {version:'DIFAL_SCENARIOS_V1';enabled:boolean;months:Array<DifalApplication & {sourceMonth:string}>};
+  difalApplication?: DifalApplication | {version:'DIFAL_SCENARIOS_V1'|'DIFAL_SCENARIOS_V2';enabled:boolean;operations?:DifalOperations;months:Array<DifalApplication & {sourceMonth:string}>};
 };
 export type SimulationResult = {
   version: string; annualRevenue: number; regimes: SimulationRegime[];

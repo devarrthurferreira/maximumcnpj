@@ -35,8 +35,15 @@
 .generation-difal-options{padding:6px 0 20px;margin-bottom:22px;border-bottom:1px solid #ebe6ed}
 .generation-difal-options h2{font-size:20px;margin-bottom:8px}
 .generation-difal-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0;border:0;margin:16px 0;min-width:0}
+.generation-difal-scenario{min-width:0;border:1px solid #ded8e0;border-radius:10px;overflow:hidden;background:#fff}
+.generation-difal-choices .generation-difal-target{border:0;border-radius:0;padding:14px 12px;align-items:center}
+.generation-difal-operations{border:0;border-top:1px solid #ebe6ed;padding:12px;margin:0;min-width:0}
+.generation-difal-operations legend{font-size:11px;color:#716575;padding:0 3px}
+.generation-difal-operations label+label{margin-top:8px}
+.generation-difal-operations:has(input:disabled){opacity:.65}
 .generation-difal-choices label{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid #ded8e0;border-radius:9px;cursor:pointer;min-width:0}
 .generation-difal-choices label:has(input:checked){background:#fbf5f6;border-color:#a86a76}
+.generation-difal-choices label:has(input:disabled){cursor:default}
 .generation-difal-choices input{margin:1px 0 0;width:20px;height:20px;flex:none;accent-color:#750207}
 .generation-difal-choices input:focus-visible{outline:3px solid #b57b35;outline-offset:3px}
 .generation-difal-choices strong{display:block;font-size:13px;line-height:1.45}

@@ -50,28 +50,58 @@ test('DRE concilia antecipação de ICMS separada do DIFAL em anual, meses, subt
 });
 
 test('escolha de DIFAL e bloqueio ficam visíveis na DRE, CSV e impressão sem reinterpretar históricos',()=>{
- const input=fixture();input.draft.difalPolicy=defaultDifalPolicy();input.draft.difalPolicy.enabled.actual=false;
+ const input=fixture();input.draft.difalPolicy=defaultDifalPolicy();input.draft.difalPolicy.enabled.hybrid=false;
  input.draft.rbt12=3600000;
  input.result=calculateSimulation(input.draft,{version:'DIFAL_DRE_V1',monthlyCents:10000,annualCents:120000},
   {version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73200,annualCents:878400});
  input.calendar=buildMonthlyDre(input.result,2027);
  const before=structuredClone(input);freeze(input);const p=buildDrePresentation(input);
  assert.deepEqual(p.difalPolicy,input.result.difalPolicy);assert.notEqual(p.difalPolicy,input.result.difalPolicy);
- assert.deepEqual(find(p,'difal').values,{pure:0,hybrid:0,presumed:-1200,actual:0});
+ assert.deepEqual(find(p,'difal').values,{pure:0,hybrid:0,presumed:0,actual:0});
  assert.equal(find(p,'icmsAnticipation').values.pure,0);
  const notes=dreDifalNotes(p);assert.equal(notes.length,4);
  assert.match(notes[0],/DIFAL: incluir.*Zerado automaticamente.*3.600.000/);
- assert.match(notes[3],/DIFAL: excluir.*escolha do usuário/);
+ assert.match(notes[1],/DIFAL: excluir/);
+ assert.match(notes[3],/DIFAL: não se aplica/);
  for(const output of [buildDreCsv({presentation:p}),renderAnnualDre({presentation:p,calendar:input.calendar,year:2027}),renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027})]){
-  assert.match(output,/DIFAL nos cenários/);assert.match(output,/Zerado automaticamente/);assert.match(output,/escolha do usuário/);
+  assert.match(output,/DIFAL nos cenários/);assert.match(output,/Zerado automaticamente/);assert.match(output,/DIFAL: não se aplica/);
  }
  assert.deepEqual(input,before);
  const legacy=structuredClone(input.result);delete legacy.difalPolicy;for(const regime of legacy.regimes)delete regime.difalApplication;
+ legacy.regimes.find(regime=>regime.id==='presumed').dre.difal=-1200;
  const original=JSON.stringify(legacy),old=buildDrePresentation({result:legacy});
  assert.equal(Object.hasOwn(old,'difalPolicy'),false);assert.deepEqual(dreDifalNotes(old),[]);
  assert(!buildDreCsv({presentation:old}).includes('DIFAL nos cenários'));
  assert(!renderDrePrintDocument({presentation:old,year:2027}).includes('DIFAL nos cenários'));
  assert.equal(find(old,'difal').values.presumed,-1200);assert.equal(JSON.stringify(legacy),original);
+});
+
+test('DRE, CSV e impressão preservam entrada e saída independentes e decisões V1 históricas',()=>{
+ const input=fixture(),policy=defaultDifalPolicy();policy.operations.pure.exit=false;policy.operations.hybrid.entry=false;
+ input.draft.difalPolicy=policy;
+ input.result=calculateSimulation(input.draft,{version:'DIFAL_DRE_V1',monthlyCents:10000,annualCents:120000},
+  {version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:7320,annualCents:87840});
+ input.calendar=buildMonthlyDre(input.result,2027);
+ const before=structuredClone(input),p=buildDrePresentation(input);
+ assert.deepEqual(find(p,'difal').values,{pure:0,hybrid:-1200,presumed:0,actual:0});
+ assert.deepEqual(find(p,'icmsAnticipation').values,{pure:-878.4,hybrid:0,presumed:0,actual:0});
+ for(const output of [dreDifalNotes(p).join('\n'),buildDreCsv({presentation:p}),renderAnnualDre({presentation:p,calendar:input.calendar,year:2027}),renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027})]){
+  assert.match(output,/Seleção de entrada: incluir; seleção de saída: excluir/);
+  assert.match(output,/Seleção de entrada: excluir; seleção de saída: incluir/);
+  assert.match(output,/Lucro Presumido · DIFAL: não se aplica/);
+ }
+ assert.deepEqual(input,before);
+ const historical=structuredClone(input.result);
+ historical.difalPolicy={version:'DIFAL_SCENARIOS_V1',enabled:{pure:true,hybrid:true,presumed:true,actual:true}};
+ for(const regime of historical.regimes){
+  regime.dre.difal=-1200;
+  regime.difalApplication={version:'DIFAL_SCENARIOS_V1',enabled:true,blocked:false,reason:'ENABLED',message:'Incluído: DIFAL das vendas elegíveis.',rbt12:180000,icmsOutside:false,salesDifal:true,purchaseAnticipation:false};
+ }
+ const captured=structuredClone(historical);freeze(historical);const old=buildDrePresentation({result:historical});
+ assert.equal(find(old,'difal').values.actual,-1200);
+ assert.match(dreDifalNotes(old)[3],/Lucro Real · DIFAL: incluir/);
+ assert(!dreDifalNotes(old).join('\n').includes('não se aplica'));
+ assert.deepEqual(old.difalPolicy,captured.difalPolicy);assert.deepEqual(historical,captured);
 });
 
 test('DRE e impressão distinguem RBT12 por competência da referência fixa legada',()=>{

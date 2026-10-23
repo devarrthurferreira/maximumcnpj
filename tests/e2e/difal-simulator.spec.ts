@@ -94,7 +94,7 @@ test('DIFAL projetado entra na DRE anual e mensal sem alterar a receita importad
   for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill('0');
   await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
   const annual=page.locator('.sim-dre tbody tr').filter({hasText:'DIFAL sobre vendas'});
-  await expect(annual).toHaveCount(1);for(const cell of await annual.locator('td').allTextContents())expect(cell).toContain('90,00');
+  await expect(annual).toHaveCount(1);for(const [index,cell] of (await annual.locator('td').allTextContents()).entries())expect(cell).toContain(index<2?'90,00':'0,00');
   await expect(page.locator('#annual-revenue')).toContainText('7.800,00');expect(posted.draft.values.salesRevenue).toBe(650);
   await page.getByRole('button',{name:'Mensal',exact:true}).click();const monthly=page.locator('[data-dre-row="difal"]');
   await expect(monthly.locator('td')).toHaveCount(2);await expect(monthly.locator('td').first()).toContainText('7,50');await expect(monthly.locator('td').last()).toContainText('90,00');

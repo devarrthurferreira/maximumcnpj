@@ -1,7 +1,7 @@
 // Regression fixtures ported from calculadora@d60e8bc3b2edcc2ebd4ff11cf584689f01d0d381.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateTax, DEFAULT_RATES, EXAMPLE_INPUT, TAX_BANDS, taxInputSchema, createEmptyDraft, draftToInput, calculateSimulation, defaultDifalPolicy, parseDifalPolicy, resolveDifalApplication } from '../public/simulator-engine.js';
+import { calculateTax, DEFAULT_RATES, EXAMPLE_INPUT, TAX_BANDS, taxInputSchema, createEmptyDraft, draftToInput, calculateSimulation, defaultDifalPolicy, parseDifalPolicy, upgradeDifalPolicy, resolveDifalApplication } from '../public/simulator-engine.js';
 import {projectDifal} from '../public/simulator-projection.js';
 
 test('wizard keeps absent revenue and expense fields blank until explicitly completed', () => {
@@ -382,24 +382,24 @@ test('all DRE subtotals reconcile without duplicated CMV, personnel or ICMS cred
   }
 });
 
-test('DIFAL enters revenue deductions and tax burden once, before Lucro Real IRPJ and CSLL', () => {
+test('DIFAL reduz receita e lucro uma vez somente no Simples, sem alterar IRPJ e CSLL dos outros regimes', () => {
   const input=example(), baseline=calculateTax(input), result=calculateTax({...input,difalMonthly:100});
   close(result.annualRevenue,baseline.annualRevenue);assert.deepEqual(result.credits,baseline.credits);
   for(const regime of result.regimes){
-    const old=baseline.regimes.find(item=>item.id===regime.id),d=regime.dre;
-    close(d.difal,-1200);close(d.netRevenue,old.dre.netRevenue-1200);close(d.preTax,old.dre.preTax-1200);
+    const old=baseline.regimes.find(item=>item.id===regime.id),d=regime.dre,charge=['pure','hybrid'].includes(regime.id)?1200:0;
+    close(d.difal,-charge);close(d.netRevenue,old.dre.netRevenue-charge);close(d.preTax,old.dre.preTax-charge);
     close(d.netRevenue,d.revenue+d.das+d.cbsDebit+d.ibsDebit+d.icmsNet+d.iss+d.difal);
     close(regime.totalTaxes,-d.das-d.cbsDebit-d.ibsDebit-d.icmsNet-d.iss-d.difal-d.payroll-d.irpj-d.csll-d.cbsUsed-d.ibsUsed);
     close(regime.annualProfit,result.annualRevenue+d.cmv+d.salaries+d.benefits+d.administrative+d.rent+d.cards-regime.totalTaxes);
     close(regime.monthlyProfit,regime.annualProfit/12);
-    if(regime.id!=='actual'){close(d.irpj,old.dre.irpj);close(d.csll,old.dre.csll);close(regime.totalTaxes,old.totalTaxes+1200);}
+    close(d.irpj,old.dre.irpj);close(d.csll,old.dre.csll);close(regime.totalTaxes,old.totalTaxes+charge);
   }
   close(memory(result,'actual.preTax'),result.regimes[3].dre.preTax);
   close(memory(result,'actual.base'),Math.max(0,result.regimes[3].dre.preTax));
   close(result.regimes[3].dre.csll,-Math.max(0,result.regimes[3].dre.preTax)*.09);
-  assert(result.regimes[3].dre.irpj>baseline.regimes[3].dre.irpj);
+  close(result.regimes[3].dre.irpj,baseline.regimes[3].dre.irpj);
   const loss=calculateTax({...input,difalMonthly:1000000});
-  assert.equal(loss.regimes[3].dre.irpj,0);assert.equal(loss.regimes[3].dre.csll,0);
+  close(loss.regimes[3].dre.irpj,baseline.regimes[3].dre.irpj);close(loss.regimes[3].dre.csll,baseline.regimes[3].dre.csll);
   assert.equal(Object.hasOwn(baseline.regimes[0].dre,'difal'),false);
   assert.equal(calculateTax({...input,difalMonthly:0}).regimes[0].dre.difal,0);
 });
@@ -421,7 +421,7 @@ test('antecipação de ICMS deduz 7,32% de compras interestaduais somente nos do
  const input={...example(),difalMonthly:100},baseline=calculateTax(input);
  const anticipation={version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73_200}; // R$10.000 ×7,32%.
  const result=calculateTax({...input,icmsAnticipation:anticipation});
- assert.equal(result.version,'1.6.0-difal-scenarios');assert.equal(baseline.version,'1.6.0-difal-scenarios');
+ assert.equal(result.version,'1.7.0-difal-directions');assert.equal(baseline.version,'1.7.0-difal-directions');
  assert.deepEqual(result.credits,baseline.credits);close(result.annualRevenue,baseline.annualRevenue);
  for(const regime of result.regimes){
   const old=baseline.regimes.find(row=>row.id===regime.id),d=regime.dre,charge=['pure','hybrid'].includes(regime.id)?8784:0;
@@ -482,10 +482,10 @@ test('política DIFAL é estrita, clonada em ordem fixa e omissão permanece aus
  const selected={...draft,difalPolicy:input};assert.deepEqual(draftToInput(selected).difalPolicy,parseDifalPolicy(input));
  assert.equal(draftToInput({...draft,difalPolicy:{...expected,enabled:{...expected.enabled,pure:0}}}),null);
 });
-test('opção independente de cada regime remove DIFAL e antecipação uma única vez sem afetar os demais',()=>{
+test('opção independente dos dois regimes Simples remove DIFAL e antecipação uma única vez sem afetar os demais',()=>{
  const input={...example(),difalMonthly:100,icmsAnticipation:{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73200}};
  const baseline=calculateTax(input),ids=['pure','hybrid','presumed','actual'];
- for(const id of ids){
+ for(const id of ['pure','hybrid']){
   const policy=defaultDifalPolicy();policy.enabled[id]=false;const before=structuredClone({input,policy});
   const result=calculateTax({...input,difalPolicy:policy}),regime=result.regimes.find(row=>row.id===id),old=baseline.regimes.find(row=>row.id===id);
   assert.equal(regime.dre.difal,0);assert.equal(regime.dre.icmsAnticipation,0);assert.equal(regime.difalApplication.reason,'USER_EXCLUDED');
@@ -499,7 +499,7 @@ test('opção independente de cada regime remove DIFAL e antecipação uma únic
  const allOff=defaultDifalPolicy();for(const id of ids)allOff.enabled[id]=false;
  for(const row of calculateTax({...input,difalPolicy:allOff}).regimes){assert.equal(row.dre.difal,0);assert.equal(row.dre.icmsAnticipation,0);}
 });
-test('excluir DIFAL no Lucro Real altera também a base positiva e IRPJ CSLL, com memória e DRE conciliadas',()=>{
+test('Lucro Real sempre exclui DIFAL da base positiva, IRPJ e CSLL, com memória e DRE conciliadas',()=>{
  for(const salesRevenue of [1000,50000,200000]){
   const input={...example(),salesRevenue,difalMonthly:2000},policy=defaultDifalPolicy();policy.enabled.actual=false;
   const off=calculateTax({...input,difalPolicy:policy}),without=calculateTax({...input,difalMonthly:0}),actual=off.regimes.find(row=>row.id==='actual'),reference=without.regimes.find(row=>row.id==='actual');
@@ -515,15 +515,72 @@ test('bloqueio DIFAL usa RBT12 no limite inclusive e ICMS fora do DAS somente no
   for(const regime of result.regimes){
    const simple=['pure','hybrid'].includes(regime.id),blocked=simple&&(rbt12>=3600000||icmsOutside);
    assert.equal(regime.difalApplication.blocked,blocked);
-   close(regime.dre.difal,blocked?0:-1200);close(regime.dre.icmsAnticipation,simple&&!blocked?-8784:0);
+   close(regime.dre.difal,simple&&!blocked?-1200:0);close(regime.dre.icmsAnticipation,simple&&!blocked?-8784:0);
    if(blocked)assert.match(regime.difalApplication.message,/Zerado automaticamente/);
   }
  }
  const policy=defaultDifalPolicy();policy.enabled.pure=false;
  assert.equal(resolveDifalApplication({policy,regimeId:'pure',rbt12:3600000}).reason,'SUBLIMIT');
- assert.equal(resolveDifalApplication({regimeId:'actual',rbt12:5000000,icmsOutside:true}).salesDifal,true);
+ assert.equal(resolveDifalApplication({regimeId:'actual',rbt12:5000000,icmsOutside:true}).salesDifal,false);
  assert.equal(resolveDifalApplication({regimeId:'actual',rbt12:5000000}).purchaseAnticipation,false);
  const noSource=calculateTax({...example(),difalPolicy:policy});assert(!Object.hasOwn(noSource.regimes[0].dre,'difal'));
+});
+
+test('V2 valida direções independentes e exclui LP/LR; migração de V1 preserva sua evidência original',()=>{
+ const current=defaultDifalPolicy();
+ assert.deepEqual(current,{version:'DIFAL_SCENARIOS_V2',enabled:{pure:true,hybrid:true,presumed:false,actual:false},operations:{pure:{entry:true,exit:true},hybrid:{entry:true,exit:true}}});
+ const copy=parseDifalPolicy(current);copy.operations.pure.entry=false;assert.equal(current.operations.pure.entry,true);
+ assert.notEqual(defaultDifalPolicy().operations.hybrid,current.operations.hybrid);
+ const {operations,...missing}=current;
+ for(const value of [missing,{...current,operations:null},{...current,operations:{}},
+  {...current,enabled:{...current.enabled,presumed:true}},{...current,enabled:{...current.enabled,actual:true}},
+  {...current,operations:{...operations,presumed:{entry:false,exit:false}}},
+  {...current,operations:{...operations,pure:{entry:true}}},
+  {...current,operations:{...operations,pure:{entry:true,exit:'false'}}},
+  {...current,operations:{...operations,pure:{entry:true,exit:false,extra:true}}},
+  {...current,operations:{...operations,hybrid:{entry:0,exit:false}}}]){
+  assert.throws(()=>parseDifalPolicy(value),TypeError);
+  assert.equal(taxInputSchema.safeParse({...example(),difalPolicy:value}).success,false);
+ }
+ const legacy={version:'DIFAL_SCENARIOS_V1',enabled:{pure:false,hybrid:true,presumed:true,actual:true}},before=structuredClone(legacy);
+ assert.deepEqual(parseDifalPolicy(legacy),before);
+ const upgraded=upgradeDifalPolicy(legacy);assert.deepEqual(upgraded,{...current,enabled:{...current.enabled,pure:false}});
+ const calculated=calculateTax({...example(),difalMonthly:100,difalPolicy:legacy});
+ assert.deepEqual(calculated.difalPolicy,upgraded);assert.deepEqual(legacy,before);
+ for(const id of ['presumed','actual']){
+  const regime=calculated.regimes.find(row=>row.id===id);assert.equal(regime.dre.difal,0);
+  assert.equal(regime.difalApplication.reason,'NOT_APPLICABLE');assert.equal(regime.difalApplication.enabled,false);
+  assert.equal(calculated.memory.find(row=>row.id===`difal.option.${id}`).value,'Não aplicável');
+ }
+ assert.throws(()=>parseDifalPolicy({...legacy,operations}),TypeError,'Versão histórica não aceita campos com significado novo.');
+});
+
+test('matriz de cenários, entrada/saída e sublimite aplica cada dedução uma vez e mantém LP/LR intactos',()=>{
+ const ids=['pure','hybrid','presumed','actual'];
+ for(const enabledMask of [0,1,2,3])for(let operationMask=0;operationMask<16;operationMask++)
+ for(const rbt12 of [3599999.99,3600000,3600000.01])for(const icmsOutside of [false,true]){
+  const policy=defaultDifalPolicy();
+  for(const [index,id]of ['pure','hybrid'].entries()){
+   policy.enabled[id]=!!(enabledMask&(1<<index));
+   policy.operations[id]={entry:!!(operationMask&(1<<(index*2))),exit:!!(operationMask&(1<<(index*2+1)))};
+  }
+  const before=structuredClone(policy),input={...example(),rbt12,icmsOutside},baseline=calculateTax(input);
+  const result=calculateTax({...input,difalPolicy:policy,difalMonthly:100,icmsAnticipation:{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73200}});
+  for(const [index,id]of ids.entries()){
+   const regime=result.regimes[index],reference=baseline.regimes[index],simple=index<2;
+   const allowed=simple&&policy.enabled[id]&&rbt12<3600000&&!icmsOutside;
+   const outgoing=allowed&&policy.operations[id].exit?1200:0,incoming=allowed&&policy.operations[id].entry?8784:0;
+   const charge=reference.available?outgoing+incoming:0;
+   close(regime.dre.difal,reference.available?-outgoing:0);close(regime.dre.icmsAnticipation,reference.available?-incoming:0);
+   close(regime.dre.netRevenue,reference.dre.netRevenue-charge);close(regime.dre.preTax,reference.dre.preTax-charge);
+   close(regime.annualProfit,reference.annualProfit-charge);close(regime.totalTaxes,reference.totalTaxes+charge);
+   close(regime.dre.irpj,reference.dre.irpj);close(regime.dre.csll,reference.dre.csll);
+   assert.equal(regime.difalApplication.salesDifal,!!outgoing);assert.equal(regime.difalApplication.purchaseAnticipation,!!incoming);
+   if(!simple)assert.equal(regime.difalApplication.reason,'NOT_APPLICABLE');
+   else if(rbt12<3600000&&!icmsOutside&&policy.enabled[id]&&!policy.operations[id].entry&&!policy.operations[id].exit)assert.equal(regime.difalApplication.reason,'NO_OPERATIONS');
+  }
+  assert.deepEqual(result.difalPolicy,policy);assert.deepEqual(policy,before);
+ }
 });
 
 test('unsupported years, annexes, extra keys and out-of-range rates are rejected', () => {

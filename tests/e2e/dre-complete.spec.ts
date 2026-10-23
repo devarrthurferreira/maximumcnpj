@@ -138,12 +138,12 @@ test('serviços e DIFAL conciliam entre tela e CSV após reabrir histórico sem 
     for(const [key,amount] of [['services','30.000,00'],['difal','3.600,00']]){
       const cells=page.locator(`.dre-complete [data-dre-row="${key}"] td`);
       await expect(cells).toHaveCount(4);
-      for(const cell of await cells.allTextContents()) expect(cell).toContain(amount);
+      for(const [index,cell] of (await cells.allTextContents()).entries()) expect(cell).toContain(key==='difal'&&index>1?'0,00':amount);
     }
     const annual=(await downloadText(page,'#export-dre-csv')).text;
     const annualDifal=annual.split('\r\n').filter(line=>line.includes('DIFAL sobre vendas (10%)'));
     expect(annualDifal).toHaveLength(1);
-    expect(annualDifal[0].split(';').slice(5,9)).toEqual(Array(4).fill('-3600,00'));
+    expect(annualDifal[0].split(';').slice(5,9)).toEqual(['-3600,00','-3600,00','0,00','0,00']);
     const annualServices=annual.split('\r\n').filter(line=>line.includes('"Receita de serviços"'));
     expect(annualServices).toHaveLength(1);
     expect(annualServices[0].split(';').slice(5,9)).toEqual(Array(4).fill('30000,00'));
@@ -155,11 +155,11 @@ test('serviços e DIFAL conciliam entre tela e CSV após reabrir histórico sem 
     const monthlyServices=monthly.split('\r\n').filter(line=>line.includes('"Receita de serviços"'));
     expect(monthlyServices).toHaveLength(4);
     for(const line of monthlyServices) expect(line.split(';').slice(6,19)).toEqual([...Array(12).fill('2500,00'),'30000,00']);
-    for(const line of monthlyDifal) expect(line.split(';').slice(6,19)).toEqual([...Array(12).fill('-300,00'),'-3600,00']);
+    for(const [index,line] of monthlyDifal.entries()) expect(line.split(';').slice(6,19)).toEqual(index<2?[...Array(12).fill('-300,00'),'-3600,00']:Array(13).fill('0,00'));
     for(const regime of saved.result.regimes){
       await page.locator('#dre-regime').selectOption(regime.id);
       await expect(page.locator('.dre-complete table')).toHaveCount(1);
-      for(const [key,amount,total] of [['services','2.500,00','30.000,00'],['difal','300,00','3.600,00']]){
+      for(const [key,amount,total] of [['services','2.500,00','30.000,00'],['difal', ['pure','hybrid'].includes(regime.id)?'300,00':'0,00', ['pure','hybrid'].includes(regime.id)?'3.600,00':'0,00']]){
         const cells=page.locator(`.dre-complete [data-dre-row="${key}"] td`);
         await expect(cells).toHaveCount(13);
         for(const cell of (await cells.allTextContents()).slice(0,12)) expect(cell).toContain(amount);

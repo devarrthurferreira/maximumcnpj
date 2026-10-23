@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {planReprocessing,reprocessedSimulationId,SERVICE_REVENUE_MIGRATION_REVISION} from '../src/simulation-reprocessing.ts';
 import {annualizeReports,projectDifal,projectScenario} from '../public/simulator-projection.js';
-import {calculateSimulation,draftToInput,MODEL_VERSION} from '../public/simulator-engine.js';
+import {calculateSimulation,draftToInput,MODEL_VERSION,defaultDifalPolicy,upgradeDifalPolicy} from '../public/simulator-engine.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import {section22Year2025} from './fixtures/section22.ts';
 
@@ -17,18 +17,23 @@ function fixture(){
   draft:{year:2027,salesAnnex:1,serviceAnnex:3,rbt12:100000,values:{serviceRevenue:0,salesRevenue:160,simplePurchases:0,regularPurchases:12,salaries:1,benefits:2,adminExpenses:3,rent:4,cardExpenses:5}},
   rbt12Source:'MANUAL',rbt12Manual:{source:'MANUAL',confirmed:true,rbt12Cents:10000000,confirmedAt:'2026-10-10T12:00:00Z',confirmedBy:{id:'original-user',name:'Origem'}}};
  source.fields={...fields,salesCpfCents:10000,serviceRevenueCents:5000};source.revenueSplit={version:'SALES_SERVICES_V1'};
- Object.defineProperty(source,'monthlyReports',{enumerable:true,get(){const count=original.reportMonths,p=annualizeReports(source.fields,count);return Array.from({length:count},(_,index)=>({sourceMonth:`2025-${String(index+1).padStart(2,'0')}`,month:index+1,fields:Object.fromEntries(Object.entries(source.fields).map(([key,total])=>[key,index<count-1?p.monthlyGroupsCents[key]:Number(total)-p.monthlyGroupsCents[key]*(count-1)])),salesLines:2,purchaseLines:1,difal:source.sales.difal?{...source.sales.difal,amountCents:index<count-1?Math.floor(source.sales.difal.amountCents/count):source.sales.difal.amountCents-Math.floor(source.sales.difal.amountCents/count)*(count-1)}:null}));}});
+ Object.defineProperty(source,'monthlyReports',{enumerable:true,get(){const count=original.reportMonths,p=annualizeReports(source.fields,count);return Array.from({length:count},(_,index)=>({sourceMonth:`2025-${String(index+1).padStart(2,'0')}`,month:index+1,fields:Object.fromEntries(Object.entries(source.fields).map(([key,total])=>[key,index<count-1?p.monthlyGroupsCents[key]:Number(total)-p.monthlyGroupsCents[key]*(count-1)])),salesLines:2,purchaseLines:1,anticipation:{...anticipation,pendingLines:0},difal:source.sales.difal?{...source.sales.difal,amountCents:index<count-1?Math.floor(source.sales.difal.amountCents/count):source.sales.difal.amountCents-Math.floor(source.sales.difal.amountCents/count)*(count-1)}:null}));}});
  return {original,source};
 }
 const difalPolicy=(enabled:Record<string,boolean>={})=>({version:'DIFAL_SCENARIOS_V1',enabled:{pure:true,hybrid:true,presumed:true,actual:true,...enabled}});
 const anticipation={version:'ICMS_ANTICIPATION_V3',ratePercent:7.32,issuerUf:'MG',eligibleLines:0,baseCents:0,amountCents:0,pendingLines:1};
 
-test('recálculo preserva escolhas explícitas e ausência histórica sem modificar o original',()=>{
+test('recálculo atualiza política e direções somente na versão vinculada, preservando o original',()=>{
  const {original,source}=fixture();
- assert.equal(Object.hasOwn(planReprocessing(original,source,'ws').input.draft,'difalPolicy'),false);
+ assert.deepEqual(planReprocessing(original,source,'ws').input.draft.difalPolicy,defaultDifalPolicy());
+ assert.equal(Object.hasOwn(original.draft,'difalPolicy'),false,'O original sem política permanece sem o campo.');
+ original.source.difalPolicy={...defaultDifalPolicy(),enabled:{pure:false,hybrid:true,presumed:false,actual:false},
+  operations:{pure:{entry:false,exit:false},hybrid:{entry:false,exit:true}}};
+ assert.deepEqual(planReprocessing(original,source,'ws').input.draft.difalPolicy,original.source.difalPolicy,'Sem escolha própria, a revisão conserva a opção da empresa congelada na fonte.');
+
  original.draft.difalPolicy=difalPolicy({pure:false,presumed:false});
  const before=structuredClone(original),planned=planReprocessing(original,source,'ws');
- assert.deepEqual(planned.input.draft.difalPolicy,before.draft.difalPolicy);assert.deepEqual(original,before);
+ assert.deepEqual(planned.input.draft.difalPolicy,upgradeDifalPolicy(before.draft.difalPolicy));assert.deepEqual(original,before);
  planned.input.draft.difalPolicy.enabled.hybrid=false;
  assert.equal(original.draft.difalPolicy.enabled.hybrid,true,'A revisão não compartilha o objeto de opções do original.');
  for(const invalid of [null,{...difalPolicy(),version:'UNKNOWN'},difalPolicy({pure:'false' as any}),{...difalPolicy(),extra:true}]){
@@ -48,7 +53,10 @@ test('pendências de UF só bloqueiam impostos potencialmente usados por algum r
  current.monthlyReports[0].difal=null;
  assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Uma estimativa excluída não exige dados de UF para seu valor.');
  original.draft.difalPolicy.enabled.presumed=true;
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Lucro Presumido legado não habilita DIFAL na revisão atual.');
+ original.draft.difalPolicy.enabled.pure=true;
  assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='DIFAL_SOURCE_MISSING');
+ original.draft.difalPolicy.enabled.pure=false;
  current.monthlyReports[0].difal={...source.sales.difal,pendingLines:0};
  assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Lucro Presumido não aplica antecipação de compras.');
  original.draft.difalPolicy.enabled.pure=true;
@@ -58,10 +66,38 @@ test('pendências de UF só bloqueiam impostos potencialmente usados por algum r
  current.monthlyReports[0].difal.pendingLines=1;
  assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'No sublimite exato, os cenários Simples não aplicam vendas nem entradas.');
  original.draft.difalPolicy.enabled.actual=true;
- assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='DIFAL_UF_PENDING','Lucro Real ativo ainda exige a UF da venda.');
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Lucro Real legado não habilita DIFAL na revisão atual.');
  current.purchases={...current.purchases,totalCents:999};
  original.draft.difalPolicy=difalPolicy({pure:false,hybrid:false,presumed:false,actual:false});
  assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='REPROCESS_SOURCE_TOTAL','Excluir o imposto não dispensa a conciliação das fontes.');
+});
+
+test('revisão exige somente a evidência da direção selecionada para Puro ou Híbrido',()=>{
+ const {original,source}=fixture();
+ const current={...source,monthlyReports:source.monthlyReports.map((row:any)=>({...row,
+  difal:{...row.difal,pendingLines:1},anticipation:{...anticipation,pendingLines:0}}))};
+ original.draft.difalPolicy={...defaultDifalPolicy(),enabled:{pure:true,hybrid:false,presumed:false,actual:false},
+  operations:{pure:{entry:true,exit:false},hybrid:{entry:false,exit:true}}};
+ const originalBefore=structuredClone(original);
+ const entryPlan=planReprocessing(original,current,'ws');
+ assert.deepEqual(entryPlan.input.draft.difalPolicy,original.draft.difalPolicy);
+ assert.deepEqual(original,originalBefore);
+ current.monthlyReports[0].difal=null;
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Somente entrada dispensa a estimativa de saída.');
+ delete current.monthlyReports[0].anticipation;
+ assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_SOURCE_MISSING');
+ current.monthlyReports[0].anticipation={...anticipation};
+ assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING');
+ original.draft.difalPolicy.enabled={pure:false,hybrid:true,presumed:false,actual:false};
+ assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='DIFAL_SOURCE_MISSING');
+ current.monthlyReports[0].difal={...source.sales.difal,pendingLines:0};
+ const exitPlan=planReprocessing(original,current,'ws');
+ assert.deepEqual(exitPlan.input.draft.difalPolicy.operations,{pure:{entry:true,exit:false},hybrid:{entry:false,exit:true}});
+ delete current.monthlyReports[0].anticipation;
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Somente saída dispensa a estimativa de entrada.');
+ original.draft.difalPolicy.operations.hybrid.exit=false;
+ current.monthlyReports[0].difal=null;
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Nenhuma direção selecionada dispensa ambas as estimativas.');
 });
 
 test('UF pendente no mês bloqueado não impede o mês aplicável com RBT12 móvel confirmada',()=>{
@@ -190,11 +226,11 @@ test('saldo reconstruído diferente é aceito somente com total original auditad
 
 test('revisão de cenário mensal preserva meses distintos mesmo quando o último foi selecionado no formulário',()=>{
  const f=fixture(),fields={...f.source.fields,salesCpfCents:12000,serviceRevenueCents:6000,purchasesNonOptantCents:1200};
- const monthlyReports=[10000,2000].map((sales,index)=>({sourceMonth:`2026-0${index+1}`,month:index+1,salesLines:2,purchaseLines:1,
+ const monthlyReports=[10000,2000].map((sales,index)=>({sourceMonth:`2026-0${index+1}`,month:index+1,salesLines:2,purchaseLines:1,anticipation:{...anticipation,pendingLines:0},
   fields:{...fields,salesCpfCents:sales,serviceRevenueCents:sales/2,purchasesNonOptantCents:sales/10},difal:{...f.source.sales.difal,amountCents:sales/10,baseCents:sales}}));
  const source={...f.source,fields,monthlyReports,purchases:{...f.source.purchases,totalCents:1200},sales:{...f.source.sales,totalCents:18000}};
  const inputs=monthlyReports.map(row=>({sourceMonth:row.sourceMonth,groups:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:row.fields.salesCpfCents/100,purchasesOptantCents:0,purchasesNonOptantCents:row.fields.purchasesNonOptantCents/100},values:{serviceRevenue:row.fields.serviceRevenueCents/100,salaries:1,benefits:2,adminExpenses:3,rent:4,cardExpenses:5}}));
- const draft={...f.original.draft,values:{...inputs[1].values,salesRevenue:20,simplePurchases:0,regularPurchases:2}};
+ const draft={...f.original.draft,difalPolicy:defaultDifalPolicy(),values:{...inputs[1].values,salesRevenue:20,simplePurchases:0,regularPurchases:2}};
  const computed=calculateMonthlySimulation(draft,monthlyReports,inputs,source.sales.jobId);
  const original={...f.original,source,reportMonths:2,draft,monthlyGroups:inputs[1].groups,baselineMonthlyGroups:inputs[0].groups,baselineServiceRevenue:50,...computed,
   monthlyDre:buildMonthlyDre(computed.result,2027,f.original.rbt12Manual)};

@@ -11,7 +11,7 @@ import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import { generationSimulator } from './simulator-store.ts';
 import { assertGenerationNotDeleted, assertLookupNotDeleted } from './generation-deletion.ts';
 import { CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
-  SIMULATION_VALUE_FIELDS, parseDifalPolicy } from '../public/simulator-engine.js';
+  SIMULATION_VALUE_FIELDS, parseDifalPolicy, upgradeDifalPolicy } from '../public/simulator-engine.js';
 import type { SimulationDraft } from '../public/simulator-engine.js';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -169,7 +169,7 @@ export async function createReprocessedSimulation(actor: LookupActor, input: unk
 
 async function createSimulationSnapshot(actor: LookupActor, input: unknown, reprocessing?: ReprocessingContext) {
   write(actor);
-  const validated = request(input), {simulationId, generationId, clientId, draft, reportMonths, monthlyGroups, parentSimulationId, rbt12ExtractionId} = validated;
+  const validated = request(input), {simulationId, generationId, clientId, draft: submittedDraft, reportMonths, monthlyGroups, parentSimulationId, rbt12ExtractionId} = validated;
   const requestHash = digest(JSON.stringify(validated));
   const c = await simulations();
   const repeated = async (record: Doc) => {
@@ -193,6 +193,11 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   const source = reprocessing?.source || await generationSimulator(generationId, clientId);
   if (reprocessing) need(parentSimulationId === reprocessing.originalId && source.generationId === generationId && source.clientId === clientId,
     'A origem do recálculo não corresponde ao histórico.', 409, 'REPROCESS_SOURCE');
+  // Match a retry against its original request before normalizing the effective
+  // policy. New snapshots always describe the directions actually calculated;
+  // omitted preferences inherit this company's selection, never another company.
+  const draft: SimulationDraft = {...submittedDraft,
+    difalPolicy: upgradeDifalPolicy(submittedDraft.difalPolicy ?? source.difalPolicy)};
   if (source.periodBasis === 'COLUMN_H') {
     need(source.reportMonths === reportMonths && source.period && reportMonths === source.period.months,
       'O período da simulação deve corresponder ao intervalo identificado na coluna H dos relatórios.', 409, 'SIMULATION_PERIOD');

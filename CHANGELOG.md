@@ -1,5 +1,15 @@
 # Histórico de alterações
 
+## [0.32.0] — 2026-10-23
+
+- DIFAL selecionável somente para Simples Puro e Híbrido, após a escolha da empresa, nos fluxos individual e multiempresa. Entrada e saída têm controles independentes por cenário; ambas ou nenhuma também são permitidas.
+- Contrato `DIFAL_SCENARIOS_V2` e motores `1.7.0-difal-directions`: entrada afeta somente antecipação de compras; saída afeta somente DIFAL de vendas. Presumido e Real ficam zerados nas novas simulações; DIFAL não reduz a base de IRPJ/CSLL do Real. Os bloqueios mensais de RBT12/sublimite e ICMS fora do DAS permanecem.
+- Opções acompanham geração, fonte, rascunho, salvamento, cópia e revisão, sem mistura entre empresas. Pedidos de simulação sem política explícita herdam a escolha da empresa; políticas V2 inválidas são rejeitadas no servidor.
+- DRE, memória, JSON, CSV e impressão exibem cenário, entrada, saída e motivo de aplicação por competência. Os relatórios de origem mantêm seus valores para conferência.
+- Histórico V1 conserva valores e escolhas originais. Nova revisão `DIFAL_DIRECTIONS_2026_10_V7` cria versões vinculadas, preserva opções reconciliáveis e verifica fontes/UF apenas para a direção aplicável. Reenvios incertos V1 ou sem política preservam o hash original e retornam o snapshot existente.
+- Classificação de naturezas, percentuais gerenciais de 10% e 7,32%, valores mensais e leitura do extrato permanecem preservados.
+- Validação com Node 22.16.0: tipos, build, release e diff aprovados; 241 testes de regras, 155 Python/PDF/OCR e 137 testes de navegador passaram sem saltos. Todos os comandos de integração, projeção, competências e reprocessamento passaram com MongoDB descartável; compras reexecutadas com 21/21 após atualizar a expectativa do novo filho de uma simulação V1. Matriz de 384 configurações/limites e 1.536 resultados de regimes; telas desktop/320/390 px e exportações conferidas.
+
 ## [0.31.0] — 2026-10-23
 
 - Resumo de compras/entradas considera somente naturezas classificadas como COMPRAS e serviços 8000; exclui devoluções, outras operações e naturezas não classificadas.

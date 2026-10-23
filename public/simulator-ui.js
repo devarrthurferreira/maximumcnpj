@@ -10,7 +10,7 @@ import {renderAnnualDre,renderDrePrintCalendar,renderDrePrintDocument} from './s
 import {buildDreCsv,buildDreExportPayload} from './simulator-dre-export.js';
 import {mountNavigation} from './navigation.js';
 import {renderSimulationCharts} from './simulation-charts.js';
-import {createEmptyDraft, calculateSimulation, defaultDifalPolicy, parseDifalPolicy, resolveDifalApplication, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES} from './simulator-engine.js';
+import {createEmptyDraft, calculateSimulation, defaultDifalPolicy, parseDifalPolicy, upgradeDifalPolicy, resolveDifalApplication, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES} from './simulator-engine.js';
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = value => value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('pt-BR', {style:'currency',currency:'BRL'});
@@ -21,7 +21,9 @@ const competenceLabel = value => /^\d{4}-(0[1-9]|1[0-2])$/.test(value||'') ? `${
 const sumMoney = values => values.every(Number.isFinite)?values.reduce((total,value)=>total+Math.round(value*100),0)/100:null;
 const IMPORTED = ['salesOptantCents','salesNonOptantCents','salesCpfCents','purchasesOptantCents','purchasesNonOptantCents'];
 const MANUAL = ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'];
-const DIFAL_REGIMES=[['pure','Simples puro'],['hybrid','Simples híbrido'],['presumed','Lucro Presumido'],['actual','Lucro Real']];
+const DIFAL_REGIMES=[['pure','Simples puro'],['hybrid','Simples híbrido']];
+const LEGACY_DIFAL_REGIMES=[...DIFAL_REGIMES,['presumed','Lucro Presumido'],['actual','Lucro Real']];
+const DIFAL_OPERATIONS=[['entry','DIFAL de entrada','Compras · antecipação de ICMS'],['exit','DIFAL de saída','Vendas']];
 const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,rbt12DocumentConfirmed:false,rbt12DocumentRetryable:false,rbt12Sequence:0,pdfOperation:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales',guided:false,guidedStage:false,guidedResume:false,rbt12Mode:'PDF',serviceMigration:null,draftMigrationNotice:null,dreShowPercent:false,dreMonthView:true,dreMonth:0,dreContext:null,detailStates:new Map(),monthlyInputs:[],entry:0};
 const hasImportedServices = () => S.source?.revenueSplit?.version === 'SALES_SERVICES_V1' && Number.isSafeInteger(S.source.fields?.serviceRevenueCents);
 const isImportedField = key => IMPORTED.includes(key) || (key === 'serviceRevenue' && hasImportedServices());
@@ -44,18 +46,35 @@ function savedDifalPolicy(snapshot){
   try{return parseDifalPolicy(value);}catch{return null;}
 }
 function difalSelectionSummary(policy){
-  const included=DIFAL_REGIMES.filter(([id])=>policy.enabled[id]).map(([,name])=>name),excluded=DIFAL_REGIMES.filter(([id])=>!policy.enabled[id]).map(([,name])=>name);
-  return [included.length?`Incluído em: ${included.join(', ')}.`:'DIFAL excluído dos quatro cenários.',excluded.length&&included.length?`Excluído em: ${excluded.join(', ')}.`:''].filter(Boolean).join(' ');
+  const current=upgradeDifalPolicy(policy);
+  return DIFAL_REGIMES.map(([id,name])=>`${name}: ${difalOperationSummary(current,id)}.`).join(' ');
+}
+function difalOperationSummary(policy,id){
+  if(!policy.enabled[id])return 'não incluir';
+  const operations=policy.operations?.[id];
+  if(!operations)return ['pure','hybrid'].includes(id)?'entrada e saída':'saída (vendas)';
+  return operations.entry&&operations.exit?'entrada e saída':operations.entry?'entrada (compras)':operations.exit?'saída (vendas)':'nenhuma operação selecionada';
+}
+function syncDifalControls(){
+  for(const [id] of DIFAL_REGIMES){
+    const input=$(`#difal-enabled-${id}`);if(input)input.checked=S.difalPolicy.enabled[id];
+    for(const [operation] of DIFAL_OPERATIONS){
+      const field=$(`#difal-${operation}-${id}`);if(!field)continue;
+      field.checked=S.difalPolicy.operations[id][operation];field.disabled=!S.difalPolicy.enabled[id];
+    }
+  }
 }
 function difalOptions(snapshot=null){
   const readonly=!!snapshot,policy=readonly?savedDifalPolicy(snapshot):S.difalPolicy,initial=!readonly&&!!S.source.difalPolicy;
-  const intro=readonly?'Escolhas registradas nesta versão. Os valores e os estados de aplicação permanecem como foram salvos.':initial?'As opções escolhidas no início acompanham esta simulação. Revise abaixo se quiser alterar algum cenário.':'Escolha os regimes em que deseja incluir o DIFAL. A opção vale para todas as competências desta simulação.';
-  const controls=policy?`<div class="sim-difal-options-grid">${DIFAL_REGIMES.map(([id,name])=>`<article class="sim-difal-option" data-difal-option="${id}">${readonly?`<h4>${name}</h4><strong class="sim-difal-choice">${policy.enabled[id]?'Incluído por escolha':'Não incluído por escolha'}</strong>`:`<label for="difal-enabled-${id}"><input id="difal-enabled-${id}" data-difal-regime="${id}" type="checkbox" aria-label="Incluir DIFAL no ${name}" ${policy.enabled[id]?'checked':''}><span>${name}</span></label>`}<p class="sim-difal-scope">${['pure','hybrid'].includes(id)?'Vendas e antecipação de entradas':'Vendas'}</p><p class="sim-difal-option-state" data-difal-state="${id}" role="status"></p></article>`).join('')}</div><p class="sim-help" id="difal-options-context"></p>${readonly?'':'<p class="sim-help">No Simples, o DIFAL fica zerado quando a RBT12 da competência alcança R$ 3,6 milhões ou o ICMS está fora do DAS. Sua escolha permanece salva para os meses em que a aplicação é permitida.</p>'}`:'<p class="sim-help" data-difal-legacy>Esta versão não registrava opções de DIFAL por regime. Consulte os valores preservados na DRE; o histórico não foi recalculado.</p>';
+  const legacy=readonly&&policy?.version==='DIFAL_SCENARIOS_V1',regimes=legacy?LEGACY_DIFAL_REGIMES:DIFAL_REGIMES;
+  const intro=readonly?'Escolhas registradas nesta versão. Os valores e os estados de aplicação permanecem como foram salvos.':initial?'As opções escolhidas no início acompanham esta simulação. Revise o cenário e as operações abaixo.':'Escolha se deseja DIFAL no Simples puro, híbrido ou ambos. Entrada e saída são opções independentes em cada cenário.';
+  const controls=policy?`${legacy?'<p class="sim-help" data-difal-legacy-policy>Opções históricas: esta versão usava a regra anterior de DIFAL. Ao criar uma nova versão, o DIFAL será permitido somente no Simples puro e híbrido, com entrada e saída separadas.</p>':''}<div class="sim-difal-options-grid">${regimes.map(([id,name])=>`<article class="sim-difal-option" data-difal-option="${id}">${readonly?`<h4>${name}</h4><strong class="sim-difal-choice">${policy.enabled[id]?'Incluído por escolha':'Não incluído por escolha'}</strong><p class="sim-difal-scope">${esc(difalOperationSummary(policy,id))}</p>`:`<label for="difal-enabled-${id}"><input id="difal-enabled-${id}" data-difal-regime="${id}" type="checkbox" aria-label="Incluir DIFAL no ${name}" ${policy.enabled[id]?'checked':''}><span>${name}</span></label><fieldset class="sim-difal-operations"><legend>Onde incluir no ${name}?</legend>${DIFAL_OPERATIONS.map(([operation,label,description])=>`<label for="difal-${operation}-${id}"><input id="difal-${operation}-${id}" data-difal-operation="${operation}" data-difal-operation-regime="${id}" type="checkbox" aria-label="${label} no ${name}" ${policy.operations[id][operation]?'checked':''} ${policy.enabled[id]?'':'disabled'}><span>${label}<small>${description}</small></span></label>`).join('')}</fieldset>`}<p class="sim-difal-option-state" data-difal-state="${id}" role="status"></p></article>`).join('')}</div><p class="sim-help" id="difal-options-context"></p>${readonly?'':'<p class="sim-help">Nesta simulação, o DIFAL é aplicado somente ao Simples puro e híbrido. Marque entrada, saída ou ambas; desmarque o cenário para não incluir. O valor fica zerado quando a RBT12 da competência alcança R$ 3,6 milhões ou o ICMS está fora do DAS. Sua escolha permanece salva para os demais meses.</p>'}`:'<p class="sim-help" data-difal-legacy>Esta versão não registrava opções de DIFAL por regime. Consulte os valores preservados na DRE; o histórico não foi recalculado.</p>';
   return `<section id="sim-difal-options" class="sim-difal-options${readonly?' card is-readonly':''}" aria-labelledby="sim-difal-options-title"><h3 id="sim-difal-options-title">DIFAL nos cenários</h3><p class="sim-help">${intro}</p>${initial?`<p class="sim-difal-selection-summary" data-difal-selection-summary>${esc(difalSelectionSummary(policy))}</p><details class="sim-difal-review"><summary>Revisar DIFAL nos cenários</summary>${controls}</details>`:controls}</section>`;
 }
 function updateDifalOptions(){
   const host=$('#sim-difal-options');if(!host||host.querySelector('[data-difal-legacy]'))return;
   const selection=host.querySelector('[data-difal-selection-summary]');if(selection)selection.textContent=difalSelectionSummary(S.difalPolicy);
+  if(!S.readonly)syncDifalControls();
   let sourceMonth,rbt12=null,regimes=null;
   if(S.readonly){
     const monthly=S.snapshot.result?.method==='REPORT_MONTHS_V1';
@@ -67,16 +86,17 @@ function updateDifalOptions(){
     rbt12=sourceMonth&&S.rbt12Mode==='PDF'?(reference?.status==='CONFIRMED'?reference.rbt12Cents/100:null):value('rbt12');
   }
   host.querySelector('#difal-options-context').textContent=sourceMonth?`Aplicação em ${competenceLabel(sourceMonth)}${rbt12===null?'':` · RBT12 ${money(rbt12)}`}.`:(S.readonly?'Aplicação preservada desta versão.':'Aplicação conforme a RBT12 informada.');
-  for(const [id] of DIFAL_REGIMES){
+  for(const option of host.querySelectorAll('[data-difal-option]')){
+    const id=option.dataset.difalOption;
     const application=S.readonly?regimes?.find(row=>row.id===id)?.difalApplication:rbt12===null?null:resolveDifalApplication({policy:S.difalPolicy,regimeId:id,rbt12});
-    const status=host.querySelector(`[data-difal-state="${id}"]`),option=host.querySelector(`[data-difal-option="${id}"]`);
+    const status=host.querySelector(`[data-difal-state="${id}"]`);
     status.textContent=application?.message||(S.readonly?'Estado de aplicação não registrado nesta competência.':'Informe a RBT12 para conferir a aplicação.');
     option.dataset.state=application?.reason||'UNAVAILABLE';
   }
 }
 function applyDifalPolicy(policy){
-  try{S.difalPolicy=policy===undefined?defaultDifalPolicy():parseDifalPolicy(policy);}catch{S.difalPolicy=defaultDifalPolicy();}
-  for(const [id] of DIFAL_REGIMES){const input=$(`#difal-enabled-${id}`);if(input)input.checked=S.difalPolicy.enabled[id];}
+  try{S.difalPolicy=upgradeDifalPolicy(policy);}catch{S.difalPolicy=defaultDifalPolicy();}
+  syncDifalControls();
 }
 function captureMonth(){if(!actualMonths()||S.readonly||!S.monthlyInputs[S.entry])return;const row=S.monthlyInputs[S.entry];row.groups=Object.fromEntries(IMPORTED.map(key=>[key,value(key)]));row.values=Object.fromEntries(MANUAL.map(key=>[key,value(key)]));}
 function showMonth(){const row=S.monthlyInputs[S.entry];for(const key of IMPORTED)$('#'+key).value=typeof row.groups[key]==='number'?row.groups[key].toFixed(2):'';for(const key of MANUAL)$('#'+key).value=typeof row.values[key]==='number'?row.values[key].toFixed(2):'';const select=$('#report-competence');if(select)select.value=String(S.entry);}
@@ -148,7 +168,7 @@ function section(number,title,subtitle,content,id) {
 function display(prefill=null) {
   S.readonly=false; S.result=null; S.snapshot=null; S.pending=null; S.rbt12Mode='PDF'; S.serviceMigration=servicesMigration(prefill)?{previousServices:Number(prefill.draft.values.serviceRevenue)||0}:null;S.draftMigrationNotice=null;clearRbt12();
   S.entry=0;S.monthlyInputs=[];
-  S.difalPolicy=S.source.difalPolicy===undefined?defaultDifalPolicy():parseDifalPolicy(S.source.difalPolicy);
+  S.difalPolicy=upgradeDifalPolicy(S.source.difalPolicy);
   const automaticPeriod=S.source.periodBasis==='COLUMN_H'&&Number.isInteger(S.source.reportMonths);
   if(automaticPeriod)S.months=S.source.reportMonths;
   const periodText=automaticPeriod ? `<details class="card sim-source sim-period-details"><summary>Período confirmado · ${S.months} ${S.months===1?'mês':'meses'}<span>${esc(S.source.period.startMonth)} a ${esc(S.source.period.endMonth)}</span></summary><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months" disabled><option value="${S.months}">${S.months} ${S.months===1?'mês':'meses'}</option></select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" checked disabled>Confirmado pela coluna H. Compras e vendas podem ter dias diferentes na mesma competência.</label></div><p id="period-explanation" class="sim-help"></p></details>` :
@@ -170,6 +190,7 @@ function display(prefill=null) {
   $('#simulator-form').oninput = event => {
     if(S.saving||event.target.id==='report-competence')return;
     if(event.target.dataset.difalRegime)S.difalPolicy.enabled[event.target.dataset.difalRegime]=event.target.checked;
+    if(event.target.dataset.difalOperation)S.difalPolicy.operations[event.target.dataset.difalOperationRegime][event.target.dataset.difalOperation]=event.target.checked;
     if (isImportedField(event.target.id)) S.edited=true;
     if(event.target.id==='serviceRevenue'&&$('#service-migration-confirm'))$('#service-migration-confirm').checked=false;
     if(event.target.id==='rbt12'){if(S.rbt12Mode==='MANUAL')$('#rbt12-manual-confirm').checked=false;else clearRbt12();}

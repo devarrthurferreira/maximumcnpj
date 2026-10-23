@@ -12,7 +12,7 @@ import {uploadLookup, finalizeLookup} from '../src/lookup-jobs.ts';
 import {createSimulation, getSimulation, deleteSimulation} from '../src/simulation-history.ts';
 import {reprocessSimulations, simulationReprocessingStatus, reprocessedSimulationId, SERVICE_REVENUE_MIGRATION_REVISION} from '../src/simulation-reprocessing.ts';
 import {annualizeReports, projectScenario} from '../public/simulator-projection.js';
-import {calculateSimulation, draftToInput} from '../public/simulator-engine.js';
+import {calculateSimulation, draftToInput, defaultDifalPolicy, upgradeDifalPolicy} from '../public/simulator-engine.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import {section22} from './fixtures/section22.ts';
 import {digest, token} from '../src/security.ts';
@@ -55,6 +55,8 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
   const simulations=await collection('simulations');
   const original:any=await simulations.findOne(scope({_id:id(index)}));
   if(legacy){
+   if (input.draft.difalPolicy === undefined) delete original.draft.difalPolicy;
+   else original.draft.difalPolicy = structuredClone(input.draft.difalPolicy);
    original.modelVersion='LEGACY_SYNTHETIC';delete original.monthlyInputs;delete original.source.monthlyReports;
    delete original.source.operationVersion;delete original.source.operationAudit;
    delete original.source.revenueSplit;delete original.source.fields.serviceRevenueCents;delete original.baselineServiceRevenue;
@@ -102,8 +104,8 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    for(const original of originals)assert.deepEqual(await (await collection('simulations')).findOne(scope({_id:original._id})),original);
    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,safe._id));
    assert.equal(child.parentSimulationId,safe._id);assert.equal(child.draft.values.salesRevenue,110);
-   assert.deepEqual(child.draft.difalPolicy,policy);
-   for(const regime of child.result.regimes)assert.equal(regime.difalApplication.enabled,policy.enabled[regime.id as keyof typeof policy.enabled]);
+   assert.deepEqual(child.draft.difalPolicy,upgradeDifalPolicy(policy));
+   for(const regime of child.result.regimes)assert.equal(regime.difalApplication.enabled,upgradeDifalPolicy(policy).enabled[regime.id as keyof typeof policy.enabled]);
    assert.equal(child.draft.values.serviceRevenue,50);assert.equal(child.draft.values.regularPurchases,12);
    for(const field of ['salaries','benefits','adminExpenses','rent','cardExpenses'])assert.equal(child.draft.values[field],safe.draft.values[field]);
    assert.deepEqual(child.rbt12Manual,safe.rbt12Manual);assert.equal(child.rbt12Manual.confirmedBy.id,actor._id);
@@ -139,13 +141,34 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.equal(outcomes.get(enabled._id)!.code,'DIFAL_UF_PENDING');
    for(const original of [excluded,atSublimit]){
     const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id));
-    assert.deepEqual(child.draft.difalPolicy,original.draft.difalPolicy);
+    assert.deepEqual(child.draft.difalPolicy,upgradeDifalPolicy(original.draft.difalPolicy));
     assert(child.source.monthlyReports[0].difal.pendingLines>0);
     assert(child.source.monthlyReports[0].anticipation.pendingLines>0);
     for(const regime of child.result.regimes){assert.equal(regime.dre.difal,0);assert.equal(regime.dre.icmsAnticipation,0);}
    }
    for(const original of [excluded,enabled,atSublimit])assert.deepEqual(await (await collection('simulations')).findOne(scope({_id:original._id})),original);
    assert.deepEqual({jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({_id:1}).toArray()},sourceBefore);
+  });
+
+  await t.test('revisão V7 conserva entrada no Puro e saída no Híbrido e não altera relatórios nem originais',async()=>{
+   switchWorkspace('directions');const input=await fixture();
+   const policy={...defaultDifalPolicy(),operations:{pure:{entry:true,exit:false},hybrid:{entry:false,exit:true}}};
+   const original=await save({...input,draft:{...input.draft,difalPolicy:policy}},80);
+   const jobs=await collection('lookupJobs'),lines=await collection('purchaseLines');
+   const sourcesBefore={jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({_id:1}).toArray()};
+   const done=await reprocessSimulations(actor,{});assert.equal(done.version,'DIFAL_DIRECTIONS_2026_10_V7');
+   assert.deepEqual(done.counts,{queued:0,processing:0,ok:1,pending:0,failed:0});
+   const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id));
+   assert.deepEqual(child.draft.difalPolicy,policy);assert.deepEqual(child.result.difalPolicy,policy);
+   for(const regime of child.result.regimes){
+    assert.equal(regime.dre.difal,regime.id==='hybrid'?-10:0);
+    assert.equal(regime.dre.icmsAnticipation,regime.id==='pure'?-.73:0);
+   }
+   assert.deepEqual(await (await collection('simulations')).findOne(scope({_id:original._id})),original);
+   assert.deepEqual({jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({_id:1}).toArray()},sourcesBefore);
+   await reprocessSimulations(operator,{});
+   assert.equal(await (await collection('simulations')).countDocuments(scope({parentSimulationId:original._id})),1);
+   assert.deepEqual(await getSimulation(child._id),child);
   });
 
   await t.test('revisão retoma somente a antiga pendência de serviços uma vez, preserva OK e não ressuscita exclusões',async()=>{
