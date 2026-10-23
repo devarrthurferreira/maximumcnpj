@@ -9,7 +9,7 @@ import {createGeneration,attachGenerationPurchase,getGeneration} from '../src/ge
 import {PURCHASE_MODE,SALES_MODE} from '../src/purchase-domain.ts';
 import {monthlyReportSource} from '../src/simulation-monthly-source.ts';
 import {purchaseSummary,purchaseRows,purchaseExport} from '../src/purchase-store.ts';
-import {ANTICIPATION_VERSION,ANTICIPATION_PREVIOUS_VERSION,ANTICIPATION_LEGACY_VERSION} from '../src/icms-anticipation.ts';
+import {ANTICIPATION_VERSION,ANTICIPATION_CPF_CNPJ_VERSION,ANTICIPATION_PREVIOUS_VERSION,ANTICIPATION_LEGACY_VERSION} from '../src/icms-anticipation.ts';
 import {DIFAL_VERSION,DIFAL_CATALOG_VERSION,DIFAL_PREVIOUS_VERSION} from '../src/difal.ts';
 
 const actor={_id:'anticipation-test',role:'admin',name:'Teste',email:'test@example.test'};
@@ -18,7 +18,7 @@ const row=(totalCents=100005,extra:Record<string,unknown>={})=>({document:'123.4
  serviceDate:'2026-08-15',quantity:'1',grossCents:totalCents,totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,...extra});
 const errorCode=(code:string)=>(error:any)=>error.code===code;
 
-test('Antecipação compras V3: CPF e CNPJ, catálogo, UF, snapshot, CSV, retomada e versões históricas', {skip:!process.env.MONGODB_URI,timeout:120000},async t=>{
+test('Antecipação compras V4: CPF e CNPJ, exclusão 8000, UF, snapshot, CSV, retomada e versões históricas', {skip:!process.env.MONGODB_URI,timeout:120000},async t=>{
  const oldDb=process.env.MONGODB_DB,oldWs=process.env.WORKSPACE_ID;
  process.env.MONGODB_DB='maximum_anticipation_'+randomUUID().replaceAll('-','');process.env.WORKSPACE_ID='anticipation_test';resetLookupIndexes();
  let providerCalls=0;
@@ -37,15 +37,15 @@ test('Antecipação compras V3: CPF e CNPJ, catálogo, UF, snapshot, CSV, retoma
   await uploadLookup(actor,job._id,{offset:0,rows:inputs});await uploadLookup(actor,job._id,{offset:0,rows:inputs});
   await complete(job._id);
   const summary=await purchaseSummary(job._id),lines=await collection('purchaseLines'),jobs=await collection('lookupJobs');
-  assert.deepEqual(summary.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:3,baseCents:201260,amountCents:14732,pendingLines:1});
+  assert.deepEqual(summary.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:2,baseCents:200010,amountCents:14640,pendingLines:1});
   assert.deepEqual(summary.job.purchaseInput.anticipation,summary.anticipation);
   assert.equal(summary.anticipationOrigin,'IMPORTED');
   assert.equal(summary.totals.totalCents,237760);assert.equal(providerCalls,1,'Somente CNPJ vai ao provedor; CPF não cria consulta.');
   const details=await purchaseRows(job._id,'ALL',1,true);
-  assert.deepEqual(details.items.map((row:any)=>row.anticipation.reason),['ELIGIBLE','SAME_UF','ELIGIBLE','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','ELIGIBLE','NOT_PURCHASE','MISSING_RECIPIENT_UF']);
+  assert.deepEqual(details.items.map((row:any)=>row.anticipation.reason),['ELIGIBLE','SAME_UF','ELIGIBLE','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','SERVICE_PURCHASE_EXCLUDED','NOT_PURCHASE','MISSING_RECIPIENT_UF']);
   assert(details.items.every((row:any)=>row.anticipationOrigin==='IMPORTED'));
   const grouped=await purchaseRows(job._id,'ALL',1),cpf=grouped.items.find((row:any)=>row.documentKind==='CPF');
-  assert.deepEqual(cpf.anticipation,{baseCents:101255,amountCents:7412,eligibleLines:2,pendingLines:1});
+  assert.deepEqual(cpf.anticipation,{baseCents:100005,amountCents:7320,eligibleLines:1,pendingLines:1});
   const csv=await purchaseExport(job._id,'ALL',1);
   assert(csv.content.includes('Antecipação de ICMS'));assert(csv.content.includes('"NOT_CPF_OR_CNPJ"'));assert(csv.content.includes('"73,20"'));assert(csv.content.includes(ANTICIPATION_VERSION));
   assert.equal((await getGeneration(generation._id)).companies[0].purchase.anticipationVersion,ANTICIPATION_VERSION);
@@ -83,7 +83,7 @@ test('Antecipação compras V3: CPF e CNPJ, catálogo, UF, snapshot, CSV, retoma
    assert.deepEqual(await lines.find(scope({jobId:job._id})).sort({index:1}).toArray(),before);
   });
   await t.test('V1 mantém regra antiga e ausência de versão não ganha campos ao retomar ou reconsultar',async()=>{
-   for(const version of [undefined,ANTICIPATION_LEGACY_VERSION,ANTICIPATION_PREVIOUS_VERSION]){
+   for(const version of [undefined,ANTICIPATION_LEGACY_VERSION,ANTICIPATION_PREVIOUS_VERSION,ANTICIPATION_CPF_CNPJ_VERSION]){
     const old=await createLookup(actor,{clientId,importId:randomUUID(),fileName:'legado.csv',expectedRows:1,issuerUf:'MG'},PURCHASE_MODE);
     await jobs.updateOne(scope({_id:old._id}),version?{$set:{anticipationVersion:version}}:{$unset:{anticipationVersion:''}});
     const payload={offset:0,rows:[row(20000,{document:cnpj})]};
@@ -93,7 +93,7 @@ test('Antecipação compras V3: CPF e CNPJ, catálogo, UF, snapshot, CSV, retoma
     await uploadLookup(actor,old._id,payload);await complete(old._id);
     const oldSummary=await purchaseSummary(old._id);
     assert.equal(oldSummary.anticipation?.version,ANTICIPATION_VERSION);assert.equal(oldSummary.anticipation?.amountCents,1464);
-    if(version)assert.equal(oldSummary.job.purchaseInput.anticipation.amountCents,version===ANTICIPATION_LEGACY_VERSION?1464:0);
+    if(version)assert.equal(oldSummary.job.purchaseInput.anticipation.amountCents,version===ANTICIPATION_PREVIOUS_VERSION?0:1464);
     assert.equal(oldSummary.anticipationOrigin,'DERIVED_FROM_SNAPSHOT');
     assert.equal(Object.hasOwn(oldSummary.job.purchaseInput,'anticipation'),!!version,'Finalizar upload legado não persiste resumo derivado.');
     const repeated=await recheckLookup(actor,old._id);
@@ -106,7 +106,7 @@ test('Antecipação compras V3: CPF e CNPJ, catálogo, UF, snapshot, CSV, retoma
   await t.test('relatório existente deriva CPF por linha, agrupa, exporta e preserva jobs, linhas e hashes',async()=>{
    const original=await createLookup(actor,{clientId,importId:randomUUID(),fileName:'compras-historicas.csv',expectedRows:7,issuerUf:'MG'},PURCHASE_MODE);
    await jobs.updateOne(scope({_id:original._id}),{$unset:{anticipationVersion:''}});
-   const payload={offset:0,rows:[row(7),row(7),row(10000,{natureCode:'8000'}),row(20000,{document:cnpj}),row(200,{recipientUf:'MG'}),row(500,{recipientUf:''}),row(1000,{natureCode:'1202'})]};
+   const payload={offset:0,rows:[row(7),row(7),row(10000,{natureCode:'8000',recipientUf:''}),row(20000,{document:cnpj}),row(200,{recipientUf:'MG'}),row(500,{recipientUf:''}),row(1000,{natureCode:'1202'})]};
    await uploadLookup(actor,original._id,payload);await uploadLookup(actor,original._id,payload);await complete(original._id);
    const snapshot=async()=>({job:await jobs.findOne(scope({_id:original._id})),rows:await lines.find(scope({jobId:original._id})).sort({index:1}).toArray(),
      chunks:await (await collection('chunks')).find(scope({_id:`lookup:${original._id}:0`})).toArray(),items:await (await collection('lookupItems')).find(scope({jobId:original._id})).sort({_id:1}).toArray()});
@@ -114,11 +114,13 @@ test('Antecipação compras V3: CPF e CNPJ, catálogo, UF, snapshot, CSV, retoma
    const derived=await purchaseSummary(original._id);
    assert.equal(derived.job.anticipationVersion,undefined);assert.equal(derived.job.purchaseInput.anticipation,undefined);
    assert.equal(derived.anticipationOrigin,'DERIVED_FROM_SNAPSHOT');
-   assert.deepEqual(derived.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:4,baseCents:30014,amountCents:2198,pendingLines:1});
+   assert.deepEqual(derived.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:3,baseCents:20014,amountCents:1466,pendingLines:1});
+   assert.equal(derived.purchaseSelection.totals.totalCents,30714,'Serviços sem UF permanecem nas compras consideradas sem gerar antecipação.');
    const detailed=await purchaseRows(original._id,'ALL',1,true),grouped=await purchaseRows(original._id,'ALL',1);
    assert(detailed.items.every((row:any)=>row.anticipationOrigin==='DERIVED_FROM_SNAPSHOT'));
-   assert.deepEqual(detailed.items.map((row:any)=>row.anticipation.amountCents),[1,1,732,1464,0,0,0]);
-   assert.deepEqual(grouped.items.find((row:any)=>row.documentKind==='CPF').anticipation,{baseCents:10014,amountCents:734,eligibleLines:3,pendingLines:1});
+   assert.deepEqual(detailed.items.map((row:any)=>row.anticipation.amountCents),[1,1,0,1464,0,0,0]);
+   assert.equal(detailed.items[2].anticipation.reason,'SERVICE_PURCHASE_EXCLUDED');
+   assert.deepEqual(grouped.items.find((row:any)=>row.documentKind==='CPF').anticipation,{baseCents:14,amountCents:2,eligibleLines:2,pendingLines:1});
    assert.equal(grouped.items.find((row:any)=>row.documentKind==='CNPJ').anticipation.amountCents,1464);
    const exported=await purchaseExport(original._id,'ALL',1);
    assert(exported.content.includes('DIFAL de entrada — Antecipação de ICMS (R$)'));assert(exported.content.includes('Origem DIFAL de entrada'));
@@ -173,10 +175,10 @@ test('relatórios históricos de compras e vendas exibem CPF/CNPJ atuais depois 
  try{
   const clientId=(await importCatalog(actor,[{code:'982',name:'Empresa sintética',uf:'MG'}])).items[0].id;
   const jobs=await collection('lookupJobs'),lines=await collection('purchaseLines');
-  for(const [mode,version] of [[SALES_MODE,DIFAL_CATALOG_VERSION],[SALES_MODE,DIFAL_PREVIOUS_VERSION],[PURCHASE_MODE,ANTICIPATION_PREVIOUS_VERSION],[PURCHASE_MODE,ANTICIPATION_LEGACY_VERSION]] as const){
+  for(const [mode,version] of [[SALES_MODE,DIFAL_CATALOG_VERSION],[SALES_MODE,DIFAL_PREVIOUS_VERSION],[PURCHASE_MODE,ANTICIPATION_PREVIOUS_VERSION],[PURCHASE_MODE,ANTICIPATION_LEGACY_VERSION],[PURCHASE_MODE,ANTICIPATION_CPF_CNPJ_VERSION]] as const){
    await t.test(`${mode} ${version}`,async()=>{
     const sales=mode===SALES_MODE,tax=sales?'difal':'anticipation',versionField=tax+'Version',originField=tax+'Origin';
-    const currentVersion=sales?DIFAL_VERSION:ANTICIPATION_VERSION,currentAmount=sales?13:10;
+    const currentVersion=sales?DIFAL_VERSION:ANTICIPATION_VERSION,currentAmount=sales?13:3;
     const inputs=[row(7),row(7,{document:cnpj}),row(7,{document:'12.abc.345/01de-35'}),
      row(100,{document:'00000000000192'}),row(100,{document:'123456789012'}),row(100,{document:''}),
      row(100,{document:cnpj,recipientUf:'MG'}),row(100,{document:cnpj,recipientUf:''}),row(100)]
@@ -191,14 +193,15 @@ test('relatórios históricos de compras e vendas exibem CPF/CNPJ atuais depois 
     await (await collection('clients')).updateOne(scope({_id:clientId}),{$set:{uf:'SP'}});
     const summary=await purchaseSummary(job._id,true,mode);
     assert.equal(summary[originField],'DERIVED_FROM_SNAPSHOT');assert.equal(summary[tax]?.version,currentVersion);
-    assert.equal(summary[tax]?.amountCents,currentAmount);assert.equal(summary[tax]?.baseCents,121);assert.equal(summary[tax]?.pendingLines,1);
+    assert.equal(summary[tax]?.amountCents,currentAmount);assert.equal(summary[tax]?.baseCents,sales?121:21);assert.equal(summary[tax]?.pendingLines,1);
     assert.equal(summary.job[versionField],version);assert.equal(summary.job.purchaseInput[tax].version,version);
     assert.equal(summary.job.purchaseInput[tax].amountCents,before.job!.purchaseInput[tax].amountCents);
-    if(version!==ANTICIPATION_LEGACY_VERSION)assert.equal(before.rows[1][tax].reason,'NOT_CPF');
+    if(version!==ANTICIPATION_LEGACY_VERSION&&version!==ANTICIPATION_CPF_CNPJ_VERSION)assert.equal(before.rows[1][tax].reason,'NOT_CPF');
     if(version===DIFAL_PREVIOUS_VERSION)assert.equal(before.rows[8].operation,'OUTRAS','Classificação histórica pode diferir do catálogo atual.');
     const detail=await purchaseRows(job._id,'ALL',1,true,mode),grouped=await purchaseRows(job._id,'ALL',1,false,mode);
     assert(detail.items.every((entry:any)=>entry[originField]==='DERIVED_FROM_SNAPSHOT'));
-    assert.deepEqual(detail.items.map((entry:any)=>entry[tax].reason),['ELIGIBLE','ELIGIBLE','ELIGIBLE','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','SAME_UF','MISSING_RECIPIENT_UF','ELIGIBLE']);
+    assert.deepEqual(detail.items.map((entry:any)=>entry[tax].reason),['ELIGIBLE','ELIGIBLE','ELIGIBLE','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','SAME_UF','MISSING_RECIPIENT_UF',sales?'ELIGIBLE':'SERVICE_PURCHASE_EXCLUDED']);
+    if(!sales){assert.equal(summary.purchaseSelection.totals.totalCents,621);assert.equal(before.rows[8].anticipation.amountCents,7);}
     assert.equal(grouped.items.reduce((sum:number,entry:any)=>sum+entry[tax].amountCents,0),currentAmount);
     assert.equal(grouped.items.find((entry:any)=>entry.document==='12ABC34501DE35')[tax].amountCents,1,'CNPJ alfanumérico com status não confirmado mantém a base fiscal gerencial.');
     const csv=await purchaseExport(job._id,'ALL',1,mode);

@@ -857,9 +857,12 @@ def anticipation_story(anticipation, width, styles, origin=None, policy=None):
     if anticipation['pendingLines']:
         story.append(p(f'Estimativa parcial: {number(anticipation["pendingLines"])} linhas pendentes por UF da empresa '
                        'ou do fornecedor ausente. Essas linhas não integram a base nem o valor acima.', 'small'))
+    nature_note = ('Naturezas consideradas: somente operações COMPRAS do catálogo. Serviços de prefixo 8000, '
+                   'inclusive com sufixos, ficam fora da antecipação e permanecem nas compras consideradas.'
+                   if anticipation['version'] == ANTICIPATION_VERSION else
+                   'A regra histórica considera operações de compra do catálogo e serviços de prefixo 8000.')
     story.append(p('Somente compras interestaduais com fornecedor identificado por CPF de 11 dígitos ou CNPJ válido. '
-                   'CNOs, documentos ausentes ou inválidos não integram esta base. '
-                   'Naturezas consideradas: operações de compra do catálogo e serviços de prefixo 8000.', 'small'))
+                   'CNOs, documentos ausentes ou inválidos não integram esta base. ' + nature_note, 'small'))
     story.append(p('Parâmetro gerencial de 7,32%, sem equivalência automática à alíquota legal. '
                    'Base = total registrado da compra; arredondamento por linha em centavos e soma uma única vez. '
                    'Este valor fica separado do total de compras. Na DRE, a antecipação é aplicada somente ao Simples puro '

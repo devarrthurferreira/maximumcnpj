@@ -100,7 +100,7 @@ test('opções DIFAL persistem por competência e anual soma somente deduções 
  const policy=defaultDifalPolicy();policy.enabled.hybrid=false;policy.enabled.actual=false;
  const selected={...draft,difalPolicy:policy},inputs=rows.map(row=>baselineMonth(row)),before=structuredClone({selected,rows,inputs});
  const out=calculateMonthlySimulation(selected,rows,inputs,'sales');
- assert.equal(out.result.version,'1.8.0-simples-revenue-context');assert.deepEqual(out.result.difalPolicy,policy);
+ assert.equal(out.result.version,'1.9.0-icms-operations');assert.deepEqual(out.result.difalPolicy,policy);
  for(const entry of out.engineInput.months)assert.deepEqual(entry.input.difalPolicy,policy);
  for(const id of ['hybrid','actual']){
   const regime=out.result.regimes.find(row=>row.id===id);assert.equal(regime.dre.difal,0);assert.equal(regime.dre.icmsAnticipation,0);
@@ -136,7 +136,7 @@ test('entrada no Puro e saída no Híbrido seguem as competências, bloqueios e 
 
 test('antecipação mensal preserva versão histórica explícita e impede misturar políticas',()=>{
  const summary={ratePercent:7.32,issuerUf:'MG',amountCents:732,baseCents:10000,eligibleLines:1,pendingLines:0};
- for(const version of ['ICMS_ANTICIPATION_V1','ICMS_ANTICIPATION_V2','ICMS_ANTICIPATION_V3']){
+ for(const version of ['ICMS_ANTICIPATION_V1','ICMS_ANTICIPATION_V2','ICMS_ANTICIPATION_V3','ICMS_ANTICIPATION_V4']){
   const rows=[{sourceMonth:'2025-01',month:1,anticipation:{...summary,version}},{sourceMonth:'2025-02',month:2,anticipation:{...summary,version}}];
   assert.equal(monthlyAnticipation(rows).sourceVersion,version);
   assert.equal(monthlyAnticipation(rows).annualCents,1464);

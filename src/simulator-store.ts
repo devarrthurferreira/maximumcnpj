@@ -77,6 +77,9 @@ export async function generationSimulator(id: string, clientId: string) {
   if (operationAudit.unknownSalesLines || operationAudit.unknownPurchaseLines) warnings.push(`${operationAudit.unknownSalesLines + operationAudit.unknownPurchaseLines} linhas possuem natureza não cadastrada. Esses valores não entraram nas bases; revise as naturezas indicadas na conferência.`);
   const anticipationPending=monthlyReports.reduce((sum,row)=>sum+row.anticipation.pendingLines,0);
   if (anticipationPending) warnings.push(`${anticipationPending} compras elegíveis não possuem UF suficiente para confirmar a antecipação de ICMS; nenhum endereço foi presumido.`);
+  warnings.push('ICMS: serviços de prefixo 8000 permanecem nos custos, sem antecipação ou crédito. As operações elegíveis usam as premissas de 18% na mesma UF e 12% entre UFs diferentes; o crédito de devolução de venda é separado do crédito de compras e considerado uma única vez.');
+  const icmsPending=monthlyReports.reduce((total,row)=>total+row.icmsOperations.sales.pendingLines+row.icmsOperations.purchases.pendingLines+row.icmsOperations.salesReturns.pendingLines,0);
+  if(icmsPending)warnings.push(`${icmsPending} operações elegíveis de ICMS dependem de UF confirmada. Os cenários com ICMS fora do DAS aguardam essa conferência.`);
   if (fields.serviceRevenueCents > 0) warnings.push('Vendas de serviços foram separadas das mercadorias e preenchem a receita de serviços pela competência de cada linha, sem duplicar o faturamento. Naturezas iniciadas por 9000 são serviços, independentemente do sufixo.');
   const difal = monthlyDifal(monthlyReports, sales.job._id);
   const selectedSalesTotalCents=exactCents(salesNetCents+fields.serviceRevenueCents);

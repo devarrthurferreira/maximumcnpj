@@ -1,7 +1,8 @@
 import {REPORT_GROUPS} from './simulator-projection.js';
 import {calculateSimulation, draftToInput, SIMULATION_VALUE_FIELDS, REVENUE_CONTEXT_VERSION, SIMPLES_DIAGNOSTIC_VERSION} from './simulator-engine.js';
+import {parseIcmsOperations} from './simulator-icms.js';
 
-export const MONTHLY_MODEL_VERSION='1.8.0-simples-revenue-context';
+export const MONTHLY_MODEL_VERSION='1.9.0-icms-operations';
 export const MONTHLY_VERSION='REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS=Object.freeze([...REPORT_GROUPS,'serviceRevenueCents']);
 const sum=values=>values.reduce((a,b)=>a+b,0);
@@ -47,7 +48,7 @@ export function monthlyAnticipation(reports){
   if(!present.length)return null;
   check(present.length===reports.length,'A antecipação de ICMS precisa estar disponível para todas as competências.');
   const sourceVersion=present[0].anticipation.version;
-  for(const {anticipation:a} of reports)check(['ICMS_ANTICIPATION_V1','ICMS_ANTICIPATION_V2','ICMS_ANTICIPATION_V3'].includes(a.version)&&a.version===sourceVersion&&a.ratePercent===7.32&&
+  for(const {anticipation:a} of reports)check(['ICMS_ANTICIPATION_V1','ICMS_ANTICIPATION_V2','ICMS_ANTICIPATION_V3','ICMS_ANTICIPATION_V4'].includes(a.version)&&a.version===sourceVersion&&a.ratePercent===7.32&&
     ['amountCents','baseCents','eligibleLines','pendingLines'].every(key=>Number.isSafeInteger(a[key])&&a[key]>=0),'Referência da antecipação de ICMS inválida.');
   const totals=Object.fromEntries(['amountCents','baseCents','eligibleLines','pendingLines'].map(key=>[key,sum(reports.map(row=>row.anticipation[key]))]));
   check(Object.values(totals).every(Number.isSafeInteger),'Total de antecipação de ICMS acima do limite seguro.');
@@ -59,6 +60,13 @@ export function monthlyAnticipation(reports){
 /** Monthly movements feed the reviewed model separately. Annual results sum those months, never a report average. */
 export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJobId,rbt12Schedule=null){
   const projection=monthlyProjection(reports),difalProjection=monthlyDifal(reports,sourceJobId),anticipationProjection=monthlyAnticipation(reports);
+  const hasIcmsOperations=reports.some(row=>row.icmsOperations!==undefined);
+  if(hasIcmsOperations)for(const row of reports){
+    const icms=parseIcmsOperations(row.icmsOperations);
+    check(icms.sourceMonth===row.sourceMonth&&icms.sourceRegularPurchasesCents===row.fields.purchasesNonOptantCents&&
+      icms.sales.totalBaseCents-icms.salesReturns.totalBaseCents===sum(REPORT_GROUPS.slice(0,3).map(key=>row.fields[key])),
+      'A composição de ICMS não corresponde às bases e à competência dos relatórios.');
+  }
   if(rbt12Schedule){
     rbt12Schedule=structuredClone(rbt12Schedule);
     check(rbt12Schedule.version==='RBT12_MONTHLY_SECTION_22_V1'&&rbt12Schedule.sourceSection==='2.2'&&Array.isArray(rbt12Schedule.rows)&&rbt12Schedule.rows.length===reports.length,'Composição mensal da RBT12 inválida.');
@@ -96,7 +104,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
       sourceAmountCents:row.difal.amountCents,reportMonths:1,pendingLines:row.difal.pendingLines}:null;
     const anticipation=row.anticipation?{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:row.anticipation.amountCents,annualCents:row.anticipation.amountCents*12,
       sourceAmountCents:row.anticipation.amountCents,sourceBaseCents:row.anticipation.baseCents,reportMonths:1,pendingLines:row.anticipation.pendingLines}:null;
-    const raw=calculateSimulation(d,difal,anticipation,revenueContext),engineInput=draftToInput(d,difal,anticipation,revenueContext);
+    const raw=calculateSimulation(d,difal,anticipation,revenueContext,row.icmsOperations??null),engineInput=draftToInput(d,difal,anticipation,revenueContext,row.icmsOperations??null);
     // The existing model reports a 12-month projection from one monthly input.
     // Convert each independent run to its one-month contribution before summing.
     const result={...raw,annualRevenue:values.salesRevenue+values.serviceRevenue,difference:raw.difference/12,
@@ -128,7 +136,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
       const pending=entries.filter(({entry})=>entry?.availability==='UNAVAILABLE'||typeof entry?.value!=='number'||!Number.isFinite(entry.value));
       const label=item.label.replace(/médio mensal|mensal|anual|da competência/g,'do período');
       if(pending.length)return {...item,label,unit:'text',value:'Conferência necessária',availability:'UNAVAILABLE',
-        formula:`O total não está confirmado. ${pending.map(({sourceMonth,result,entry})=>`${sourceMonth}: ${entry?.availability==='UNAVAILABLE'?result.simplesDiagnostic.message:'Memória de cálculo ausente ou não numérica.'}`).join(' ')}`};
+        formula:`O total não está confirmado. ${pending.map(({sourceMonth,result,entry})=>`${sourceMonth}: ${entry?.availability==='UNAVAILABLE'?(entry.formula||result.simplesDiagnostic.message):'Memória de cálculo ausente ou não numérica.'}`).join(' ')}`};
       return {...item,label,formula:'Soma dos valores calculados separadamente em cada competência importada.',value:sum(entries.map(({entry})=>entry.value))};
     });
   for(const regime of regimes){

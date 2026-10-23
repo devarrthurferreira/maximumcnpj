@@ -3,7 +3,7 @@ from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
-from reporting.anticipation import (ANTICIPATION_VERSION, ANTICIPATION_CPF_VERSION, ANTICIPATION_LEGACY_VERSION,
+from reporting.anticipation import (ANTICIPATION_VERSION, ANTICIPATION_CPF_CNPJ_VERSION, ANTICIPATION_CPF_VERSION, ANTICIPATION_LEGACY_VERSION,
                                     calculate_anticipation, summarize_anticipation)
 from reporting.core import ReportError
 from reporting.operation_catalog import OPERATION_CATALOG_VERSION, OPERATION_CATALOG_GROUPS, classify_operation_nature
@@ -75,13 +75,26 @@ class AnticipationReportTests(unittest.TestCase):
         self.assertEqual(meta['anticipation']['amountCents'], 732)
         self.assertEqual(meta['anticipation']['pendingLines'], 0)
 
-    def test_catalog_purchase_and_service_prefixes_only(self):
+    def test_catalog_purchase_only_and_all_service_8000_suffixes_excluded(self):
         row = {'totalCents': 10000, 'recipientUf': 'SP', 'document': '12345678901'}
-        for nature in (*OPERATION_CATALOG_GROUPS['COMPRAS'], '8000', '8000002', '8000102'):
+        for nature in OPERATION_CATALOG_GROUPS['COMPRAS']:
             with self.subTest(nature=nature):
                 self.assertEqual(calculate_anticipation({**row, 'natureCode': nature}, 'MG')['amountCents'], 732)
         for nature in ('1202', '2202', '5202', '5102', '9000', '1910', '9999', ''):
             self.assertEqual(calculate_anticipation({**row, 'natureCode': nature}, 'MG')['reason'], 'NOT_PURCHASE')
+        for nature in ('8000', '8000002', '8000102', '8000999999', '8.000.102', 8000102):
+            for issuer, recipient in (('MG', 'SP'), ('MG', ''), ('', 'SP'), ('', '')):
+                current = {**row, 'natureCode': nature, 'recipientUf': recipient}
+                frozen = deepcopy(current)
+                self.assertEqual(calculate_anticipation(current, issuer), {
+                    'eligible': False, 'baseCents': 0, 'amountCents': 0, 'reason': 'SERVICE_PURCHASE_EXCLUDED'})
+                summary = summarize_anticipation([current], issuer)
+                for key in ('baseCents', 'amountCents', 'eligibleLines', 'pendingLines'):
+                    self.assertEqual(summary[key], 0)
+                self.assertEqual(current, frozen)
+            for version in (ANTICIPATION_LEGACY_VERSION, ANTICIPATION_CPF_VERSION, ANTICIPATION_CPF_CNPJ_VERSION):
+                self.assertEqual(calculate_anticipation({**row, 'natureCode': nature}, 'MG', version)['amountCents'], 732)
+                self.assertEqual(calculate_anticipation({**row, 'natureCode': nature}, '', version)['reason'], 'MISSING_ISSUER_UF')
 
     def test_ufs_are_explicit_and_invalid_totals_are_rejected(self):
         row = {'totalCents': 10000, 'natureCode': '1102', 'recipientUf': 'SP', 'document': '12345678901'}
@@ -96,7 +109,8 @@ class AnticipationReportTests(unittest.TestCase):
             summarize_anticipation([{**row, 'totalCents': 9_007_199_254_740_991}]*2, 'MG')
 
     def test_old_versions_are_validated_before_current_view_without_snapshot_changes(self):
-        for version, stored_amount in ((ANTICIPATION_LEGACY_VERSION, 732), (ANTICIPATION_CPF_VERSION, 0)):
+        for version, stored_amount in ((ANTICIPATION_LEGACY_VERSION, 732), (ANTICIPATION_CPF_VERSION, 0),
+                                       (ANTICIPATION_CPF_CNPJ_VERSION, 732)):
             job, rows, items = anticipation_fixture(cnpj=True, version=version)
             frozen = deepcopy((job, rows, items))
             self.assertEqual(rows[0]['anticipation']['amountCents'], stored_amount)
@@ -119,6 +133,29 @@ class AnticipationReportTests(unittest.TestCase):
         meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
         self.assertIsNone(meta['anticipation'])
         self.assertEqual(meta['anticipationOrigin'], 'UNAVAILABLE')
+
+    def test_historical_services_derive_zero_anticipation_keep_costs_and_original_evidence(self):
+        for version in (ANTICIPATION_LEGACY_VERSION, ANTICIPATION_CPF_VERSION, ANTICIPATION_CPF_CNPJ_VERSION):
+            for recipient in ('SP', ''):
+                job, rows, items = anticipation_fixture(nature='8000', recipient=recipient, version=version)
+                frozen = deepcopy((job, rows, items))
+                self.assertEqual(rows[0]['anticipation']['reason'], 'ELIGIBLE' if recipient else 'MISSING_RECIPIENT_UF')
+                meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+                self.assertEqual(meta['anticipationOrigin'], 'DERIVED_FROM_SNAPSHOT')
+                self.assertEqual(meta['anticipation'], {
+                    'version': ANTICIPATION_VERSION, 'ratePercent': 7.32, 'issuerUf': 'MG',
+                    'baseCents': 0, 'amountCents': 0, 'eligibleLines': 0, 'pendingLines': 0})
+                self.assertEqual(meta['totalCents'], 10000)
+                self.assertEqual(meta['purchaseSelection']['totals']['totalCents'], 10000)
+                self.assertIn('ficam fora da antecipação e permanecem nas compras consideradas', story_text(meta))
+                self.assertEqual((job, rows, items), frozen)
+        job, rows, items = derivable_fixture(nature='8000', recipient='')
+        frozen = deepcopy((job, rows, items))
+        meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
+        self.assertEqual(meta['anticipation']['amountCents'], 0)
+        self.assertEqual(meta['anticipation']['pendingLines'], 0)
+        self.assertEqual(meta['purchaseSelection']['totals']['totalCents'], 10000)
+        self.assertEqual((job, rows, items), frozen)
 
     def test_reconciliation_blocks_missing_tampered_estimates_and_summary(self):
         changes = [
@@ -149,6 +186,7 @@ class AnticipationReportTests(unittest.TestCase):
             text = story_text(meta)
             for phrase in ('Antecipação de ICMS (7,32%)', 'Base elegível', expected,
                            'Somente compras interestaduais com fornecedor identificado por CPF de 11 dígitos ou CNPJ válido',
+                           'Serviços de prefixo 8000', 'ficam fora da antecipação e permanecem nas compras consideradas',
                            'Simples puro e híbrido', 'sublimite estiver alcançado'):
                 self.assertIn(phrase, text)
             self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))

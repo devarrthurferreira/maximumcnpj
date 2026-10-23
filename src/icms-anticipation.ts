@@ -1,28 +1,31 @@
-import {isPurchaseOperation} from './operation-catalog.ts';
+import {isPurchaseOperation,normalizeOperationNature} from './operation-catalog.ts';
 import {normalizeUf} from './difal.ts';
 import {normalizeCnpj} from './domain.ts';
 
 /** Fixed managerial purchase rule requested by Maximum. Not a statutory rate lookup. */
-export const ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_V3';
+export const ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_V4';
+export const ANTICIPATION_CPF_CNPJ_VERSION = 'ICMS_ANTICIPATION_V3';
 export const ANTICIPATION_PREVIOUS_VERSION = 'ICMS_ANTICIPATION_V2';
 export const ANTICIPATION_LEGACY_VERSION = 'ICMS_ANTICIPATION_V1';
-export type AnticipationVersion = typeof ANTICIPATION_VERSION | typeof ANTICIPATION_PREVIOUS_VERSION | typeof ANTICIPATION_LEGACY_VERSION;
+export type AnticipationVersion = typeof ANTICIPATION_VERSION | typeof ANTICIPATION_CPF_CNPJ_VERSION | typeof ANTICIPATION_PREVIOUS_VERSION | typeof ANTICIPATION_LEGACY_VERSION;
 export type AnticipationOrigin = 'IMPORTED' | 'DERIVED_FROM_SNAPSHOT' | 'UNAVAILABLE';
 export function isAnticipationVersion(value:unknown):value is AnticipationVersion {
-  return value===ANTICIPATION_VERSION||value===ANTICIPATION_PREVIOUS_VERSION||value===ANTICIPATION_LEGACY_VERSION;
+  return value===ANTICIPATION_VERSION||value===ANTICIPATION_CPF_CNPJ_VERSION||value===ANTICIPATION_PREVIOUS_VERSION||value===ANTICIPATION_LEGACY_VERSION;
 }
 export const ANTICIPATION_RATE_PERCENT = 7.32;
-export type AnticipationReason = 'ELIGIBLE' | 'NOT_PURCHASE' | 'NOT_CPF' | 'NOT_CPF_OR_CNPJ' | 'MISSING_ISSUER_UF' | 'MISSING_RECIPIENT_UF' | 'SAME_UF' | 'INVALID_TOTAL';
+export type AnticipationReason = 'ELIGIBLE' | 'NOT_PURCHASE' | 'SERVICE_PURCHASE_EXCLUDED' | 'NOT_CPF' | 'NOT_CPF_OR_CNPJ' | 'MISSING_ISSUER_UF' | 'MISSING_RECIPIENT_UF' | 'SAME_UF' | 'INVALID_TOTAL';
 export type AnticipationResult = {eligible:boolean; baseCents:number; amountCents:number; reason:AnticipationReason};
 export type AnticipationInput = {totalCents:unknown; natureCode?:unknown; document?:unknown; issuerUf?:unknown; recipientUf?:unknown};
 export function calculateAnticipation(input:AnticipationInput,version:AnticipationVersion=ANTICIPATION_VERSION):AnticipationResult {
   if(!isAnticipationVersion(version))throw new TypeError('Versão da antecipação de ICMS desconhecida.');
   const rejected = (reason:AnticipationReason):AnticipationResult => ({eligible:false,baseCents:0,amountCents:0,reason});
   if (typeof input.totalCents !== 'number' || !Number.isSafeInteger(input.totalCents) || input.totalCents < 0) return rejected('INVALID_TOTAL');
+  // V4 excludes every 8000 suffix from this tax only. Purchase costs keep their catalog rule.
+  if (version===ANTICIPATION_VERSION&&normalizeOperationNature(input.natureCode)==='8000') return rejected('SERVICE_PURCHASE_EXCLUDED');
   if (!isPurchaseOperation(input.natureCode)) return rejected('NOT_PURCHASE');
   const document=String(input.document??'').trim().replace(/[.\/\-\s]/g,'');
   if(version===ANTICIPATION_PREVIOUS_VERSION&&!/^\d{11}$/.test(document))return rejected('NOT_CPF');
-  if(version===ANTICIPATION_VERSION&&!/^\d{11}$/.test(document)&&!normalizeCnpj(input.document).valid)return rejected('NOT_CPF_OR_CNPJ');
+  if((version===ANTICIPATION_VERSION||version===ANTICIPATION_CPF_CNPJ_VERSION)&&!/^\d{11}$/.test(document)&&!normalizeCnpj(input.document).valid)return rejected('NOT_CPF_OR_CNPJ');
   const issuerUf=normalizeUf(input.issuerUf), recipientUf=normalizeUf(input.recipientUf);
   if (!issuerUf) return rejected('MISSING_ISSUER_UF');
   if (!recipientUf) return rejected('MISSING_RECIPIENT_UF');

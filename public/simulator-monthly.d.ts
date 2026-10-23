@@ -1,9 +1,9 @@
-export const MONTHLY_MODEL_VERSION: '1.8.0-simples-revenue-context';
+export const MONTHLY_MODEL_VERSION: '1.9.0-icms-operations';
 import type {ReportFields} from './simulator-projection.js';
 import type {Rbt12Schedule} from './simulator-rbt12.js';
 export const MONTHLY_VERSION: 'REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS: readonly string[];
-export type MonthlyReport = {sourceMonth:string;month:number;fields:ReportFields & {serviceRevenueCents:number};salesLines:number;purchaseLines:number;difal:any;operationVersion?:string;operationAudit?:any;anticipation?:any};
+export type MonthlyReport = {sourceMonth:string;month:number;fields:ReportFields & {serviceRevenueCents:number};salesLines:number;purchaseLines:number;difal:any;operationVersion?:string;operationAudit?:any;anticipation?:any;icmsOperations?:import('./simulator-icms.js').IcmsOperations};
 export function monthlyProjection(reports:MonthlyReport[]):any;
 export function monthlyDifal(reports:MonthlyReport[],sourceJobId:string):any;
 export function monthlyAnticipation(reports:MonthlyReport[]):any;

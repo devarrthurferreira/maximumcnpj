@@ -140,6 +140,9 @@ export async function rebuildSimulationSource(snapshot: Doc): Promise<Source & {
   if(difal?.pendingLines)warnings.push(`${difal.pendingLines} vendas elegíveis dependem de UF histórica do emitente ou destinatário; nenhum endereço atual foi utilizado para preencher a ausência.`);
   const anticipationPending=monthlyReports!.reduce((sum,row)=>sum+row.anticipation.pendingLines,0);
   if(anticipationPending)warnings.push(`${anticipationPending} compras elegíveis dependem de UF histórica para confirmar a antecipação de ICMS.`);
+  warnings.push('A revisão calcula ICMS por natureza e UF: serviços 8000 ficam fora da antecipação e do crédito, sem sair dos custos. Compras elegíveis e devoluções de venda têm créditos separados, com premissas de 18% interna e 12% interestadual.');
+  const icmsPending=monthlyReports!.reduce((total,row)=>total+row.icmsOperations.sales.pendingLines+row.icmsOperations.purchases.pendingLines+row.icmsOperations.salesReturns.pendingLines,0);
+  if(icmsPending)warnings.push(`${icmsPending} operações de ICMS dependem da UF histórica; os regimes com ICMS fora do DAS ficam pendentes, sem presumir endereço atual.`);
   return {...original,generationId:snapshot.generationId,clientId:snapshot.clientId,
     company:structuredClone(snapshot.company||original.company),fields,revenueSplit:{version:'SALES_SERVICES_V1'},
     operationVersion:OPERATION_CATALOG_VERSION,operationAudit,projection,monthlyReports,

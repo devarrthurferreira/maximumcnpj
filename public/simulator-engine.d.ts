@@ -6,7 +6,7 @@ export const REVENUE_CONTEXT_VERSION:'SIMPLES_REVENUE_CONTEXT_V1';
 export type SimplesRevenueContext={version:'SIMPLES_REVENUE_CONTEXT_V1';method:'ACTUAL_REPORT_MONTHS';revenueCents:number;sourceMonths:string[]};
 export type SimplesDiagnostic={
   version:'SIMPLES_DIAGNOSTIC_V1';available:boolean;
-  statusCode:'READY'|'ZERO_REVENUE'|'MISSING_RBT12'|'RATE_TABLE_EXCEEDED'|'LOCAL_TAX_REVIEW_REQUIRED'|'REVENUE_REVIEW_REQUIRED'|'MULTIPLE_MONTH_STATUSES';
+  statusCode:'READY'|'ZERO_REVENUE'|'MISSING_RBT12'|'RATE_TABLE_EXCEEDED'|'LOCAL_TAX_REVIEW_REQUIRED'|'REVENUE_REVIEW_REQUIRED'|'ICMS_OPERATIONS_PENDING'|'MULTIPLE_MONTH_STATUSES';
   message:string;action:string;rbt12:number|null;rbt12Min?:number;rbt12Max?:number;
   federalLimit:number;sublimit:number;revenueReference:number;revenueBasis:'ACTUAL_REPORT_MONTHS'|'AVERAGE_X12';
   sourceMonths:string[];coveredMonths:number;completeYear:boolean;icmsOutside:boolean;eligibilityVerified:false;assumptions:string[];
@@ -69,5 +69,5 @@ export type SimulationResult = {
   difalPolicy?: DifalPolicy;
   simplesDiagnostic?: SimplesDiagnostic;
 };
-export function draftToInput(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null, revenueContext?: SimplesRevenueContext|null): Record<string, unknown> | null;
-export function calculateSimulation(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null, revenueContext?: SimplesRevenueContext|null): SimulationResult;
+export function draftToInput(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null, revenueContext?: SimplesRevenueContext|null,icmsOperations?:import('./simulator-icms.js').IcmsOperations|null): Record<string, unknown> | null;
+export function calculateSimulation(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null, revenueContext?: SimplesRevenueContext|null,icmsOperations?:import('./simulator-icms.js').IcmsOperations|null): SimulationResult;

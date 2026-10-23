@@ -1,5 +1,16 @@
 # Histórico de alterações
 
+## [0.34.0] — 2026-10-23
+
+- Exclui todas as naturezas de prefixo 8000 da antecipação e do crédito de ICMS, preservando seus custos. Antecipação V4 conserva 7,32% nas demais compras elegíveis e valida exatamente as regras históricas V1/V2/V3.
+- Acrescenta composição de ICMS por competência, natureza e UF, derivada somente das linhas conciliadas no servidor: premissas de 18% interna e 12% interestadual nas vendas, compras elegíveis e devoluções de venda. Não presume UF ausente nem localização pela natureza.
+- Separa crédito de compras e crédito de devoluções de venda, usando débito sobre vendas brutas para não duplicar o efeito da devolução já abatida na receita. Crédito utilizado reduz o ICMS líquido uma única vez; excedente não aumenta lucro nem é compensado entre meses.
+- Move a apuração do crédito para o final da DRE, retirando o detalhamento das deduções; anual, mensal, PDF e CSV mantêm os mesmos valores. Composição nova só aparece quando capturada e conciliada; históricos não recebem valores inventados.
+- Ajustes de receita usam as bases de UF da origem, evitando ampliar arredondamentos de notas pequenas. Ajustes de custos não criam créditos de documentos. Ausência de UF ou de composição suficiente deixa pendentes os regimes com ICMS fora do DAS, seu diagnóstico e a memória fiscal.
+- Versiona `ICMS_OPERATIONS_V1`, motores `1.9.0-icms-operations` e revisão vinculada `ICMS_OPERATIONS_2026_10_V9`; preserva snapshots originais, enquadramento consultado e opções de DIFAL. Acrescenta referências oficiais e identifica 12% como premissa gerencial, sem declarar alíquota legal universal.
+- Corrige a divergência do contrato de reprocessamento entre servidor e navegador, compartilhando a revisão atual. Resposta desconhecida interrompe antes do POST; tentativa explícita retoma quando a versão estiver confirmada, sem alterar a revisão registrada nos históricos.
+- Validação: 295 testes de regras, 113 verificações de integração/projeção/competências, 172 Python/PDF/OCR e 171 testes na rodada completa de navegador aprovados, sem saltos; tipos, build, versão e diff conferidos. Fluxo autenticado real confirma crédito de R$ 156,00 e ICMS líquido de R$ 264,00 após reabertura, CSV/PDF e preservação das fontes. Inspeção visual confere anual/mensal/completo e 320/390 px; avisos móveis se limitam ao regime selecionado.
+
 ## [0.33.0] — 2026-10-23
 
 - Corrige o bloqueio do Simples em meses sazonais: a verificação usa a soma das competências do cenário, sem comparar mês × 12 ao limite. RBT12, receita do período, limite federal e sublimite passam a ter diagnóstico separado.
