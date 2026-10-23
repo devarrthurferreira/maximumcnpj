@@ -148,3 +148,50 @@
   .sim-difal-option { padding:13px; }
 }
 @media print { .sim-difal-options { break-inside:avoid; } }
+
+/* Captured gross revenue, returns and the already-net amount used by the scenario. */
+.sim-revenue-reconciliation,.dre-revenue-reconciliation { margin-top:24px; padding:20px; border:1px solid #d9e4df; border-radius:12px; background:#f7faf8; }
+.sim-revenue-reconciliation h3,.dre-revenue-reconciliation h3 { margin:0 0 8px; color:#234b3d; font-size:18px; line-height:1.35; }
+.sim-revenue-reconciliation header p,.dre-revenue-reconciliation header p { margin:0; font-size:12px; line-height:1.65; color:#59675f; }
+.sim-revenue-reconciliation dl { margin:16px 0 0; }
+.sim-revenue-reconciliation dl>div { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:18px; padding:11px 0; border-top:1px solid #e0e8e2; align-items:baseline; }
+.sim-revenue-reconciliation dt { font-size:13px; line-height:1.5; color:#42594d; }
+.sim-revenue-reconciliation dd { margin:0; text-align:right; color:#253e30; font-size:14px; font-variant-numeric:tabular-nums; font-weight:600; overflow-wrap:anywhere; }
+.sim-revenue-reconciliation .revenue-reconciliation-total { border-top-color:#b5cbbd; }
+.sim-revenue-reconciliation .revenue-reconciliation-total dt,.sim-revenue-reconciliation .revenue-reconciliation-total dd { font-weight:700; }
+.revenue-reconciliation-note,.revenue-reconciliation-unavailable { margin:14px 0 0; font-size:12px; line-height:1.65; color:#59675f; }
+.revenue-reconciliation-unavailable { color:#725c36; }
+.simulator-clean .dre-revenue-reconciliation .dre-table-wrap { max-height:none; background:#fff; }
+.simulator-clean .dre-revenue-reconciliation tr[data-dre-row=revenueUsed] th,.simulator-clean .dre-revenue-reconciliation tr[data-dre-row=revenueUsed] td { background:#e7f1eb; color:#234b3d; font-weight:700; }
+.simulator-clean .dre-single-month .dre-revenue-table table { min-width:560px; }
+.dre-revenue-reconciliation .eyebrow { display:block; margin-bottom:8px; color:#597866; }
+.dre-revenue-mobile { display:none; }
+@media(max-width:650px) {
+  .sim-revenue-reconciliation,.dre-revenue-reconciliation { padding:16px 12px; }
+  .sim-revenue-reconciliation h3,.dre-revenue-reconciliation h3 { font-size:16px; }
+  .sim-revenue-reconciliation dl>div { grid-template-columns:minmax(0,1fr); gap:4px; }
+  .sim-revenue-reconciliation dd { text-align:left; }
+}
+@media screen and (max-width:650px) {
+  .dre-revenue-mobile { display:block; margin-top:16px; }
+  .dre-revenue-reconciliation.has-mobile-summary .dre-revenue-table { display:none; }
+  .revenue-reconciliation-mobile-title { margin:0 0 12px; color:#234b3d; font-size:12px; font-weight:700; line-height:1.5; }
+  .dre-revenue-mobile dl { margin:0; }
+  .dre-revenue-mobile dl>div { padding:12px 0; border-top:1px solid #dde6df; }
+  .dre-revenue-mobile dt { font-size:12px; line-height:1.5; color:#42594d; }
+  .dre-revenue-mobile dd { margin:5px 0 0; color:#253e30; font-variant-numeric:tabular-nums; }
+  .dre-revenue-mobile dd strong { display:block; font-size:18px; font-weight:650; line-height:1.35; overflow-wrap:anywhere; }
+  .dre-revenue-mobile dd small { display:block; margin-top:4px; font-size:11px; color:#59675f; line-height:1.4; }
+  .dre-revenue-mobile .revenue-reconciliation-total { border-top-color:#aabfb1; }
+  .dre-revenue-mobile .revenue-reconciliation-total dt,.dre-revenue-mobile .revenue-reconciliation-total dd strong { color:#234b3d; font-weight:750; }
+  .revenue-reconciliation-mobile-help { margin:10px 0 0; color:#59675f; font-size:11px; line-height:1.5; }
+}
+@media print {
+  .dre-revenue-mobile { display:none!important; }
+  .sim-calendar>.dre-revenue-reconciliation { display:none!important; }
+  .dre-revenue-reconciliation { break-inside:avoid; padding:10px; background:#fff; border-color:#b7c7bd; }
+  .dre-revenue-reconciliation h3 { font-size:12px; }
+  .dre-revenue-reconciliation header p,.dre-revenue-reconciliation .revenue-reconciliation-note,.dre-revenue-reconciliation .revenue-reconciliation-unavailable { font-size:9px; }
+  .simulator-clean .dre-revenue-reconciliation .dre-table-wrap { max-height:none; overflow:visible; }
+  .simulator-clean .dre-single-month .dre-revenue-table table { min-width:0; }
+}

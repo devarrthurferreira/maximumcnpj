@@ -2,7 +2,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {collection, scope} from './store.ts';
 import type {Doc} from './store.ts';
 import {need} from './security.ts';
-import {purchaseSummary} from './purchase-store.ts';
+import {reconciledPurchaseSummary as purchaseSummary} from './purchase-store.ts';
 import {PURCHASE_MODE, SALES_MODE, COMPONENT_FIELDS, exactCents, exactSignedCents} from './purchase-domain.ts';
 import {normalizeNatureCode, normalizeUf, salesOperation} from './difal.ts';
 import {monthlyProjection, monthlyDifal, MONTHLY_FIELDS} from '../public/simulator-monthly.js';

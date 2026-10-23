@@ -11,7 +11,7 @@ import { LOOKUP_MODE, compactLine, SOURCE_NAME } from './lookup-domain.ts';
 import { ensureLookupIndexes, withJob, getJob, write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { PURCHASE_MODE, SALES_MODE, isFinancialMode, PURCHASE_CALCULATION_VERSION, calculationVersion, compactPurchaseLine } from './purchase-domain.ts';
-import { finalizePurchaseUpload, purchaseSummary } from './purchase-store.ts';
+import { finalizePurchaseUpload, reconciledPurchaseSummary as purchaseSummary } from './purchase-store.ts';
 import { processLookupBatch } from './lookup-engine.ts';
 import { assertLookupNotDeleted, assertGenerationNotDeleted } from './generation-deletion.ts';
 export async function createLookup(actor:LookupActor,input:any,mode=LOOKUP_MODE){

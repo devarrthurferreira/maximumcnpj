@@ -1,16 +1,17 @@
 import {reportDifalPolicy} from './report-difal-policy.ts';
+import {reportRevenueReconciliation, generationRevenueReconciliation} from './report-revenue.ts';
 import {ANTICIPATION_VERSION,calculateAnticipation,isAnticipationVersion,summarizeAnticipation,type AnticipationSummary,type AnticipationOrigin} from './icms-anticipation.ts';
 import { calculateDifal, salesOperation, normalizeUf, summarizeDifal, DIFAL_VERSION, isDifalVersion, type DifalSummary, type DifalOrigin } from './difal.ts';
 import {OPERATION_CATALOG_VERSION, normalizeOperationNature, classifyOperationNature} from './operation-catalog.ts';
 import { PURCHASE_SELECTION_VERSION, selectPurchaseLine, summarizePurchaseSelection, type PurchaseSelectionSummary } from './purchase-selection.ts';
-import { normalizeCnpj } from './domain.ts';
+import { normalizeCnpj, safeCell } from './domain.ts';
 import { documentKind } from './lookup-domain.ts';
 import { collection, scope, audit } from './store.ts';
 import type { Doc } from './store.ts';
 import { getJob } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { need, integer } from './security.ts';
-import { PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialLabel, type FinancialMode, PURCHASE_STATUSES, COMPONENT_FIELDS, MAX_LINE_CENTS, calculationVersion, purchaseFormula, exactCents, exactSignedCents, percentage, signedPercentage, reconciledPercentages, reconciledSignedPercentages, purchaseCsv, reportPeriod, sameReportPeriod } from './purchase-domain.ts';
+import { PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialLabel, type FinancialMode, PURCHASE_STATUSES, COMPONENT_FIELDS, MAX_LINE_CENTS, calculationVersion, purchaseFormula, exactCents, exactSignedCents, percentage, signedPercentage, reconciledPercentages, reconciledSignedPercentages, purchaseCsv, reportPeriod, sameReportPeriod, moneyText } from './purchase-domain.ts';
 
 const FINANCIAL_FIELDS = [...COMPONENT_FIELDS, 'totalCents'] as const;
 // Stored documents are already normalized. An absent identifier represents its own row, never a shared person.
@@ -105,7 +106,7 @@ async function financialTaxes(name:string,id:string,job:Doc,deriveLegacy = false
     anticipationOrigin:derivePurchase?(canDerive?'DERIVED_FROM_SNAPSHOT':'UNAVAILABLE'):purchaseTax?'IMPORTED':'UNAVAILABLE'};
 }
 /** Derive today's estimate from already reconciled frozen rows for a new scenario. */
-export async function currentSalesDifal(summary: Awaited<ReturnType<typeof purchaseSummary>>): Promise<DifalSummary | null> {
+export async function currentSalesDifal(summary: Awaited<ReturnType<typeof reconciledPurchaseSummary>>): Promise<DifalSummary | null> {
   return summary.difal || null;
 }
 function sameTaxSummary(actual: DifalSummary|AnticipationSummary, saved: any) {
@@ -180,7 +181,7 @@ export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
 }
 
 /** Reconcile against immutable stored lines and scoped provider snapshots before any report/download. */
-export async function purchaseSummary(id: string, requireComplete = true, mode: FinancialMode = PURCHASE_MODE) {
+export async function reconciledPurchaseSummary(id: string, requireComplete = true, mode: FinancialMode = PURCHASE_MODE) {
   const job = await purchaseJob(id, mode), difalPolicy = await reportDifalPolicy(job);
   if (requireComplete) need(job.status === 'COMPLETED', `Conclua a consulta para emitir o relatório de ${financialLabel(mode)}.`, 409, 'INCOMPLETE');
   need(job.summary && job.purchaseInput, 'Resumo financeiro ausente.', 409, 'INCOMPLETE');
@@ -274,6 +275,40 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
     totals: {lines, uniqueCnpjs: valid.length, uniqueDocuments, nonCnpjDocumentCount, cnpjLines, nonCnpjLines: lines - cnpjLines, totalCents, cnpjCents, nonCnpjCents}, groups, excluded,
     denominators: {count: 'Documentos distintos do relatório, incluindo CPF, CNO e inválidos. Cada linha sem documento conta separadamente.', value: `Soma de ${formula} de todas as linhas do relatório. Apenas optantes confirmados entram em Simples; ${mode === SALES_MODE ? 'CPF tem grupo próprio nas vendas; os demais, incluindo não confirmados e outros documentos, integram Não optantes.' : 'todo o restante integra Não optantes no agrupamento gerencial.'}`},
     sources, source: `${sources.join(', ') || 'Nenhuma consulta CNPJ neste relatório'} — enquadramento observado na consulta; não comprova o regime na data da ${mode === SALES_MODE ? 'venda' : 'compra'}.`};
+}
+const readRevenueSummary = (id:string, mode:FinancialMode) => reconciledPurchaseSummary(id, true, mode);
+
+/** Public report view. The immutable file totals and the paired revenue closing remain separate. */
+export async function purchaseSummary(id:string, requireComplete = true, mode:FinancialMode = PURCHASE_MODE) {
+  const summary = await reconciledPurchaseSummary(id, requireComplete, mode);
+  return {...summary, revenueReconciliation:await reportRevenueReconciliation(summary, readRevenueSummary)};
+}
+export async function generationRevenue(id:string, clientId:string) {
+  return generationRevenueReconciliation(id, clientId, readRevenueSummary);
+}
+export async function revenueExport(id:string, mode:FinancialMode = PURCHASE_MODE) {
+  const summary = await purchaseSummary(id, true, mode), closing = summary.revenueReconciliation;
+  const rows:string[] = [], textCell = (value:unknown) => '"' + safeCell(value).replace(/"/g, '""') + '"';
+  const textRow = (values:unknown[]) => rows.push(values.map(textCell).join(';'));
+  // Only reconciled, integer monetary values bypass text escaping. Metadata always remains a text cell.
+  const moneyRow = (label:string, cents:number[]) => rows.push([textCell(label), ...cents.map(moneyText)].join(';'));
+  textRow(['Fechamento da receita', closing.version]);textRow(['Empresa', summary.job.clientName || summary.job.clientCode || summary.job.clientId]);
+  textRow(['Geração', closing.generationId || '']);textRow(['Empresa ID', closing.clientId || '']);
+  textRow(['Relatório de vendas', closing.salesJobId || '']);textRow(['Relatório de compras', closing.purchaseJobId || '']);
+  textRow(['Situação', closing.status]);textRow(['Observação', closing.reason || 'Receita de origem conciliada; devoluções abatidas uma única vez.']);
+  if (closing.available) {
+    textRow(['Período', `${closing.period!.startMonth} a ${closing.period!.endMonth}`]);textRow([]);textRow(['Composição', 'Valor (R$)']);
+    moneyRow('Vendas de mercadorias', [closing.grossSalesCents!]);moneyRow('Serviços de venda', [closing.serviceSalesCents!]);
+    moneyRow('Receita bruta (vendas + serviços)', [closing.grossRevenueCents!]);
+    moneyRow('(-) Devoluções de venda no relatório de compras', [-closing.salesReturnsCents!]);
+    moneyRow('Receita após devoluções', [closing.revenueAfterReturnsCents!]);textRow([]);
+    textRow(['Competência', 'Vendas de mercadorias (R$)', 'Serviços de venda (R$)', 'Receita bruta (R$)', 'Devoluções de venda — dedução (R$)', 'Receita após devoluções (R$)']);
+    for (const month of closing.monthly) moneyRow(month.sourceMonth, [month.grossSalesCents, month.serviceSalesCents,
+      month.grossRevenueCents, -month.salesReturnsCents, month.revenueAfterReturnsCents]);
+    textRow([]);textRow(['Base', 'Operações VENDA e serviços 9000, menos DEVOLUCAO_VENDA do relatório de compras, pela competência da coluna H.']);
+    textRow(['Conferência', 'Valores calculados por Q - Y + AA - AB. Outras operações e devoluções de compra não integram esta receita. Os totais dos arquivos originais são preservados.']);
+  }
+  return {fileName:`fechamento-receita-${summary.job.clientCode || 'empresa'}-${id}.csv`, content:'\uFEFF' + rows.join('\r\n'), mimeType:'text/csv;charset=utf-8'};
 }
 export function purchaseFilter(value: string, mode: FinancialMode = PURCHASE_MODE) {
   need(['ALL', ...PURCHASE_STATUSES, 'NON_CNPJ', ...(mode === SALES_MODE ? ['CPF'] : [])].includes(value), 'Grupo financeiro inválido.'); return value;
@@ -375,12 +410,12 @@ async function financialPage(id: string, status: string, page: number, pageSize:
   }), total: result?.count?.[0]?.total || 0, page, pageSize};
 }
 export async function purchaseRows(id: string, status: string, page: number, lines = false, mode: FinancialMode = PURCHASE_MODE) {
-  const summary=await purchaseSummary(id, true, mode); purchaseFilter(status, mode);
+  const summary=await reconciledPurchaseSummary(id, true, mode); purchaseFilter(status, mode);
   return {...await financialPage(id, status, page, 100, !lines, mode,summary),
     ...(summary.difalPolicy === undefined ? {} : {difalPolicy:summary.difalPolicy})};
 }
 export async function purchaseExport(id: string, status: string, part: number, mode: FinancialMode = PURCHASE_MODE) {
-  const summary = await purchaseSummary(id, true, mode); purchaseFilter(status, mode);
+  const summary = await reconciledPurchaseSummary(id, true, mode); purchaseFilter(status, mode);
   const result = await financialPage(id, status, part, 2000, false, mode,summary), parts = Math.max(1, Math.ceil(result.total / 2000));
   integer(part, 1, parts);
   const content = purchaseCsv(summary.job, result.items,summary);

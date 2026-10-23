@@ -63,7 +63,7 @@ test('CSV mensal mantém uma tabela e um cabeçalho com doze meses, total e todo
   assert.match(taxes[1][19], /Calendário não disponível/);
   const indicators = rows.filter(row => row[3] === 'Margem líquida');
   assert(indicators[0].slice(6,19).every(value => value === '30,00'));
-  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores'].includes(row[1]));
+  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores','Conferência da receita'].includes(row[1]));
   assert.equal(dataRows.length, 8);
   assert.deepEqual([...new Set(dataRows.map(row => row[0]))], ['Regime A','Regime B']);
   for (const name of ['Regime A','Regime B']) assert.deepEqual(dataRows.filter(row => row[0] === name).map(row => row[3]), ['Receita bruta total','Vendas; "CPFs"\nClientes','DAS','Margem líquida']);
@@ -104,11 +104,11 @@ test('Integração com a apresentação compartilhada preserva calendário diver
   const presentation = buildDrePresentation({result,calendar});
   const rows = readCsv(buildDreCsv({presentation,period:'monthly',showPercent:true}));
   const header = rows.find(row => row[0] === 'Regime');assert.equal(header.length,34);
-  const revenue = rows.find(row => row[3] === 'Receita bruta total');
+  const revenue = rows.find(row => row[3] === 'Receita total utilizada');
   assert.equal(revenue[6],'300,00');assert.equal(revenue[7],'100,00');assert.equal(revenue[30],'2400,00');assert.equal(revenue[31],'100,00');
-  const sales = rows.find(row => row[3] === 'Receita de vendas');
+  const sales = rows.find(row => row[3] === 'Receita de vendas utilizada');
   assert.equal(sales[6],'83,33');assert.equal(sales[7],'27,777778');
-  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores'].includes(row[1]));
+  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores','Conferência da receita'].includes(row[1]));
   // Spreadsheet text escaping changes only the protective prefix, never row order.
   assert.deepEqual(dataRows.map(row => row[3].replace(/^'/,'')), unifiedDreRows(presentation).map(row => row.label));
   assert.deepEqual({result,calendar},before);

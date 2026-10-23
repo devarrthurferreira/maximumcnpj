@@ -20,6 +20,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 from .brand import draw_brand_header
 from .difal_policy import report_difal_policy, direction_selection
+from .revenue import RevenueEvidence, report_revenue_reconciliation, unavailable_revenue
 from .core import VERSION, display_date, number, percent, require, utcnow, snapshot_source
 from .difal import DIFAL_VERSION, DIFAL_VERSIONS, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
 from .operation_catalog import OPERATION_CATALOG_VERSION, classify_operation_nature, normalize_operation_nature
@@ -283,6 +284,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
 
     by_cnpj, indexes, non_cnpj_documents, cpf_documents = {}, set(), set(), set()
     selection_rows, statuses = [], {}
+    revenue_evidence = RevenueEvidence(job)
     total_raw_cents = total_cents = non_cnpj_cents = excluded_lines = cpf_cents = cpf_lines = 0
     operation_totals = {key: {'operation': key, 'lines': 0, 'totalCents': 0, 'balanceCents': 0} for key in ('VENDA','SERVICO','DEVOLUCAO','OUTRAS')}
     nature_totals = {}
@@ -304,6 +306,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         valid = _valid_cnpj(document)
         _check(row['valid'] == valid and row.get('cnpj') == (document if valid else ''))
         raw_cents = _integer(row.get('totalCents'), 100_000_000_000)
+        revenue_evidence.add(row, raw_cents)
         if operation_version is not None:
             _check(row.get('operationVersion') == operation_version)
             nature_code = row.get('natureCode')
@@ -504,7 +507,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         anticipation = derived_anticipation if derivation_complete else None
         anticipation_origin = 'DERIVED_FROM_SNAPSHOT' if derivation_complete else 'UNAVAILABLE'
     return {'job': {key: job.get(key) for key in ('_id', 'mode', 'clientId', 'clientCode', 'clientName', 'fileName', 'completedAt', 'reportPeriod', 'difalVersion', 'anticipationVersion')},
-            'reportType': 'SALES' if sales else 'PURCHASES',
+            'reportType': 'SALES' if sales else 'PURCHASES', '_revenueEvidence': revenue_evidence.finish(),
             'totalCents': total_cents, 'cnpjCents': cnpj_cents, 'nonCnpjCents': non_cnpj_cents,
             'lineCount': line_count, 'uniqueSuppliers': unique, 'groups': list(groups.values()),
             'uniqueDocuments': unique_documents, 'nonCnpjDocumentCount': len(non_cnpj_documents),
@@ -522,13 +525,13 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             'firstCheck': min(checks) if checks else None, 'lastCheck': max(checks) if checks else None}
 
 
-def purchase_metadata(db, job, workspace):
+def reconciled_purchase_metadata(db, job, workspace):
     """Read only the selected job and join states by workspace, exact identity and state ID."""
     policy = report_difal_policy(db, job, workspace)
     query = {'workspaceId': workspace, 'jobId': job['_id']}
     lines = db.purchaseLines.find(query, {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'index': 1, 'document': 1,
                                         'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'operation': 1, 'balanceCents': 1, 'totalCents': 1, 'valid': 1, 'kind': 1,
-                                        'natureCode': 1, 'description': 1, 'recipientUf': 1, 'difal': 1,
+                                        'natureCode': 1, 'description': 1, 'recipientUf': 1, 'difal': 1, 'serviceDate': 1,
                                         'natureOperation': 1, 'operationVersion': 1, 'anticipation': 1,
                                         **{key: 1 for key in COMPONENT_FIELDS}})
     lines = lines.limit(50_001).batch_size(500).max_time_ms(20000)
@@ -543,6 +546,12 @@ def purchase_metadata(db, job, workspace):
     ], maxTimeMS=20000)
     metadata = reconcile_purchase_snapshot(job, lines, items, workspace)
     return {**metadata, **({'difalPolicy': policy} if policy is not None else {})}
+
+
+def purchase_metadata(db, job, workspace):
+    metadata = reconciled_purchase_metadata(db, job, workspace)
+    return {**metadata, 'revenueReconciliation': report_revenue_reconciliation(
+        db, job, workspace, metadata, reconciled_purchase_metadata)}
 
 
 def money(cents):
@@ -628,10 +637,10 @@ def purchase_story(meta, width, styles):
                   p('Há naturezas ausentes ou incompletas nas linhas salvas. Reimporte as compras para aplicar '
                     'o catálogo. O valor original abaixo é mantido para conferência e não representa a base de compras selecionada.', 'small'),
                   p('Conferência do arquivo original — sem seleção por natureza', 'heading')]
-    total_label = 'Total' if sales else 'Compras consideradas' if selected is not None else 'Total do arquivo original'
+    total_label = 'Saldo do arquivo de vendas' if sales else 'Compras consideradas' if selected is not None else 'Total do arquivo original'
     story.append(p(f'{total_label}: {money(display["totalCents"])} | {number(display["lineCount"])} linhas | '
                    f'{number(display["uniqueDocuments"])} documentos na base | Cálculo {calculation_label}', 'heading'))
-    value_label = f'Valor de {report_label.lower()}' if sales else 'Compras consideradas' if selected is not None else 'Valor do arquivo original'
+    value_label = 'Saldo do arquivo de vendas' if sales else 'Compras consideradas' if selected is not None else 'Valor do arquivo original'
     rows = [['Grupo gerencial', 'Documentos', '% dos documentos', 'Linhas', value_label, '% do valor total']]
     for group in display['managerialGroups']:
         rows.append([group['label'], number(group['count']), percent(group['countPercent']), number(group['lines']),
@@ -741,6 +750,41 @@ def purchase_story(meta, width, styles):
           f'A observação salva não comprova o regime na data da {"venda" if sales else "compra"} nem a atualização fiscal da base. '
           'Referência fiscal não informada. Este PDF lê o snapshot reconciliado e não faz nova consulta.', 'small'),
     ]
+    story += revenue_story(meta.get('revenueReconciliation'), width, styles)
+    return story
+
+
+def revenue_story(closing, width, styles, title='Fechamento da receita'):
+    """Keep the closing last and separate from original balances and all-file components."""
+    p = lambda value, style='body': purchase_paragraph(value, styles, style)
+    closing = closing or unavailable_revenue('Este relatório não conserva um par conciliado de compras e vendas para conferir as devoluções.')
+    story = [Spacer(1, 8), p(title, 'heading')]
+    if not closing['available']:
+        status = 'Pendente' if closing['status'] == 'PENDING' else 'Indisponível'
+        story.append(p(f'{status}: {closing["reason"]}', 'small'))
+        return story
+    period = closing['period']
+    note = p(f'Receita de origem de {period["startMonth"]} a {period["endMonth"]}. '
+             'Vendas e compras da mesma empresa e geração; devoluções abatidas uma única vez.', 'small')
+    note.keepWithNext = True
+    story.append(note)
+    rows = [['Composição da receita', 'Valor do período'],
+            ['Vendas de mercadorias', money(closing['grossSalesCents'])],
+            ['Serviços de venda', money(closing['serviceSalesCents'])],
+            ['Receita bruta (vendas + serviços)', money(closing['grossRevenueCents'])],
+            ['(-) Devoluções de venda no relatório de compras', money(-closing['salesReturnsCents'])],
+            ['RECEITA APÓS DEVOLUÇÕES', money(closing['revenueAfterReturnsCents'])]]
+    story += [purchase_table(rows, (.70, .30), width, styles, True, padding=5), Spacer(1, 5)]
+    if len(closing['monthly']) > 1:
+        rows = [['Competência', 'Receita bruta', '(-) Devoluções de venda', 'Receita após devoluções']]
+        rows.extend([[row['sourceMonth'], money(row['grossRevenueCents']), money(-row['salesReturnsCents']),
+                      money(row['revenueAfterReturnsCents'])] for row in closing['monthly']])
+        story += [purchase_table(rows, (.16, .28, .28, .28), width, styles, padding=5), Spacer(1, 5)]
+    story += [p('Base: operações VENDA e serviços 9000, menos DEVOLUCAO_VENDA do relatório de compras, pela competência '
+                'da coluna H. Os valores usam Q - Y + AA - AB. Devoluções de compra e outras operações não integram '
+                'essa receita. Os totais originais dos arquivos permanecem preservados.', 'small'),
+              p(f'Origem: vendas {closing.get("salesJobId", "")} | compras {closing.get("purchaseJobId", "")}. '
+                'O cenário pode conter ajustes manuais, apresentados separadamente na DRE.', 'small')]
     return story
 
 

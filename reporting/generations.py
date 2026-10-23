@@ -9,7 +9,8 @@ from .core import require, utcnow, display_date, number
 from .anticipation import ANTICIPATION_VERSION
 from .difal import DIFAL_VERSION
 from .difal_policy import parse_difal_policy, direction_selection, assert_generation_available, NAMES
-from .purchases import (PURCHASES_MODE, SALES_MODE, purchase_metadata, purchase_pdf_styles, purchase_story,
+from .revenue import revenue_from_pair, revenue_totals
+from .purchases import (PURCHASES_MODE, SALES_MODE, reconciled_purchase_metadata as purchase_metadata, purchase_pdf_styles, purchase_story,
                         purchase_page_callback, purchase_paragraph, purchase_table, money, _check, _integer,
                         purchase_selection_view, PURCHASE_SELECTION_VERSION)
 
@@ -162,14 +163,19 @@ def generation_metadata(db, generation_id, workspace, part=1):
                     tax_totals['legacyReports'] += int(source_version is not None and source_version != tax_totals['version'])
                     tax_totals['derivedReports'] += int(meta.get(f'{tax_key}Origin') == 'DERIVED_FROM_SNAPSHOT')
                     tax_totals['importedReports'] += int(meta.get(f'{tax_key}Origin') == 'IMPORTED')
-        sections.append({'company': company, 'reports': reports})
+        closing = revenue_from_pair(reports.get('PURCHASES'), reports.get('SALES'),
+            {'generationId': generation_id, 'clientId': company['clientId'],
+             'purchaseJobId': company.get('purchaseJobId'), 'salesJobId': company.get('salesJobId')})
+        reports = {key: {**report, 'revenueReconciliation': closing} for key, report in reports.items()}
+        sections.append({'company': company, 'reports': reports, 'revenueReconciliation': closing})
     # Keep the internal purchases list for consumers of older generation metadata.
     purchases = [section['reports']['PURCHASES'] for section in sections if 'PURCHASES' in section['reports']]
     sales = [section['reports']['SALES'] for section in sections if 'SALES' in section['reports']]
     return {'generation': generation, 'requiredReports': required, 'sections': sections,
             'purchases': purchases, 'sales': sales, 'part': part, 'parts': parts,
             'companyCount': len(companies), 'firstCompany': start + 1, 'lastCompany': start + len(selected),
-            'totalsByType': totals_by_type, 'totals': totals_by_type.get('PURCHASES'), 'generatedAt': utcnow()}
+            'totalsByType': totals_by_type, 'totals': totals_by_type.get('PURCHASES'),
+            'revenueTotals': revenue_totals([section['revenueReconciliation'] for section in sections]), 'generatedAt': utcnow()}
 
 
 def selected_tax_story(total, report_type, scope, width, styles):
@@ -245,7 +251,7 @@ def render_generation_pdf(meta):
     headers = ['Código / Empresa']
     for report_type in required:
         label = REPORTS[report_type]['label']
-        headers.extend([f'Linhas de {label.lower()}', 'Compras consideradas' if report_type == 'PURCHASES' else f'Total de {label.lower()}'])
+        headers.extend([f'Linhas de {label.lower()}', 'Compras consideradas' if report_type == 'PURCHASES' else 'Saldo do arquivo de vendas'])
     rows = [headers]
     for section in meta['sections']:
         first = section['reports'][required[0]]['job']
@@ -273,9 +279,9 @@ def render_generation_pdf(meta):
         totals = meta['totalsByType'][report_type]
         groups = [['Classificação de ' + REPORTS[report_type]['label'].lower(), f'Valor {scope}']]
         if report_type == 'SALES':
-            groups.extend([['Faturamento de vendas a optantes SN', money(totals['optantCents'])],
-                           ['Faturamento de vendas a não optantes SN', money(totals['nonoptantCents'])],
-                           ['Faturamento de vendas a CPFs', money(totals['cpfCents'])]])
+            groups.extend([['Saldo do arquivo - vendas a optantes SN', money(totals['optantCents'])],
+                           ['Saldo do arquivo - vendas a não optantes SN', money(totals['nonoptantCents'])],
+                           ['Saldo do arquivo - vendas a CPFs', money(totals['cpfCents'])]])
         else:
             selected = totals['purchaseSelection']
             if selected['availableReports']:
@@ -327,6 +333,39 @@ def render_generation_pdf(meta):
     for section in meta['sections']:
         for report_type in required:
             story.extend([PageBreak(), *purchase_story(section['reports'][report_type], width, styles)])
+    story.extend([PageBreak(), *generation_revenue_story(meta, width, styles, scope)])
     on_page = purchase_page_callback(f'Geração {generation["_id"]} | Parte {part}/{parts}')
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
     return stream.getvalue()
+
+
+def generation_revenue_story(meta, width, styles, scope):
+    p = lambda value, style='body': purchase_paragraph(value, styles, style)
+    totals = meta['revenueTotals']
+    story = [p(f'Fechamento da receita {scope}', 'title'),
+             p('Receita bruta das vendas e serviços, menos devoluções de venda identificadas nas compras. '
+               'Cada empresa participa uma única vez, com o seu par exato de relatórios. '
+               'Os saldos dos arquivos originais não são substituídos por este fechamento.', 'small')]
+    rows = [['Código / Empresa', 'Competências', 'Receita bruta', '(-) Devoluções de venda', 'Receita após devoluções']]
+    for section in meta['sections']:
+        company, closing = section['company'], section['revenueReconciliation']
+        identity = f'{company.get("code") or "Sem código"} - {company.get("name") or "Empresa"}'
+        if closing['available']:
+            period = closing['period']
+            rows.append([identity, f'{period["startMonth"]} a {period["endMonth"]}', money(closing['grossRevenueCents']),
+                         money(-closing['salesReturnsCents']), money(closing['revenueAfterReturnsCents'])])
+        else:
+            rows.append([identity, 'Indisponível', 'Indisponível', 'Indisponível', closing['reason']])
+    if totals['availableCompanies']:
+        label = 'TOTAL' if totals['complete'] else 'TOTAL PARCIAL - EMPRESAS CONCILIADAS'
+        rows.append([label, f'{totals["availableCompanies"]} empresa(s)', money(totals['grossRevenueCents']),
+                     money(-totals['salesReturnsCents']), money(totals['revenueAfterReturnsCents'])])
+    story += [purchase_table(rows, (.28, .16, .18, .18, .20), width, styles, bool(totals['availableCompanies']), padding=5), Spacer(1, 6)]
+    if totals['unavailableCompanies']:
+        story.append(p(f'{number(totals["unavailableCompanies"])} empresa(s) sem fechamento disponível. '
+                       'Elas não foram tratadas como receita ou devoluções iguais a zero. '
+                       'O total parcial, quando presente, soma apenas as empresas conciliadas desta parte.', 'small'))
+    story.append(p('VENDA e serviços de prefixo 9000 formam a receita bruta elegível. Somente DEVOLUCAO_VENDA no relatório '
+                   'de compras reduz essa receita, na competência da coluna H, uma única vez. Devoluções de compra e '
+                   'demais operações ficam fora dessa base. Valores por Q - Y + AA - AB, sem nova consulta externa.', 'small'))
+    return story

@@ -1,9 +1,10 @@
 import {mountNavigation} from './navigation.js';
 import {defaultDifalPolicy,parseDifalPolicy} from './simulator-engine.js';
 import {difalDirectionSelection} from './difal-policy.js';
+import {renderRevenueReconciliation} from './revenue-reconciliation-view.js';
 const $=q=>document.querySelector(q),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const n=v=>Number(v||0).toLocaleString('pt-BR'),dt=v=>v?new Date(v).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}):'—';
-const S={user:null,clients:[],selected:new Set(),generation:null,page:1,seq:0,busy:false,pendingId:null,pendingClientIds:null,reports:new Set(['PURCHASES','SALES']),pendingReports:null,difalPolicies:new Map(),difalExpanded:new Set(),pendingDifalPolicies:null,historyItems:[],deleteTarget:null,deleteTrigger:null,deleting:false};
+const S={user:null,clients:[],selected:new Set(),generation:null,page:1,seq:0,busy:false,pendingId:null,pendingClientIds:null,reports:new Set(['PURCHASES','SALES']),pendingReports:null,difalPolicies:new Map(),difalExpanded:new Set(),pendingDifalPolicies:null,historyItems:[],deleteTarget:null,deleteTrigger:null,deleting:false,revenueObserver:null};
 const DIFAL_REGIMES=[['pure','Simples puro'],['hybrid','Simples híbrido']];
 const DIFAL_OPERATIONS=[['entry','DIFAL de entrada','Compras · antecipação de ICMS'],['exit','DIFAL de saída','Vendas']];
 function companyDifalPolicy(clientId){
@@ -119,7 +120,7 @@ async function create(){if(!S.selected.size||!S.reports.size||S.busy)return;S.bu
 const statusLabel=g=>g.status==='COMPLETED'?'Concluída':`${n(g.completedCount)} de ${n(g.companyCount)} empresas concluídas`;
 const trashIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg>';
 const deleteButton=g=>writable()?`<button type="button" class="generation-delete" data-delete-generation="${esc(g._id)}" aria-label="Excluir geração definitivamente">${trashIcon}Excluir</button>`:'';
-async function history(page=1,focusAfter=false){clearError();const ticket=++S.seq;heading('Histórico de gerações.','Consulte suas gerações, retome relatórios pendentes ou exclua os registros que não precisa mais.');$('#generation-app').innerHTML='<div class="initial">Carregando suas gerações…</div>';const d=await api('/api/v4/generations?'+new URLSearchParams({page}));if(ticket!==S.seq)return;
+async function history(page=1,focusAfter=false){clearError();S.revenueObserver?.disconnect();const ticket=++S.seq;heading('Histórico de gerações.','Consulte suas gerações, retome relatórios pendentes ou exclua os registros que não precisa mais.');$('#generation-app').innerHTML='<div class="initial">Carregando suas gerações…</div>';const d=await api('/api/v4/generations?'+new URLSearchParams({page}));if(ticket!==S.seq)return;
  const totalPages=Math.max(1,Math.ceil(d.total/(d.pageSize||20)));if(page>totalPages)return history(totalPages,focusAfter);S.page=page;S.historyItems=d.items;
  window.history.replaceState(null,'','/generations.html?'+new URLSearchParams({view:'history',page}));
  $('#generation-app').innerHTML=`<div class="generation-history-tabs"><span class="active">Gerações</span><a href="/simulations.html">Simulações</a><a href="/purchases.html">Compras anteriores</a><a href="/purchases.html?type=SALES">Vendas anteriores</a><a href="/#history">Consultas anteriores</a></div><section class="card"><div class="generation-section-title"><div><h2 id="generation-history-title" tabindex="-1">Gerações salvas</h2><p class="hint mt">${n(d.total)} geração(ões)</p></div>${writable()?'<a class="primary report-links" href="/generations.html">Iniciar geração</a>':''}</div>${d.items.length?`<div class="generation-history-list">${d.items.map(g=>`<article class="generation-history-row" data-generation-id="${esc(g._id)}"><a class="generation-history-item" href="/generations.html?id=${encodeURIComponent(g._id)}"><div class="generation-history-icon">${g.status==='COMPLETED'?'✓':'↗'}</div><div><strong>${g.companies?.slice(0,2).map(c=>esc((c.code||'—')+' · '+c.name)).join(' · ')||'Geração de relatórios'}${g.companyCount>2?' e mais '+n(g.companyCount-2):''}</strong><small>${dt(g.createdAt)} · ${n(g.companyCount)} empresa(s) · ${requiredReports(g).map(type=>reportLabels[type]).join(' + ')}</small><span class="generation-state ${g.status==='COMPLETED'?'complete':''}">${statusLabel(g)}</span></div><span aria-hidden="true">→</span></a>${deleteButton(g)}</article>`).join('')}</div>`:'<div class="purchase-empty"><h3>O histórico começa na primeira geração</h3><p>Selecione suas empresas e adicione os relatórios de compras e vendas.</p><a class="report-links" href="/generations.html">Iniciar agora →</a></div>'}<div class="pagination"><button id="generation-prev" ${page<=1?'disabled':''}>Anterior</button><span>${page} / ${totalPages}</span><button id="generation-next" ${page>=totalPages?'disabled':''}>Próxima</button></div></section>`;
@@ -157,10 +158,10 @@ async function confirmDelete(){
 const reportLabels={PURCHASES:'Compras',SALES:'Vendas'};
 const requiredReports=g=>g.requiredReports||['PURCHASES'];
 function reportUrl(g,c,type){const jobId=type==='SALES'?c.salesJobId:c.purchaseJobId;return '/purchases.html?'+new URLSearchParams({generation:g._id,client:c.clientId,...(requiredReports(g).includes(type)?{guided:'1'}:{}),...(type==='SALES'?{type}:{}),...(jobId?{job:jobId}:{})});}
-async function detail(id){clearError();const ticket=++S.seq;heading('Uma geração. Todas as empresas.','1. Importe compras. 2. Importe vendas. 3. Confira os valores. O botão do simulador aparece abaixo de cada empresa quando as duas leituras terminarem.');$('#generation-app').innerHTML='<div class="initial">Conferindo relatórios da geração…</div>';const g=await api('/api/v4/generations/'+encodeURIComponent(id));if(ticket!==S.seq)return;S.generation=g;
+async function detail(id){clearError();S.revenueObserver?.disconnect();const ticket=++S.seq;heading('Uma geração. Todas as empresas.','1. Importe compras. 2. Importe vendas. 3. Confira os valores. O botão do simulador aparece abaixo de cada empresa quando as duas leituras terminarem.');$('#generation-app').innerHTML='<div class="initial">Conferindo relatórios da geração…</div>';const g=await api('/api/v4/generations/'+encodeURIComponent(id));if(ticket!==S.seq)return;S.generation=g;
  const complete=g.status==='COMPLETED',parts=Math.max(1,Math.ceil(g.companyCount/10));
  $('#generation-app').innerHTML=`<div class="generation-back"><a href="/generations.html?view=history">← Histórico de gerações</a><div class="generation-toolbar"><button id="generation-refresh">Atualizar situação</button>${deleteButton(g)}</div></div>${stepper(complete?2:1)}<section class="card generation-progress-card"><div><div class="eyebrow">${complete?'PRONTO PARA CONFERIR':'PROGRESSO SALVO'}</div><h2>${complete?'Sua geração está completa.':`${n(g.completedCount)} de ${n(g.companyCount)} empresas concluídas`}</h2><p class="hint mt">${dt(g.createdAt)} · ${requiredReports(g).map(type=>reportLabels[type]).join(' + ')} · ${n(g.missingCount)} pendente(s) · ${n(g.inProgressCount)} em andamento</p></div><div class="generation-progress"><strong>${n(g.completedCount)}<span> / ${n(g.companyCount)}</span></strong><progress aria-label="Empresas concluídas" value="${g.completedCount}" max="${g.companyCount}"></progress></div></section><div class="generation-cards">${g.companies.map(c=>companyCard(g,c)).join('')}</div><section class="card generation-download"><div><div class="eyebrow">RELATÓRIO FINAL</div><h2>${complete?'Os cálculos, do início ao total.':'Adicione os relatórios para concluir.'}</h2><p class="hint mt">O PDF inclui ${requiredReports(g).map(type=>reportLabels[type].toLowerCase()).join(' e ')} de cada empresa, com composição dos valores e percentuais por enquadramento. Compras e vendas são apresentadas separadamente.</p>${parts>1?`<p class="hint mt">${n(g.companyCount)} empresas divididas em ${parts} partes de até 10 empresas. Baixe todas as partes para obter a geração completa.</p>`:''}</div><div class="generation-download-actions">${parts>1?`<label>Parte do relatório<select id="generation-pdf-part">${Array.from({length:parts},(_,i)=>`<option value="${i+1}">${i+1} / ${parts}</option>`).join('')}</select></label>`:''}<button id="generation-download" class="primary" ${complete?'':'disabled'}>Baixar relatório completo PDF</button><p id="generation-download-status" class="hint" role="status">${complete?'Gerado em Python a partir dos resultados salvos.':'Disponível quando todos os relatórios selecionados estiverem concluídos.'}</p></div></section><p class="hint generation-identity">Identificação da geração: ${esc(g._id)}</p>`;
- const remove=$('[data-delete-generation]');if(remove)remove.onclick=()=>openDelete(g,remove);$('#generation-refresh').onclick=()=>detail(id).catch(errors);$('#generation-download').onclick=()=>download().catch(errors);
+ const remove=$('[data-delete-generation]');if(remove)remove.onclick=()=>openDelete(g,remove);$('#generation-refresh').onclick=()=>detail(id).catch(errors);$('#generation-download').onclick=()=>download().catch(errors);loadRevenueClosings(g,ticket);
 }
 function reportSlot(g,c,type){
  const job=type==='SALES'?c.sales:c.purchase,complete=job?.status==='COMPLETED',cancelled=['CANCELLED','INVALID'].includes(job?.status),uploading=job?.status==='UPLOADING',processing=job?.status==='PROCESSING',required=requiredReports(g).includes(type),label=reportLabels[type];
@@ -169,7 +170,7 @@ function reportSlot(g,c,type){
 }
 function companyCard(g,c){
  const complete=c.status==='COMPLETED';
- return `<article class="card generation-company-card"><div class="generation-company-title"><span class="generation-company-code">${esc(c.code||'—')}</span><div><h2>${esc(c.name)}</h2><span class="generation-state ${complete?'complete':''}">${complete?'Concluída':c.status==='IN_PROGRESS'?'Em andamento':'Relatório pendente'}</span></div></div>${companyTaxSelection(c)}${['PURCHASES','SALES'].map(type=>reportSlot(g,c,type)).join('')}${simulatorSlot(g,c)}</article>`;
+ return `<article class="card generation-company-card"><div class="generation-company-title"><span class="generation-company-code">${esc(c.code||'—')}</span><div><h2>${esc(c.name)}</h2><span class="generation-state ${complete?'complete':''}">${complete?'Concluída':c.status==='IN_PROGRESS'?'Em andamento':'Relatório pendente'}</span></div></div>${companyTaxSelection(c)}${['PURCHASES','SALES'].map(type=>reportSlot(g,c,type)).join('')}${simulatorSlot(g,c)}${companyRevenueClosing(g,c)}</article>`;
 }
 function companyTaxSelection(company){
  if(!Object.hasOwn(company,'difalPolicy'))return '';
@@ -177,6 +178,31 @@ function companyTaxSelection(company){
   const selected=difalDirectionSelection(company.difalPolicy,direction);
   return `<p data-generation-tax-direction="${direction}"><span>${label}:</span> ${selected.enabled?esc(selected.regimeNames.join(' e ')):'não incluir'}</p>`;
  }).join('')}<small>A DRE também verifica os bloqueios de cada competência.</small></section>`;
+}
+function companyRevenueClosing(g,company){
+ const ready=company.purchase?.status==='COMPLETED'&&company.sales?.status==='COMPLETED';
+ const both=requiredReports(g).includes('PURCHASES')&&requiredReports(g).includes('SALES');
+ const pending={version:'REVENUE_RECONCILIATION_V1',status:both?'PENDING':'UNAVAILABLE',available:false,reason:!both?'O fechamento da receita exige compras e vendas da mesma empresa. Esta geração selecionou somente '+requiredReports(g).map(type=>reportLabels[type].toLowerCase()).join(' e ')+'.':ready?'Conferindo a receita e as devoluções dos relatórios desta empresa…':'Conclua os relatórios de compras e vendas desta empresa para conferir a receita após as devoluções.'};
+ return `<div class="generation-revenue-slot" data-generation-revenue-client="${esc(company.clientId)}">${renderRevenueReconciliation(pending,{headingLevel:3})}</div>`;
+}
+function loadRevenueClosings(g,ticket){
+ if(!requiredReports(g).includes('PURCHASES')||!requiredReports(g).includes('SALES'))return;
+ const ready=g.companies.filter(company=>company.purchase?.status==='COMPLETED'&&company.sales?.status==='COMPLETED');
+ const load=async host=>{
+  const company=ready.find(item=>item.clientId===host.dataset.generationRevenueClient);if(!company)return;
+  let value;
+  try{
+   value=await api(`/api/v4/generations/${encodeURIComponent(g._id)}/revenue?${new URLSearchParams({clientId:company.clientId})}`);
+   if(value?.available&&(value.generationId!==g._id||value.clientId!==company.clientId||value.purchaseJobId!==company.purchase._id||value.salesJobId!==company.sales._id))throw new Error('O fechamento recebido não corresponde aos relatórios desta empresa. Atualize a situação da geração.');
+  }catch(cause){value={version:'REVENUE_RECONCILIATION_V1',status:'UNAVAILABLE',available:false,reason:cause.message||'Não foi possível conferir a receita. Atualize a situação da geração para tentar novamente.'};}
+  if(ticket!==S.seq||!host.isConnected)return;
+  host.innerHTML=renderRevenueReconciliation(value,{headingLevel:3});
+ };
+ const hosts=[...document.querySelectorAll('[data-generation-revenue-client]')].filter(host=>ready.some(company=>company.clientId===host.dataset.generationRevenueClient));
+ if(!hosts.length)return;
+ if(!('IntersectionObserver' in window)){for(const host of hosts)void load(host);return;}
+ const observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){observer.unobserve(entry.target);void load(entry.target);}},{rootMargin:'200px'});
+ S.revenueObserver=observer;for(const host of hosts)observer.observe(host);
 }
 function simulatorSlot(g,c){
  const ready=c.purchase?.status==='COMPLETED'&&c.sales?.status==='COMPLETED',done=[c.purchase,c.sales].filter(job=>job?.status==='COMPLETED').length;

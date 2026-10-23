@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.32.2] — 2026-10-23
+
+- Fechamento visível da receita bruta de vendas e serviços, devoluções de venda e receita após devoluções, por competência e no período. A DRE apresenta a composição ao final, com ajustes manuais e receita utilizada separados; celular recebe valores empilhados para o regime e período selecionados.
+- Corrige os rótulos que chamavam a receita já reduzida pelas devoluções de receita bruta. Campos editáveis e denominadores dos percentuais identificam a base usada, preservando os cálculos e o abatimento único.
+- Relatórios distinguem saldo original do arquivo e receita considerada. Fechamento derivado exige o par confiável de compras e vendas da mesma empresa e geração; devoluções de compra e outras operações não viram uma segunda dedução da receita.
+- CSV específico de fechamento, PDFs individuais/consolidados e impressão mantêm a mesma composição. O novo CSV conserva valores negativos numéricos para conferência em planilha, com textos e metadados escapados. CSV de linhas, totais e evidências originais preservados.
+- Histórico usa apenas a composição capturada e conciliável com os valores salvos. Ausência de evidência fica indisponível, sem inventar devoluções em zero ou misturar relatórios atuais com versões antigas. Regras e escolhas de DIFAL preservadas.
+- Validação: 261 testes de regras, 111 verificações de integração/projeção/competências, 171 Python/PDF/OCR e 164 no navegador aprovados; tipos, build, versão e inspeção visual conferidos. Regressão real cobre dois meses, reabertura autenticada, nova versão com ajuste manual e preservação das fontes.
+
 ## [0.32.1] — 2026-10-23
 
 - Corrige DIFAL sobre vendas aparecendo como incluído na prévia e nos resumos, mesmo após desmarcar a saída. Os indicadores do simulador também passam a respeitar a escolha e os bloqueios por competência.

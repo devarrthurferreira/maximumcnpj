@@ -24,6 +24,7 @@ function rowContexts(presentation) {
   for (const section of presentation.sections || []) for (const row of section.rows || []) contexts.set(row, ['DRE',section.label]);
   for (const detail of presentation.details || []) for (const row of detail.rows || []) contexts.set(row, ['Detalhamento informativo',detail.label]);
   for (const row of presentation.indicators || []) contexts.set(row, ['Indicadores','Indicadores']);
+  for (const row of presentation.revenueReconciliation?.rows || []) contexts.set(row, ['Conferência da receita',presentation.revenueReconciliation.label]);
   return contexts;
 }
 
@@ -83,7 +84,8 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   textLine(['Critério', presentation.method==='REPORT_MONTHS_V1'?'Valores por competência dos relatórios. Total anual é a soma dos meses importados; meses fora do período sem dados.':'Valores da simulação preservados. Projeção mensal, não lançamentos históricos.']);
   textLine(['Arredondamento', 'Exibição com duas casas decimais; a soma dos meses exibidos pode diferir por centavos do total anual preservado.']);
   for(const note of dreDifalNotes(presentation))textLine(['DIFAL nos cenários',note]);
-  if (showPercent) textLine(['Análise vertical', presentation.percentBasis || 'Receita bruta total do cenário']);
+  if (showPercent) textLine(['Análise vertical', presentation.percentBasis || 'Receita utilizada na simulação, no mesmo período e regime']);
+  if (presentation.revenueReconciliation?.note) textLine(['Fechamento da receita',presentation.revenueReconciliation.note]);
   lines.push('');
 
   const prefix = row => [...(contexts.get(row) || ['DRE','']), row.label, row.kind || 'line', row.unit === 'percent' ? '%' : 'BRL'];

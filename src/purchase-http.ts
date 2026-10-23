@@ -1,6 +1,6 @@
 import { createLookup, uploadLookup, finalizeLookup, processLookup, cancelLookup } from './lookup-jobs.ts';
 import { PURCHASE_MODE, SALES_MODE, financialLabel } from './purchase-domain.ts';
-import { purchaseJob, purchaseSummary, purchaseHistory, purchaseRows, purchaseExport } from './purchase-store.ts';
+import { purchaseJob, purchaseSummary, purchaseHistory, purchaseRows, purchaseExport, revenueExport } from './purchase-store.ts';
 import { need, integer } from './security.ts';
 import { rateLimit, workspace } from './store.ts';
 import type { LookupActor } from './lookup-db.ts';
@@ -14,7 +14,7 @@ export async function routePurchases(actor: LookupActor, method: string, url: UR
   const path = route[2] || '', page = integer(url.searchParams.get('page') || 1, 1, 100000);
   if (!path && method === 'POST') return createLookup(actor, input, mode);
   if (!path && method === 'GET') return purchaseHistory(url.searchParams.get('clientId') || '', page, mode);
-  const match = path.match(/^\/([a-f0-9-]{36})(?:\/(rows|finalize|process|cancel|summary|results|lines|csv))?$/);
+  const match = path.match(/^\/([a-f0-9-]{36})(?:\/(rows|finalize|process|cancel|summary|results|lines|csv|revenue-csv))?$/);
   if (match) {
     const id = match[1], action = match[2];
     await purchaseJob(id, mode);
@@ -23,6 +23,10 @@ export async function routePurchases(actor: LookupActor, method: string, url: UR
       if (action === 'finalize') return finalizeLookup(actor, id);
       if (action === 'process') return processLookup(actor, id);
       if (action === 'cancel') return cancelLookup(actor, id);
+      if (action === 'revenue-csv') {
+        await rateLimit(`financial-export:${workspace()}:${actor._id}`, 15, 1);
+        return revenueExport(id, mode);
+      }
       if (action === 'csv') {
         await rateLimit(`financial-export:${workspace()}:${actor._id}`, 15, 1);
         return purchaseExport(id, typeof input.status === 'string' ? input.status : 'ALL', integer(input.part ?? 1, 1, 100000), mode);
