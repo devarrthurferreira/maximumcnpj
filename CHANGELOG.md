@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.32.1] — 2026-10-23
+
+- Corrige DIFAL sobre vendas aparecendo como incluído na prévia e nos resumos, mesmo após desmarcar a saída. Os indicadores do simulador também passam a respeitar a escolha e os bloqueios por competência.
+- Apresentação compartilhada por direção identifica quais cenários do Simples incluem entrada ou saída. Não incluir saída preserva a entrada selecionada e vice-versa; nenhum valor é duplicado por selecionar os dois cenários.
+- Política do relatório resolvida no servidor pela geração, empresa e consulta vinculadas; resumos, linhas, CSV e PDFs individuais/consolidados respeitam a seleção. Reconsultas novas conservam a política de origem; antigas usam a linhagem válida somente em leitura e identificam a ausência de escolha quando a origem não está disponível.
+- Estimativa bruta preservada como evidência explicitamente identificada e recolhida nos cartões; a impressão não expande nem inclui esses detalhes. Cálculos da DRE, totais, snapshots e históricos permanecem imutáveis; a consulta de uma simulação salva usa a aplicação registrada. Consolidados contam cada empresa uma única vez e separam relatórios sem escolha histórica da soma selecionada.
+- Regressão do problema reproduzida no navegador antes da correção, com saída desmarcada mostrando R$ 15,00. Novos testes cobrem prévia, resumo, opções mistas, persistência, vínculo por empresa e exportações.
+- Validação com Node 22.16.0: tipos, build, release e diff aprovados; 248 testes de regras, 161 Python/PDF/OCR e a rodada final completa de 150 testes de navegador passaram sem saltos. Todos os comandos de integração, projeção, competências e reprocessamento passaram com MongoDB descartável. Fluxo real confirmou saída zerada e entrada preservada após importação, CSV, salvamento e novo login; PDFs e layouts desktop/320/390 px conferidos visualmente.
+
 ## [0.32.0] — 2026-10-23
 
 - DIFAL selecionável somente para Simples Puro e Híbrido, após a escolha da empresa, nos fluxos individual e multiempresa. Entrada e saída têm controles independentes por cenário; ambas ou nenhuma também são permitidas.

@@ -120,6 +120,12 @@ test('entrada no Puro e saída no Híbrido persistem no rascunho, histórico e e
   for(const id of ['pure','hybrid'])await expect(page.locator(`#difal-enabled-${id}`)).toBeChecked();
   await expect(page.locator('[data-difal-regime]')).toHaveCount(2);await expect(page.locator('[data-difal-operation]')).toHaveCount(4);
   await manual(page);await page.locator('#difal-exit-pure').uncheck();await page.locator('#difal-entry-hybrid').uncheck();
+  await expect(page.locator('#month-summary-difal')).toHaveText('Por cenário');
+  await expect(page.locator('[data-difal-monthly]')).toHaveText('Por cenário');
+  await expect(page.locator('[data-difal-applied-regime="pure"] [data-difal-applied-month]')).toContainText('0,00');
+  await expect(page.locator('[data-difal-applied-regime="hybrid"] [data-difal-applied-month]')).toContainText('100,00');
+  await expect(page.locator('[data-anticipation-applied-regime="pure"] [data-anticipation-applied-month]')).toContainText('36,60');
+  await expect(page.locator('[data-anticipation-applied-regime="hybrid"] [data-anticipation-applied-month]')).toContainText('0,00');
   await page.reload();await expect(page.locator('#difal-exit-pure')).not.toBeChecked();await expect(page.locator('#difal-entry-hybrid')).not.toBeChecked();await expect(page.locator('#difal-entry-pure')).toBeChecked();await expect(page.locator('#difal-exit-hybrid')).toBeChecked();
   await expect(page.locator('[data-difal-state="pure"]')).toContainText('entrada');await expect(page.locator('[data-difal-state="hybrid"]')).toContainText('saída');
   await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('salva');
@@ -129,6 +135,7 @@ test('entrada no Puro e saída no Híbrido persistem no rascunho, histórico e e
   expect(saved.result.regimes.map((row:any)=>Math.round(row.dre.icmsAnticipation*100))).toEqual([-10980,0,0,0]);
   expect(saved.difalProjection.annualCents).toBe(30000);expect(saved.source.fields).toEqual(source.fields);
   await page.locator('#difal-exit-pure').check();await expect(page.locator('#simulation-changes-notice')).toBeVisible();expect(state.writes).toHaveLength(1);
+  await expect(page.locator('#month-summary-difal')).toContainText('100,00');await expect(page.locator('[data-difal-monthly]')).toContainText('100,00');
   await page.locator('#regenerate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('salva');expect(state.writes).toHaveLength(2);
   expect(state.writes[1].draft.difalPolicy.operations.pure).toEqual({entry:true,exit:true});
   await capturePanel(page,'#sim-difal-options',info.outputPath('difal-opcoes-desktop.png'));
@@ -138,6 +145,9 @@ test('entrada no Puro e saída no Híbrido persistem no rascunho, histórico e e
   const before=JSON.stringify(saved);await page.goto(`/simulator.html?simulation=${saved._id}`);
   await expect(page.locator('[data-difal-option="pure"]')).toContainText('entrada (compras)');await expect(page.locator('[data-difal-option="hybrid"]')).toContainText('saída (vendas)');
   await expect(page.locator('#sim-difal-options input')).toHaveCount(0);
+  await expect(page.locator('[data-difal-monthly]')).toHaveText('Por cenário');
+  await expect(page.locator('[data-difal-applied-regime="pure"] [data-difal-applied-month]')).toContainText('0,00');
+  await expect(page.locator('[data-difal-applied-regime="hybrid"] [data-difal-applied-month]')).toContainText('100,00');
   await page.locator('#dre-regime').selectOption('pure');await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('0,00');
   await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('36,60');
   await page.locator('#dre-regime').selectOption('hybrid');await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('100,00');
@@ -147,6 +157,42 @@ test('entrada no Puro e saída no Híbrido persistem no rascunho, histórico e e
   const payload=JSON.parse(Buffer.concat(chunks).toString('utf8'));
   expect(payload.draft.difalPolicy).toEqual(saved.draft.difalPolicy);expect(payload.result.regimes.map((row:any)=>row.dre.difal)).toEqual([0,-300,0,0]);
   expect(JSON.stringify(saved)).toBe(before);expect(state.writes).toHaveLength(2);
+});
+
+test('saída desmarcada some dos KPIs e da impressão; entrada e histórico mantêm seus valores',async({page},info)=>{
+  const state=await mount(page);await open(page);await manual(page);
+  await expect(page.locator('#month-summary-difal')).toContainText('100,00');
+  await page.locator('#difal-exit-pure').uncheck();await page.locator('#difal-exit-hybrid').uncheck();
+  const exit=page.locator('#simulator-difal'),entry=page.locator('#simulator-anticipation');
+  await expect(page.locator('#month-summary-difal')).toContainText('0,00');
+  await expect(exit.locator('[data-difal-monthly]')).toContainText('0,00');await expect(exit.locator('[data-difal-annual]')).toContainText('0,00');
+  await expect(exit.locator('[data-difal-application-status]')).toHaveText('Não incluído');
+  await expect(entry.locator('[data-anticipation-monthly]')).toContainText('36,60');
+  await expect(exit.locator('[data-difal-source-monthly]')).toContainText('100,00');
+  await expect(exit.locator('[data-difal-source-monthly]')).toBeHidden();
+  await page.reload();await expect(page.locator('#month-summary-difal')).toContainText('0,00');
+  await expect(page.locator('#difal-exit-pure')).not.toBeChecked();await expect(page.locator('#difal-entry-pure')).toBeChecked();
+  await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('salva');
+  const saved=state.snapshots.get(state.writes[0].simulationId),frozen=JSON.stringify(saved);
+  expect(saved.result.regimes.map((row:any)=>row.dre.difal)).toEqual([0,0,0,0]);
+  expect(saved.source.monthlyReports[0].difal.amountCents).toBe(10000);expect(saved.difalProjection.annualCents).toBe(30000);
+  await page.evaluate(()=>window.dispatchEvent(new Event('beforeprint')));
+  const print=page.locator('#simulation-print-context');
+  await expect(print.locator('[data-difal-monthly]')).toContainText('0,00');await expect(print.locator('[data-anticipation-monthly]')).toContainText('36,60');
+  await expect(print.locator('[data-difal-audit]')).toHaveCount(0);await expect(print.locator('[data-difal-source-monthly]')).toHaveCount(0);
+  await expect(exit.locator('[data-difal-audit]')).not.toHaveAttribute('open','');
+  await page.emulateMedia({media:'print'});await expect(exit.locator('[data-difal-source-monthly]')).toBeHidden();
+  await page.emulateMedia({media:'screen'});await page.evaluate(()=>window.dispatchEvent(new Event('afterprint')));
+  await page.setViewportSize({width:320,height:1000});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await capturePanel(page,'#simulator-difal',info.outputPath('difal-saida-desativada-320.png'));
+  await page.setViewportSize({width:1280,height:900});await page.goto(`/simulator.html?simulation=${saved._id}`);
+  await expect(exit.locator('[data-difal-application-status]')).toHaveText('Não incluído');
+  await expect(exit.locator('[data-difal-monthly]')).toContainText('0,00');await expect(entry.locator('[data-anticipation-monthly]')).toContainText('36,60');
+  await page.locator('#dre-month').selectOption('1');await expect(exit.locator('[data-difal-monthly]')).toContainText('0,00');await expect(entry.locator('[data-anticipation-monthly]')).toContainText('73,20');
+  await page.locator('#dre-month').selectOption('2');await expect(exit.locator('[data-difal-monthly]')).toHaveText('Indisponível');
+  expect(JSON.stringify(saved)).toBe(frozen);expect(state.sourceReads).toBe(2);expect(state.writes).toHaveLength(1);
+  await page.locator('#create-version').click();await expect(page.locator('#difal-exit-pure')).not.toBeChecked();await expect(page.locator('#difal-exit-hybrid')).not.toBeChecked();
+  await expect(page.locator('#month-summary-difal')).toContainText('0,00');await expect(entry.locator('[data-anticipation-monthly]')).toContainText('36,60');
 });
 
 test('sem operações não gera DIFAL e desmarcar o cenário conserva suas direções',async({page})=>{

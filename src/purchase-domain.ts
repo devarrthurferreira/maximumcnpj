@@ -1,3 +1,5 @@
+import {difalDirectionSelection} from '../public/difal-policy.js';
+import type {DifalPolicy} from '../public/simulator-engine.js';
 import {calculateAnticipation,isAnticipationVersion,isPendingAnticipation,ANTICIPATION_RATE_PERCENT,type AnticipationResult,type AnticipationSummary,type AnticipationOrigin} from './icms-anticipation.ts';
 import { calculateDifal, isPendingDifal, normalizeUf, normalizeNatureCode, salesOperation, DIFAL_VERSION, DIFAL_PREVIOUS_VERSION, isDifalVersion, DIFAL_RATE_PERCENT, type SalesOperation, type DifalResult, type DifalSummary, type DifalOrigin } from './difal.ts';
 import { normalizeCnpj, csvEncode } from './domain.ts';
@@ -179,14 +181,14 @@ export function moneyText(cents: number): string {
   const sign = cents < 0 ? '-' : '', value = Math.abs(cents);
   return `${sign}${Math.floor(value / 100)},${String(value % 100).padStart(2, '0')}`;
 }
-type FinancialCsvView = {anticipation?:AnticipationSummary|null;anticipationOrigin?:AnticipationOrigin;difal?:DifalSummary|null;difalOrigin?:DifalOrigin;purchaseSelection?:PurchaseSelectionSummary};
+type FinancialCsvView = {difalPolicy?:DifalPolicy;anticipation?:AnticipationSummary|null;anticipationOrigin?:AnticipationOrigin;difal?:DifalSummary|null;difalOrigin?:DifalOrigin;purchaseSelection?:PurchaseSelectionSummary};
 function selectionCsvFields(row: any, view: FinancialCsvView) {
   const selection = row.purchaseSelection;
   if (!view.purchaseSelection?.available || !selection?.available)
     return ['', '', 'Indisponível', 'Natureza ausente — reimporte as compras', PURCHASE_SELECTION_VERSION, 'UNAVAILABLE'];
   return [moneyText(selection.consideredCents), selection.selectedLines, selection.eligible ? 'SIM' : 'NÃO', selection.reason, PURCHASE_SELECTION_VERSION, view.purchaseSelection.origin];
 }
-function anticipationCsvFields(job:any,row:any,view:FinancialCsvView) {
+function rawAnticipationCsvFields(job:any,row:any,view:FinancialCsvView) {
   const version=view.anticipation?.version||(isAnticipationVersion(job.anticipationVersion)?job.anticipationVersion:undefined);
   const origin=view.anticipationOrigin||(isAnticipationVersion(job.anticipationVersion)?'IMPORTED':'UNAVAILABLE');
   const prefix=[view.anticipation?.issuerUf??job.issuerUf??'',row.recipientUf||''];
@@ -196,7 +198,7 @@ function anticipationCsvFields(job:any,row:any,view:FinancialCsvView) {
   return [...prefix,ANTICIPATION_RATE_PERCENT,pending?'':moneyText(row.anticipation.baseCents),pending?'':moneyText(row.anticipation.amountCents),
     pending?(row.anticipation.reason==='MISSING_ISSUER_UF'?'Pendente — UF do estabelecimento ausente':'Pendente — UF do fornecedor ausente'):row.anticipation.reason,version,origin];
 }
-function difalCsvFields(job:any,row:any,view:FinancialCsvView) {
+function rawDifalCsvFields(job:any,row:any,view:FinancialCsvView) {
   const version=view.difal?.version||(isDifalVersion(job.difalVersion)?job.difalVersion:undefined);
   const origin=view.difalOrigin||(isDifalVersion(job.difalVersion)?'IMPORTED':'UNAVAILABLE');
   const prefix=[view.difal?.issuerUf??job.issuerUf??'',row.recipientUf||''];
@@ -206,14 +208,24 @@ function difalCsvFields(job:any,row:any,view:FinancialCsvView) {
   return [...prefix,DIFAL_RATE_PERCENT,pending?'':moneyText(row.difal.baseCents),pending?'':moneyText(row.difal.amountCents),
     pending?(row.difal.reason==='MISSING_ISSUER_UF'?'Pendente — UF do emitente ausente':'Pendente — UF do destinatário ausente'):row.difal.reason,version,origin];
 }
+function selectedTaxCsvFields(raw: (string|number)[], view: FinancialCsvView, sales: boolean) {
+  const choice = difalDirectionSelection(view.difalPolicy, sales ? 'exit' : 'entry');
+  // A zero in the selected columns expresses an explicit exclusion, not missing
+  // fiscal evidence. Original availability and amounts remain in audit columns.
+  return choice && !choice.enabled ? [...raw.slice(0, 2), '', '0,00', '0,00', 'Não incluído por escolha', ...raw.slice(6)] : raw;
+}
+function taxAuditCsvFields(raw: (string|number)[], view: FinancialCsvView, sales: boolean) {
+  const choice = difalDirectionSelection(view.difalPolicy, sales ? 'exit' : 'entry');
+  return [choice ? (choice.enabled ? choice.label : 'Não incluído por escolha — Simples puro e híbrido') : 'Sem escolha registrada — estimativa de origem', view.difalPolicy?.version || '', ...raw.slice(2, 6)];
+}
 export function purchaseCsv(job: any, rows: any[], view:FinancialCsvView = {}): string {
   const version = calculationVersion(job), net = version === 'NET_V2', sales = job.mode === SALES_MODE;
   return csvEncode([
-    ['Código da empresa', 'Empresa', 'Consulta', 'Arquivo', 'Conclusão', 'Linha importada', 'Data Escrituração/Serviço (H)', sales ? 'Documento do comprador (A)' : 'Documento do fornecedor (A)', 'Tipo de documento', sales ? 'Comprador (I)' : 'Razão social informada (I)', 'Natureza / CFOP', 'Descrição da operação', 'Operação', sales ? 'Quantidade (P) — opcional' : 'Quantidade (P)', 'Valor bruto Q (R$)', 'Desconto Y (R$)', 'Despesa acessória Z — informativa (R$)', 'Frete AA (R$)', 'Abatimento AB (R$)', 'Total calculado (R$)', 'Saldo da operação (R$)', 'Fórmula', 'Versão do cálculo', 'Grupo gerencial', 'Situação Simples na fonte', 'Data da consulta', 'Fonte', ...(sales ? ['UF emitente', 'UF destinatário (J)', 'DIFAL estimado — alíquota média (%)', 'Base DIFAL (R$)', 'DIFAL estimado (R$)', 'Situação DIFAL', 'Versão DIFAL', 'Origem DIFAL'] : ['UF estabelecimento comprador', 'UF fornecedor (J)', 'DIFAL de entrada — Antecipação de ICMS — alíquota média (%)', 'Base DIFAL de entrada — Antecipação de ICMS (R$)', 'DIFAL de entrada — Antecipação de ICMS (R$)', 'Situação DIFAL de entrada — Antecipação de ICMS', 'Versão DIFAL de entrada — Antecipação de ICMS', 'Origem DIFAL de entrada']), 'Versão do catálogo de naturezas', ...(!sales ? ['Compras consideradas (R$)', 'Linhas consideradas em compras', 'Elegível para compras', 'Motivo da seleção de compras', 'Versão da seleção de compras', 'Origem da seleção de compras'] : [])],
+    ['Código da empresa', 'Empresa', 'Consulta', 'Arquivo', 'Conclusão', 'Linha importada', 'Data Escrituração/Serviço (H)', sales ? 'Documento do comprador (A)' : 'Documento do fornecedor (A)', 'Tipo de documento', sales ? 'Comprador (I)' : 'Razão social informada (I)', 'Natureza / CFOP', 'Descrição da operação', 'Operação', sales ? 'Quantidade (P) — opcional' : 'Quantidade (P)', 'Valor bruto Q (R$)', 'Desconto Y (R$)', 'Despesa acessória Z — informativa (R$)', 'Frete AA (R$)', 'Abatimento AB (R$)', 'Total calculado (R$)', 'Saldo da operação (R$)', 'Fórmula', 'Versão do cálculo', 'Grupo gerencial', 'Situação Simples na fonte', 'Data da consulta', 'Fonte', ...(sales ? ['UF emitente', 'UF destinatário (J)', 'DIFAL estimado — alíquota média (%)', 'Base DIFAL (R$)', 'DIFAL estimado (R$)', 'Situação DIFAL', 'Versão DIFAL', 'Origem DIFAL'] : ['UF estabelecimento comprador', 'UF fornecedor (J)', 'DIFAL de entrada — Antecipação de ICMS — alíquota média (%)', 'Base DIFAL de entrada — Antecipação de ICMS (R$)', 'DIFAL de entrada — Antecipação de ICMS (R$)', 'Situação DIFAL de entrada — Antecipação de ICMS', 'Versão DIFAL de entrada — Antecipação de ICMS', 'Origem DIFAL de entrada']), 'Versão do catálogo de naturezas', ...(!sales ? ['Compras consideradas (R$)', 'Linhas consideradas em compras', 'Elegível para compras', 'Motivo da seleção de compras', 'Versão da seleção de compras', 'Origem da seleção de compras'] : []), 'Escolha de DIFAL por cenário', 'Versão da escolha de DIFAL', 'Auditoria — alíquota estimada na origem (%)', 'Auditoria — base estimada na origem (R$)', sales ? 'Auditoria — DIFAL de saída estimado na origem (R$)' : 'Auditoria — DIFAL de entrada estimado na origem (R$)', 'Auditoria — situação da estimativa de origem'],
     ...rows.map(row => [job.clientCode || '', job.clientName, job._id, job.fileName, job.completedAt?.toISOString?.() || job.completedAt || '', row.index + 1, row.serviceDate || '',
       row.document, row.documentKind, row.name, row.natureCode || '', row.description || '', row.natureOperation || row.operation || '', row.quantity, moneyText(net ? row.grossCents : row.totalCents),
       ...['discountCents', 'accessoryCents', 'freightCents', 'abatementCents'].map(field => net ? moneyText(row[field]) : ''),
       moneyText(row.totalCents), moneyText(row.balanceCents ?? row.totalCents), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,
-      row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado', ...(sales ? difalCsvFields(job,row,view) : anticipationCsvFields(job,row,view)), row.operationVersion || '', ...(!sales ? selectionCsvFields(row,view) : [])])
+      row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado', ...selectedTaxCsvFields(sales ? rawDifalCsvFields(job,row,view) : rawAnticipationCsvFields(job,row,view),view,sales), row.operationVersion || '', ...(!sales ? selectionCsvFields(row,view) : []), ...taxAuditCsvFields(sales ? rawDifalCsvFields(job,row,view) : rawAnticipationCsvFields(job,row,view),view,sales)])
   ]);
 }

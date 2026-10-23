@@ -1,5 +1,6 @@
 import {mountNavigation} from './navigation.js';
 import {defaultDifalPolicy,parseDifalPolicy} from './simulator-engine.js';
+import {difalDirectionSelection} from './difal-policy.js';
 const $=q=>document.querySelector(q),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const n=v=>Number(v||0).toLocaleString('pt-BR'),dt=v=>v?new Date(v).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}):'—';
 const S={user:null,clients:[],selected:new Set(),generation:null,page:1,seq:0,busy:false,pendingId:null,pendingClientIds:null,reports:new Set(['PURCHASES','SALES']),pendingReports:null,difalPolicies:new Map(),difalExpanded:new Set(),pendingDifalPolicies:null,historyItems:[],deleteTarget:null,deleteTrigger:null,deleting:false};
@@ -168,7 +169,14 @@ function reportSlot(g,c,type){
 }
 function companyCard(g,c){
  const complete=c.status==='COMPLETED';
- return `<article class="card generation-company-card"><div class="generation-company-title"><span class="generation-company-code">${esc(c.code||'—')}</span><div><h2>${esc(c.name)}</h2><span class="generation-state ${complete?'complete':''}">${complete?'Concluída':c.status==='IN_PROGRESS'?'Em andamento':'Relatório pendente'}</span></div></div>${['PURCHASES','SALES'].map(type=>reportSlot(g,c,type)).join('')}${simulatorSlot(g,c)}</article>`;
+ return `<article class="card generation-company-card"><div class="generation-company-title"><span class="generation-company-code">${esc(c.code||'—')}</span><div><h2>${esc(c.name)}</h2><span class="generation-state ${complete?'complete':''}">${complete?'Concluída':c.status==='IN_PROGRESS'?'Em andamento':'Relatório pendente'}</span></div></div>${companyTaxSelection(c)}${['PURCHASES','SALES'].map(type=>reportSlot(g,c,type)).join('')}${simulatorSlot(g,c)}</article>`;
+}
+function companyTaxSelection(company){
+ if(!Object.hasOwn(company,'difalPolicy'))return '';
+ return `<section class="generation-tax-selection" aria-label="DIFAL escolhido para esta empresa"><strong>DIFAL escolhido para esta empresa</strong>${[['entry','Entrada · compras'],['exit','Saída · vendas']].map(([direction,label])=>{
+  const selected=difalDirectionSelection(company.difalPolicy,direction);
+  return `<p data-generation-tax-direction="${direction}"><span>${label}:</span> ${selected.enabled?esc(selected.regimeNames.join(' e ')):'não incluir'}</p>`;
+ }).join('')}<small>A DRE também verifica os bloqueios de cada competência.</small></section>`;
 }
 function simulatorSlot(g,c){
  const ready=c.purchase?.status==='COMPLETED'&&c.sales?.status==='COMPLETED',done=[c.purchase,c.sales].filter(job=>job?.status==='COMPLETED').length;

@@ -6,9 +6,10 @@ import { resetLookupIndexes, getJob, withJob } from '../src/lookup-db.ts';
 import { importCatalog } from '../src/lookup-catalog.ts';
 import { createGeneration, getGeneration, generationHistory, attachGenerationPurchase, attachGenerationSale, withGeneration, deleteGeneration } from '../src/generation-store.ts';
 import { createLookup, uploadLookup, finalizeLookup, cancelLookup, processLookup, recheckLookup } from '../src/lookup-jobs.ts';
-import { PURCHASE_MODE } from '../src/purchase-domain.ts';
+import { PURCHASE_MODE, SALES_MODE } from '../src/purchase-domain.ts';
 import { generationDeletion } from '../src/generation-deletion.ts';
-import { purchaseSummary, purchaseHistory } from '../src/purchase-store.ts';
+import { purchaseSummary, purchaseHistory, purchaseRows, purchaseExport } from '../src/purchase-store.ts';
+import { reportDifalPolicy } from '../src/report-difal-policy.ts';
 import { routeV4 } from '../src/lookup-http.ts';
 import { generationSimulator } from '../src/simulator-store.ts';
 import { digits } from '../src/domain.ts';
@@ -595,5 +596,127 @@ test('MongoDB exclusão de geração: purge exclusivo, leases, recibos e retomad
     await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
     if(oldDb===undefined)delete process.env.MONGODB_DB;else process.env.MONGODB_DB=oldDb;
     if(oldWs===undefined)delete process.env.WORKSPACE_ID;else process.env.WORKSPACE_ID=oldWs;
+  }
+});
+
+test('MongoDB relatórios: DIFAL desmarcado, CSV auditável, propriedade e linhagem de reconsulta', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
+  const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
+  process.env.MONGODB_DB = 'maximum_report_policy_test_' + randomUUID().replaceAll('-', '');
+  process.env.WORKSPACE_ID = 'report_policy_test'; resetLookupIndexes();
+  const actor = {_id: 'tester', role: 'admin', name: 'Teste', email: 'test@example.test'};
+  const errorCode = (code: string) => (error: any) => error.code === code;
+  const entryOnly = {...defaultDifalPolicy(), operations: {pure: {entry: true, exit: false}, hybrid: {entry: false, exit: false}}};
+  const hybridExit = {...defaultDifalPolicy(), operations: {pure: {entry: false, exit: false}, hybrid: {entry: false, exit: true}}};
+  const parseCsv = (content: string) => {
+    const [header, first] = content.replace(/^\uFEFF/, '').trim().split(/\r?\n/).map(line => line.split(';').map(cell => cell.replace(/^"|"$/g, '').replaceAll('""', '"')));
+    return Object.fromEntries(header.map((key, index) => [key, first[index]]));
+  };
+  const transport = (async () => Response.json({cnpj: '00000000000191', opcao_pelo_simples: false})) as typeof fetch;
+  const finishJob = async (jobId: string) => {
+    await (await collection('providerControl')).deleteMany({});
+    await processLookup(actor, jobId, transport);
+  };
+  try {
+    const catalog = await importCatalog(actor, ['Entrada', 'Saída', 'Legado'].map((name, index) => ({code: String(970 + index), name: `Empresa sintética ${name}`})));
+    const [first, second, legacy] = catalog.items.map((client: any) => client.id);
+    const generation = await createGeneration(actor, {generationId: randomUUID(), clientIds: [first, second, legacy], requiredReports: ['PURCHASES', 'SALES'],
+      companyDifalPolicies: [{clientId: first, difalPolicy: entryOnly}, {clientId: second, difalPolicy: hybridExit}]});
+    const reports = new Map<string, {purchase: string; sales: string}>();
+    for (const clientId of [first, second, legacy]) {
+      const ids = {purchase: '', sales: ''};
+      for (const sales of [false, true]) {
+        const {job} = await (sales ? attachGenerationSale : attachGenerationPurchase)(actor, generation._id,
+          {clientId, importId: randomUUID(), fileName: sales ? 'vendas.csv' : 'compras.csv', expectedRows: 1, issuerUf: 'MG'});
+        await uploadLookup(actor, job._id, {offset: 0, rows: [{document: '00000000000191', name: 'Documento sintético',
+          serviceDate: '2026-08-15', quantity: '1', natureCode: sales ? '6102' : '2102', description: 'Mercadoria sintética', recipientUf: 'SP',
+          grossCents: 10000, totalCents: 10000, discountCents: 0, accessoryCents: 0, freightCents: 0, abatementCents: 0}]});
+        await finalizeLookup(actor, job._id); await finishJob(job._id);
+        ids[sales ? 'sales' : 'purchase'] = job._id;
+      }
+      reports.set(clientId, ids);
+    }
+    const jobs = await collection('lookupJobs'), lines = await collection('purchaseLines'), generations = await collection('generations');
+    const originalJobs = await jobs.find(scope({generationId: generation._id})).sort({_id: 1}).toArray();
+    const originalLines = await lines.find(scope()).sort({_id: 1}).toArray();
+    const originalGeneration = await generations.findOne(scope({_id: generation._id}));
+    const firstSale = reports.get(first)!.sales, firstPurchase = reports.get(first)!.purchase;
+    const summary = await purchaseSummary(firstSale, true, SALES_MODE);
+    assert.deepEqual(summary.difalPolicy, entryOnly);
+    assert.equal(summary.difal?.amountCents, 1000, 'A estimativa bruta não muda quando a saída está desmarcada.');
+    const detail = await purchaseRows(firstSale, 'ALL', 1, true, SALES_MODE);
+    assert.deepEqual(detail.difalPolicy, entryOnly); assert.equal(detail.items[0].difal.amountCents, 1000);
+    const excludedCsv = parseCsv((await purchaseExport(firstSale, 'ALL', 1, SALES_MODE)).content);
+    assert.equal(excludedCsv['DIFAL estimado (R$)'], '0,00');
+    assert.equal(excludedCsv['Base DIFAL (R$)'], '0,00');
+    assert.equal(excludedCsv['Situação DIFAL'], 'Não incluído por escolha');
+    assert.equal(excludedCsv['Auditoria — DIFAL de saída estimado na origem (R$)'], '10,00');
+    assert.equal(excludedCsv['Auditoria — situação da estimativa de origem'], 'ELIGIBLE');
+    assert.match(excludedCsv['Escolha de DIFAL por cenário'], /Não incluído/);
+    const entryCsv = parseCsv((await purchaseExport(firstPurchase, 'ALL', 1, PURCHASE_MODE)).content);
+    assert.equal(entryCsv['DIFAL de entrada — Antecipação de ICMS (R$)'], '7,32');
+    assert.equal(entryCsv['Escolha de DIFAL por cenário'], 'Simples puro');
+    const hybridSale = parseCsv((await purchaseExport(reports.get(second)!.sales, 'ALL', 1, SALES_MODE)).content);
+    assert.equal(hybridSale['DIFAL estimado (R$)'], '10,00');
+    assert.equal(hybridSale['Escolha de DIFAL por cenário'], 'Simples híbrido');
+    const excludedEntry = parseCsv((await purchaseExport(reports.get(second)!.purchase, 'ALL', 1, PURCHASE_MODE)).content);
+    assert.equal(excludedEntry['DIFAL de entrada — Antecipação de ICMS (R$)'], '0,00');
+    assert.equal(excludedEntry['Auditoria — DIFAL de entrada estimado na origem (R$)'], '7,32');
+    assert.equal(Object.hasOwn(await purchaseSummary(reports.get(legacy)!.sales, true, SALES_MODE), 'difalPolicy'), false);
+    const legacyCsv = parseCsv((await purchaseExport(reports.get(legacy)!.sales, 'ALL', 1, SALES_MODE)).content);
+    assert.equal(legacyCsv['DIFAL estimado (R$)'], '10,00');
+    assert.match(legacyCsv['Escolha de DIFAL por cenário'], /Sem escolha registrada/);
+    assert.deepEqual(await jobs.find(scope({generationId: generation._id})).sort({_id: 1}).toArray(), originalJobs);
+    assert.deepEqual(await lines.find(scope()).sort({_id: 1}).toArray(), originalLines);
+    assert.deepEqual(await generations.findOne(scope({_id: generation._id})), originalGeneration);
+
+    for (const extra of [{difalPolicy: defaultDifalPolicy()}, {generationId: generation._id}, {clientId: second}, {difalPolicyOrigin: 'RECHECK_SOURCE'}]) {
+      await assert.rejects(recheckLookup(actor, firstSale, {importId: randomUUID(), ...extra}), errorCode('VALIDATION'));
+    }
+    const recheckInput = {importId: randomUUID()};
+    const repeated = await recheckLookup(actor, firstSale, recheckInput); await finishJob(repeated._id);
+    assert.equal(repeated.generationId, undefined); assert.deepEqual(repeated.difalPolicy, entryOnly);
+    assert.equal(repeated.difalPolicyOrigin, 'RECHECK_SOURCE');
+    const frozenRecheck = await jobs.findOne(scope({_id: repeated._id}));
+    assert.deepEqual(await recheckLookup(actor, firstSale, recheckInput), frozenRecheck);
+    assert.deepEqual((await purchaseSummary(repeated._id, true, SALES_MODE)).difalPolicy, entryOnly);
+    assert.equal(parseCsv((await purchaseExport(repeated._id, 'ALL', 1, SALES_MODE)).content)['DIFAL estimado (R$)'], '0,00');
+
+    // Emulate a completed recheck made before policy snapshots existed.
+    await jobs.updateOne(scope({_id: repeated._id}), {$unset: {difalPolicy: '', difalPolicyOrigin: ''}});
+    const oldRecheck = await jobs.findOne(scope({_id: repeated._id}));
+    assert.deepEqual((await purchaseSummary(repeated._id, true, SALES_MODE)).difalPolicy, entryOnly);
+    assert.deepEqual(await jobs.findOne(scope({_id: repeated._id})), oldRecheck, 'A herança histórica é somente leitura.');
+    const descendant = await recheckLookup(actor, repeated._id, {importId: randomUUID()}); await finishJob(descendant._id);
+    assert.deepEqual(descendant.difalPolicy, entryOnly);
+
+    const current = originalJobs.find(job => job._id === firstSale)!;
+    await assert.rejects(reportDifalPolicy({...current, workspaceId: 'foreign'}), errorCode('GENERATION_INCONSISTENT'));
+    await jobs.updateOne(scope({_id: repeated._id}), {$set: {repeatedFrom: repeated._id}});
+    await assert.rejects(purchaseSummary(repeated._id, true, SALES_MODE), errorCode('GENERATION_INCONSISTENT'));
+    await jobs.updateOne(scope({_id: repeated._id}), {$set: {repeatedFrom: reports.get(second)!.sales}});
+    await assert.rejects(purchaseSummary(repeated._id, true, SALES_MODE), errorCode('GENERATION_INCONSISTENT'));
+    await jobs.updateOne(scope({_id: repeated._id}), {$set: {repeatedFrom: firstPurchase}});
+    await assert.rejects(purchaseSummary(repeated._id, true, SALES_MODE), errorCode('GENERATION_INCONSISTENT'));
+    await jobs.updateOne(scope({_id: repeated._id}), {$set: {repeatedFrom: firstSale}});
+    await generations.updateOne(scope({_id: generation._id}), {$set: {'companies.0.salesJobId': randomUUID()}});
+    assert.deepEqual((await purchaseSummary(firstSale, true, SALES_MODE)).difalPolicy, entryOnly, 'A política também atende um job histórico, sem exigir o ponteiro atual.');
+    await generations.replaceOne(scope({_id: generation._id}), originalGeneration!);
+    for (const update of [{$set: {'companies.0.difalPolicy': null}}, {$set: {'companies.0.salesJobIds': []}},
+      {$push: {'companies.1.salesJobIds': firstSale}}, {$push: {'companies.0.purchaseJobIds': firstSale}},
+      {$set: {deletionStartedAt: new Date()}}]) {
+      await generations.updateOne(scope({_id: generation._id}), update as any);
+      await assert.rejects(purchaseSummary(firstSale, true, SALES_MODE), errorCode('GENERATION_INCONSISTENT'));
+      await generations.replaceOne(scope({_id: generation._id}), originalGeneration!);
+    }
+    await deleteGeneration(actor, generation._id);
+    assert.deepEqual((await purchaseSummary(descendant._id, true, SALES_MODE)).difalPolicy, entryOnly, 'Reconsulta nova conserva escolha depois da exclusão da origem.');
+    const orphan = await purchaseSummary(repeated._id, true, SALES_MODE);
+    assert.equal(Object.hasOwn(orphan, 'difalPolicy'), false, 'Origem antiga ausente não inventa seleção nem impede ler suas linhas autossuficientes.');
+    assert.equal(orphan.difal?.amountCents, 1000);
+    await assert.rejects(reportDifalPolicy(current), errorCode('GENERATION_DELETED'));
+  } finally {
+    await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
+    if (oldDb === undefined) delete process.env.MONGODB_DB; else process.env.MONGODB_DB = oldDb;
+    if (oldWs === undefined) delete process.env.WORKSPACE_ID; else process.env.WORKSPACE_ID = oldWs;
   }
 });
