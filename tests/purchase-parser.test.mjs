@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {amountCents, decimal, decodePurchaseCsv, parsePurchaseMatrix, fiscalDate} from '../public/purchase-parser.js';
 import {OPERATION_CATALOG_VERSION} from '../public/operation-catalog.js';
 import {DIFAL_VERSION, DIFAL_CATALOG_VERSION} from '../public/difal.js';
-import {ANTICIPATION_VERSION, ANTICIPATION_PREVIOUS_VERSION, ANTICIPATION_LEGACY_VERSION} from '../public/icms-anticipation.js';
+import {ANTICIPATION_VERSION, ANTICIPATION_CPF_CNPJ_VERSION, ANTICIPATION_PREVIOUS_VERSION, ANTICIPATION_LEGACY_VERSION} from '../public/icms-anticipation.js';
 
 const header = Array(28).fill('');
 for (const [index,label] of [[0,'Documento'],[7,'Data Escrituração/Serviço'],[8,'Razão social'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']]) header[index] = label;
@@ -368,10 +368,16 @@ test('antecipação de compras usa 7,32% para CPF e CNPJ válido interestadual, 
     purchase('12345678900','','2102'),purchase('12345678900','SP','1202'),purchase('12345678900','SP','8000102'),purchase('12.abc.345/01de-35'),purchase('11222333000182')];
   const report=parsePurchaseMatrix([header,...inputs],0,{issuerUf:'MG'});
   assert.deepEqual(report.errors,[]);
-  assert.deepEqual(report.rows.map(value=>value.anticipation.reason),['ELIGIBLE','ELIGIBLE','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','SAME_UF','MISSING_RECIPIENT_UF','NOT_PURCHASE','ELIGIBLE','ELIGIBLE','NOT_CPF_OR_CNPJ']);
+  assert.deepEqual(report.rows.map(value=>value.anticipation.reason),['ELIGIBLE','ELIGIBLE','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','SAME_UF','MISSING_RECIPIENT_UF','NOT_PURCHASE','SERVICE_PURCHASE_EXCLUDED','ELIGIBLE','NOT_CPF_OR_CNPJ']);
   assert.equal(report.rows[0].totalCents,14100); assert.equal(report.rows[0].anticipation.amountCents,1032);
   assert.equal(report.totalCents,141000); assert.equal(report.components.accessoryCents,900000);
-  assert.deepEqual(report.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:4,baseCents:56400,amountCents:4128,pendingLines:1});
+  assert.deepEqual(report.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:3,baseCents:42300,amountCents:3096,pendingLines:1});
+  for(const nature of ['8000','8000002','8000102','8.000.102']) {
+    const service=parsePurchaseMatrix([header,purchase('12345678900','',nature)],0,{});
+    assert.equal(service.rows[0].anticipation.reason,'SERVICE_PURCHASE_EXCLUDED');
+    assert.equal(service.anticipation.pendingLines,0);assert.equal(service.anticipation.baseCents,0);
+    assert.equal(service.rows[0].totalCents,14100);assert.equal(service.rows[0].natureOperation,'SERVICO_COMPRA');
+  }
   const missing=parsePurchaseMatrix([header,purchase()],0,{});
   assert.equal(missing.anticipation.pendingLines,1); assert.equal(missing.rows[0].anticipation.reason,'MISSING_ISSUER_UF');
   assert.equal(parsePurchaseMatrix([header,purchase('11222333000181')]).anticipation.pendingLines,1);
@@ -380,6 +386,8 @@ test('antecipação de compras usa 7,32% para CPF e CNPJ válido interestadual, 
   assert.equal(cpfOnly.anticipation.amountCents,0);assert.equal(cpfOnly.rows[0].anticipation.reason,'NOT_CPF');
   const historical=parsePurchaseMatrix([header,purchase('11222333000181')],0,{issuerUf:'MG',anticipationVersion:ANTICIPATION_LEGACY_VERSION});
   assert.equal(historical.rows[0].anticipation.amountCents,1032); assert.equal(historical.anticipation.version,ANTICIPATION_LEGACY_VERSION);
+  const v3Service=parsePurchaseMatrix([header,purchase('11222333000181','SP','8000102')],0,{issuerUf:'MG',anticipationVersion:ANTICIPATION_CPF_CNPJ_VERSION});
+  assert.equal(v3Service.rows[0].anticipation.amountCents,1032);assert.equal(v3Service.anticipation.version,ANTICIPATION_CPF_CNPJ_VERSION);
   const legacy=parsePurchaseMatrix([header,purchase()],0,{issuerUf:'MG',anticipationVersion:null});
   assert.equal(legacy.anticipation,null); assert.equal('anticipation' in legacy.rows[0],false);
   const legacyCatalog=parsePurchaseMatrix([header,purchase()],0,{issuerUf:'MG',operationVersion:null});

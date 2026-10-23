@@ -6,6 +6,7 @@ import {isAnticipationVersion,summarizeAnticipation} from './icms-anticipation.t
 import {OPERATION_CATALOG_VERSION, classifyOperationNature, normalizeOperationNature, type CatalogOperation} from './operation-catalog.ts';
 import {sameReportCompetences} from './report-competence.ts';
 import {MONTHLY_FIELDS, type MonthlyReport} from '../public/simulator-monthly.js';
+import {summarizeIcmsOperations, type IcmsOperations} from '../public/simulator-icms.js';
 
 export type NatureAudit = {
   side: 'SALES' | 'PURCHASES'; natureCode: string; operation: CatalogOperation; lines: number;
@@ -18,6 +19,7 @@ export type OperationAudit = Record<typeof AUDIT_FIELDS[number], number> & {natu
 export type OperationMonthlyReport = MonthlyReport & {
   operationVersion: typeof OPERATION_CATALOG_VERSION; operationAudit: OperationAudit;
   anticipation: ReturnType<typeof summarizeAnticipation>;
+  icmsOperations: IcmsOperations;
 };
 const emptyAudit = (): OperationAudit => ({...Object.fromEntries(AUDIT_FIELDS.map(key=>[key,0])) as Record<typeof AUDIT_FIELDS[number],number>,natures:[]});
 const natureKey = (row: NatureAudit) => `${row.side}:${row.natureCode}`;
@@ -51,7 +53,8 @@ export function selectOperationMonths(purchases: ReconciledRows, sales: Reconcil
     return {sourceMonth:date.toISOString().slice(0,7),month:date.getUTCMonth()+1,
       fields:Object.fromEntries(MONTHLY_FIELDS.map(key=>[key,0])) as MonthlyReport['fields'],
       salesLines:0,purchaseLines:0,difal:null,operationVersion:OPERATION_CATALOG_VERSION,
-      operationAudit:emptyAudit(),anticipation:summarizeAnticipation([],purchaseIssuerUf)};
+      operationAudit:emptyAudit(),anticipation:summarizeAnticipation([],purchaseIssuerUf),
+      icmsOperations:summarizeIcmsOperations({sourceMonth:date.toISOString().slice(0,7),purchases:[],sales:[],issuerUf,purchaseIssuerUf})};
   });
   const byMonth=new Map(months.map(row=>[row.sourceMonth,row]));
   const salesByMonth=new Map<string,any[]>(),purchasesByMonth=new Map<string,any[]>();
@@ -101,7 +104,7 @@ export function selectOperationMonths(purchases: ReconciledRows, sales: Reconcil
           audit.excludedPurchaseCents=exactCents(audit.excludedPurchaseCents+total);entry.excludedCents=exactCents(entry.excludedCents+total);
           if(operation==='NAO_CLASSIFICADA')audit.unknownPurchaseLines++;
         }
-        const list=purchasesByMonth.get(target.sourceMonth)||[];list.push(row);purchasesByMonth.set(target.sourceMonth,list);
+        const list=purchasesByMonth.get(target.sourceMonth)||[];list.push({...row,creditGroup:group});purchasesByMonth.set(target.sourceMonth,list);
       }
     }
   }
@@ -109,6 +112,8 @@ export function selectOperationMonths(purchases: ReconciledRows, sales: Reconcil
     month.operationAudit.natures=[...auditNatures.get(month.sourceMonth)!.values()].sort((a,b)=>natureKey(a).localeCompare(natureKey(b)));
     month.difal=summarizeDifal((salesByMonth.get(month.sourceMonth)||[]).map(row=>({...row,operation:salesOperation(row.natureCode,'')})),issuerUf);
     month.anticipation=summarizeAnticipation(purchasesByMonth.get(month.sourceMonth)||[],purchaseIssuerUf);
+    month.icmsOperations=summarizeIcmsOperations({sourceMonth:month.sourceMonth,purchases:purchasesByMonth.get(month.sourceMonth)||[],
+      sales:salesByMonth.get(month.sourceMonth)||[],issuerUf,purchaseIssuerUf});
     const audit=month.operationAudit;
     need(exactSignedCents(audit.grossSalesCents+audit.serviceSalesCents+audit.excludedSalesCents+audit.reportSalesBalanceAdjustmentCents)===audit.reportSalesCents&&
       exactCents(audit.purchaseGoodsCents+audit.purchaseServicesCents+audit.salesReturnsCents+audit.excludedPurchaseCents)===audit.reportPurchasesCents,

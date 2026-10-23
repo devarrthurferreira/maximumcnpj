@@ -6,7 +6,8 @@ permissions:
   contents: read
 jobs:
   annual-projection:
-    runs-on: ubuntu-latest
+    # Keep the browser runner compatible with the pinned Playwright version.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     services:
       mongo:

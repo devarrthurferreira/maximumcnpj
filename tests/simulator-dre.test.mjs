@@ -10,7 +10,7 @@ import {baselineMonth,calculateMonthlySimulation} from '../public/simulator-mont
 import {buildDreCsv} from '../public/simulator-dre-export.js';
 
 const near=(a,b)=>assert(Math.abs(a-b)<1e-7,`${a} != ${b}`);
-const allRows=p=>[...p.sections.flatMap(section=>section.rows),...p.details.flatMap(section=>section.rows),...p.indicators,...(p.revenueReconciliation?.rows||[])];
+const allRows=p=>[...p.sections.flatMap(section=>section.rows),...p.details.flatMap(section=>section.rows),...p.indicators,...(p.revenueReconciliation?.rows||[]),...(p.icmsReconciliation?.rows||[])];
 const find=(p,key)=>allRows(p).find(row=>row.key===key);
 function fixture(){
  const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:180000,values:{salesRevenue:12000,serviceRevenue:3000,simplePurchases:1000,regularPurchases:2000,salaries:300,benefits:10,adminExpenses:200,rent:100,cardExpenses:50}};
@@ -297,9 +297,9 @@ test('DRE única inclui cada linha uma vez, composição junto ao total e indica
  assert.equal(rows.length,allRows(p).length);assert.equal(new Set(keys).size,rows.length);
  assert.deepEqual(rows.filter(row=>row.kind!=='detail'&&row.kind!=='indicator').map(row=>row.key),[...p.sections.flatMap(section=>section.rows.map(row=>row.key)),...p.revenueReconciliation.rows.map(row=>row.key)]);
  for(const group of p.details){const parent=keys.indexOf(group.parentKey);assert(parent>=0);assert.deepEqual(keys.slice(parent+1,parent+1+group.rows.length),group.rows.map(row=>row.key));}
- assert.deepEqual(rows.slice(-p.indicators.length-p.revenueReconciliation.rows.length,-p.revenueReconciliation.rows.length),p.indicators);
- assert.deepEqual(rows.slice(-p.revenueReconciliation.rows.length),p.revenueReconciliation.rows);
- assert.equal(keys[keys.length-p.indicators.length-p.revenueReconciliation.rows.length-1],'netProfit');
+ const closing=[...p.indicators,...p.revenueReconciliation.rows,...p.icmsReconciliation.rows];
+ assert.deepEqual(rows.slice(-closing.length),closing);
+ assert.equal(keys[keys.length-closing.length-1],'netProfit');
  for(const row of rows)assert.equal(row,find(p,row.key),'A ordenação não copia nem transforma os valores anuais ou mensais.');
  assert.deepEqual(p,before);
 });
@@ -313,8 +313,9 @@ test('DRE única mantém legado, detalhes indisponíveis e extensões sem repeti
  assert.equal(keys.includes('difal'),false);assert.equal(keys.filter(key=>key==='salesCpfCents').length,1);
  assert.equal(rows.find(row=>row.key==='serviceReport').values.actual,null);
  assert.equal(rows.find(row=>row.key==='extraDetail'),extension);
- assert.equal(new Set(keys).size,keys.length);assert.deepEqual(rows.slice(-p.indicators.length-p.revenueReconciliation.rows.length,-p.revenueReconciliation.rows.length),p.indicators);
- assert.deepEqual(rows.slice(-p.revenueReconciliation.rows.length),p.revenueReconciliation.rows);
+ assert.equal(new Set(keys).size,keys.length);
+ const closing=[...p.indicators,...p.revenueReconciliation.rows,...p.icmsReconciliation.rows];
+ assert.deepEqual(rows.slice(-closing.length),closing);
 });
 
 
@@ -561,4 +562,69 @@ test('memória completa mantém itens anuais e normaliza rótulos legados sem co
  assert(!reported.some(row=>/^(?:dre|summary)\./.test(row.id)));
  assert.equal(reported.find(row=>row.id==='simples.pureDas').unit,'text');
  assert.deepEqual(input,before);assert.deepEqual(presentation.report.memory,input.result.memory);
+});
+
+test('apuração de ICMS aparece uma vez no final e mantém o crédito apenas no imposto líquido',()=>{
+ const dre=Object.fromEntries(dreRows(fixture().result).map(([key])=>[key,0]));
+ Object.assign(dre,{sales:2700,revenue:2700,icmsNet:-264,netRevenue:2436,cmvRegular:-1400,cmv:-1400,grossProfit:1036,preTax:1036,netProfit:1036,icmsUsed:156,icmsBalance:0});
+ const result={version:'histórico sintético',annualRevenue:2700,credits:{icms:{debit:420,potential:156,used:156,due:264,balance:0}},memory:[],
+  regimes:[{id:'actual',name:'Lucro Real',available:true,dre,annualProfit:1036,totalTaxes:264,margin:1036/2700,taxBurden:264/2700}]};
+ const input={result,calendar:buildMonthlyDre(result,2027)},before=structuredClone(input);freeze(input);
+ const p=buildDrePresentation(input),keys=['icms.debit','icms.potential','icms.used','icms.due','icms.balance'];
+ assert.equal(p.icmsReconciliation.label,'Apuração do crédito de ICMS');
+ assert.deepEqual(p.icmsReconciliation.rows.map(row=>row.key),keys);
+ assert(!p.details.some(group=>group.key==='icmsCredits'));
+ assert.deepEqual(unifiedDreRows(p).slice(-5),p.icmsReconciliation.rows);
+ assert.equal(find(p,'icmsNet').values.actual,-264);assert.equal(find(p,'netRevenue').values.actual,2436);
+ assert.equal(find(p,'netProfit').values.actual,1036);assert.equal(find(p,'totalTaxes').values.actual,264);
+ const summary=buildDreSummary(p,{id:'actual',mode:'annual'});assert.equal(summary.result,1036);assert.equal(summary.reconciled,true);
+ assert.deepEqual(p.icmsReconciliation.rows.map(row=>row.values.actual),[420,156,156,264,0]);
+ for(const row of p.icmsReconciliation.rows){assert.equal(row.informative,true);near(row.monthlyValues.actual[0],row.values.actual/12);}
+ for(const html of [renderAnnualDre({presentation:p,year:2027}),renderCompleteMonthlyDre({presentation:p,calendar:input.calendar,year:2027,regimeId:'actual',month:0})]){
+  const position=html.indexOf('data-icms-reconciliation="dre"');assert(position>html.indexOf('data-revenue-reconciliation="dre"'));assert(position>html.indexOf('data-dre-row="netProfit"'));
+  assert.equal((html.match(/data-icms-reconciliation="dre"/g)||[]).length,1);
+  assert(!html.slice(0,position).includes('data-dre-row="icms.potential"'));
+  for(const key of keys)assert.equal((html.match(new RegExp(`data-dre-row="${key}"`,'g'))||[]).length,1);
+  assert.match(html,/já está abatido na linha “− ICMS líquido fora do DAS”/);
+ }
+ for(const [period,count] of [['annual',1],['monthly',1],['complete',2]]){
+  const html=renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027,period});
+  assert.equal((html.match(/data-icms-reconciliation="dre"/g)||[]).length,count);
+  for(const key of keys)assert.equal((html.match(new RegExp(`data-dre-row="${key}"`,'g'))||[]).length,count);
+  assert(!html.includes('data-icms-mobile'));
+ }
+ assert.deepEqual(input,before);
+});
+
+test('quadro final de ICMS conserva ausência e divergência em vez de exibir crédito zero',()=>{
+ const input=fixture();delete input.result.credits.icms;
+ const before=structuredClone(input);freeze(input);
+ const p=buildDrePresentation(input);
+ for(const row of p.icmsReconciliation.rows){assert.equal(row.values.actual,null);assert.match(row.reasonByRegime.actual,/não está disponível ou não concilia/);}
+ assert.equal(find(p,'icmsNet').values.actual,input.result.regimes.find(row=>row.id==='actual').dre.icmsNet);
+ const html=renderAnnualDre({presentation:p,year:2027}),credit=html.slice(html.indexOf('data-icms-reconciliation="dre"'));
+ assert.match(credit,/data-icms-unavailable/);assert(!credit.includes('R$ 0,00'));
+ assert.deepEqual(input,before);
+});
+
+test('origem do crédito de ICMS exige compras e devoluções capturadas e conciliadas com o potencial',()=>{
+ const input=fixture(),potential=input.result.credits.icms.potential;
+ input.result.memory.push({id:'icms.purchaseCredit',section:'Apuração de ICMS',label:'Compras elegíveis',formula:'Memória capturada',value:potential*.75,unit:'currency'},
+  {id:'icms.returnCredit',section:'Apuração de ICMS',label:'Devoluções de venda',formula:'Memória capturada',value:potential*.25,unit:'currency'});
+ input.calendar=buildMonthlyDre(input.result,2027);
+ const before=structuredClone(input),p=buildDrePresentation(input);
+ assert.deepEqual(p.icmsReconciliation.rows.map(row=>row.key),['icms.debit','icms.potential','icms.purchaseCredit','icms.returnCredit','icms.used','icms.due','icms.balance']);
+ near(find(p,'icms.purchaseCredit').values.actual+find(p,'icms.returnCredit').values.actual,potential);
+ near(find(p,'icms.purchaseCredit').monthlyValues.actual[0],potential*.75/12);
+ near(find(p,'icms.returnCredit').calendarAnnualValues.actual,potential*.25);
+ assert.equal(find(p,'icms.purchaseCredit').values.pure,null);
+ for(const change of [data=>data.result.memory.splice(data.result.memory.findIndex(row=>row.id==='icms.returnCredit'),1),
+  data=>data.result.memory.find(row=>row.id==='icms.returnCredit').value++,
+  data=>data.result.memory.push({...data.result.memory.find(row=>row.id==='icms.purchaseCredit')})]){
+  const broken=structuredClone(input);change(broken);const checked=buildDrePresentation(broken);
+  assert.equal(checked.icmsReconciliation.rows.length,5);assert.equal(find(checked,'icms.potential').values.actual,potential);
+ }
+ const zero=structuredClone(input);zero.result.memory.find(row=>row.id==='icms.purchaseCredit').value=potential;zero.result.memory.find(row=>row.id==='icms.returnCredit').value=0;
+ assert.equal(find(buildDrePresentation(zero),'icms.returnCredit').values.actual,0);
+ assert.deepEqual(input,before);
 });

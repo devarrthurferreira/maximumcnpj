@@ -1,8 +1,9 @@
 import {test,expect} from '@playwright/test';
+import {REPROCESS_VERSION} from '../../public/simulation-reprocess-contract.js';
 const item={_id:'00000000-0000-4000-8000-000000000001',title:'Cenário com novas despesas',company:{code:'936',name:'EMPRESA DE TESTE'},year:2027,createdAt:'2026-09-30T16:00:00Z',createdBy:{id:'operator',name:'Equipe Teste'},annualRevenue:120000,bestRegimeId:'pure',bestRegimeName:'Simples Puro',bestAnnualProfit:50000,manuallyAdjusted:true,reportMonths:1};
 async function session(page:any,user:any={_id:'operator',role:'operator',name:'Teste'}){
  await page.route('**/api/auth/session',(r:any)=>r.fulfill({json:{user}}));
- await page.route(/\/api\/v4\/simulations\/reprocess(?:\?.*)?$/,(r:any)=>r.fulfill({json:{version:'REPORT_MONTHS_2026_10_V1',total:0,counts:{queued:0,processing:0,ok:0,pending:0,failed:0},retryableFailed:0,inventoryComplete:true,hasMore:false,retryAfterMs:0,items:[],page:1,totalPages:1}}));
+ await page.route(/\/api\/v4\/simulations\/reprocess(?:\?.*)?$/,(r:any)=>r.fulfill({json:{version:REPROCESS_VERSION,total:0,counts:{queued:0,processing:0,ok:0,pending:0,failed:0},retryableFailed:0,inventoryComplete:true,hasMore:false,retryAfterMs:0,items:[],page:1,totalPages:1}}));
 }
 test('Simulation history searches, filters, paginates and exposes direct detail links on desktop/mobile',async({page},info)=>{
  await session(page);const queries:URLSearchParams[]=[];const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));

@@ -1,5 +1,16 @@
 # Histórico de alterações
 
+## [0.34.0] — 2026-10-23
+
+- Exclui todas as naturezas de prefixo 8000 da antecipação e do crédito de ICMS, preservando seus custos. Antecipação V4 conserva 7,32% nas demais compras elegíveis e valida exatamente as regras históricas V1/V2/V3.
+- Acrescenta composição de ICMS por competência, natureza e UF, derivada somente das linhas conciliadas no servidor: premissas de 18% interna e 12% interestadual nas vendas, compras elegíveis e devoluções de venda. Não presume UF ausente nem localização pela natureza.
+- Separa crédito de compras e crédito de devoluções de venda, usando débito sobre vendas brutas para não duplicar o efeito da devolução já abatida na receita. Crédito utilizado reduz o ICMS líquido uma única vez; excedente não aumenta lucro nem é compensado entre meses.
+- Move a apuração do crédito para o final da DRE, retirando o detalhamento das deduções; anual, mensal, PDF e CSV mantêm os mesmos valores. Composição nova só aparece quando capturada e conciliada; históricos não recebem valores inventados.
+- Ajustes de receita usam as bases de UF da origem, evitando ampliar arredondamentos de notas pequenas. Ajustes de custos não criam créditos de documentos. Ausência de UF ou de composição suficiente deixa pendentes os regimes com ICMS fora do DAS, seu diagnóstico e a memória fiscal.
+- Versiona `ICMS_OPERATIONS_V1`, motores `1.9.0-icms-operations` e revisão vinculada `ICMS_OPERATIONS_2026_10_V9`; preserva snapshots originais, enquadramento consultado e opções de DIFAL. Acrescenta referências oficiais e identifica 12% como premissa gerencial, sem declarar alíquota legal universal.
+- Corrige a divergência do contrato de reprocessamento entre servidor e navegador, compartilhando a revisão atual. Resposta desconhecida interrompe antes do POST; tentativa explícita retoma quando a versão estiver confirmada, sem alterar a revisão registrada nos históricos.
+- Validação: 295 testes de regras, 113 verificações de integração/projeção/competências, 172 Python/PDF/OCR e 171 testes na rodada completa de navegador aprovados, sem saltos; tipos, build, versão e diff conferidos. Fluxo autenticado real confirma crédito de R$ 156,00 e ICMS líquido de R$ 264,00 após reabertura, CSV/PDF e preservação das fontes. Inspeção visual confere anual/mensal/completo e 320/390 px; avisos móveis se limitam ao regime selecionado.
+
 ## [0.33.0] — 2026-10-23
 
 - Corrige o bloqueio do Simples em meses sazonais: a verificação usa a soma das competências do cenário, sem comparar mês × 12 ao limite. RBT12, receita do período, limite federal e sublimite passam a ter diagnóstico separado.
@@ -10,6 +21,7 @@
 - DRE abre em Anual e conserva a alternância Mensal. PDF e CSV oferecem relatório completo, somente anual ou somente mensal, sempre para os quatro regimes; completo traz anual primeiro, meses, fechamento da receita, diagnósticos, premissas, memória e referências capturadas.
 - Mostra cobertura parcial, competências de origem e ano do cenário, sem inventar meses nem recalcular históricos. Motores `1.8.0-simples-revenue-context` e revisão vinculada `SIMPLES_REVENUE_CONTEXT_2026_10_V8` preservam os originais.
 - Validação: 278 testes de regras, 112 verificações de integração/projeção/competências e 171 Python/PDF/OCR aprovados. Navegador: 166 testes na rodada completa e 21 na conferência final direcionada, incluindo a nova regressão da memória histórica. Fluxo real de R$ 3,3 milhões, três PDFs, CSV, nova sessão e versões dentro/fora do DAS conferidos; tipos, build, versão e inspeção visual aprovados.
+- Fixa os jobs de navegador no Ubuntu 24.04, compatível com o Playwright 1.55.1 instalado. Corrige a falha de preparação do Chromium causada pela migração de `ubuntu-latest` para Ubuntu 26.04, mantendo as verificações obrigatórias.
 
 ## [0.32.2] — 2026-10-23
 

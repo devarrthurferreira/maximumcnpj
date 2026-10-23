@@ -13,6 +13,7 @@ export type DrePresentation = {
   sections:Array<{key:string;label:string;rows:DrePresentationRow[]}>;
   details:Array<{key:string;label:string;parentKey:string;rows:DrePresentationRow[]}>;indicators:DrePresentationRow[];
   revenueReconciliation?:{key:'revenueReconciliation';label:string;note:string;rows:DrePresentationRow[]};
+  icmsReconciliation?:{key:'icmsReconciliation';label:string;note:string;rows:DrePresentationRow[]};
   months:Array<{number:number;label:string;period:string|null;sourceMonth?:string|null;rbt12Cents?:number|null}>;
   rbt12Schedule?:import('./simulator-rbt12.js').Rbt12Schedule;
   calendarYear:number|null;calendarReference:any;calendarRounding:string;percentBasis:string;

@@ -64,7 +64,7 @@ test('CSV mensal mantém uma tabela e um cabeçalho com doze meses, total e todo
   assert.match(taxes[1][19], /Calendário não disponível/);
   const indicators = rows.filter(row => row[3] === 'Margem líquida');
   assert(indicators[0].slice(6,19).every(value => value === '30,00'));
-  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores','Conferência da receita'].includes(row[1]));
+  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores','Conferência da receita','Apuração do crédito de ICMS'].includes(row[1]));
   assert.equal(dataRows.length, 8);
   assert.deepEqual([...new Set(dataRows.map(row => row[0]))], ['Regime A','Regime B']);
   for (const name of ['Regime A','Regime B']) assert.deepEqual(dataRows.filter(row => row[0] === name).map(row => row[3]), ['Receita bruta total','Vendas; "CPFs"\nClientes','DAS','Margem líquida']);
@@ -109,7 +109,7 @@ test('Integração com a apresentação compartilhada preserva calendário diver
   assert.equal(revenue[6],'300,00');assert.equal(revenue[7],'100,00');assert.equal(revenue[30],'2400,00');assert.equal(revenue[31],'100,00');
   const sales = rows.find(row => row[3] === 'Receita de vendas utilizada');
   assert.equal(sales[6],'83,33');assert.equal(sales[7],'27,777778');
-  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores','Conferência da receita'].includes(row[1]));
+  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores','Conferência da receita','Apuração do crédito de ICMS'].includes(row[1]));
   // Spreadsheet text escaping changes only the protective prefix, never row order.
   assert.deepEqual(dataRows.map(row => row[3].replace(/^'/,'')), unifiedDreRows(presentation).map(row => row.label));
   assert.deepEqual({result,calendar},before);
@@ -175,4 +175,35 @@ test('memória histórica do Simples pendente não publica imposto não confirma
   assert.match(rows.find(row=>row[0]==='Memória'&&row[2]==='DAS puro')[4],/Não disponível/);
   assert.equal(rows.find(row=>row[0]==='Memória'&&row[2]==='Parcela a deduzir da tabela')[4],'87300,00');
   assert.deepEqual(data,before);
+});
+
+test('CSV anual, mensal e completo terminam a DRE com apuração informativa de ICMS sem duplicar o abatimento',()=>{
+  const dre=Object.fromEntries(DRE_ROWS.map(([key])=>[key,0]));
+  Object.assign(dre,{sales:2700,revenue:2700,icmsNet:-264,netRevenue:2436,cmvRegular:-1400,cmv:-1400,grossProfit:1036,preTax:1036,netProfit:1036,icmsUsed:156,icmsBalance:0});
+  const result={version:'histórico sintético',annualRevenue:2700,credits:{icms:{debit:420,potential:156,used:156,due:264,balance:0}},
+    memory:[{id:'icms.purchaseCredit',section:'Apuração de ICMS',label:'Crédito das compras',formula:'Memória capturada',value:114,unit:'currency'},
+      {id:'icms.returnCredit',section:'Apuração de ICMS',label:'Crédito das devoluções',formula:'Memória capturada',value:42,unit:'currency'}],
+    regimes:[{id:'actual',name:'Lucro Real',available:true,dre,annualProfit:1036,totalTaxes:264,margin:1036/2700,taxBurden:264/2700}]};
+  const presentation=buildDrePresentation({result,calendar:buildMonthlyDre(result,2027)}),before=structuredClone(presentation);
+  const labels=presentation.icmsReconciliation.rows.map(row=>row.label),scope='Apuração do crédito de ICMS';
+  for(const period of ['annual','monthly','complete']){
+    const csv=readCsv(buildDreCsv({presentation,period,year:2027}));
+    const annual=csv.filter(row=>row[0]===scope),monthly=csv.filter(row=>row[0]==='Lucro Real'&&row[1]===scope);
+    assert.equal(annual.length,period==='monthly'?0:7);assert.equal(monthly.length,period==='annual'?0:7);
+    if(annual.length){
+      assert.deepEqual(annual.map(row=>row[2]),labels);assert.deepEqual(annual.map(row=>row[5]),['420,00','156,00','114,00','42,00','156,00','264,00','0,00']);
+      assert(csv.indexOf(annual[0])>csv.findIndex(row=>row[0]==='Conferência da receita'&&row[2].includes('Receita utilizada')));
+      assert.equal(csv.find(row=>row[0]==='DRE'&&row[2]==="'− ICMS líquido fora do DAS")[5],'-264,00');
+      assert.equal(csv.find(row=>row[0]==='DRE'&&row[2]==='Resultado líquido')[5],'1036,00');
+    }
+    if(monthly.length){
+      assert.deepEqual(monthly.map(row=>row[3]),labels);
+      assert.deepEqual(monthly[1].slice(6,19),[...Array(12).fill('13,00'),'156,00']);
+      assert.deepEqual(monthly[2].slice(6,19),[...Array(12).fill('9,50'),'114,00']);
+      assert.deepEqual(monthly[3].slice(6,19),[...Array(12).fill('3,50'),'42,00']);
+      assert(csv.indexOf(monthly[0])>csv.findIndex(row=>row[1]==='Conferência da receita'&&row[3].includes('Receita utilizada')));
+    }
+    for(const row of [...annual,...monthly])assert(row.at(-2).includes('não somar novamente'));
+  }
+  assert.deepEqual(presentation,before);
 });

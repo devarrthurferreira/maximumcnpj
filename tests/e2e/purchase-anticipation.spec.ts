@@ -56,13 +56,14 @@ test('Antecipação compras inclui CPF e CNPJ válido, 7,32%, exclusões e pend�
     {name:'Pessoa jurídica',document:'11222333000181'},
     {name:'CNPJ inválido',document:'11222333000182'},
     {name:'Mesma UF',uf:'MG'},
-    {name:'Serviço 8000',nature:'8000102'},
+    {name:'Serviço 8000',nature:'8000102',uf:''},
     {name:'Devolução',nature:'1202001'},
     {name:'Sem UF',uf:''},
     {name:'Pessoa alfanumérica',document:'12.abc.345/01de-35'}]);
-  await expect(panel.locator('[data-anticipation-amount]')).toContainText('43,92');
+  await expect(panel.locator('[data-anticipation-amount]')).toContainText('32,94');
   await expect(panel).toContainText('Compras com CPF ou CNPJ');
-  await expect(panel).toContainText('4 linha(s) elegível(is)');await expect(panel).toContainText('1 linha(s) pendente(s)');
+  await expect(panel).toContainText('3 linha(s) elegível(is)');await expect(panel).toContainText('1 linha(s) pendente(s)');
+  await expect(panel).toContainText('Serviços de prefixo 8000, inclusive com sufixos, ficam fora da antecipação');
   await expect(page.locator('#purchase-review [data-purchase-original-total]')).toContainText('1.200,00');
   await expect(page.locator('#purchase-review [data-purchase-excluded-total]')).toContainText('150,00');
   await expect(page.locator('#purchase-review [data-purchase-selection-total]')).toContainText('1.050,00');
@@ -70,7 +71,9 @@ test('Antecipação compras inclui CPF e CNPJ válido, 7,32%, exclusões e pend�
   await expect(table.getByRole('row').filter({hasText:'CNPJ inválido'})).toContainText('Fornecedor não identificado por CPF ou CNPJ válido');
   for(const name of ['Pessoa jurídica','Pessoa alfanumérica'])await expect(table.getByRole('row').filter({hasText:name})).toContainText('10,98');
   await expect(table.getByRole('row').filter({hasText:'Mesma UF'})).toContainText('Não se aplica');
-  await expect(table.getByRole('row').filter({has:page.getByRole('cell',{name:'Serviço 8000',exact:true})})).toContainText('10,98');
+  const service=table.getByRole('row').filter({has:page.getByRole('cell',{name:'Serviço 8000',exact:true})});
+  await expect(service).toContainText('Não se aplica');await expect(service).toContainText('Serviço de prefixo 8000 excluído da antecipação');
+  await expect(service).not.toContainText('Pendente');await expect(service).toContainText('150,00');
   await expect(table.getByRole('row').filter({hasText:'Devolução'})).toContainText('Não se aplica');
   await expect(table.getByRole('row').filter({hasText:'Sem UF'})).toContainText('Pendente');
   const desktop=testInfo.outputPath('anticipation-preview-desktop.png');

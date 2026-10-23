@@ -1,3 +1,5 @@
+import {REPROCESS_VERSION} from './simulation-reprocess-contract.js';
+
 const endpoint = '/api/v4/simulations/reprocess';
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
 const number = value => Number(value).toLocaleString('pt-BR');
@@ -8,7 +10,7 @@ const simulationLink = (id, label) => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f
 
 function validate(data) {
   const validCount = value => Number.isSafeInteger(value) && value >= 0;
-  if (!data || data.version !== 'REPORT_MONTHS_2026_10_V1' || !validCount(data.total) ||
+  if (!data || data.version !== REPROCESS_VERSION || !validCount(data.total) ||
       !['queued','processing','ok','pending','failed'].every(key => validCount(data.counts?.[key])) ||
       !validCount(data.retryableFailed) || data.retryableFailed > data.counts.failed ||
       typeof data.hasMore !== 'boolean' || typeof data.inventoryComplete !== 'boolean' ||
@@ -63,7 +65,7 @@ export function mountSimulationReprocess(root, user, onComplete) {
       state.finished && !state.running ? issues ? 'Há simulações que precisam de conferência. Veja os motivos nos detalhes.' :
         data?.total ? 'As simulações verificadas estão atualizadas.' : 'Nenhuma simulação precisa de atualização neste lote.' :
       !data ? 'Verificando o andamento…' : !writable ? 'Seu acesso permite acompanhar a atualização. Um administrador ou operador pode continuar o processamento.' :
-      !data.inventoryComplete ? 'Identificando as simulações que precisam de atualização…' : 'Serviços e DIFAL estão sendo conferidos em cada simulação.');
+      !data.inventoryComplete ? 'Identificando as simulações que precisam de atualização…' : 'Serviços, DIFAL, naturezas e créditos de ICMS estão sendo conferidos em cada simulação.');
     const detail = state.detail || data;
     const processed = counts ? counts.ok + counts.pending + counts.failed : 0;
     const showProgress = data?.inventoryComplete && data.total > 0 && processed <= data.total;

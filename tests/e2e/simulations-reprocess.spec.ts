@@ -1,10 +1,11 @@
 import {test, expect, type Page} from '@playwright/test';
+import {REPROCESS_VERSION} from '../../public/simulation-reprocess-contract.js';
 
 const originalId = '00000000-0000-4000-8000-000000000001';
 const childId = '00000000-0000-4000-8000-000000000002';
 const original = {_id:originalId, title:'Cenário original', company:{code:'936',name:'EMPRESA SINTÉTICA'}, year:2027,
   createdAt:'2026-10-01T12:00:00Z', createdBy:{name:'Equipe de teste'}, annualRevenue:120000, bestAnnualProfit:30000, bestRegimeName:'Simples Puro', reportMonths:3};
-const completed = {version:'REPORT_MONTHS_2026_10_V1',modelVersion:'current',startedAt:'2026-10-19T12:00:00Z',updatedAt:'2026-10-19T12:01:00Z',
+const completed = {version:REPROCESS_VERSION,modelVersion:'current',startedAt:'2026-10-19T12:00:00Z',updatedAt:'2026-10-19T12:01:00Z',
   total:4,counts:{queued:0,processing:0,ok:2,pending:1,failed:1},retryableFailed:1,inventoryComplete:true,hasMore:false,retryAfterMs:0,page:1,pageSize:100,totalPages:1,
   items:[
     {originalId,childId,status:'OK',code:'UPDATED',message:'Nova versão criada com serviços e DIFAL.',company:original.company,title:original.title},
@@ -100,6 +101,7 @@ test('Pendência antiga de serviços em lote encerrado é atualizada automaticam
   try {
     await expect.poll(()=>posts).toBe(1);
     await expect(panel.locator('[data-reprocess-count="pending"] dd')).toHaveText('1');
+    await expect(panel.locator('.history-reprocess-status')).toContainText('naturezas e créditos de ICMS');
     await expect(page.locator('#simulations-app details[open]')).toHaveCount(0);
     expect(methods).toEqual(['GET','POST']);expect(bodies).toEqual([{}]);
   } finally {release();}
@@ -138,6 +140,26 @@ test('Falha de rede interrompe o lote e tentativa explícita retoma sem enviar d
   await panel.getByRole('button',{name:'Tentar atualização novamente'}).click();
   await expect(panel.getByRole('heading',{name:'Atualização encerrada com pendências'})).toBeVisible();
   expect(methods).toEqual(['GET','POST','GET','POST']);expect(bodies).toEqual([{},{}]);
+});
+
+test('Contrato desconhecido interrompe antes do POST e a versão atual permite retomar o lote', async({page}) => {
+  const historyReads=await mockHistory(page),methods:string[]=[],bodies:unknown[]=[];
+  let current=false;
+  await page.route('**/api/v4/simulations/reprocess',route=>{
+    const method=route.request().method();methods.push(method);
+    if(method==='GET')return route.fulfill({json:current?queued:{...queued,version:'UNKNOWN_REPROCESS_REVISION'}});
+    bodies.push(route.request().postDataJSON());return route.fulfill({json:completed});
+  });
+  await page.goto('/simulations.html');const panel=page.locator('#history-reprocess');
+  await expect(panel.getByRole('heading',{name:'Atualização interrompida'})).toBeVisible();
+  await expect(panel).toContainText('O servidor não confirmou o andamento da atualização.');
+  await expect(panel.locator('[data-reprocess-count="ok"] dd')).toHaveText('—');
+  expect(methods).toEqual(['GET']);expect(bodies).toEqual([]);expect(historyReads()).toBe(1);
+  current=true;await panel.getByRole('button',{name:'Tentar atualização novamente'}).click();
+  await expect(panel.getByRole('heading',{name:'Atualização encerrada com pendências'})).toBeVisible();
+  await expect(panel.locator('[data-reprocess-count="ok"] dd')).toHaveText('2');
+  await expect(page.locator(`[data-simulation-id="${originalId}"]`)).toBeVisible();
+  expect(methods).toEqual(['GET','GET','POST']);expect(bodies).toEqual([{}]);expect(historyReads()).toBe(2);
 });
 
 test('Sessão expirada interrompe o reprocessamento e não oferece nova tentativa de escrita', async({page}) => {

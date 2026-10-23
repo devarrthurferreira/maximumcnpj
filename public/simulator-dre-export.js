@@ -25,6 +25,7 @@ function rowContexts(presentation) {
   for (const detail of presentation.details || []) for (const row of detail.rows || []) contexts.set(row, ['Detalhamento informativo',detail.label]);
   for (const row of presentation.indicators || []) contexts.set(row, ['Indicadores','Indicadores']);
   for (const row of presentation.revenueReconciliation?.rows || []) contexts.set(row, ['Conferência da receita',presentation.revenueReconciliation.label]);
+  for (const row of presentation.icmsReconciliation?.rows || []) contexts.set(row, ['Apuração do crédito de ICMS',presentation.icmsReconciliation.label]);
   return contexts;
 }
 
@@ -102,6 +103,7 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   for(const note of dreDifalNotes(presentation))textLine(['DIFAL nos cenários',note]);
   if (showPercent) textLine(['Análise vertical', presentation.percentBasis || 'Receita utilizada na simulação, no mesmo período e regime']);
   if (presentation.revenueReconciliation?.note) textLine(['Fechamento da receita',presentation.revenueReconciliation.note]);
+  if (presentation.icmsReconciliation?.note) textLine(['Critério do crédito de ICMS',presentation.icmsReconciliation.note]);
   lines.push('');
 
   const prefix = row => [...(contexts.get(row) || ['DRE','']), row.label, row.kind || 'line', row.unit === 'percent' ? '%' : 'BRL'];

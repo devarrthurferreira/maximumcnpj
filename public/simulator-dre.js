@@ -97,6 +97,7 @@ export function unifiedDreRows(presentation) {
   for(const {row} of details)append(row);
   for(const row of presentation?.indicators||[])append(row);
   for(const row of presentation?.revenueReconciliation?.rows||[])append(row);
+  for(const row of presentation?.icmsReconciliation?.rows||[])append(row);
   return rows;
 }
 
@@ -229,6 +230,20 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   const creditDetails=['cbs','ibs','icms'].map(tax=>({key:tax+'Credits',label:'Apuração de '+tax.toUpperCase(),parentKey:tax==='icms'?'icmsNet':tax+'Debit',
     rows:[['debit','Débito'],['potential','Crédito potencial'],['used','Crédito utilizado'],['due','Valor líquido a recolher'],['balance','Saldo credor potencial']].map(([field,label])=>detail(tax+'.'+field,label+' de '+tax.toUpperCase(),tax==='icms'?'icmsNet':tax+'Debit',creditCell(tax,field),{
       notes:[field==='balance'?'Saldo informativo: não compõe o lucro nem representa restituição automática.':tax==='icms'?'Crédito já abatido do ICMS líquido; não somar novamente ao resultado.':'Detalhe da apuração já refletida nas linhas de débitos e créditos da DRE.'],sourceRefs:[`result.credits.${tax}.${field}`]}))}));
+  const icmsOrigin=field=>f=>{
+    const potential=creditCell('icms','potential')(f);
+    if(potential.value===null)return potential;
+    const purchase=memory('icms.purchaseCredit',f),returns=memory('icms.returnCredit',f),total=sum([purchase,returns]);
+    if(!finite(total)||!close(total*f.scale,potential.value))return missing('A composição do crédito entre compras e devoluções não está capturada ou não concilia com o potencial salvo.');
+    return good((field==='purchaseCredit'?purchase:returns)*f.scale);
+  };
+  const icmsOriginRows=[['purchaseCredit','Crédito de ICMS das compras elegíveis'],['returnCredit','Crédito de ICMS das devoluções de venda']].map(([field,label])=>
+    detail('icms.'+field,label,'icms.potential',icmsOrigin(field),{notes:['Parcela do crédito potencial de ICMS; já incluída no crédito utilizado quando houver débito. Não somar novamente ao resultado.'],sourceRefs:[`result.memory:icms.${field}`]}));
+  const capturedOrigin=icmsOriginRows.every(row=>Object.values(row.values).some(finite)||Object.values(row.monthlyValues).some(values=>values.some(finite))||Object.values(row.calendarAnnualValues).some(finite));
+  const icmsRows=creditDetails.find(group=>group.key==='icmsCredits').rows;
+  const icmsReconciliation={key:'icmsReconciliation',label:'Apuração do crédito de ICMS',
+    note:'Débito de ICMS menos crédito utilizado = valor líquido a recolher. O crédito utilizado já está abatido na linha “− ICMS líquido fora do DAS” desta DRE. Este quadro é informativo e não acrescenta uma segunda dedução ao resultado. Crédito potencial menos crédito utilizado = saldo credor potencial, sem restituição ou compensação automática.',
+    rows:[...icmsRows.slice(0,2),...(capturedOrigin?icmsOriginRows:[]),...icmsRows.slice(2)]};
   const irpjDetail=part=>f=>{
     const id=f.regime.id;
     if(['pure','hybrid'].includes(id))return missing('IRPJ incluído no DAS; sem parcela externa neste regime.');
@@ -240,7 +255,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   const details=[
     {key:'salesBreakdown',label:'Composição das vendas utilizadas',parentKey:'sales',rows:GROUPS.map((key,index)=>detail(key,['Vendas a optantes do Simples','Vendas a não optantes do Simples','Vendas a CPFs'][index],'sales',salesDetail(index),{notes:['Valores utilizados no cenário. O fechamento ao final separa a receita da fonte, as devoluções já abatidas e os ajustes manuais quando há evidência capturada.'],sourceRefs:[`monthlyGroups.${key}`]}))},
     {key:'serviceBreakdown',label:'Composição da receita de serviços',parentKey:'services',rows:[detail('serviceReport',actual?'Serviços dos relatórios · por competência':'Serviços dos relatórios · média projetada','services',servicesDetail(false),{sourceRefs:['projection.monthlyGroupsCents.serviceRevenueCents']}),detail('serviceAdjustment','Ajuste de serviços no cenário','services',servicesDetail(true),{notes:[reprocessing?.serviceRevenueMigration?.warning||'Diferença entre os serviços do cenário e a base importada; pode ser positiva, negativa ou zero.'],sourceRefs:['result.regimes[].dre.services','projection.monthlyGroupsCents.serviceRevenueCents']})]},
-    ...creditDetails,
+    ...creditDetails.filter(group=>group.key!=='icmsCredits'),
     {key:'irpjBreakdown',label:'Composição do IRPJ',parentKey:'irpj',rows:[detail('irpjBasic','− IRPJ normal','irpj',irpjDetail('basic'),{sourceRefs:['result.memory:presumed.irBasic','result.memory:actual.irBasic']}),detail('irpjAdditional','− Adicional de IRPJ','irpj',irpjDetail('additional'),{sourceRefs:['result.memory:presumed.irAdditional','result.memory:actual.irAdditional']})]}
   ];
   const taxes=f=>{
@@ -300,7 +315,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
       row('revenueManualAdjustment','Ajustes manuais do cenário (+/−)','line',revenueCell('manualAdjustmentCents'),{informative:true,notes:['Diferença entre a receita utilizada no cenário e a receita da fonte após devoluções. Não modifica os relatórios de origem.'],sourceRefs:['source.monthlyReports[].fields','result.regimes[].dre.revenue']}),
       row('revenueUsed','= Receita utilizada na simulação','subtotal',f=>currency(f.get('revenue')),{informative:true,notes:['Valor preservado na DRE. A base dos tributos, margens e percentuais permanece a mesma.'],sourceRefs:['result.regimes[].dre.revenue']})
     ]};
-  return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,revenueReconciliation,months,calendarYear,
+  return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,revenueReconciliation,icmsReconciliation,months,calendarYear,
     ...(result?.simplesDiagnostic?.version==='SIMPLES_DIAGNOSTIC_V1'?{simplesDiagnostic:structuredClone(result.simplesDiagnostic)}:{}),
     report:{modelVersion:typeof result?.version==='string'?result.version:null,
       sourceMonths:actual?(result.monthlyResults||[]).map(row=>row.sourceMonth):[],

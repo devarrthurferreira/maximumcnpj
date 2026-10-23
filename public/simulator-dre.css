@@ -61,11 +61,29 @@
 .dre-percent{display:block;font-size:10px;color:#8b7080;margin-top:4px;font-weight:400;font-variant-numeric:tabular-nums}
 tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
 .dre-footnotes p{margin:5px 0;line-height:1.55}
+.dre-icms-reconciliation{min-width:0;margin-top:24px;padding:20px;border:1px solid #d9e4df;border-radius:12px;background:#f7faf8}
+.dre-icms-reconciliation h3{margin:0 0 8px;color:#234b3d;font-size:18px;line-height:1.35}
+.dre-icms-reconciliation header p{margin:0;font-size:12px;line-height:1.65;color:#59675f}
+.dre-icms-reconciliation .eyebrow{display:block;margin-bottom:8px;color:#597866}
+.dre-icms-note,.dre-icms-unavailable{font-size:11px;line-height:1.65;color:#59675f;margin:12px 0 0}
+.simulator-clean .dre-icms-reconciliation .dre-table-wrap{max-height:none;background:#fff}
+.dre-icms-mobile{display:none}
+.dre-icms-mobile-title{margin:0 0 12px;color:#234b3d;font-size:12px;font-weight:700;line-height:1.5}
+.dre-icms-mobile dl{margin:0}
+.dre-icms-mobile dl>div{padding:12px 0;border-top:1px solid #dde6df}
+.dre-icms-mobile dt{font-size:12px;line-height:1.5;color:#42594d}
+.dre-icms-mobile dd{margin:5px 0 0;color:#253e30;font-variant-numeric:tabular-nums}
+.dre-icms-mobile dd strong{display:block;font-size:18px;font-weight:650;line-height:1.35;overflow-wrap:anywhere}
+.dre-icms-mobile dd small{display:block;margin-top:4px;font-size:11px;color:#59675f;line-height:1.4}
 .dre-table-wrap:focus-visible{outline:2px solid #750207;outline-offset:2px}
 .sim-calendar.dre-single-month .dre-calendar-screen table{min-width:500px}
 .dre-print-calendar,.dre-print-document{display:none}
 @media(max-width:640px){
   .dre-report-control{width:100%;min-width:0}
+  .dre-icms-reconciliation{padding:16px 12px}
+  .dre-icms-reconciliation h3{font-size:16px}
+  .dre-icms-mobile{display:block;margin-top:16px}
+  .dre-icms-reconciliation.has-mobile-summary .dre-icms-table,.dre-icms-reconciliation.has-mobile-summary .dre-icms-table-unavailable{display:none}
   .dre-simples-diagnostic{padding:13px}
   .dre-simples-diagnostic dl{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 9px}
   .dre-simples-diagnostic dd{font-size:13px}
@@ -90,6 +108,11 @@ tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
     @bottom-right{content:counter(page) " / " counter(pages);font-family:Arial,sans-serif;font-size:8pt;color:#75606a}
   }
   .dre-print-part-heading,.dre-report-monthly-part>h2,.dre-report-appendix h2,.dre-report-appendix h3,.dre-report-appendix h4{break-after:avoid;page-break-after:avoid}
+  .dre-icms-reconciliation{break-inside:avoid;page-break-inside:avoid;padding:10px;background:#fff;border-color:#b7c7bd}
+  .dre-icms-reconciliation h3{font-size:12px}
+  .dre-icms-reconciliation header p,.dre-icms-note,.dre-icms-unavailable{font-size:9px}
+  .dre-icms-mobile{display:none!important}
+  .dre-icms-reconciliation .dre-icms-table,.dre-icms-reconciliation .dre-icms-table-unavailable{display:block!important}
   .dre-report-monthly-part,.dre-report-appendix{break-before:page;page-break-before:always}
   .dre-print-monthly .dre-report-monthly-part.is-first{break-before:auto;page-break-before:auto}
   .dre-print-summary,.dre-report-coverage,.dre-simples-diagnostic,.dre-report-statuses article,.dre-report-warnings article{break-inside:avoid;page-break-inside:avoid}

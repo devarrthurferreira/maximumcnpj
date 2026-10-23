@@ -1,3 +1,5 @@
+import {parseIcmsOperations,projectIcmsOperations} from './simulator-icms.js';
+
 /**
  * Maximum simulator: faithful JavaScript port of the existing calculadora model.
  * Source: devarrthurferreira/calculadora@d60e8bc3b2edcc2ebd4ff11cf584689f01d0d381
@@ -19,7 +21,7 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
-export const MODEL_VERSION = '1.8.0-simples-revenue-context';
+export const MODEL_VERSION = '1.9.0-icms-operations';
 export const SIMPLES_DIAGNOSTIC_VERSION = 'SIMPLES_DIAGNOSTIC_V1';
 export const REVENUE_CONTEXT_VERSION = 'SIMPLES_REVENUE_CONTEXT_V1';
 export const ICMS_ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_DRE_V1';
@@ -268,6 +270,14 @@ export const TAX_SOURCES = [
         url: 'https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp87.htm'
     },
     {
+        label: 'Alíquotas interestaduais de ICMS — Resolução do Senado 22/1989',
+        url: 'https://legis.senado.leg.br/norma/586152/publicacao/15646891'
+    },
+    {
+        label: 'Base e alíquota da devolução interestadual — Convênio ICMS 54/2000',
+        url: 'https://www.sefanet.pr.gov.br/dados/SEFADOCUMENTOS/8200000054.pdf'
+    },
+    {
         label: 'Coeficientes de presunção — Lei 9.249/1995',
         url: 'https://www.planalto.gov.br/ccivil_03/leis/l9249.htm'
     },
@@ -402,7 +412,9 @@ function parseTaxInput(input) {
   const hasAnticipation = input != null && Object.hasOwn(input, 'icmsAnticipation');
   const hasDifalPolicy=input!=null&&Object.hasOwn(input,'difalPolicy');
   const hasRevenueContext=input!=null&&Object.hasOwn(input,'revenueContext');
-  strictObject(input, [...TAX_AMOUNT_FIELDS, 'year', 'salesAnnex', 'serviceAnnex', 'icmsOutside', 'rates', 'credits', ...(hasDifal ? ['difalMonthly'] : []), ...(hasAnticipation ? ['icmsAnticipation'] : []),...(hasDifalPolicy?['difalPolicy']:[]),...(hasRevenueContext?['revenueContext']:[])]);
+  const hasIcmsOperations=input!=null&&Object.hasOwn(input,'icmsOperations');
+  strictObject(input, [...TAX_AMOUNT_FIELDS, 'year', 'salesAnnex', 'serviceAnnex', 'icmsOutside', 'rates', 'credits', ...(hasDifal ? ['difalMonthly'] : []), ...(hasAnticipation ? ['icmsAnticipation'] : []),...(hasDifalPolicy?['difalPolicy']:[]),...(hasRevenueContext?['revenueContext']:[]),...(hasIcmsOperations?['icmsOperations']:[])]);
+  const icmsOperations=hasIcmsOperations?parseIcmsOperations(input.icmsOperations):null;
   const revenueContext=hasRevenueContext?parseRevenueContext(input.revenueContext):null;
   const difalPolicy=hasDifalPolicy?parseDifalPolicy(input.difalPolicy):null;
   if (hasDifal) checkNumber(input.difalMonthly, VALUE_LIMIT, ['difalMonthly']);
@@ -417,6 +429,7 @@ function parseTaxInput(input) {
   for (const key of TAX_AMOUNT_FIELDS) checkNumber(input[key], VALUE_LIMIT, [key]);
   strictObject(input.rates, RATE_FIELDS, ['rates']);
   for (const key of RATE_FIELDS) checkNumber(input.rates[key], 1, ['rates', key]);
+  if(icmsOperations&&input.rates.icms!==icmsOperations.internalRatePercent/100)failInput(['rates','icms'],'A taxa interna diverge da premissa de ICMS capturada nas operações.');
   strictObject(input.credits, CREDIT_GROUPS, ['credits']);
   if (input.simpleRegularPurchases > input.simplePurchases) failInput(['simpleRegularPurchases'], 'Esta parcela já está nas compras do Simples e não pode exceder seu total.');
   const purchases = { simple: Math.max(0, input.simplePurchases - input.simpleRegularPurchases), simpleRegular: input.simpleRegularPurchases, regular: input.regularPurchases };
@@ -429,7 +442,7 @@ function parseTaxInput(input) {
     if (group.base > purchases[key]) failInput(['credits', key, 'base'], 'A base elegível não pode superar as compras deste grupo. Informe 0 se não houver crédito.');
     if (group.base * (group.cbsRate + group.ibsRate) > purchases[key] + 1e-8) failInput(['credits', key, 'cbsRate'], 'O crédito combinado de CBS e IBS não pode exceder as compras do grupo.');
   }
-  return { ...input,...(hasRevenueContext?{revenueContext}:{}),...(hasDifalPolicy?{difalPolicy}:{}), ...(hasAnticipation ? {icmsAnticipation: {...input.icmsAnticipation}} : {}), rates: { ...input.rates }, credits: Object.fromEntries(CREDIT_GROUPS.map(key => [key, { ...input.credits[key] }])) };
+  return { ...input,...(hasIcmsOperations?{icmsOperations}:{}),...(hasRevenueContext?{revenueContext}:{}),...(hasDifalPolicy?{difalPolicy}:{}), ...(hasAnticipation ? {icmsAnticipation: {...input.icmsAnticipation}} : {}), rates: { ...input.rates }, credits: Object.fromEntries(CREDIT_GROUPS.map(key => [key, { ...input.credits[key] }])) };
 }
 export const taxInputSchema = Object.freeze({
   parse: parseTaxInput,
@@ -529,6 +542,10 @@ const DRE_LABELS = {
 };
 export function calculateTax(rawInput) {
     const input = taxInputSchema.parse(rawInput);
+    const icmsProjection=input.icmsOperations?projectIcmsOperations(input.icmsOperations,{salesRevenueCents:Math.round(input.salesRevenue*100),regularPurchasesCents:Math.round(input.regularPurchases*100)}):null;
+    if(icmsProjection)for(const key of ['debitCents','potentialCents','purchaseCreditCents','salesReturnCreditCents']){
+      if(!Number.isSafeInteger(icmsProjection[key]*MONTHS))failInput(['icmsOperations'],'O ICMS da projeção excede o limite seguro.');
+    }
     const hasDifal = Object.hasOwn(input, 'difalMonthly');
     const annualDifal = (input.difalMonthly ?? 0) * MONTHS;
     const hasAnticipation = Object.hasOwn(input, 'icmsAnticipation');
@@ -567,6 +584,13 @@ export function calculateTax(rawInput) {
     };
     const revenue = annual.services + annual.sales;
     const simplesDiagnostic=diagnoseSimples(input,revenue);
+    if(input.icmsOutside&&icmsProjection&&!icmsProjection.available){
+      const previous=simplesDiagnostic.available?'':simplesDiagnostic.message+' ';
+      if(simplesDiagnostic.available)simplesDiagnostic.statusCode='ICMS_OPERATIONS_PENDING';
+      simplesDiagnostic.available=false;
+      simplesDiagnostic.message=previous+icmsProjection.status;
+      simplesDiagnostic.action='Confira natureza, UF da empresa e UF da contraparte nos relatórios para completar o ICMS fora do DAS. '+simplesDiagnostic.action;
+    }
     const revenueReference=simplesDiagnostic.revenueReference;
     const cmv = annual.cmvSimple + annual.cmvRegular;
     const operational = revenue - cmv - annual.salaries - annual.benefits - annual.administrative - annual.rent - annual.cards;
@@ -633,8 +657,22 @@ export function calculateTax(rawInput) {
     const credits = {
         cbs: apportion(revenue * input.rates.cbs, cbsPotential),
         ibs: apportion(revenue * input.rates.ibs, ibsPotential),
-        icms: apportion(annual.sales * input.rates.icms, annual.cmvRegular * input.rates.icms)
+        icms: icmsProjection?apportion(icmsProjection.debitCents*MONTHS/100,icmsProjection.potentialCents*MONTHS/100):apportion(annual.sales * input.rates.icms, annual.cmvRegular * input.rates.icms)
     };
+    if(icmsProjection){
+      const p=icmsProjection,s=p.source,annualAmount=value=>value*MONTHS/100;
+      add('icms.interstateRate','Apuração de ICMS','Alíquota interestadual do cenário','Premissa gerencial solicitada para operações com UFs confirmadas e diferentes; não substitui a alíquota da nota.',s.interstateRatePercent/100,'percent');
+      add('icms.grossSales','Apuração de ICMS','Vendas brutas de mercadorias consideradas','Vendas líquidas do cenário + devoluções de venda importadas. A receita da DRE continua após devoluções.',annualAmount(p.grossSalesCents));
+      add('icms.salesAdjustment','Apuração de ICMS','Ajuste de vendas na base de ICMS','Diferença manual aplicada à composição de UFs das vendas brutas de origem; não altera as devoluções.',annualAmount(p.salesAdjustmentCents));
+      add('icms.purchaseCredit','Apuração de ICMS','Crédito de ICMS das compras elegíveis','Somente COMPRAS do grupo gerencial não optante, por UF: internas 18% e interestaduais 12%. Serviços 8000 excluídos.',annualAmount(p.purchaseCreditCents));
+      add('icms.returnCredit','Apuração de ICMS','Crédito de ICMS das devoluções de venda','DEVOLUCAO_VENDA nas entradas, independentemente do grupo do comprador; mesma premissa 18% interna / 12% interestadual das vendas. O débito parte das vendas brutas para evitar duplicação.',annualAmount(p.salesReturnCreditCents));
+      add('icms.excludedServices','Apuração de ICMS','Compras 8000 excluídas do crédito de ICMS','Serviços com prefixo 8000 permanecem no custo, sem crédito e sem antecipação de ICMS.',annualAmount(s.excludedServicePurchasesCents));
+      for(const [group,label] of [['purchases','Compras elegíveis'],['salesReturns','Devoluções de venda'],['sales','Vendas brutas de origem']]){
+        add(`icms.${group}.internalBase`,'Apuração de ICMS',`${label} — base interna`,'UF confirmada igual à UF da empresa; premissa de 18%.',annualAmount(s[group].internalBaseCents));
+        add(`icms.${group}.interstateBase`,'Apuração de ICMS',`${label} — base interestadual`,'UFs confirmadas e diferentes; premissa de 12%.',annualAmount(s[group].interstateBaseCents));
+      }
+      add('icms.operationStatus','Apuração de ICMS','Condição da apuração por operações','Natureza, UF e valores vêm dos relatórios conciliados.',p.status,'text');
+    }
     for (const key of [
         'cbs',
         'ibs',
@@ -642,8 +680,8 @@ export function calculateTax(rawInput) {
     ]){
         const credit = credits[key];
         const name = key.toUpperCase();
-        add(`${key}.debit`, `Apuração de ${name}`, `Débito de ${name}`, key === 'icms' ? `${currency(annual.sales)} de vendas anuais × ${percent(input.rates.icms)}` : `${currency(revenue)} de receita anual × ${percent(input.rates[key])}`, credit.debit);
-        add(`${key}.potential`, `Apuração de ${name}`, `Crédito potencial de ${name}`, key === 'icms' ? `${currency(annual.cmvRegular)} de compras/CMV de não optantes × ${percent(input.rates.icms)}` : `Soma dos créditos de ${name} dos três grupos; sem compensar outro tributo.`, credit.potential);
+        add(`${key}.debit`, `Apuração de ${name}`, `Débito de ${name}`, key === 'icms' ? icmsProjection?'Vendas brutas elegíveis: internas × 18% + interestaduais × 12%, por linha. Ajuste de receita ponderado pela composição da origem.':`${currency(annual.sales)} de vendas anuais × ${percent(input.rates.icms)}` : `${currency(revenue)} de receita anual × ${percent(input.rates[key])}`, credit.debit);
+        add(`${key}.potential`, `Apuração de ${name}`, `Crédito potencial de ${name}`, key === 'icms' ? icmsProjection?'Crédito das compras elegíveis + crédito das devoluções de venda. Naturezas 8000 não geram crédito.':`${currency(annual.cmvRegular)} de compras/CMV de não optantes × ${percent(input.rates.icms)}` : `Soma dos créditos de ${name} dos três grupos; sem compensar outro tributo.`, credit.potential);
         add(`${key}.used`, `Apuração de ${name}`, `Crédito utilizado de ${name}`, 'Mínimo entre débito e crédito potencial', credit.used);
         add(`${key}.due`, `Apuração de ${name}`, `${name} líquido a recolher`, 'Débito − crédito utilizado; nunca imposto negativo', credit.due);
         add(`${key}.balance`, `Apuração de ${name}`, `Saldo credor potencial de ${name}`, 'Máximo(0; crédito potencial − crédito utilizado). Não integra lucro ou restituição automática.', credit.balance);
@@ -928,7 +966,9 @@ export function calculateTax(rawInput) {
         const isSimple = id === 'pure' || id === 'hybrid';
         const isPure = id === 'pure';
         const outside = !isSimple || input.icmsOutside;
-        const available = !isSimple || simpleAvailable;
+        const icmsPending=outside&&icmsProjection&&!icmsProjection.available;
+        const available = (!isSimple || simpleAvailable)&&!icmsPending;
+        const status=isSimple?simpleStatus:icmsPending?icmsProjection.status:revenue===0?'Calculado com receita zero':id==='presumed'?'Simulação sujeita ao enquadramento':'Disponível';
         const application=difalApplications[id];
         const dre = {
             services: annual.services,
@@ -1002,7 +1042,7 @@ export function calculateTax(rawInput) {
         };
         for (const key of Object.keys(dre)){
             dre[key] = available ? cleanZero(dre[key]) : 0;
-            add(`dre.${id}.${key}`, `DRE · ${name}`, DRE_LABELS[key], available ? formulas[key] : `Indisponível: ${simpleStatus}.`, dre[key]);
+            add(`dre.${id}.${key}`, `DRE · ${name}`, DRE_LABELS[key], available ? formulas[key] : `Indisponível: ${status}.`, dre[key]);
         }
         add(`difal.option.${id}`,`DIFAL · ${name}`,'Opção de DIFAL do cenário','Escolha somente no Simples Puro e Híbrido; o bloqueio automático prevalece sobre a inclusão.',!isSimple?'Não aplicável':application.enabled?'Incluir':'Excluir','text');
         add(`difal.operations.${id}`,`DIFAL · ${name}`,'Operações de DIFAL selecionadas','Entrada e saída são opções independentes por cenário; a seleção não altera os relatórios de origem.',!isSimple?'Não aplicável':DIFAL_OPERATIONS.filter(operation=>application.operations[operation]).map(operation=>operation==='entry'?'Entrada':'Saída').join(' e ')||'Nenhuma','text');
@@ -1018,7 +1058,7 @@ export function calculateTax(rawInput) {
             id,
             name,
             available,
-            status: isSimple ? simpleStatus : revenue === 0 ? 'Calculado com receita zero' : id === 'presumed' ? 'Simulação sujeita ao enquadramento' : 'Disponível',
+            status,
             annualProfit: dre.netProfit,
             monthlyProfit: dre.netProfit / MONTHS,
             margin,
@@ -1038,7 +1078,10 @@ export function calculateTax(rawInput) {
     const bestRegimeId = ranked[0]?.id ?? null;
     const difference = ranked.length > 1 ? ranked[0].annualProfit - ranked[ranked.length - 1].annualProfit : 0;
     warn('model-period', 'info', 'Cenário de 2027/2028', `O ano selecionado é ${input.year}. As partilhas pertencem a 2027/2028. CBS de 9,11% e IBS de 0,10% são premissas deste modelo, não alíquotas oficiais definitivas.`);
-    warn('icms-assumption', 'info', 'Utilização da alíquota padrão de ICMS', `O padrão da simulação é 18% nas vendas e nas compras/CMV de não optantes; o cenário usa ${percent(input.rates.icms)}. A mesma taxa gera débito e crédito potencial somente com ICMS fora do DAS. Não representa alíquota única nacional. Créditos dependem das operações e documentos fiscais.`);
+    warn('icms-assumption', 'info',icmsProjection?'ICMS por natureza e UF':'Utilização da alíquota padrão de ICMS',icmsProjection?'Premissa gerencial: 18% nas operações internas e 12% nas interestaduais com UFs confirmadas. O crédito potencial soma compras elegíveis e devoluções de venda; serviços 8000 não geram crédito. A devolução usa a mesma premissa das vendas e não é abatida duas vezes. A alíquota e a base efetivas da nota, inclusive nas devoluções, precisam de conferência; 12% não é alíquota universal.':`O padrão da simulação é 18% nas vendas e nas compras/CMV de não optantes; o cenário usa ${percent(input.rates.icms)}. A mesma taxa gera débito e crédito potencial somente com ICMS fora do DAS. Não representa alíquota única nacional. Créditos dependem das operações e documentos fiscais.`);
+    if(icmsProjection?.salesAdjustmentCents)warn('icms-sales-adjustment','info','Ajuste de receita com a composição de UFs da origem','O ajuste manual altera a base bruta de vendas pela proporção das bases internas e interestaduais importadas, com arredondamento no total da competência. Sem ajuste, conserva o arredondamento por linha. Devoluções e créditos dos documentos permanecem preservados.');
+    if(icmsProjection?.purchaseAdjustmentCents)warn('icms-purchase-adjustment','info','Crédito de ICMS vinculado aos documentos','O ajuste manual de compras modifica o custo, mas não cria ou exclui crédito fiscal das operações importadas. Para alterar naturezas, UFs ou crédito de origem, revise e reimporte os documentos.');
+    if(icmsProjection&&!icmsProjection.available)warn('icms-operations-pending','warning','Apuração de ICMS exige conferência',icmsProjection.status+' Regimes com ICMS fora do DAS ficam pendentes; o Simples com ICMS no DAS mantém seu cálculo.');
     if(!input.revenueContext)warn('projection', 'info', 'Projeção gerencial de 12 meses', 'Um mês é repetido 12 vezes. Compras/CMV são uma simplificação de custo; não há controle de estoque, ajustes fiscais do Lucro Real, compensação de prejuízos nem apuração trimestral. O maior resultado é apenas o maior deste cenário, sujeito a enquadramento e premissas.');
     warn('credits-eligibility', 'info', 'Bases e percentuais creditáveis', 'Bases de CBS/IBS são informadas separadamente do CMV. Fornecedor Simples com tributos no DAS não transfere automaticamente a taxa regular integral. Créditos excedentes ficam separados e não aumentam o lucro.');
     warn('presumed-eligibility', 'info', 'Lucro Presumido sujeito ao enquadramento', 'A opção exige verificar a receita bruta total do ano-calendário anterior, limitada a R$ 78 milhões ou ao limite proporcional quando aplicável, além das situações que obrigam o Lucro Real (Lei 9.718/1998, arts. 13 e 14). A receita do ano anterior não é coletada; RBT12 e projeção não a substituem. A apresentação dos cálculos não confirma elegibilidade.');
@@ -1075,6 +1118,13 @@ export function calculateTax(rawInput) {
           formula:`Sem valor confirmado para este cenário: ${simpleStatus}`});
       }
     }
+    if(icmsProjection&&!icmsProjection.available){
+      const pending=new Set(regimes.filter(regime=>!regime.available).map(regime=>regime.id));
+      for(const item of memory){
+        const id=/^(?:dre|summary)\.([^.]+)\./.exec(item.id)?.[1];
+        if(item.unit==='currency'&&(item.id.startsWith('icms.')||item.id.startsWith('actual.')||pending.has(id)))Object.assign(item,{unit:'text',value:'Conferência necessária',availability:'UNAVAILABLE',formula:icmsProjection.status});
+      }
+    }
     return {
         version: MODEL_VERSION,
         simplesDiagnostic,
@@ -1097,7 +1147,7 @@ export function createEmptyDraft() {
 }
 
 /** Same assumptions and default credit bases as calculadora/src/lib/simulation.ts. */
-export function draftToInput(draft, difalProjection = null, anticipationProjection = null, revenueContext = null) {
+export function draftToInput(draft, difalProjection = null, anticipationProjection = null, revenueContext = null, icmsOperations = null) {
   try {
     const explicitRbt12 = Object.hasOwn(draft, 'rbt12');
     const hasDifalPolicy=Object.hasOwn(draft,'difalPolicy');
@@ -1128,6 +1178,7 @@ export function draftToInput(draft, difalProjection = null, anticipationProjecti
       ...values, year: draft.year, salesAnnex: draft.salesAnnex, serviceAnnex: draft.serviceAnnex,
       ...(hasDifalPolicy?{difalPolicy}:{}),
       ...(revenueContext===null?{}:{revenueContext:parseRevenueContext(revenueContext)}),
+      ...(icmsOperations===null?{}:{icmsOperations:parseIcmsOperations(icmsOperations)}),
       ...(difalProjection === null ? {} : {difalMonthly: difalProjection.monthlyCents / 100}),
       ...(anticipationProjection === null ? {} : {icmsAnticipation: {version: ICMS_ANTICIPATION_VERSION, monthlyCents: anticipationProjection.monthlyCents}}),
       simpleRegularPurchases: 0, extraPayroll: 0, icmsOutside: hasIcmsOutside?draft.icmsOutside:false,
@@ -1143,9 +1194,9 @@ export function draftToInput(draft, difalProjection = null, anticipationProjecti
 }
 
 /** Display-ready projection. Novas simulações usam a RBT12 informada/extraída; snapshots antigos mantêm a estimativa histórica. */
-export function calculateSimulation(draft, difalProjection = null, anticipationProjection = null, revenueContext = null) {
+export function calculateSimulation(draft, difalProjection = null, anticipationProjection = null, revenueContext = null, icmsOperations = null) {
   const explicitRbt12 = Object.hasOwn(draft, 'rbt12');
-  const input = draftToInput(draft, difalProjection, anticipationProjection, revenueContext);
+  const input = draftToInput(draft, difalProjection, anticipationProjection, revenueContext,icmsOperations);
   if (!input) throw new TypeError('Preencha todos os campos com valores válidos. Informe 0 quando não houver valor.');
   const result = calculateTax(input);
   if (difalProjection !== null) {

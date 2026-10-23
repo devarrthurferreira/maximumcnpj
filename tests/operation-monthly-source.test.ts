@@ -19,8 +19,8 @@ test('catálogo seleciona receita e compras, devolução de venda vem somente de
   assert.equal(months.length,2);assert(months.every(month=>month.operationVersion===OPERATION_CATALOG_VERSION));
   assert.deepEqual(months[0].fields,{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:95000,purchasesOptantCents:0,purchasesNonOptantCents:58000,serviceRevenueCents:20000});
   assert.equal(months[1].fields.purchasesNonOptantCents,10001);
-  assert.deepEqual(months[0].anticipation,{version:'ICMS_ANTICIPATION_V3',ratePercent:7.32,issuerUf:'MG',eligibleLines:2,baseCents:50000,amountCents:3660,pendingLines:1});
-  assert.equal(months[1].anticipation.amountCents,732);
+  assert.deepEqual(months[0].anticipation,{version:'ICMS_ANTICIPATION_V4',ratePercent:7.32,issuerUf:'MG',eligibleLines:1,baseCents:40000,amountCents:2928,pendingLines:1});
+  assert.equal(months[1].anticipation.amountCents,0);assert.equal(months[1].anticipation.pendingLines,0);
   assert.equal(months[0].difal.amountCents,10000,'Operação antiga OUTRAS não substitui VENDA do catálogo.');
   assert.equal(months[0].difal.eligibleLines,1);
   const audit=aggregateOperationAudit(months),projection=monthlyProjection(months);
@@ -44,7 +44,7 @@ test('devoluções mantêm CPF e enquadramento consultado, sem converter ausênc
   const month=selectOperationMonths(purchases,sales,'MG')![0];
   assert.equal(month.fields.salesOptantCents,17000);assert.equal(month.fields.salesNonOptantCents,3000);
   assert.equal(month.fields.salesCpfCents,10000);assert.equal(month.fields.purchasesNonOptantCents,1000);
-  assert.equal(month.anticipation.amountCents,73);assert.equal(month.anticipation.eligibleLines,1);
+  assert.equal(month.anticipation.amountCents,0);assert.equal(month.anticipation.eligibleLines,0);
   assert.equal(month.difal.amountCents,3500);assert.equal(month.difal.eligibleLines,3);
   assert.equal(statuses.get('11222333000181'),'NAO_CONFIRMADO');
   assert.throws(()=>selectOperationMonths({...purchases,statuses:new Map()},sales,'MG'),(error:any)=>error.code==='SIMULATION_MONTHS');
@@ -52,7 +52,7 @@ test('devoluções mantêm CPF e enquadramento consultado, sem converter ausênc
 
 test('compras de CPF e CNPJ geram antecipação ou pendência de UF; demais documentos conservam custos',()=>{
   const purchases=report([
-    row('2102',10000),row('8000102',20000,{document:'123.456.789-00'}),
+    row('2102',10000),row('8000102',20000,{document:'123.456.789-00',recipientUf:''}),
     row('2102',30000,{document:'00000000000191',cnpj:'00000000000191',documentKind:'CNPJ',valid:true,recipientUf:''}),
     ...['123456789012','','12345'].map(document=>row('2102',1000,{document,documentKind:'INVALID',recipientUf:''})),
     row('2102',2000,{recipientUf:''}),row('2102',4000,{recipientUf:'MG'}),row('2202',500)
@@ -60,7 +60,7 @@ test('compras de CPF e CNPJ geram antecipação ou pendência de UF; demais docu
   const month=selectOperationMonths(purchases,report([row('6102',100000)]),'MG')![0];
   assert.equal(month.fields.purchasesOptantCents+month.fields.purchasesNonOptantCents,69000);
   assert.equal(month.fields.salesCpfCents,99500);
-  assert.deepEqual(month.anticipation,{version:'ICMS_ANTICIPATION_V3',ratePercent:7.32,issuerUf:'MG',eligibleLines:2,baseCents:30000,amountCents:2196,pendingLines:2});
+  assert.deepEqual(month.anticipation,{version:'ICMS_ANTICIPATION_V4',ratePercent:7.32,issuerUf:'MG',eligibleLines:1,baseCents:10000,amountCents:732,pendingLines:2});
   assert.equal(month.difal.amountCents,10000);
 });
 
@@ -84,11 +84,12 @@ test('CPF e CNPJs numérico/alfanumérico entram nas duas bases, com arredondame
   const sales=report([row('6102',10000),row('5103',20000,numeric),row('6102',30000,alpha),
     row('6102',1000,{...numeric,recipientUf:'MG'}),row('9000',5000,alpha)],statuses);
   const month=selectOperationMonths(purchases,sales,'MG')![0];
-  assert.deepEqual(month.anticipation,{version:'ICMS_ANTICIPATION_V3',ratePercent:7.32,issuerUf:'MG',eligibleLines:5,baseCents:60014,amountCents:4394,pendingLines:0});
+  assert.deepEqual(month.anticipation,{version:'ICMS_ANTICIPATION_V4',ratePercent:7.32,issuerUf:'MG',eligibleLines:4,baseCents:30014,amountCents:2198,pendingLines:0});
+  assert.equal(month.fields.purchasesOptantCents+month.fields.purchasesNonOptantCents,61014,'Serviço 8000 continua nos custos de compras.');
   assert.deepEqual(month.difal,{version:'DIFAL_ESTIMATE_V4',ratePercent:10,issuerUf:'MG',eligibleLines:3,baseCents:60000,amountCents:6000,pendingLines:0});
   assert.equal(month.fields.salesOptantCents,16000,'Devolução reduz a receita, sem entrar na base do imposto de compras.');
   assert.equal(statuses.get('12ABC34501DE35'),'NAO_CONFIRMADO','Elegibilidade documental não modifica o enquadramento capturado.');
   const pending=selectOperationMonths(purchases,sales,'MG','')![0];
-  assert.equal(pending.anticipation.pendingLines,6);assert.equal(pending.anticipation.amountCents,0);
+  assert.equal(pending.anticipation.pendingLines,5);assert.equal(pending.anticipation.amountCents,0);
   assert.equal(pending.difal.amountCents,6000);
 });
