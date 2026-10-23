@@ -19,6 +19,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 from .brand import draw_brand_header
+from .difal_policy import report_difal_policy, direction_selection
 from .core import VERSION, display_date, number, percent, require, utcnow, snapshot_source
 from .difal import DIFAL_VERSION, DIFAL_VERSIONS, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
 from .operation_catalog import OPERATION_CATALOG_VERSION, classify_operation_nature, normalize_operation_nature
@@ -523,6 +524,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
 
 def purchase_metadata(db, job, workspace):
     """Read only the selected job and join states by workspace, exact identity and state ID."""
+    policy = report_difal_policy(db, job, workspace)
     query = {'workspaceId': workspace, 'jobId': job['_id']}
     lines = db.purchaseLines.find(query, {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'index': 1, 'document': 1,
                                         'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'operation': 1, 'balanceCents': 1, 'totalCents': 1, 'valid': 1, 'kind': 1,
@@ -539,7 +541,8 @@ def purchase_metadata(db, job, workspace):
         {'$project': {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'clientId': 1, 'cnpj': 1, 'state': 1,
                       'stateId': 1, 'status': 1, 'occurrences': 1, 'totalCents': 1, 'checkedAt': 1, 'sourceState': 1, 'kind': 1, 'source': 1}}
     ], maxTimeMS=20000)
-    return reconcile_purchase_snapshot(job, lines, items, workspace)
+    metadata = reconcile_purchase_snapshot(job, lines, items, workspace)
+    return {**metadata, **({'difalPolicy': policy} if policy is not None else {})}
 
 
 def money(cents):
@@ -648,9 +651,9 @@ def purchase_story(meta, width, styles):
                     'documentos e percentuais de compras. Devoluções, outras operações e naturezas não classificadas '
                     'ficam fora dessa base e permanecem na conferência do arquivo original.', 'small')]
     if sales:
-        story += difal_story(meta.get('difal'), width, styles, meta.get('difalOrigin'))
+        story += difal_story(meta.get('difal'), width, styles, meta.get('difalOrigin'), meta.get('difalPolicy'))
     else:
-        story += anticipation_story(meta.get('anticipation'), width, styles, meta.get('anticipationOrigin'))
+        story += anticipation_story(meta.get('anticipation'), width, styles, meta.get('anticipationOrigin'), meta.get('difalPolicy'))
     if sales and meta.get('operationTotals'):
         operation_labels = {'VENDA':'Vendas','SERVICO':'Vendas de serviços','DEVOLUCAO':'Devoluções','OUTRAS':'Outras'}
         operation_rows = [['Operação','Linhas','Valor antes do sinal','Impacto no saldo']]
@@ -741,10 +744,22 @@ def purchase_story(meta, width, styles):
     return story
 
 
-def difal_story(difal, width, styles, origin=None):
+def difal_story(difal, width, styles, origin=None, policy=None):
     """Keep the estimate separate from invoice totals and preserve missing-data states."""
     p = lambda value, style='body': purchase_paragraph(value, styles, style)
     story = [p('DIFAL sobre vendas (10%)', 'heading')]
+    choice = direction_selection(policy, 'exit')
+    if choice is not None and not choice['enabled']:
+        exclusion_note = p('Não incluído por escolha: DIFAL de saída desmarcado no Simples puro e híbrido. Valor selecionado: R$ 0,00.')
+        exclusion_note.keepWithNext = True
+        return story + [exclusion_note,
+                        p('A estimativa de origem permanece preservada para auditoria; não integra os valores selecionados deste relatório.', 'small')]
+    if choice is not None:
+        selection_note = p('DIFAL de saída selecionado para: ' + ', '.join(choice['regimeNames']) + '. O valor abaixo é uma estimativa de origem; a DRE aplica os bloqueios por competência.', 'small')
+    else:
+        selection_note = p('Sem escolha de DIFAL registrada neste relatório. Os valores abaixo são apenas estimativas de origem, sem indicar inclusão em uma simulação.', 'small')
+    selection_note.keepWithNext = True
+    story.append(selection_note)
     if difal is None:
         return story + [p('Indisponível neste histórico: os dados salvos não permitem conferir o DIFAL em todas as linhas. '
                           'São necessários os valores das vendas, a natureza de quatro dígitos e o campo de UF '
@@ -764,14 +779,26 @@ def difal_story(difal, width, styles, origin=None):
                    'base = total registrado da venda. Valores arredondados por linha e somados uma única vez. '
                    'Este relatório mostra o total do período importado, sem alterar o total de vendas. '
                    'Nas novas simulações, cada competência usa as vendas daquele mês, e o total anual soma '
-                   'as competências calculadas. O DIFAL sobre vendas aparece em linha própria na DRE.', 'small'))
+                   'as competências calculadas. A dedução na DRE depende da direção escolhida em cada cenário Simples e dos bloqueios por competência.', 'small'))
     return story
 
 
-def anticipation_story(anticipation, width, styles, origin=None):
+def anticipation_story(anticipation, width, styles, origin=None, policy=None):
     """Show the reconciled purchase estimate without changing the purchase base."""
     p = lambda value, style='body': purchase_paragraph(value, styles, style)
     story = [p('DIFAL de entrada — Antecipação de ICMS (7,32%)', 'heading')]
+    choice = direction_selection(policy, 'entry')
+    if choice is not None and not choice['enabled']:
+        exclusion_note = p('Não incluído por escolha: DIFAL de entrada desmarcado no Simples puro e híbrido. Valor selecionado: R$ 0,00.')
+        exclusion_note.keepWithNext = True
+        return story + [exclusion_note,
+                        p('A estimativa de origem permanece preservada para auditoria; não integra os valores selecionados deste relatório.', 'small')]
+    if choice is not None:
+        selection_note = p('DIFAL de entrada selecionado para: ' + ', '.join(choice['regimeNames']) + '. O valor abaixo é uma estimativa de origem; a DRE aplica os bloqueios por competência.', 'small')
+    else:
+        selection_note = p('Sem escolha de DIFAL registrada neste relatório. Os valores abaixo são apenas estimativas de origem, sem indicar inclusão em uma simulação.', 'small')
+    selection_note.keepWithNext = True
+    story.append(selection_note)
     if anticipation is None:
         return story + [p('Indisponível neste histórico: os dados salvos não permitem conferir a antecipação de ICMS '
                           'em todas as linhas. São necessários os valores Q - Y + AA - AB, a natureza de quatro dígitos '

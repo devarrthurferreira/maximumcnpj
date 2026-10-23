@@ -60,6 +60,8 @@
 .generation-company-difal .generation-difal-options{border-top:1px solid #ebe6ed;border-bottom:0;margin-bottom:0;padding-top:16px}
 .generation-company-difal .generation-difal-options>h2{font-size:15px}
 .generation-company-difal .generation-difal-options p{font-size:12px;line-height:1.65}
+.generation-tax-selection{margin:14px 0;padding:14px;border:1px solid #e8dfe3;border-radius:9px;background:#faf7f8;font-size:12px;line-height:1.6}
+.generation-tax-selection p{margin:6px 0}.generation-tax-selection span{font-weight:600}.generation-tax-selection small{display:block;color:#716575;margin-top:8px}
 .generation-report-choices{border:0;padding:0;margin:22px 0 14px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;min-width:0}
 .generation-report-choices label{position:relative;display:flex;align-items:flex-start;gap:12px;cursor:pointer;padding:18px 14px;border:1px solid #ded8e0;border-radius:11px;background:#fff;min-height:95px;transition:border-color .15s,background .15s}
 .generation-report-choices label:hover{border-color:#aa7883;background:#fcf9fa}

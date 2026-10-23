@@ -1,3 +1,4 @@
+import {reportDifalPolicy} from './report-difal-policy.ts';
 import {ANTICIPATION_VERSION,calculateAnticipation,isAnticipationVersion,summarizeAnticipation,type AnticipationSummary,type AnticipationOrigin} from './icms-anticipation.ts';
 import { calculateDifal, salesOperation, normalizeUf, summarizeDifal, DIFAL_VERSION, isDifalVersion, type DifalSummary, type DifalOrigin } from './difal.ts';
 import {OPERATION_CATALOG_VERSION, normalizeOperationNature, classifyOperationNature} from './operation-catalog.ts';
@@ -180,7 +181,7 @@ export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
 
 /** Reconcile against immutable stored lines and scoped provider snapshots before any report/download. */
 export async function purchaseSummary(id: string, requireComplete = true, mode: FinancialMode = PURCHASE_MODE) {
-  const job = await purchaseJob(id, mode);
+  const job = await purchaseJob(id, mode), difalPolicy = await reportDifalPolicy(job);
   if (requireComplete) need(job.status === 'COMPLETED', `Conclua a consulta para emitir o relatório de ${financialLabel(mode)}.`, 409, 'INCOMPLETE');
   need(job.summary && job.purchaseInput, 'Resumo financeiro ausente.', 409, 'INCOMPLETE');
   const version = calculationVersion(job), formula = purchaseFormula(version);
@@ -268,7 +269,7 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
     purchaseSelection = summarizePurchaseSelection(sourceRows.map(row => ({...row, totalCents: row.totalCents, status: indexed.get(row.cnpj)?.status})),
       {origin: 'DERIVED_FROM_SNAPSHOT', includeGroups: true, calculationVersion: version});
   }
-  return {job, ...(mode === SALES_MODE ? {difal,difalOrigin, serviceGroups, servicesTotalCents} : {}), ...(mode===PURCHASE_MODE?{anticipation,anticipationOrigin,purchaseSelection}:{}), calculationVersion: version, formula, components, period, operationTotals: operationTotals.map(row => ({operation: row._id, lines: row.lines, totalCents: exactCents(row.totalCents), balanceCents: exactSignedCents(row.balanceCents)})),
+  return {job, ...(difalPolicy === undefined ? {} : {difalPolicy}), ...(mode === SALES_MODE ? {difal,difalOrigin, serviceGroups, servicesTotalCents} : {}), ...(mode===PURCHASE_MODE?{anticipation,anticipationOrigin,purchaseSelection}:{}), calculationVersion: version, formula, components, period, operationTotals: operationTotals.map(row => ({operation: row._id, lines: row.lines, totalCents: exactCents(row.totalCents), balanceCents: exactSignedCents(row.balanceCents)})),
     reportingGroups: reportingGroups(groups, uniqueDocuments, totalCents, {count: nonCnpjDocumentCount, lines: lines - cnpjLines, totalCents: nonCnpjCents}, excludedByKind.get('CPF') || {count: 0, lines: 0, totalCents: 0}, mode),
     totals: {lines, uniqueCnpjs: valid.length, uniqueDocuments, nonCnpjDocumentCount, cnpjLines, nonCnpjLines: lines - cnpjLines, totalCents, cnpjCents, nonCnpjCents}, groups, excluded,
     denominators: {count: 'Documentos distintos do relatório, incluindo CPF, CNO e inválidos. Cada linha sem documento conta separadamente.', value: `Soma de ${formula} de todas as linhas do relatório. Apenas optantes confirmados entram em Simples; ${mode === SALES_MODE ? 'CPF tem grupo próprio nas vendas; os demais, incluindo não confirmados e outros documentos, integram Não optantes.' : 'todo o restante integra Não optantes no agrupamento gerencial.'}`},
@@ -375,7 +376,8 @@ async function financialPage(id: string, status: string, page: number, pageSize:
 }
 export async function purchaseRows(id: string, status: string, page: number, lines = false, mode: FinancialMode = PURCHASE_MODE) {
   const summary=await purchaseSummary(id, true, mode); purchaseFilter(status, mode);
-  return financialPage(id, status, page, 100, !lines, mode,summary);
+  return {...await financialPage(id, status, page, 100, !lines, mode,summary),
+    ...(summary.difalPolicy === undefined ? {} : {difalPolicy:summary.difalPolicy})};
 }
 export async function purchaseExport(id: string, status: string, part: number, mode: FinancialMode = PURCHASE_MODE) {
   const summary = await purchaseSummary(id, true, mode); purchaseFilter(status, mode);

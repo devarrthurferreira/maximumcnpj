@@ -158,7 +158,8 @@ for(const guided of [false,true])test(`Relatório de entradas ${guided?'guiado':
   await expect(panel.getByRole('heading',{name:'DIFAL de entrada — Antecipação de ICMS'})).toBeVisible();
   await expect(panel).toContainText('Calculado a partir dos dados já salvos neste relatório.');
   await expect(panel.locator('[data-anticipation-amount]')).toContainText('10,98');
-  await expect(panel).not.toContainText('importe');await expect(panel).toContainText('Compras com CPF ou CNPJ · 7,32%');
+  await expect(panel).not.toContainText('importe');await expect(panel).toContainText('Compras com CPF ou CNPJ');
+  await expect(panel).toContainText('Alíquota média estimada de 7,32%');
   await expect(page.locator('#purchase-report-view .purchase-hero')).toContainText('150,00');
   await expect(page.locator('#purchase-report-view [data-purchase-original-total]')).toContainText('150,00');
   await expect(page.locator('#purchase-report-view [data-purchase-excluded-total]')).toContainText('0,00');

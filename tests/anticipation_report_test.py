@@ -225,7 +225,11 @@ class AnticipationReportTests(unittest.TestCase):
         self.assertIsNone(reconcile_purchase_snapshot(job, rows, items, WORKSPACE)['anticipation'])
 
     def test_consolidation_sums_once_and_identifies_missing_and_old_versions(self):
-        db, _, _, snapshots = generations_report_test.GenerationReportTests().setup_db(3, ['PURCHASES'])
+        db, generation, _, snapshots = generations_report_test.GenerationReportTests().setup_db(3, ['PURCHASES'])
+        for company in generation['companies']:
+            company['difalPolicy'] = {'version': 'DIFAL_SCENARIOS_V2',
+                'enabled': {'pure': True, 'hybrid': True, 'presumed': False, 'actual': False},
+                'operations': {'pure': {'entry': True, 'exit': True}, 'hybrid': {'entry': True, 'exit': True}}}
         entries = list(snapshots.items())
         for index, (job_id, (old, _, _)) in enumerate(entries[:2]):
             job, rows, items = anticipation_fixture(10000 if index == 0 else 20000,
@@ -239,11 +243,15 @@ class AnticipationReportTests(unittest.TestCase):
         with patch('reporting.generations.purchase_metadata', side_effect=lambda db, job, workspace:
                    reconcile_purchase_snapshot(*snapshots[job['_id']], workspace)):
             meta = generation_metadata(db, generations_report_test.GENERATION, WORKSPACE)
-        self.assertEqual(meta['totalsByType']['PURCHASES']['anticipation'], {
+        totals = meta['totalsByType']['PURCHASES']['anticipation']
+        expected = {
             'baseCents': 30000, 'amountCents': 2196, 'eligibleLines': 2, 'pendingLines': 0,
             'unavailableReports': 1, 'legacyReports': 1, 'derivedReports': 1, 'importedReports': 1,
             'version': ANTICIPATION_VERSION, 'ratePercent': 7.32,
-            'sourceVersions': [ANTICIPATION_LEGACY_VERSION, ANTICIPATION_VERSION]})
+            'sourceVersions': [ANTICIPATION_LEGACY_VERSION, ANTICIPATION_VERSION]}
+        self.assertEqual({key: totals[key] for key in expected}, expected)
+        self.assertEqual((totals['selectedReports'], totals['excludedReports'], totals['unconfiguredReports']), (3, 0, 0))
+        self.assertEqual(totals['sourceEstimate']['amountCents'], 2196)
         self.assertEqual(meta['totalsByType']['PURCHASES']['totalCents'], 130000)
         self.assertTrue(render_generation_pdf(meta).startswith(b'%PDF'))
 

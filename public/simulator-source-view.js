@@ -1,7 +1,75 @@
+import {resolveDifalApplication} from './simulator-engine.js';
+import {difalDirectionSelection} from './difal-policy.js';
+
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=cents=>Number.isSafeInteger(cents)?(cents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):'—';
 const month=value=>/^\d{4}-(0[1-9]|1[0-2])$/.test(value||'')?`${value.slice(5)}/${value.slice(0,4)}`:String(value||'—');
 const operationLabels={VENDA:'Venda',COMPRAS:'Compra',DEVOLUCAO_VENDA:'Devolução de venda',DEVOLUCAO_COMPRA:'Devolução de compra',OUTRAS:'Outras operações',SERVICO_COMPRA:'Serviço de compra',SERVICO_VENDA:'Serviço de venda',NAO_CLASSIFICADA:'Não classificada'};
+const appliedMoney=value=>typeof value==='number'&&Number.isFinite(value)?value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):'Indisponível';
+const difalRegimes=[['pure','Simples puro'],['hybrid','Simples híbrido']];
+const summed=values=>values.every(value=>typeof value==='number'&&Number.isFinite(value))?values.reduce((sum,value)=>sum+Math.round(value*100),0)/100:null;
+
+/** Amounts in BRL. Editing uses the selected source estimate; history reads saved DRE cells only. */
+export function buildDifalApplicationView({direction,policy,reports=[],row=null,rbt12ByMonth={},rbt12=null,currentCents=null,totalCents=null,sourceEstimate=null,snapshot=null,monthIndex=0}) {
+  if(!['entry','exit'].includes(direction))throw new TypeError('Direção do DIFAL inválida.');
+  const field=direction==='exit'?'difal':'icmsAnticipation',sourceKey=direction==='exit'?'difal':'anticipation';
+  const caption=direction==='exit'?'DIFAL de saída':'DIFAL de entrada';
+  if(snapshot){
+    const saved=snapshot.result;
+    if(!saved?.regimes?.some(regime=>Number.isFinite(regime.dre?.[field])))return null;
+    const monthly=saved.method==='REPORT_MONTHS_V1',selected=monthly?saved.monthlyResults?.find(item=>item.month===monthIndex+1):null;
+    const currentPolicy=snapshot.draft?.difalPolicy||saved.difalPolicy;
+    const ids=currentPolicy?.version==='DIFAL_SCENARIOS_V2'?difalRegimes.map(([id])=>id):saved.regimes.map(regime=>regime.id);
+    const values=ids.map(id=>{
+      const regime=saved.regimes.find(item=>item.id===id),periodValue=regime?.dre?.[field];
+      const currentRegime=monthly?selected?.result?.regimes?.find(item=>item.id===id):regime;
+      const calendar=snapshot.monthlyDre?.regimes?.find(item=>item.id===id)?.rows?.find(item=>item.key===field)?.months?.[monthIndex];
+      const currentValue=monthly?currentRegime?.dre?.[field]:Number.isFinite(calendar)?calendar:Number.isFinite(periodValue)?periodValue/12:null;
+      const application=currentRegime?.difalApplication;
+      const current=Number.isFinite(currentValue)?currentValue===0?0:-currentValue:null,total=Number.isFinite(periodValue)?periodValue===0?0:-periodValue:null;
+      const selectedOperation=application?.operations?.[direction]??regime?.difalApplication?.operations?.[direction]??currentPolicy?.operations?.[id]?.[direction];
+      const selectedRegime=application?.enabled??regime?.difalApplication?.enabled??currentPolicy?.enabled?.[id];
+      const excluded=current===0&&total===0&&(selectedRegime===false||selectedOperation===false||!application?.blocked&&['USER_EXCLUDED','NO_OPERATIONS','NOT_APPLICABLE'].includes(application?.reason));
+      return {id,name:regime?.name||id,current,total,excluded,
+        blocked:!!application?.blocked&&!excluded,pending:false,preview:false,message:excluded?`${caption} não incluído por escolha nesta versão.`:application?.message||'Valores preservados da versão salva.'};
+    });
+    return {direction,caption,values,historical:true,currentMonth:selected?.sourceMonth||row?.sourceMonth||null};
+  }
+  const selection=difalDirectionSelection(policy,direction);
+  if(!selection)return null;
+  const apply=(id,estimate,reference)=>{
+    if(!selection.regimeIds.includes(id))return {value:0,excluded:true,blocked:false,pending:false,preview:false,message:`${caption} não incluído por escolha.`};
+    const known=typeof reference==='number'&&Number.isFinite(reference);
+    const application=known?resolveDifalApplication({policy,regimeId:id,rbt12:reference}):null;
+    if(application?.blocked)return {value:0,excluded:false,blocked:true,pending:false,preview:false,message:application.message};
+    const amount=estimate?.amountCents,pending=!!estimate?.pendingLines,onlyPending=pending&&!estimate.eligibleLines;
+    return {value:Number.isSafeInteger(amount)&&!onlyPending?amount/100:null,excluded:false,blocked:false,pending,preview:!known,
+      message:pending?'Estimativa parcial: confira as UFs pendentes.':!Number.isSafeInteger(amount)?'Estimativa de origem indisponível.':!known?'Prévia selecionada; confirme a RBT12 para aplicar os bloqueios.':`${caption} incluído neste cenário.`};
+  };
+  const values=difalRegimes.map(([id,name])=>{
+    const current=reports.length?row?apply(id,row[sourceKey],rbt12ByMonth[row.sourceMonth]):{value:null,message:'Mês sem dados importados.'}:apply(id,{...sourceEstimate,amountCents:currentCents},rbt12);
+    const period=reports.length?reports.map(item=>apply(id,item[sourceKey],rbt12ByMonth[item.sourceMonth])):[apply(id,{...sourceEstimate,amountCents:totalCents},rbt12)];
+    return {id,name,...current,current:current.value,total:summed(period.map(item=>item.value)),pending:!!current.pending||period.some(item=>item.pending),preview:!!current.preview||period.some(item=>item.preview)};
+  });
+  return {direction,caption,values,historical:false,selection,currentMonth:row?.sourceMonth||null};
+}
+
+export function difalApplicationSummary(view,period='current') {
+  if(!view?.values?.length)return 'Indisponível';
+  const values=view.values.map(row=>row[period]);
+  if(values.every(value=>value===null)&&view.values.some(row=>row.pending))return 'Pendente';
+  return values.every(value=>Object.is(value,values[0])||value===values[0])?appliedMoney(values[0]):'Por cenário';
+}
+
+/** The collapsed source remains auditable, but is never presented as the applied amount. */
+export function renderDifalAppliedSource({view,sourceHtml='',auditOpen=false}) {
+  if(!view)return sourceHtml;
+  if(view.values.every(row=>row.current===null&&row.total===null&&!row.pending&&!row.excluded))return sourceHtml;
+  const exit=view.direction==='exit',prefix=exit?'difal':'anticipation',allExcluded=view.values.every(row=>row.excluded),blocked=view.values.some(row=>row.blocked),pending=view.values.some(row=>row.pending),preview=view.values.some(row=>row.preview);
+  const status=allExcluded?'Não incluído':view.historical?'Valores da versão salva':blocked?'Bloqueio por competência':pending?'Estimativa parcial':preview?'Prévia selecionada':'Aplicação por cenário';
+  const audit=sourceHtml.replaceAll(`data-${prefix}-`, `data-${prefix}-source-`).replaceAll(exit?'sim-difal-title':'sim-anticipation-title',exit?'sim-difal-source-title':'sim-anticipation-source-title');
+  return `<section class="sim-difal-card sim-difal-application${allExcluded?' is-excluded':''}" data-difal-application-direction="${view.direction}" aria-labelledby="sim-${prefix}-title"><header class="sim-difal-header"><div><span class="eyebrow">${view.historical?'APLICAÇÃO SALVA NA DRE':'ESCOLHA DESTA SIMULAÇÃO'}</span><h3 id="sim-${prefix}-title">${view.caption}${exit?' — vendas':' — antecipação de compras'}</h3></div><span class="sim-state-badge" data-difal-application-status>${status}</span></header><div class="sim-difal-metrics"><article class="sim-difal-current"><span>${view.currentMonth?esc(month(view.currentMonth)):'Valor mensal por cenário'}</span><strong data-${prefix}-monthly>${difalApplicationSummary(view)}</strong><small>${allExcluded?'Desativado nos cenários Simples':'Aplicação conforme cada cenário abaixo'}</small></article><article><span>Total do período por cenário</span><strong data-${prefix}-${exit?'annual':'total'}${exit?' data-difal-amount':''}>${difalApplicationSummary(view,'total')}</strong><small>Os cenários são alternativas; seus valores não são somados.</small></article><article><span>Seleção</span><strong class="sim-difal-selection-label">${allExcluded?'Não incluir':view.historical?'Conforme a versão salva':view.selection?.label||'Não incluir'}</strong><small>${view.historical?'O histórico conserva os valores originalmente salvos.':'Entrada e saída são independentes.'}</small></article></div><div class="sim-difal-applied-regimes">${view.values.map(item=>`<article data-${prefix}-applied-regime="${esc(item.id)}"><h4>${esc(item.name)}</h4><dl><div><dt>Mês</dt><dd data-${prefix}-applied-month>${appliedMoney(item.current)}</dd></div><div><dt>Período</dt><dd data-${prefix}-applied-total>${appliedMoney(item.total)}</dd></div></dl><p>${esc(item.message)}</p></article>`).join('')}</div><p class="sim-difal-explanation">${allExcluded?`${view.caption} desativado. Nenhum valor desta direção é incluído nos cenários acima.`:view.historical?'Esta apresentação lê os valores salvos da DRE e não recalcula impostos.':'A prévia considera as opções selecionadas e os bloqueios conhecidos de cada competência.'}</p>${audit?`<details class="sim-difal-source-audit" data-${prefix}-audit ${auditOpen?'open':''}><summary>Conferir estimativa original do relatório <span aria-hidden="true">+</span></summary><p class="sim-help">Valores brutos de origem, antes das escolhas dos cenários. Estes valores não substituem a aplicação mostrada acima.</p>${audit}</details>`:''}</section>`;
+}
 
 /** Show the captured source reconciliation, independently of manual scenario adjustments. */
 export function renderOperationAudit(audit) {

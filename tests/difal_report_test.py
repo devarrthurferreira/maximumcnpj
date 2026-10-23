@@ -181,7 +181,7 @@ class DifalReportTests(unittest.TestCase):
                     meta = reconcile_purchase_snapshot(job, rows, items, WORKSPACE)
                     text = story_text(meta)
                     self.assertIn('Vendas de serviços', text)
-                    self.assertIn('DIFAL sobre vendas aparece em linha própria na DRE', text)
+                    self.assertIn('A dedução na DRE depende da direção escolhida em cada cenário Simples', text)
                     self.assertEqual(meta['difal']['amountCents'], 0)
                     service = next(item for item in meta['operationTotals'] if item['operation'] == 'SERVICO')
                     self.assertEqual(service['balanceCents'], 15000)
@@ -264,7 +264,11 @@ class DifalReportTests(unittest.TestCase):
 
     def test_consolidation_sums_difal_once_and_marks_legacy_reports(self):
         helper = generations_report_test.GenerationReportTests()
-        db, _, _, snapshots = helper.setup_db(2, ['SALES'])
+        db, generation, _, snapshots = helper.setup_db(2, ['SALES'])
+        for company in generation['companies']:
+            company['difalPolicy'] = {'version': 'DIFAL_SCENARIOS_V2',
+                'enabled': {'pure': True, 'hybrid': True, 'presumed': False, 'actual': False},
+                'operations': {'pure': {'entry': True, 'exit': True}, 'hybrid': {'entry': True, 'exit': True}}}
         entries = list(snapshots.items())
         for index, (job_id, (job, _, _)) in enumerate(entries):
             replacement, rows, items = difal_fixture(15000 if index == 0 else 100000)

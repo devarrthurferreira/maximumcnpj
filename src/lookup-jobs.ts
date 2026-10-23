@@ -1,3 +1,5 @@
+import type {DifalPolicy} from '../public/simulator-engine.js';
+import {parseDifalPolicy} from '../public/simulator-engine.js';
 import {ANTICIPATION_VERSION} from './icms-anticipation.ts';
 import { DIFAL_VERSION, normalizeUf } from './difal.ts';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.ts';
@@ -16,7 +18,7 @@ export async function createLookup(actor:LookupActor,input:any,mode=LOOKUP_MODE)
   return createLookupRecord(actor,input,mode);
 }
 /** The source is reserved before copying, so retries cannot adopt an ordinary upload. */
-async function createLookupRecord(actor:LookupActor,input:any,mode:string,repeatedFrom?:string){
+async function createLookupRecord(actor:LookupActor,input:any,mode:string,repeatedFrom?:string, sourceDifalPolicy?:DifalPolicy){
   need([LOOKUP_MODE,PURCHASE_MODE,SALES_MODE].includes(mode),'Tipo de consulta inválido.');
   write(actor);await ensureLookupIndexes();
   const id=text(input.importId);need(/^[a-f0-9-]{36}$/.test(id),'Identificador inválido.');
@@ -31,7 +33,7 @@ async function createLookupRecord(actor:LookupActor,input:any,mode:string,repeat
     return existing;
   };
   if(old)return sameInput(old);
-  const job={_id:id,...scope(),mode,...(repeatedFrom?{repeatedFrom}:{}),...(isFinancialMode(mode)?{calculationVersion:PURCHASE_CALCULATION_VERSION,operationVersion:OPERATION_CATALOG_VERSION,issuerUf}:{}),...(mode===SALES_MODE?{difalVersion:DIFAL_VERSION}:mode===PURCHASE_MODE?{anticipationVersion:ANTICIPATION_VERSION}:{}),clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
+  const job={_id:id,...scope(),mode,...(repeatedFrom?{repeatedFrom}:{}),...(repeatedFrom && sourceDifalPolicy !== undefined ? {difalPolicy:parseDifalPolicy(sourceDifalPolicy),difalPolicyOrigin:'RECHECK_SOURCE'} : {}),...(isFinancialMode(mode)?{calculationVersion:PURCHASE_CALCULATION_VERSION,operationVersion:OPERATION_CATALOG_VERSION,issuerUf}:{}),...(mode===SALES_MODE?{difalVersion:DIFAL_VERSION}:mode===PURCHASE_MODE?{anticipationVersion:ANTICIPATION_VERSION}:{}),clientId:c._id,clientCode:c.code||null,clientName:c.name,fileName,expectedRows:expected,uploaded:0,status:'UPLOADING',createdAt:new Date(),createdBy:actor._id,version:VERSION,source:SOURCE_NAME,received:0};
   try{await jobs.insertOne(job);}catch(error:any){
     if(error.code!==11000)throw error;
     const concurrent=await jobs.findOne(scope({_id:id}));
@@ -86,7 +88,7 @@ export async function repeatLookup(actor:LookupActor,id:string){
 /** Revalidation creates an independent snapshot, with an optional stable ID for uncertain responses. */
 export async function recheckLookup(actor: LookupActor, id: string, input: any = {}) {
   write(actor);
-  need(input && typeof input === 'object' && !Array.isArray(input), 'Pedido de reconsulta inválido.');
+  need(input && typeof input === 'object' && !Array.isArray(input) && Object.keys(input).every(key => key === 'importId'), 'Pedido de reconsulta inválido.');
   const importId = input.importId === undefined ? randomUUID() : text(input.importId, 36);
   need(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(importId), 'Identificador inválido.');
   need(importId !== id, 'A reconsulta precisa de um novo identificador.', 409, 'LOOKUP_EXISTS');
@@ -95,12 +97,13 @@ export async function recheckLookup(actor: LookupActor, id: string, input: any =
   return withJob(id, async old => {
     need(old.status === 'COMPLETED', 'A consulta anterior precisa estar concluída.', 409);
     const financial = isFinancialMode(old.mode);
-    const count = financial ? (await purchaseSummary(id, true, old.mode)).totals.uniqueCnpjs
+    const sourceSummary = financial ? await purchaseSummary(id, true, old.mode) : null;
+    const count = sourceSummary ? sourceSummary.totals.uniqueCnpjs
       : await (await collection('lookupItems')).countDocuments(scope({jobId: id}));
     need(count > 0, 'Este relatório não tem CNPJs consultáveis.');
     const fresh = await createLookupRecord(actor, {importId, clientId: old.clientId,
       fileName: 'Reconsulta · ' + old.fileName.slice(0,170), expectedRows: financial ? old.expectedRows : count,
-      issuerUf: old.issuerUf}, old.mode, id);
+      issuerUf: old.issuerUf}, old.mode, id, sourceSummary?.difalPolicy);
     // A lost HTTP response must return the same job, including one already processed.
     if (['PROCESSING', 'COMPLETED'].includes(fresh.status)) return fresh;
     return withJob(fresh._id, async locked => {

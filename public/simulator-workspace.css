@@ -58,6 +58,16 @@
 .sim-difal-card .projection-table-wrap table { min-width:440px; }
 .sim-difal-card .projection-table-wrap th:first-child { min-width:150px; }
 .sim-difal-card tr.is-current th,.sim-difal-card tr.is-current td { background:#f7edf1; color:#703749; }
+.sim-difal-application.is-excluded { background:#f8f7f8; }
+.sim-difal-metrics .sim-difal-selection-label { font-size:15px;line-height:1.5; }
+.sim-difal-applied-regimes { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 16px; }
+.sim-difal-applied-regimes article { min-width:0;padding:13px;border:1px solid var(--sim-line);border-radius:8px;background:#fff; }
+.sim-difal-applied-regimes h4 { margin:0 0 10px;font-size:13px; }
+.sim-difal-applied-regimes dl { margin:0;display:flex;gap:14px;flex-wrap:wrap; }
+.sim-difal-applied-regimes dt { font-size:10px;color:var(--sim-muted); }
+.sim-difal-applied-regimes dd { margin:3px 0 0;font-weight:650;font-size:15px; }
+.sim-difal-applied-regimes p { margin:10px 0 0;font-size:11px;line-height:1.5;color:var(--sim-muted); }
+.sim-difal-source-audit>.sim-difal-card { background:#fff;box-shadow:none; }
 .sim-difal-card th small { display:block; font-size:10px; font-weight:400; margin-top:4px; }
 .simulator-clean .sim-period-toggle button,.simulator-clean .dre-calendar-controls button,.simulator-clean .dre-export-actions button { min-height:44px; }
 .simulator-clean .dre-denominator,.simulator-clean .dre-legend,.simulator-clean .dre-method-note { color:var(--sim-muted); }
@@ -104,8 +114,10 @@
 }
 @media print {
   .sim-month-nav,.sim-month-overview { display:none!important; }
+  .sim-difal-source-audit { display:none!important; }
   .sim-difal-card { break-inside:avoid; }
 }
+@media (max-width:560px) { .sim-difal-applied-regimes { grid-template-columns:1fr; } }
 
 .sim-difal-options { margin-top:24px; padding-top:22px; border-top:1px solid var(--sim-line,#e3dce0); }
 .sim-difal-options h3 { margin:0 0 8px; font-size:18px; }

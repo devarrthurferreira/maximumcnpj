@@ -52,6 +52,7 @@ class GenerationReportTests(unittest.TestCase):
     def setup_db(self, count=11, required_reports=None):
         generation, jobs, snapshots = generation_fixture(count, required_reports)
         db = SimpleNamespace(
+            audit=SimpleNamespace(find_one=lambda query: None),
             generations=SimpleNamespace(find_one=lambda query: generation if query['workspaceId'] == WORKSPACE else None),
             lookupJobs=SimpleNamespace(find=lambda query: Cursor(jobs)))
         return db, generation, jobs, snapshots

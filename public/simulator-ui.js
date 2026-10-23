@@ -1,6 +1,6 @@
 import {monthlyProjection, monthlyDifal, baselineMonth, calculateMonthlySimulation} from './simulator-monthly.js';
 import {buildRbt12Schedule, reconcileSection22Extraction} from './simulator-rbt12.js';
-import {renderOperationAudit,renderRbt12Schedule,renderAnticipationSource} from './simulator-source-view.js';
+import {renderOperationAudit,renderRbt12Schedule,renderAnticipationSource,buildDifalApplicationView,difalApplicationSummary,renderDifalAppliedSource} from './simulator-source-view.js';
 import {buildMonthlyDre} from './simulator-calendar.js';
 import {renderSection22,renderMonthlyDre,isSection22} from './simulator-extrato-view.js';
 import {annualizeReports, projectScenario, projectDifal} from './simulator-projection.js';
@@ -31,11 +31,20 @@ const actualMonths=()=>Array.isArray(S.source?.monthlyReports)&&(!S.readonly||S.
 const sourceProjection=()=>actualMonths()?monthlyProjection(S.source.monthlyReports):annualizeReports(S.source.fields,S.months);
 const difalProjection = () => S.readonly ? S.snapshot?.difalProjection || null : actualMonths()?monthlyDifal(S.source.monthlyReports,S.source.sales.jobId):projectDifal(S.source.sales.difal, S.months, S.source.sales.jobId);
 const rbt12Schedule=()=>S.readonly?S.snapshot?.rbt12Schedule||S.snapshot?.result?.rbt12Schedule||null:actualMonths()&&S.rbt12Mode==='PDF'&&S.rbt12Data?buildRbt12Schedule(S.rbt12Data,S.source.monthlyReports.map(row=>row.sourceMonth)):null;
+function difalSourceApplication(direction){
+  const reports=actualMonths()?S.source.monthlyReports:[],row=S.readonly?reports.find(item=>item.month===S.dreMonth+1):reports[S.entry];
+  const rbt12=S.readonly?null:value('rbt12'),schedule=S.readonly?null:rbt12Schedule();
+  const rbt12ByMonth=Object.fromEntries(reports.map(item=>{const reference=schedule?.rows.find(entry=>entry.sourceMonth===item.sourceMonth);return [item.sourceMonth,S.rbt12Mode==='MANUAL'?rbt12:reference?.status==='CONFIRMED'?reference.rbt12Cents/100:null];}));
+  const projection=direction==='exit'?difalProjection():null;
+  return buildDifalApplicationView({direction,policy:S.difalPolicy,reports,row,rbt12ByMonth,rbt12,
+    currentCents:projection?.monthlyCents??null,totalCents:projection?.annualCents??null,sourceEstimate:direction==='exit'?S.source.sales?.difal:null,snapshot:S.readonly?S.snapshot:null,monthIndex:S.dreMonth});
+}
 function updateAnticipationSource(){
   const host=$('#simulator-anticipation');if(!host)return;
   const reports=S.source.monthlyReports,row=S.readonly?reports?.find(item=>item.month===S.dreMonth+1):reports?.[S.entry];
-  const open=host.querySelector('[data-anticipation-disclosure]')?.open||false;
-  host.innerHTML=renderAnticipationSource({reports,row,open,adjusted:S.readonly?S.edited:actualMonths()&&monthHasAdjustments(S.entry)});
+  const open=host.querySelector('[data-anticipation-disclosure],[data-anticipation-source-disclosure]')?.open||false,auditOpen=host.querySelector('[data-anticipation-audit]')?.open||false;
+  const sourceHtml=renderAnticipationSource({reports,row,open,adjusted:S.readonly?S.edited:actualMonths()&&monthHasAdjustments(S.entry)});
+  host.innerHTML=renderDifalAppliedSource({view:Array.isArray(reports)?difalSourceApplication('entry'):null,sourceHtml,auditOpen});
 }
 function updateRbt12Schedule(){
   const host=$('#rbt12-schedule');if(host)host.innerHTML=renderRbt12Schedule(rbt12Schedule());
@@ -107,7 +116,7 @@ function selectReportMonth(index){
   if(S.result){S.dreMonth=S.source.monthlyReports[index].month-1;renderResult();}
 }
 function monthWorkspace(){
-  return `<div class="sim-month-workspace"><div class="sim-month-nav" role="group" aria-label="Navegação entre competências"><div class="sim-month-heading"><span class="eyebrow">CONFERÊNCIA MENSAL</span><label for="report-competence">Competência dos relatórios</label></div><div class="sim-month-switch"><button type="button" id="report-prev" aria-label="Competência anterior">←</button><select id="report-competence" aria-describedby="month-context">${S.source.monthlyReports.map((row,index)=>`<option value="${index}">${esc(competenceLabel(row.sourceMonth))}</option>`).join('')}</select><button type="button" id="report-next" aria-label="Próxima competência">→</button></div><span id="month-position" class="sim-month-position"></span></div><section class="sim-month-overview" aria-label="Resumo da competência"><div class="sim-month-context"><p id="month-context" role="status"></p><span id="month-adjustment-state" class="sim-state-badge"></span></div><div class="sim-month-metrics">${[['revenue','Vendas e serviços'],['purchases','Compras'],['expenses','Despesas informadas'],['difal','DIFAL estimado']].map(([key,label])=>`<article><span>${label}</span><strong id="month-summary-${key}">—</strong></article>`).join('')}</div><div class="sim-month-footer"><p>Despesas são preenchidas em cada mês. O total anual soma as competências.</p><button type="button" id="restore-month">Restaurar receitas e compras deste mês</button></div></section>`;
+  return `<div class="sim-month-workspace"><div class="sim-month-nav" role="group" aria-label="Navegação entre competências"><div class="sim-month-heading"><span class="eyebrow">CONFERÊNCIA MENSAL</span><label for="report-competence">Competência dos relatórios</label></div><div class="sim-month-switch"><button type="button" id="report-prev" aria-label="Competência anterior">←</button><select id="report-competence" aria-describedby="month-context">${S.source.monthlyReports.map((row,index)=>`<option value="${index}">${esc(competenceLabel(row.sourceMonth))}</option>`).join('')}</select><button type="button" id="report-next" aria-label="Próxima competência">→</button></div><span id="month-position" class="sim-month-position"></span></div><section class="sim-month-overview" aria-label="Resumo da competência"><div class="sim-month-context"><p id="month-context" role="status"></p><span id="month-adjustment-state" class="sim-state-badge"></span></div><div class="sim-month-metrics">${[['revenue','Vendas e serviços'],['purchases','Compras'],['expenses','Despesas informadas'],['difal','DIFAL de saída selecionado']].map(([key,label])=>`<article><span>${label}</span><strong id="month-summary-${key}">—</strong></article>`).join('')}</div><div class="sim-month-footer"><p>Despesas são preenchidas em cada mês. O total anual soma as competências.</p><button type="button" id="restore-month">Restaurar receitas e compras deste mês</button></div></section>`;
 }
 function monthHasAdjustments(index){
   const entry=S.monthlyInputs[index],base=S.source.monthlyReports[index].fields;
@@ -124,7 +133,7 @@ function updateMonthWorkspace(){
   $('#month-summary-revenue').textContent=money(sumMoney([...IMPORTED.slice(0,3).map(key=>entry.groups[key]),entry.values.serviceRevenue]));
   $('#month-summary-purchases').textContent=money(sumMoney(IMPORTED.slice(3).map(key=>entry.groups[key])));
   $('#month-summary-expenses').textContent=money(sumMoney(MANUAL.slice(1).map(key=>entry.values[key])));
-  $('#month-summary-difal').textContent=!report.difal?'Indisponível':report.difal.pendingLines?'Pendente de UF':money(report.difal.amountCents/100);
+  $('#month-summary-difal').textContent=difalApplicationSummary(difalSourceApplication('exit'));
   const adjusted=monthHasAdjustments(S.entry),badge=$('#month-adjustment-state');
   badge.textContent=adjusted?'Receitas ou compras ajustadas':'Receitas e compras do relatório';badge.classList.toggle('is-adjusted',adjusted);
   $('#restore-month').disabled=!adjusted;
@@ -250,11 +259,16 @@ function updateProjection() {
 
 function updateDifalSource() {
   const host=$('#simulator-difal');if(!host)return;
+  const auditOpen=host.querySelector('[data-difal-audit]')?.open||false;
+  renderDifalSource(host);
+  host.innerHTML=renderDifalAppliedSource({view:difalSourceApplication('exit'),sourceHtml:host.innerHTML,auditOpen});
+}
+function renderDifalSource(host) {
   const difal=S.source.sales.difal;
   if(actualMonths()){
     const projected=difalProjection(),reports=S.source.monthlyReports;
     const row=S.readonly?reports.find(item=>item.month===S.dreMonth+1):reports[S.entry],current=row?.difal;
-    const open=host.querySelector('[data-difal-disclosure]')?.open||false;
+    const open=host.querySelector('[data-difal-disclosure],[data-difal-source-disclosure]')?.open||false;
     if(!projected){host.innerHTML='<section class="sim-difal-card is-pending"><h3>DIFAL indisponível</h3><p>Reimporte as vendas com a UF do emitente e do destinatário para conferir a estimativa.</p></section>';return;}
     const adjusted=S.readonly?S.edited:monthHasAdjustments(S.entry);
     host.innerHTML=`<section class="sim-difal-card${projected.pendingLines?' is-pending':''}" aria-labelledby="sim-difal-title">
@@ -614,6 +628,7 @@ window.addEventListener('beforeprint',()=>{
       const source=$('#simulator-form '+selector);if(!source||!source.textContent.trim())continue;
       const copy=source.cloneNode(true);copy.removeAttribute('id');
       copy.querySelectorAll('[id]').forEach(node=>node.removeAttribute('id'));
+      copy.querySelectorAll('.sim-difal-source-audit').forEach(detail=>detail.remove());
       copy.querySelectorAll('details').forEach(detail=>detail.open=true);
       if(copy.matches('details'))copy.open=true;
       context.append(copy);
@@ -623,6 +638,7 @@ window.addEventListener('beforeprint',()=>{
   const calendarHost=$('.sim-calendar');
   if(calendarHost&&S.dreContext&&!calendarHost.querySelector('.dre-print-calendar'))calendarHost.querySelector('.dre-calendar-screen').insertAdjacentHTML('afterend',renderDrePrintCalendar({...S.dreContext,regimeId:S.calendarRegime,showPercent:S.dreShowPercent}));
   document.querySelectorAll('#simulator-app details:not([open])').forEach(detail=>{
+    if(detail.closest('.sim-difal-source-audit'))return;
     printDetails.push(detail);detail.open=true;
   });
 });
