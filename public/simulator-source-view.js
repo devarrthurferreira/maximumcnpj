@@ -10,7 +10,7 @@ const difalRegimes=[['pure','Simples puro'],['hybrid','Simples híbrido']];
 const summed=values=>values.every(value=>typeof value==='number'&&Number.isFinite(value))?values.reduce((sum,value)=>sum+Math.round(value*100),0)/100:null;
 
 /** Amounts in BRL. Editing uses the selected source estimate; history reads saved DRE cells only. */
-export function buildDifalApplicationView({direction,policy,reports=[],row=null,rbt12ByMonth={},rbt12=null,currentCents=null,totalCents=null,sourceEstimate=null,snapshot=null,monthIndex=0}) {
+export function buildDifalApplicationView({direction,policy,reports=[],row=null,rbt12ByMonth={},rbt12=null,currentCents=null,totalCents=null,sourceEstimate=null,icmsOutside=false,snapshot=null,monthIndex=0}) {
   if(!['entry','exit'].includes(direction))throw new TypeError('Direção do DIFAL inválida.');
   const field=direction==='exit'?'difal':'icmsAnticipation',sourceKey=direction==='exit'?'difal':'anticipation';
   const caption=direction==='exit'?'DIFAL de saída':'DIFAL de entrada';
@@ -26,12 +26,15 @@ export function buildDifalApplicationView({direction,policy,reports=[],row=null,
       const calendar=snapshot.monthlyDre?.regimes?.find(item=>item.id===id)?.rows?.find(item=>item.key===field)?.months?.[monthIndex];
       const currentValue=monthly?currentRegime?.dre?.[field]:Number.isFinite(calendar)?calendar:Number.isFinite(periodValue)?periodValue/12:null;
       const application=currentRegime?.difalApplication;
-      const current=Number.isFinite(currentValue)?currentValue===0?0:-currentValue:null,total=Number.isFinite(periodValue)?periodValue===0?0:-periodValue:null;
+      const savedCurrent=Number.isFinite(currentValue)?currentValue===0?0:-currentValue:null,savedTotal=Number.isFinite(periodValue)?periodValue===0?0:-periodValue:null;
       const selectedOperation=application?.operations?.[direction]??regime?.difalApplication?.operations?.[direction]??currentPolicy?.operations?.[id]?.[direction];
       const selectedRegime=application?.enabled??regime?.difalApplication?.enabled??currentPolicy?.enabled?.[id];
-      const excluded=current===0&&total===0&&(selectedRegime===false||selectedOperation===false||!application?.blocked&&['USER_EXCLUDED','NO_OPERATIONS','NOT_APPLICABLE'].includes(application?.reason));
+      const exclusionRecorded=selectedRegime===false||selectedOperation===false||!application?.blocked&&['USER_EXCLUDED','NO_OPERATIONS','NOT_APPLICABLE'].includes(application?.reason);
+      const currentExcluded=savedCurrent===0&&exclusionRecorded,periodExcluded=savedTotal===0&&exclusionRecorded,excluded=currentExcluded&&periodExcluded;
+      const currentPending=!currentExcluded&&currentRegime?.available===false,periodPending=!periodExcluded&&regime?.available===false;
+      const current=currentPending?null:savedCurrent,total=periodPending?null:savedTotal,pending=currentPending||periodPending;
       return {id,name:regime?.name||id,current,total,excluded,
-        blocked:!!application?.blocked&&!excluded,pending:false,preview:false,message:excluded?`${caption} não incluído por escolha nesta versão.`:application?.message||'Valores preservados da versão salva.'};
+        blocked:!!application?.blocked&&!excluded,pending,preview:false,message:excluded?`${caption} não incluído por escolha nesta versão.`:pending?(currentPending?currentRegime?.status:regime?.status)||'Cálculo pendente: o total do período não foi confirmado.':application?.message||'Valores preservados da versão salva.'};
     });
     return {direction,caption,values,historical:true,currentMonth:selected?.sourceMonth||row?.sourceMonth||null};
   }
@@ -40,7 +43,7 @@ export function buildDifalApplicationView({direction,policy,reports=[],row=null,
   const apply=(id,estimate,reference)=>{
     if(!selection.regimeIds.includes(id))return {value:0,excluded:true,blocked:false,pending:false,preview:false,message:`${caption} não incluído por escolha.`};
     const known=typeof reference==='number'&&Number.isFinite(reference);
-    const application=known?resolveDifalApplication({policy,regimeId:id,rbt12:reference}):null;
+    const application=known?resolveDifalApplication({policy,regimeId:id,rbt12:reference,icmsOutside}):null;
     if(application?.blocked)return {value:0,excluded:false,blocked:true,pending:false,preview:false,message:application.message};
     const amount=estimate?.amountCents,pending=!!estimate?.pendingLines,onlyPending=pending&&!estimate.eligibleLines;
     return {value:Number.isSafeInteger(amount)&&!onlyPending?amount/100:null,excluded:false,blocked:false,pending,preview:!known,

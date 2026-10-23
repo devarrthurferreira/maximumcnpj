@@ -59,10 +59,13 @@ function request(input: unknown) {
   const title = input.title === undefined ? null : text(input.title, 160);
   object(input.monthlyGroups, GROUPS);
   const monthlyGroups = Object.fromEntries(GROUPS.map((key, index) => [key, index < 3 ? signedSalesMoney(input.monthlyGroups[key]) : money(input.monthlyGroups[key])])) as MonthlyGroups;
-  object(input.draft, ['year', 'salesAnnex', 'serviceAnnex', 'values'], ['rbt12', 'difalPolicy']);
+  object(input.draft, ['year', 'salesAnnex', 'serviceAnnex', 'values'], ['rbt12', 'difalPolicy', 'icmsOutside']);
   need([2027, 2028].includes(input.draft.year) && [1, 2].includes(input.draft.salesAnnex) && [3, 4, 5].includes(input.draft.serviceAnnex),
     'Ano ou anexo inválido para o modelo da calculadora.');
   object(input.draft.values, SIMULATION_VALUE_FIELDS);
+  if (Object.hasOwn(input.draft, 'icmsOutside')) {
+    need(typeof input.draft.icmsOutside === 'boolean', 'Informe se o ICMS/ISS está dentro ou fora do DAS neste cenário.');
+  }
   let difalPolicy: SimulationDraft['difalPolicy'];
   if (Object.hasOwn(input.draft, 'difalPolicy')) {
     try { difalPolicy = parseDifalPolicy(input.draft.difalPolicy); }
@@ -70,6 +73,7 @@ function request(input: unknown) {
   }
   const draft: SimulationDraft = {year: input.draft.year, salesAnnex: input.draft.salesAnnex, serviceAnnex: input.draft.serviceAnnex,
     ...(Object.hasOwn(input.draft, 'rbt12') ? {rbt12: money(input.draft.rbt12)} : {}),
+    ...(Object.hasOwn(input.draft, 'icmsOutside') ? {icmsOutside: input.draft.icmsOutside} : {}),
     // Keep omission and the normalized request hash unchanged for historical retries.
     ...(difalPolicy ? {difalPolicy} : {}),
     values: Object.fromEntries(SIMULATION_VALUE_FIELDS.map(key => [key, money(input.draft.values[key])])) as SimulationDraft['values']};

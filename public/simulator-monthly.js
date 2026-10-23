@@ -1,11 +1,11 @@
 import {REPORT_GROUPS} from './simulator-projection.js';
-import {calculateSimulation, draftToInput, SIMULATION_VALUE_FIELDS} from './simulator-engine.js';
+import {calculateSimulation, draftToInput, SIMULATION_VALUE_FIELDS, REVENUE_CONTEXT_VERSION, SIMPLES_DIAGNOSTIC_VERSION} from './simulator-engine.js';
 
-export const MONTHLY_MODEL_VERSION='1.7.0-difal-directions';
+export const MONTHLY_MODEL_VERSION='1.8.0-simples-revenue-context';
 export const MONTHLY_VERSION='REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS=Object.freeze([...REPORT_GROUPS,'serviceRevenueCents']);
 const sum=values=>values.reduce((a,b)=>a+b,0);
-const fixedMemory=id=>['rbt12','sublimit','simplesLimit'].includes(id)||/^simples\..+\.deduction$/.test(id);
+const fixedMemory=id=>['rbt12','sublimit','simplesLimit','simples.revenueReference'].includes(id)||/^simples\..+\.deduction$/.test(id);
 const monthlyMemory=item=>{
   if(item.id==='months')return {...item,value:1,formula:'Uma competência dos relatórios, calculada separadamente com as premissas do modelo.'};
   if(item.unit!=='currency'||fixedMemory(item.id)||['difal.source','difal.monthly','icmsAnticipation.source','icmsAnticipation.base','icmsAnticipation.monthly'].includes(item.id)||/^group\..+\.(purchases|base)$/.test(item.id))return item;
@@ -71,7 +71,9 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
   }
   check(Array.isArray(monthlyInputs)&&monthlyInputs.length===reports.length,'Preencha os valores de todas as competências.');
   const adjustments=[];
-  const monthlyResults=reports.map((row,index)=>{
+  // Validate every month before deriving the revenue reference. A seasonal month is
+  // never multiplied by twelve to decide whether the period fits this model.
+  const prepared=reports.map((row,index)=>{
     const input=monthlyInputs[index],baseline=baselineMonth(row);
     check(input?.sourceMonth===row.sourceMonth&&Object.keys(input).every(key=>['sourceMonth','groups','values'].includes(key)),'As competências do cenário divergem dos relatórios.');
     check(input.groups&&Object.keys(input.groups).length===REPORT_GROUPS.length&&input.values&&Object.keys(input.values).length===6,'Campos mensais incompletos ou não reconhecidos.');
@@ -84,11 +86,17 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
       const value=key==='serviceRevenue'?values[key]:groups[key],original=key==='serviceRevenue'?baseline.values[key]:baseline.groups[key];
       if(value!==original)adjustments.push({sourceMonth:row.sourceMonth,field:key,reportMonthlyValue:original,simulatedMonthlyValue:value});
     }
+    return {row,index,groups,values};
+  });
+  const revenueCents=sum(prepared.map(({values})=>asCents(values.salesRevenue)+asCents(values.serviceRevenue)));
+  check(Number.isSafeInteger(revenueCents),'Receita do período acima do limite seguro.');
+  const revenueContext={version:REVENUE_CONTEXT_VERSION,method:'ACTUAL_REPORT_MONTHS',revenueCents,sourceMonths:reports.map(row=>row.sourceMonth)};
+  const monthlyResults=prepared.map(({row,index,groups,values})=>{
     const d={...draft,...(rbt12Schedule?{rbt12:rbt12Schedule.rows[index].rbt12Cents/100}:{}),values},difal=row.difal?{version:'DIFAL_DRE_V1',monthlyCents:row.difal.amountCents,annualCents:row.difal.amountCents*12,
       sourceAmountCents:row.difal.amountCents,reportMonths:1,pendingLines:row.difal.pendingLines}:null;
     const anticipation=row.anticipation?{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:row.anticipation.amountCents,annualCents:row.anticipation.amountCents*12,
       sourceAmountCents:row.anticipation.amountCents,sourceBaseCents:row.anticipation.baseCents,reportMonths:1,pendingLines:row.anticipation.pendingLines}:null;
-    const raw=calculateSimulation(d,difal,anticipation),engineInput=draftToInput(d,difal,anticipation);
+    const raw=calculateSimulation(d,difal,anticipation,revenueContext),engineInput=draftToInput(d,difal,anticipation,revenueContext);
     // The existing model reports a 12-month projection from one monthly input.
     // Convert each independent run to its one-month contribution before summing.
     const result={...raw,annualRevenue:values.salesRevenue+values.serviceRevenue,difference:raw.difference/12,
@@ -102,17 +110,27 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     const all=monthlyResults.map(row=>row.result.regimes.find(item=>item.id===regime.id));
     const dre=Object.fromEntries(Object.keys(regime.dre).map(key=>[key,sum(all.map(item=>item.dre[key]))]));
     const totalTaxes=sum(all.map(item=>item.totalTaxes));
-    return {...regime,available:all.every(item=>item.available),...(all.some(item=>!item.available)?{status:`Indisponível em: ${monthlyResults.filter((row,index)=>!all[index].available).map(row=>row.sourceMonth).join(', ')}`} : {}),annualProfit:dre.netProfit,monthlyProfit:null,totalTaxes,dre,
+    const available=all.every(item=>item.available);
+    const status=!available?`Cálculo pendente em: ${monthlyResults.filter((row,index)=>!all[index].available).map(row=>`${row.sourceMonth}: ${row.result.regimes.find(item=>item.id===regime.id).status}`).join(' ')}`:
+      annualRevenue===0?'Calculado com receita zero em todo o período':['pure','hybrid'].includes(regime.id)?`Cálculo disponível nas competências informadas · ICMS/ISS ${draft.icmsOutside?'fora do':'no'} DAS`:
+      regime.id==='presumed'?'Simulação sujeita ao enquadramento':'Cálculo disponível nas competências informadas';
+    return {...regime,available,status,annualProfit:dre.netProfit,monthlyProfit:null,totalTaxes,dre,
       difalApplication:{version:regime.difalApplication.version,enabled:regime.difalApplication.enabled,operations:{...regime.difalApplication.operations},
         months:all.map((item,index)=>({sourceMonth:monthlyResults[index].sourceMonth,...item.difalApplication}))},
-      margin:annualRevenue>0?dre.netProfit/annualRevenue:null,taxBurden:annualRevenue>0?totalTaxes/annualRevenue:null};
+      margin:all.every(item=>item.available)&&annualRevenue>0?dre.netProfit/annualRevenue:null,taxBurden:all.every(item=>item.available)&&annualRevenue>0?totalTaxes/annualRevenue:null};
   });
   const ranked=annualRevenue>0?regimes.filter(row=>row.available).sort((a,b)=>b.annualProfit-a.annualProfit):[];
   const credits=Object.fromEntries(Object.keys(first.credits).map(tax=>[tax,Object.fromEntries(Object.keys(first.credits[tax]).map(key=>[key,sum(monthlyResults.map(row=>row.result.credits[tax][key]))]))]));
-  const memory=first.memory.filter(item=>item.unit==='currency'&&(!rbt12Schedule||item.id!=='rbt12')&&
-    (!fixedMemory(item.id)||monthlyResults.every(row=>row.result.memory.some(entry=>entry.id===item.id&&entry.unit===item.unit&&entry.value===item.value)))).map(item=>fixedMemory(item.id)?{...item}:({...item,label:item.label.replace(/médio mensal|mensal|anual|da competência/g,'do período'),
-    formula:'Soma dos valores calculados separadamente em cada competência importada.',
-    value:sum(monthlyResults.map(row=>row.result.memory.find(entry=>entry.id===item.id)?.value||0))}));
+  const memory=first.memory.filter(item=>(item.unit==='currency'||item.id==='outside'||item.availability==='UNAVAILABLE')&&(!rbt12Schedule||item.id!=='rbt12')&&
+    (!fixedMemory(item.id)||monthlyResults.every(row=>row.result.memory.some(entry=>entry.id===item.id&&entry.unit===item.unit&&entry.value===item.value)))).map(item=>{
+      if((fixedMemory(item.id)&&item.availability!=='UNAVAILABLE')||item.id==='outside')return {...item};
+      const entries=monthlyResults.map(row=>({sourceMonth:row.sourceMonth,result:row.result,entry:row.result.memory.find(entry=>entry.id===item.id)}));
+      const pending=entries.filter(({entry})=>entry?.availability==='UNAVAILABLE'||typeof entry?.value!=='number'||!Number.isFinite(entry.value));
+      const label=item.label.replace(/médio mensal|mensal|anual|da competência/g,'do período');
+      if(pending.length)return {...item,label,unit:'text',value:'Conferência necessária',availability:'UNAVAILABLE',
+        formula:`O total não está confirmado. ${pending.map(({sourceMonth,result,entry})=>`${sourceMonth}: ${entry?.availability==='UNAVAILABLE'?result.simplesDiagnostic.message:'Memória de cálculo ausente ou não numérica.'}`).join(' ')}`};
+      return {...item,label,formula:'Soma dos valores calculados separadamente em cada competência importada.',value:sum(entries.map(({entry})=>entry.value))};
+    });
   for(const regime of regimes){
     const choices=regime.difalApplication.months;
     const simple=['pure','hybrid'].includes(regime.id),operations=regime.difalApplication.operations;
@@ -120,11 +138,32 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
       {id:`difal.operations.${regime.id}`,section:`DIFAL · ${regime.name}`,label:'Operações de DIFAL selecionadas',formula:'Entrada e saída são opções independentes por cenário; a seleção não altera os relatórios de origem.',value:!simple?'Não aplicável':['entry','exit'].filter(operation=>operations[operation]).map(operation=>operation==='entry'?'Entrada':'Saída').join(' e ')||'Nenhuma',unit:'text'},
       {id:`difal.status.${regime.id}`,section:`DIFAL · ${regime.name}`,label:'Aplicação por competência',formula:'Cada mês usa sua RBT12 e conserva o motivo de inclusão, exclusão ou bloqueio.',value:choices.map(item=>`${item.sourceMonth}: ${item.message}`).join(' '),unit:'text'});
   }
-  const warnings=[...new Map(monthlyResults.flatMap(row=>row.result.warnings.map(item=>({...item,detail:`${row.sourceMonth}: ${item.detail}`}))).filter(item=>!['difal-estimate'].includes(item.code)).map(item=>[item.code,item])).values()];
+  const warningGroups=new Map();
+  for(const row of monthlyResults)for(const item of row.result.warnings){
+    if(['difal-estimate','projection'].includes(item.code))continue;
+    // Coalesce identical explanations while retaining every affected competence.
+    const key=JSON.stringify([item.code,item.severity,item.title,item.detail]);
+    const group=warningGroups.get(key)||{...item,sourceMonths:[]};
+    group.sourceMonths.push(row.sourceMonth);warningGroups.set(key,group);
+  }
+  const warnings=[...warningGroups.values()].map(({sourceMonths,...item})=>({...item,detail:`${sourceMonths.join(', ')}: ${item.detail}`}));
   warnings.push({code:'actual-months',severity:'info',title:'Valores por competência',detail:`Compras, vendas, serviços, DIFAL e antecipação seguem cada mês da coluna H. ${rbt12Schedule?'RBT12 móvel composta pelas 12 receitas anteriores de cada competência, exclusivamente do quadro 2.2.':'RBT12 fixa informada para o cenário.'} Total anual é a soma dos meses importados. Meses fora do período não têm dados. Não há compensação automática de créditos entre competências.`});
-  const result={...first,version:MONTHLY_MODEL_VERSION,method:MONTHLY_VERSION,annualRevenue,regimes,credits,memory,warnings,monthlyResults,...(rbt12Schedule?{rbt12Schedule}:{}),
+  warnings.push({code:'monthly-model-scope',severity:'info',title:'Escopo do cálculo por competência',detail:'O consolidado soma os resultados dos meses informados. Compras/CMV simplificam o custo; o modelo não controla estoques, ajustes fiscais do Lucro Real, compensação de prejuízos ou apuração trimestral. A comparação depende das premissas e do enquadramento.'});
+  const diagnoses=monthlyResults.map(row=>({sourceMonth:row.sourceMonth,...row.result.simplesDiagnostic}));
+  const pending=diagnoses.filter(item=>!item.available),rbt12Values=diagnoses.map(item=>item.rbt12);
+  const sameRbt12=rbt12Values.every(value=>value===rbt12Values[0]);
+  const statusCodes=new Set(diagnoses.map(item=>item.statusCode));
+  const simplesDiagnostic={...first.simplesDiagnostic,version:SIMPLES_DIAGNOSTIC_VERSION,
+    available:pending.length===0,statusCode:statusCodes.size===1?diagnoses[0].statusCode:'MULTIPLE_MONTH_STATUSES',
+    rbt12:sameRbt12?rbt12Values[0]:null,rbt12Min:Math.min(...rbt12Values),rbt12Max:Math.max(...rbt12Values),
+    message:pending.length?`Cálculo pendente em ${pending.length} ${pending.length===1?'competência':'competências'}. Consulte os motivos de cada mês; isso não confirma exclusão do Simples Nacional.`:'Cálculo disponível em todas as competências informadas; o total é a soma dos meses, sem multiplicar um mês por 12.',
+    action:pending.length?[...new Set(pending.map(item=>item.action))].join(' '):first.simplesDiagnostic.action,
+    months:diagnoses};
+  memory.push({id:'simples.diagnostic',section:'Simples Nacional',label:'Condição do cálculo no período',formula:'Cada competência mantém sua RBT12 e seu motivo; disponibilidade não confirma enquadramento fiscal.',value:diagnoses.map(item=>`${item.sourceMonth}: ${item.message}`).join(' '),unit:'text'},
+    {id:'simples.action',section:'Simples Nacional',label:'Conferência necessária',formula:simplesDiagnostic.statusCode,value:simplesDiagnostic.action,unit:'text'});
+  const result={...first,version:MONTHLY_MODEL_VERSION,method:MONTHLY_VERSION,annualRevenue,simplesDiagnostic,regimes,credits,memory,warnings,monthlyResults,...(rbt12Schedule?{rbt12Schedule}:{}),
     bestRegimeId:ranked[0]?.id||null,difference:ranked.length?ranked[0].annualProfit-ranked.at(-1).annualProfit:0};
   projection.scenario={unit:'CENTS',annual:{revenueCents:sum(monthlyResults.map(row=>asCents(row.values.salesRevenue)+asCents(row.values.serviceRevenue)))},months:monthlyResults.map(({sourceMonth,groups,values})=>({sourceMonth,groups,values}))};
   return {result,projection,difalProjection,anticipationProjection,...(rbt12Schedule?{rbt12Schedule}:{}),adjustments,monthlyInputs:monthlyResults.map(({sourceMonth,groups,values})=>({sourceMonth,groups,values:Object.fromEntries(['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,values[key]]))})),
-    engineInput:{version:MONTHLY_VERSION,months:monthlyResults.map(({sourceMonth,engineInput})=>({sourceMonth,input:engineInput})),...(rbt12Schedule?{rbt12Method:rbt12Schedule.version}:{rbt12:draft.rbt12})}};
+    engineInput:{version:MONTHLY_VERSION,icmsOutside:draft.icmsOutside===true,months:monthlyResults.map(({sourceMonth,engineInput})=>({sourceMonth,input:engineInput})),...(rbt12Schedule?{rbt12Method:rbt12Schedule.version}:{rbt12:draft.rbt12})}};
 }

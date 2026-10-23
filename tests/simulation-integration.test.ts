@@ -474,6 +474,34 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.deepEqual(await getSimulation(saved._id),saved,'O histórico OCR anterior permanece imutável.');
     });
 
+    await t.test('situação do ICMS/ISS é validada, salva e revisada sem inventar receita anual nem alterar históricos', async () => {
+      const localInput={...input,simulationId:randomUUID(),rbt12ExtractionId:undefined,rbt12Source:'MANUAL',rbt12ManualConfirmed:true,
+        draft:{...draft,rbt12:4_000_000,icmsOutside:false}};
+      for(const icmsOutside of [null,'true',1,{},[]]){
+        await assert.rejects(createSimulation(actor,{...localInput,draft:{...localInput.draft,icmsOutside}}),code('VALIDATION'));
+      }
+      await assert.rejects(createSimulation(actor,{...localInput,draft:{...localInput.draft,revenueContext:{annualRevenue:1}}}),code('VALIDATION'));
+      const pending=await createSimulation(actor,localInput);
+      assert.equal(pending.draft.icmsOutside,false);
+      assert.equal(pending.result.simplesDiagnostic.statusCode,'LOCAL_TAX_REVIEW_REQUIRED');
+      assert.equal(pending.result.simplesDiagnostic.eligibilityVerified,false);
+      assert.equal(pending.result.simplesDiagnostic.revenueReference,pending.result.annualRevenue);
+      assert.equal(pending.result.simplesDiagnostic.coveredMonths,3);
+      assert.equal(pending.result.simplesDiagnostic.completeYear,false);
+      const outsideInput={...localInput,simulationId:randomUUID(),parentSimulationId:pending._id,
+        draft:{...localInput.draft,icmsOutside:true}};
+      const confirmed=await createSimulation(operator,outsideInput);
+      assert.equal(confirmed.draft.icmsOutside,true);
+      assert(confirmed.result.regimes.filter((r:any)=>['pure','hybrid'].includes(r.id)).every((r:any)=>r.available));
+      assert(confirmed.engineInput.months.every((row:any)=>row.input.icmsOutside===true));
+      assert(confirmed.result.monthlyResults.every((row:any)=>row.result.regimes.filter((r:any)=>['pure','hybrid'].includes(r.id)).every((r:any)=>r.dre.icmsNet<=0&&r.dre.iss===-250)));
+      assert.deepEqual(await getSimulation(pending._id),pending);
+      assert.deepEqual(await getSimulation(confirmed._id),confirmed);
+      assert.deepEqual(await createSimulation(operator,outsideInput),confirmed);
+      await assert.rejects(createSimulation(operator,{...outsideInput,draft:{...outsideInput.draft,icmsOutside:false}}),code('SIMULATION_EXISTS'));
+      assert.deepEqual(await getSimulation(saved._id),saved);
+    });
+
     await t.test('opções de DIFAL estritas, idempotentes e preservadas em nova versão sem alterar o hash legado', async () => {
       const policy = {version:'DIFAL_SCENARIOS_V1', enabled:{pure:false, hybrid:true, presumed:false, actual:true}};
       const records = await collection('simulations'), count = await records.countDocuments(scope());

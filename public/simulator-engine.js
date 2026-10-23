@@ -2,7 +2,8 @@
  * Maximum simulator: faithful JavaScript port of the existing calculadora model.
  * Source: devarrthurferreira/calculadora@d60e8bc3b2edcc2ebd4ff11cf584689f01d0d381
  * Files: src/lib/tax/{constants,engine,schema}.ts and src/lib/simulation.ts.
- * Formulas and numerical defaults are unchanged; schema validation has no dependencies.
+ * Numerical defaults are retained; monthly revenue context and explicit local-tax
+ * treatment extend the original projection. Schema validation has no dependencies.
  * Forecast assumptions only; this port does not establish fiscal eligibility.
  */
 export const CALCULATOR_SOURCE_COMMIT = 'd60e8bc3b2edcc2ebd4ff11cf584689f01d0d381';
@@ -18,8 +19,9 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
-export const MODEL_VERSION = '1.7.0-difal-directions';
-const LEGACY_MODEL_VERSION = '1.2.0-services-difal';
+export const MODEL_VERSION = '1.8.0-simples-revenue-context';
+export const SIMPLES_DIAGNOSTIC_VERSION = 'SIMPLES_DIAGNOSTIC_V1';
+export const REVENUE_CONTEXT_VERSION = 'SIMPLES_REVENUE_CONTEXT_V1';
 export const ICMS_ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_DRE_V1';
 export const DIFAL_POLICY_VERSION = 'DIFAL_SCENARIOS_V2';
 const LEGACY_DIFAL_POLICY_VERSION = 'DIFAL_SCENARIOS_V1';
@@ -340,6 +342,16 @@ function checkChoices(input) {
     if (!values.includes(input[key])) failInput([key], 'Opção inválida.');
   }
 }
+/** Derived by the monthly adapter, never copied from an editable draft or client result. */
+function parseRevenueContext(value) {
+  strictObject(value,['version','method','revenueCents','sourceMonths'],['revenueContext']);
+  if(value.version!==REVENUE_CONTEXT_VERSION||value.method!=='ACTUAL_REPORT_MONTHS')failInput(['revenueContext'],'Contexto da receita inválido.');
+  if(!Number.isSafeInteger(value.revenueCents)||value.revenueCents<0)failInput(['revenueContext','revenueCents'],'Receita do período inválida.');
+  if(!Array.isArray(value.sourceMonths)||value.sourceMonths.length<1||value.sourceMonths.length>12||
+      value.sourceMonths.some(month=>typeof month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))||
+      new Set(value.sourceMonths).size!==value.sourceMonths.length)failInput(['revenueContext','sourceMonths'],'Competências da receita inválidas.');
+  return {...value,sourceMonths:[...value.sourceMonths]};
+}
 /** New choices never mutate an older draft or normalize its request hash. */
 export function defaultDifalPolicy() {
   return {version:DIFAL_POLICY_VERSION,enabled:{pure:true,hybrid:true,presumed:false,actual:false},
@@ -389,7 +401,9 @@ function parseTaxInput(input) {
   const hasDifal = input != null && Object.hasOwn(input, 'difalMonthly');
   const hasAnticipation = input != null && Object.hasOwn(input, 'icmsAnticipation');
   const hasDifalPolicy=input!=null&&Object.hasOwn(input,'difalPolicy');
-  strictObject(input, [...TAX_AMOUNT_FIELDS, 'year', 'salesAnnex', 'serviceAnnex', 'icmsOutside', 'rates', 'credits', ...(hasDifal ? ['difalMonthly'] : []), ...(hasAnticipation ? ['icmsAnticipation'] : []),...(hasDifalPolicy?['difalPolicy']:[])]);
+  const hasRevenueContext=input!=null&&Object.hasOwn(input,'revenueContext');
+  strictObject(input, [...TAX_AMOUNT_FIELDS, 'year', 'salesAnnex', 'serviceAnnex', 'icmsOutside', 'rates', 'credits', ...(hasDifal ? ['difalMonthly'] : []), ...(hasAnticipation ? ['icmsAnticipation'] : []),...(hasDifalPolicy?['difalPolicy']:[]),...(hasRevenueContext?['revenueContext']:[])]);
+  const revenueContext=hasRevenueContext?parseRevenueContext(input.revenueContext):null;
   const difalPolicy=hasDifalPolicy?parseDifalPolicy(input.difalPolicy):null;
   if (hasDifal) checkNumber(input.difalMonthly, VALUE_LIMIT, ['difalMonthly']);
   if (hasAnticipation) {
@@ -415,7 +429,7 @@ function parseTaxInput(input) {
     if (group.base > purchases[key]) failInput(['credits', key, 'base'], 'A base elegível não pode superar as compras deste grupo. Informe 0 se não houver crédito.');
     if (group.base * (group.cbsRate + group.ibsRate) > purchases[key] + 1e-8) failInput(['credits', key, 'cbsRate'], 'O crédito combinado de CBS e IBS não pode exceder as compras do grupo.');
   }
-  return { ...input,...(hasDifalPolicy?{difalPolicy}:{}), ...(hasAnticipation ? {icmsAnticipation: {...input.icmsAnticipation}} : {}), rates: { ...input.rates }, credits: Object.fromEntries(CREDIT_GROUPS.map(key => [key, { ...input.credits[key] }])) };
+  return { ...input,...(hasRevenueContext?{revenueContext}:{}),...(hasDifalPolicy?{difalPolicy}:{}), ...(hasAnticipation ? {icmsAnticipation: {...input.icmsAnticipation}} : {}), rates: { ...input.rates }, credits: Object.fromEntries(CREDIT_GROUPS.map(key => [key, { ...input.credits[key] }])) };
 }
 export const taxInputSchema = Object.freeze({
   parse: parseTaxInput,
@@ -443,10 +457,48 @@ function apportion(debit, potential) {
         balance: positive(potential - used)
     };
 }
+function diagnoseSimples(input, revenue) {
+    const context=input.revenueContext;
+    const sourceMonths=context?[...context.sourceMonths]:[];
+    const revenueReference=context?context.revenueCents/100:revenue;
+    const revenueBasis=context?'ACTUAL_REPORT_MONTHS':'AVERAGE_X12';
+    const completeYear=sourceMonths.length===12&&new Set(sourceMonths.map(month=>month.slice(0,4))).size===1;
+    const referenceLabel=context?'A receita considerada no período':'A projeção de receita em 12 meses';
+    let statusCode='READY',available=true;
+    let message=input.icmsOutside?'Cálculo disponível com ICMS/ISS fora do DAS, conforme a premissa informada.':'Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.';
+    let action='Confira enquadramento, atividade, receita do ano-calendário e demais condições antes de usar o resultado fiscalmente.';
+    if(revenue>0&&input.rbt12===0){
+      statusCode='MISSING_RBT12';available=false;
+      message='Informe uma RBT12 válida para calcular o Simples com receita positiva.';
+      action='Confirme a RBT12 do extrato ou informe a referência manual. Início de atividade exige a regra de proporcionalização aplicável.';
+    }else if(input.rbt12>SIMPLES_LIMIT){
+      statusCode='RATE_TABLE_EXCEEDED';available=false;
+      message=`A RBT12 de ${currency(input.rbt12)} supera a faixa de R$ 4.800.000 suportada neste modelo. Isso não confirma exclusão do Simples Nacional.`;
+      action='Confira RBA, RBAA, mercados interno/externo e a regra de cálculo além da última faixa. O modelo não aplica automaticamente essa apuração especial.';
+    }else if(revenueReference>SIMPLES_LIMIT){
+      statusCode='REVENUE_REVIEW_REQUIRED';available=false;
+      message=`${referenceLabel} de ${currency(revenueReference)} supera a referência de R$ 4.800.000. A data e os efeitos de eventual exclusão precisam de análise específica.`;
+      action='Confira a receita por ano-calendário e mercado, início de atividade e percentual de excesso. O total considerado não substitui essa análise.';
+    }else if(input.rbt12>SUBLIMIT&&!input.icmsOutside){
+      statusCode='LOCAL_TAX_REVIEW_REQUIRED';available=false;
+      message='A RBT12 está na sexta faixa e ICMS/ISS permanecem indicados no DAS. Essa apuração local exige revisão específica; o sublimite não exclui a empresa do Simples Nacional.';
+      action='Se ICMS/ISS já forem recolhidos fora do DAS, selecione essa situação. Se ainda estiverem no DAS, confira RBA, RBAA, parcela de excesso e a apuração local da sexta faixa; não altere a opção apenas para liberar o cálculo.';
+    }else if(revenue===0){
+      statusCode='ZERO_REVENUE';message='Cálculo disponível com receita zero; custos e despesas permanecem considerados.';
+    }
+    return {version:SIMPLES_DIAGNOSTIC_VERSION,available,statusCode,message,action,rbt12:input.rbt12,
+      federalLimit:SIMPLES_LIMIT,sublimit:SUBLIMIT,revenueReference,revenueBasis,sourceMonths,
+      coveredMonths:context?sourceMonths.length:MONTHS,completeYear,icmsOutside:input.icmsOutside,eligibilityVerified:false,
+      assumptions:[
+        'RBT12 define a faixa de cálculo. Receita do período, RBT12 e receita acumulada no ano-calendário (RBA/RBAA) são bases diferentes.',
+        'O modelo não confirma enquadramento nem datas de exclusão. Receita de cada mercado, início de atividade, vedações e efeitos do excesso exigem conferência.',
+        ...(context&&!completeYear?['O período não cobre um ano-calendário completo. Meses ausentes não são presumidos como zero nem projetados.']:[])
+      ]};
+}
 const DRE_LABELS = {
     services: 'Receita de serviços',
     sales: 'Receita de vendas',
-    revenue: 'Receita bruta total',
+    revenue: 'Receita total utilizada',
     das: 'DAS',
     cbsDebit: 'Débito de CBS',
     ibsDebit: 'Débito de IBS',
@@ -514,6 +566,8 @@ export function calculateTax(rawInput) {
         cards: input.cardExpenses * MONTHS
     };
     const revenue = annual.services + annual.sales;
+    const simplesDiagnostic=diagnoseSimples(input,revenue);
+    const revenueReference=simplesDiagnostic.revenueReference;
     const cmv = annual.cmvSimple + annual.cmvRegular;
     const operational = revenue - cmv - annual.salaries - annual.benefits - annual.administrative - annual.rent - annual.cards;
     add('year', 'Premissas', 'Ano do cenário', 'Partilhas do Simples válidas para 2027 e 2028.', input.year, 'number');
@@ -521,6 +575,9 @@ export function calculateTax(rawInput) {
     add('rbt12', 'Premissas', 'RBT12', 'Receita total efetiva dos últimos 12 meses informada pelo usuário; separada da projeção.', input.rbt12);
     add('sublimit', 'Premissas', 'Sublimite de referência', 'Referência preventiva para ICMS/ISS fora do DAS.', SUBLIMIT);
     add('simplesLimit', 'Premissas', 'Limite do Simples', 'Limite de referência do modelo.', SIMPLES_LIMIT);
+    add('simples.revenueReference','Simples Nacional',input.revenueContext?'Receita considerada no período':'Receita anual projetada de referência',input.revenueContext?'Soma das receitas de cada competência informada, após devoluções e ajustes do cenário. Não é cada mês multiplicado por 12 nem confirmação de RBA fiscal.':'Receita mensal × 12, identificada como projeção; não substitui RBA/RBAA para enquadramento.',revenueReference);
+    add('simples.diagnostic','Simples Nacional','Condição do cálculo do Simples','A disponibilidade informa se o modelo suporta o cálculo; não confirma elegibilidade fiscal.',simplesDiagnostic.message,'text');
+    add('simples.action','Simples Nacional','Conferência necessária',simplesDiagnostic.statusCode,simplesDiagnostic.action,'text');
     add('outside', 'Premissas', 'ICMS e ISS fora do DAS', 'Situação informada pelo usuário; alerta de sublimite não altera a opção automaticamente.', input.icmsOutside ? 'Sim' : 'Não', 'text');
     const rateLabels = {
         cbs: 'CBS de saída (hipótese)',
@@ -734,7 +791,11 @@ export function calculateTax(rawInput) {
             ipiIncluded
         ]
     ])add(`simples.${id}`, 'Simples Nacional', label, formula, value);
-    const excessRevenue = positive(revenue - PRESUMPTION_LIMIT);
+    // In the monthly adapter, distribute the model's annual excess across the
+    // actual period. A seasonal month is not evidence of a R$ 5m annual excess.
+    const excessRevenue = input.revenueContext
+      ? (revenueReference>0?positive(revenueReference-PRESUMPTION_LIMIT)*revenue/revenueReference:0)
+      : positive(revenue - PRESUMPTION_LIMIT);
     const irBase = annual.sales * input.rates.irSales + annual.services * input.rates.irServices;
     const csBase = annual.sales * input.rates.csSales + annual.services * input.rates.csServices;
     const irCoefficient = revenue > 0 ? irBase / revenue : 0;
@@ -757,7 +818,7 @@ export function calculateTax(rawInput) {
         [
             'excessRevenue',
             'Receita excedente a R$ 5 milhões',
-            'Máximo(0; receita anual − R$ 5.000.000)',
+            input.revenueContext?'Excedente do período a R$ 5.000.000, rateado pela receita da competência no modelo gerencial; contribuição anualizada para conversão mensal. Não representa apuração trimestral.':'Máximo(0; receita anual − R$ 5.000.000)',
             excessRevenue
         ],
         [
@@ -861,20 +922,8 @@ export function calculateTax(rawInput) {
             actualCs
         ]
     ])add(`actual.${id}`, 'Lucro Real', label, formula, value);
-    let simpleStatus = input.icmsOutside ? 'Disponível · ICMS/ISS fora do DAS' : 'Disponível';
-    let simpleAvailable = true;
-    if (revenue > SIMPLES_LIMIT || input.rbt12 > SIMPLES_LIMIT) {
-        simpleStatus = 'Fora do limite de referência do Simples';
-        simpleAvailable = false;
-    } else if (revenue > 0 && input.rbt12 === 0) {
-        simpleStatus = 'Informe a RBT12 para calcular o Simples';
-        simpleAvailable = false;
-    } else if (input.rbt12 > SUBLIMIT && !input.icmsOutside) {
-        simpleStatus = 'Revise o sublimite e o ICMS/ISS fora do DAS';
-        simpleAvailable = false;
-    } else if (revenue === 0) {
-        simpleStatus = 'Calculado com receita zero';
-    }
+    const simpleStatus=simplesDiagnostic.message;
+    const simpleAvailable=simplesDiagnostic.available;
     function regime(id, name) {
         const isSimple = id === 'pure' || id === 'hybrid';
         const isPure = id === 'pure';
@@ -930,7 +979,7 @@ export function calculateTax(rawInput) {
             iss: outside ? '−Serviços anuais × alíquota de ISS' : 'Zero: ISS incluído no DAS',
             difal: application.salesDifal?'−DIFAL mensal estimado das operações importadas × 12; hipótese gerencial de 10%, incluída uma única vez.':application.message,
             icmsAnticipation: !isSimple ? 'Zero: antecipação de ICMS aplicada somente ao Simples Puro e Híbrido.' : !application.purchaseAnticipation ? application.message : '−Antecipação mensal das compras interestaduais elegíveis × 12; premissa de 7,32%, deduzida uma única vez e sem crédito adicional.',
-            netRevenue: 'Receita bruta + linhas negativas de DAS, CBS, IBS, ICMS, ISS e DIFAL estimado' + (hasAnticipation ? ' + antecipação de ICMS quando aplicável' : ''),
+            netRevenue: 'Receita utilizada + linhas negativas de DAS, CBS, IBS, ICMS, ISS e DIFAL estimado' + (hasAnticipation ? ' + antecipação de ICMS quando aplicável' : ''),
             cmvSimple: '−Compras/CMV de optantes × 12',
             cmvRegular: '−Compras/CMV de não optantes × 12',
             cmv: 'CMV optantes + CMV não optantes (subtotal negativo)',
@@ -988,35 +1037,47 @@ export function calculateTax(rawInput) {
     const ranked = revenue > 0 ? regimes.filter((item)=>item.available).sort((a, b)=>b.annualProfit - a.annualProfit) : [];
     const bestRegimeId = ranked[0]?.id ?? null;
     const difference = ranked.length > 1 ? ranked[0].annualProfit - ranked[ranked.length - 1].annualProfit : 0;
-    warn('model-period', 'info', 'Cenário de 2027/2028', `O ano selecionado é ${input.year}. As partilhas pertencem a 2027/2028. CBS de 9,11% e IBS de 0,10% são hipóteses iniciais editáveis, não promessa de alíquota oficial definitiva.`);
+    warn('model-period', 'info', 'Cenário de 2027/2028', `O ano selecionado é ${input.year}. As partilhas pertencem a 2027/2028. CBS de 9,11% e IBS de 0,10% são premissas deste modelo, não alíquotas oficiais definitivas.`);
     warn('icms-assumption', 'info', 'Utilização da alíquota padrão de ICMS', `O padrão da simulação é 18% nas vendas e nas compras/CMV de não optantes; o cenário usa ${percent(input.rates.icms)}. A mesma taxa gera débito e crédito potencial somente com ICMS fora do DAS. Não representa alíquota única nacional. Créditos dependem das operações e documentos fiscais.`);
-    warn('projection', 'info', 'Projeção gerencial de 12 meses', 'Um mês é repetido 12 vezes. Compras/CMV são uma simplificação de custo; não há controle de estoque, ajustes fiscais do Lucro Real, compensação de prejuízos nem apuração trimestral. O maior resultado é apenas o maior deste cenário, sujeito a enquadramento e premissas.');
+    if(!input.revenueContext)warn('projection', 'info', 'Projeção gerencial de 12 meses', 'Um mês é repetido 12 vezes. Compras/CMV são uma simplificação de custo; não há controle de estoque, ajustes fiscais do Lucro Real, compensação de prejuízos nem apuração trimestral. O maior resultado é apenas o maior deste cenário, sujeito a enquadramento e premissas.');
     warn('credits-eligibility', 'info', 'Bases e percentuais creditáveis', 'Bases de CBS/IBS são informadas separadamente do CMV. Fornecedor Simples com tributos no DAS não transfere automaticamente a taxa regular integral. Créditos excedentes ficam separados e não aumentam o lucro.');
     warn('presumed-eligibility', 'info', 'Lucro Presumido sujeito ao enquadramento', 'A opção exige verificar a receita bruta total do ano-calendário anterior, limitada a R$ 78 milhões ou ao limite proporcional quando aplicável, além das situações que obrigam o Lucro Real (Lei 9.718/1998, arts. 13 e 14). A receita do ano anterior não é coletada; RBT12 e projeção não a substituem. A apresentação dos cálculos não confirma elegibilidade.');
-    if (input.rbt12 > PRESUMED_ELIGIBILITY_REFERENCE || revenue > PRESUMED_ELIGIBILITY_REFERENCE) {
+    if (input.rbt12 > PRESUMED_ELIGIBILITY_REFERENCE || revenueReference > PRESUMED_ELIGIBILITY_REFERENCE) {
         const causes = [
             input.rbt12 > PRESUMED_ELIGIBILITY_REFERENCE ? `RBT12 de ${currency(input.rbt12)}` : '',
-            revenue > PRESUMED_ELIGIBILITY_REFERENCE ? `projeção anual de ${currency(revenue)}` : ''
+            revenueReference > PRESUMED_ELIGIBILITY_REFERENCE ? `${input.revenueContext?'receita do período':'projeção anual'} de ${currency(revenueReference)}` : ''
         ].filter(Boolean).join(' e ');
         warn('presumed-limit-reference', 'warning', 'Revise a elegibilidade ao Lucro Presumido', `${causes} supera(m) a referência de R$ 78 milhões. Confira a receita bruta total do ano-calendário anterior, o limite proporcional e as demais hipóteses de obrigatoriedade do Lucro Real. O cálculo permanece disponível porque o modelo não coleta os dados necessários para decidir o enquadramento; esse resultado não comprova o direito à opção.`);
     }
-    if (input.rbt12 > SUBLIMIT || revenue > SUBLIMIT) {
+    if (input.rbt12 > SUBLIMIT || revenueReference > SUBLIMIT) {
         const causes = [
             input.rbt12 > SUBLIMIT ? `RBT12 de ${currency(input.rbt12)}` : '',
-            revenue > SUBLIMIT ? `projeção anual de ${currency(revenue)}` : ''
+            revenueReference > SUBLIMIT ? `${input.revenueContext?'receita do período':'projeção anual'} de ${currency(revenueReference)}` : ''
         ].filter(Boolean).join(' e ');
-        warn('sublimit', 'warning', 'Sublimite de R$ 3,6 milhões ultrapassado', `${causes} supera(m) o sublimite de referência. Revise ICMS/ISS fora do DAS. A data de efeito exige examinar receita acumulada no ano, ano anterior e excesso; o aviso não altera a opção automaticamente.`);
+        warn('sublimit', 'warning', 'Conferência do sublimite de ICMS/ISS', `${causes} supera(m) a referência de R$ 3,6 milhões. Isso não significa exclusão do Simples Nacional. A data de efeito sobre ICMS/ISS depende da receita acumulada no ano, ano anterior e excesso; RBT12 e projeções não substituem essa verificação. A opção não é alterada automaticamente.`);
     }
-    if (!simpleAvailable) warn('simples-unavailable', 'warning', 'Simples indisponível neste cenário', simpleStatus + '. Os resultados de Presumido e Real continuam disponíveis.');
+    if (!simpleAvailable) warn('simples-unavailable', 'warning', 'Simples: revisão necessária para calcular', `${simpleStatus} ${simplesDiagnostic.action}`);
     if (input.salesAnnex === 2 && input.salesRevenue > 0) warn('industry-ipi', 'warning', 'Indústria: revise o IPI antes de comparar', 'O IPI do Anexo II permanece no DAS do Puro e do Híbrido. Este modelo não inclui IPI fora do DAS nos regimes de Lucro Presumido e Real. A comparação industrial está incompleta sem essa avaliação.');
     if (input.serviceRevenue > 0) warn('service-annex', 'info', 'Anexo de serviços informado', 'A classificação III/IV/V depende da atividade e, quando aplicável, do fator R. O sistema usa a seleção informada e não determina CNAE ou enquadramento automaticamente.');
     if (input.serviceAnnex === 4 && input.serviceRevenue > 0 && input.extraPayroll === 0) warn('annex-iv-payroll', 'warning', 'Anexo IV com encargos fora do DAS zerados', 'O Anexo IV exige revisar a CPP fora do DAS. Informe os encargos efetivos, considerando eventual atividade mista; o modelo mantém o zero que foi explicitamente informado.');
-    if (excessRevenue > 0) warn('presumption-increase', 'warning', 'Acréscimo dos coeficientes de presunção', 'A parcela projetada acima de R$ 5 milhões recebe acréscimo relativo de 10% nos coeficientes, ponderado pela receita das atividades. A projeção pressupõe composição uniforme e não substitui a verificação por período.');
+    if (excessRevenue > 0) warn('presumption-increase', 'warning', 'Acréscimo dos coeficientes de presunção', input.revenueContext?'O excedente do período a R$ 5 milhões é rateado proporcionalmente entre as competências, com acréscimo relativo de 10% nos coeficientes. Essa alocação gerencial anual não substitui a apuração e os limites proporcionais de cada trimestre.':'A parcela projetada acima de R$ 5 milhões recebe acréscimo relativo de 10% nos coeficientes, ponderado pela receita das atividades. A projeção pressupõe composição uniforme e não substitui a verificação por período.');
     if (revenue === 0) warn('zero-revenue', 'info', 'Receita zero aceita', 'A DRE continua calculando custos e despesas. Margem, carga sobre receita e ranking não são apresentados, pois não há receita para comparação.');
     if (hasDifal) warn('difal-estimate', 'info', 'DIFAL de saída nos cenários Simples', 'A referência importada de 10% permanece disponível. Sua dedução ocorre somente no Simples Puro e Híbrido, com o cenário e a saída selecionados. RBT12 igual ou superior a R$ 3,6 milhões ou ICMS fora do DAS zera sua aplicação. Esta é uma premissa gerencial, não uma determinação de incidência legal.');
     if (hasAnticipation) warn('icms-anticipation', 'info', 'DIFAL de entrada — antecipação de ICMS', anticipationBlocked ? 'Antecipação zerada nesta competência: a RBT12 alcançou o sublimite de R$ 3,6 milhões ou o ICMS está fora do DAS. A base importada permanece na memória para conferência.' : 'Premissa gerencial de 7,32% sobre compras interestaduais elegíveis, somente no Simples Puro e Híbrido, com o cenário e a entrada selecionados. A dedução entra uma única vez na DRE e não gera crédito adicional.');
+    if(!simpleAvailable){
+      // Memory is also an export surface. Intermediate tax arithmetic from an
+      // unsupported scenario must not look like a confirmed amount (or zero).
+      for(const item of memory){
+        const regimeAmount=/^(dre|summary)\.(pure|hybrid)\./.test(item.id);
+        const simplesCalculation=item.id.startsWith('simples.')&&
+          !['simples.band','simples.revenueReference','simples.diagnostic','simples.action'].includes(item.id)&&!/^simples\.(sales|services)\.annex$/.test(item.id);
+        if(regimeAmount||simplesCalculation)Object.assign(item,{unit:'text',value:'Conferência necessária',availability:'UNAVAILABLE',
+          formula:`Sem valor confirmado para este cenário: ${simpleStatus}`});
+      }
+    }
     return {
-        version: hasDifal||hasAnticipation||Object.hasOwn(input,'difalPolicy') ? MODEL_VERSION : LEGACY_MODEL_VERSION,
+        version: MODEL_VERSION,
+        simplesDiagnostic,
         difalPolicy:parseDifalPolicy(difalPolicy),
         annualRevenue: revenue,
         regimes,
@@ -1036,11 +1097,13 @@ export function createEmptyDraft() {
 }
 
 /** Same assumptions and default credit bases as calculadora/src/lib/simulation.ts. */
-export function draftToInput(draft, difalProjection = null, anticipationProjection = null) {
+export function draftToInput(draft, difalProjection = null, anticipationProjection = null, revenueContext = null) {
   try {
     const explicitRbt12 = Object.hasOwn(draft, 'rbt12');
     const hasDifalPolicy=Object.hasOwn(draft,'difalPolicy');
-    strictObject(draft, ['year','salesAnnex','serviceAnnex','values',...(explicitRbt12?['rbt12']:[]),...(hasDifalPolicy?['difalPolicy']:[])]);
+    const hasIcmsOutside=Object.hasOwn(draft,'icmsOutside');
+    strictObject(draft, ['year','salesAnnex','serviceAnnex','values',...(explicitRbt12?['rbt12']:[]),...(hasDifalPolicy?['difalPolicy']:[]),...(hasIcmsOutside?['icmsOutside']:[])]);
+    if(hasIcmsOutside&&typeof draft.icmsOutside!=='boolean')failInput(['icmsOutside'],'Informe uma opção válida.');
     const difalPolicy=hasDifalPolicy?parseDifalPolicy(draft.difalPolicy):null;
     checkChoices(draft);
     strictObject(draft.values, SIMULATION_VALUE_FIELDS, ['values']);
@@ -1064,9 +1127,10 @@ export function draftToInput(draft, difalProjection = null, anticipationProjecti
     return taxInputSchema.parse({
       ...values, year: draft.year, salesAnnex: draft.salesAnnex, serviceAnnex: draft.serviceAnnex,
       ...(hasDifalPolicy?{difalPolicy}:{}),
+      ...(revenueContext===null?{}:{revenueContext:parseRevenueContext(revenueContext)}),
       ...(difalProjection === null ? {} : {difalMonthly: difalProjection.monthlyCents / 100}),
       ...(anticipationProjection === null ? {} : {icmsAnticipation: {version: ICMS_ANTICIPATION_VERSION, monthlyCents: anticipationProjection.monthlyCents}}),
-      simpleRegularPurchases: 0, extraPayroll: 0, icmsOutside: false,
+      simpleRegularPurchases: 0, extraPayroll: 0, icmsOutside: hasIcmsOutside?draft.icmsOutside:false,
       rbt12,
       rates: { ...DEFAULT_RATES },
       credits: {
@@ -1079,9 +1143,9 @@ export function draftToInput(draft, difalProjection = null, anticipationProjecti
 }
 
 /** Display-ready projection. Novas simulações usam a RBT12 informada/extraída; snapshots antigos mantêm a estimativa histórica. */
-export function calculateSimulation(draft, difalProjection = null, anticipationProjection = null) {
+export function calculateSimulation(draft, difalProjection = null, anticipationProjection = null, revenueContext = null) {
   const explicitRbt12 = Object.hasOwn(draft, 'rbt12');
-  const input = draftToInput(draft, difalProjection, anticipationProjection);
+  const input = draftToInput(draft, difalProjection, anticipationProjection, revenueContext);
   if (!input) throw new TypeError('Preencha todos os campos com valores válidos. Informe 0 quando não houver valor.');
   const result = calculateTax(input);
   if (difalProjection !== null) {

@@ -55,6 +55,9 @@ test('DRE alterna mês e anual somando somente as competências importadas',asyn
  await page.route('**/api/v4/simulations/'+saved._id,r=>r.fulfill({json:saved}));
  await page.goto('/simulator.html?simulation='+saved._id);
  const monthly=page.locator('#dre-demonstrativo [data-period="monthly"]'),annual=page.locator('#dre-demonstrativo [data-period="annual"]');
+ await expect(annual).toHaveAttribute('aria-pressed','true');await expect(monthly).toHaveAttribute('aria-pressed','false');
+ await expect(page.locator('#dre-month')).toHaveCount(0);await expect(page.locator('[data-dre-summary="revenue"]')).toContainText('3.453,00');
+ await expect(page.locator('#dre-report-period')).toHaveValue('complete');await monthly.click();
  await expect(monthly).toHaveAttribute('aria-pressed','true');await expect(annual).toHaveAttribute('aria-pressed','false');
  await expect(page.locator('#dre-month')).toHaveCount(1);await expect(page.locator('.dre-calendar-screen thead th')).toHaveCount(3);
  await expect(page.locator('[data-dre-summary="revenue"]')).toContainText('1.050,00');
@@ -142,6 +145,8 @@ test('compras, vendas e DIFAL por mês: edição isolada, rascunho, DRE, CSV, JS
  await page.locator('#report-competence').selectOption('0');await expect(page.locator('#rent')).toHaveValue('15.00');
  await page.locator('#rbt12-manual').click();await page.locator('#rbt12').fill('500000');await page.locator('#rbt12-manual-confirm').check();
  await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('salva');
+ await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');await expect(page.locator('#dre-report-period')).toHaveValue('complete');
+ await expect(page.locator('[data-dre-summary="revenue"]')).toContainText('19.266,00');await page.getByRole('button',{name:'Mensal',exact:true}).click();
  await page.locator('#report-competence').selectOption('11');await expect(page.locator('#simulation-save-status')).toContainText('salva');
  await expect(page.locator('#dre-month')).toHaveValue('11');
  await expect(page.locator('.sim-kpis article').first()).toContainText('2.161,00');
@@ -156,6 +161,7 @@ test('compras, vendas e DIFAL por mês: edição isolada, rascunho, DRE, CSV, JS
  await page.getByRole('button',{name:'12 meses',exact:true}).click();
  const sales=page.locator('.dre-calendar-screen tr[data-dre-row="sales"]');
  await expect(sales).toContainText('1.000,00');await expect(sales).toContainText('2.100,00');
+ await page.locator('#dre-report-period').selectOption('monthly');
  const csvPromise=page.waitForEvent('download');await page.locator('#export-dre-csv').click();const download=await csvPromise;
  const stream=await download.createReadStream();const parts:Buffer[]=[];for await(const part of stream!)parts.push(Buffer.from(part));const csv=Buffer.concat(parts).toString();
  expect(csv).toContain('1000,00');expect(csv).toContain('2100,00');expect(csv).toContain('Valores por competência');
@@ -163,6 +169,7 @@ test('compras, vendas e DIFAL por mês: edição isolada, rascunho, DRE, CSV, JS
  const jsonStream=await jsonDownload.createReadStream();const chunks:Buffer[]=[];for await(const part of jsonStream!)chunks.push(Buffer.from(part));const exported=JSON.parse(Buffer.concat(chunks).toString());
  expect(exported.monthlyInputs).toEqual(saved.monthlyInputs);expect(exported.monthlyDre).toEqual(saved.monthlyDre);
  await page.goto(`/simulator.html?simulation=${saved._id}`);await expect(page.locator('#simulation-snapshot')).toBeVisible();expect(posts).toBe(1);
+ await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');await expect(page.locator('#dre-report-period')).toHaveValue('complete');
  await page.locator('[data-period="monthly"]').click();await expect(page.locator('.sim-calendar')).toContainText('valores por competência');
  await page.locator('#dre-month').selectOption('11');await expect(page.locator('[data-difal-monthly]')).toContainText('210,00');
  await page.getByRole('button',{name:'Um mês por vez',exact:true}).click();

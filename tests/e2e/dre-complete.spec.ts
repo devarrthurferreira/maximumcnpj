@@ -87,14 +87,16 @@ test('DRE única conserva composição, escolhas, exportação e impressão anua
   await expect(page.locator('#dre-show-percent')).toBeChecked();
   await page.getByRole('button',{name:'Anual',exact:true}).click();await page.getByRole('button',{name:'Mensal',exact:true}).click();await expect(page.locator('.sim-charts-details')).toHaveAttribute('open','');
   await expect(page.locator('#dre-regime')).toHaveValue('actual');
+  await page.locator('#dre-report-period').selectOption('monthly');
   const csv=await downloadText(page,'#export-dre-csv');expect(csv.name).toBe('dre-DRE-2027-mensal.csv');expect(csv.text).toContain('Janeiro');expect(csv.text).toContain('Dezembro');expect(csv.text).toContain('Lucro Real');expect(csv.text).toContain('Simples Puro');expect(csv.text).toContain('% da receita');
   const json=JSON.parse((await downloadText(page,'#export-simulation')).text);expect(json.result).toEqual(saved.result);expect(json.monthlyDre).toEqual(saved.monthlyDre);expect(json.drePresentation.version).toBe('DRE_PRESENTATION_V1');
   await page.getByRole('button',{name:'Anual',exact:true}).click();
+  await page.locator('#dre-report-period').selectOption('annual');
   await page.evaluate(()=>{window.print=()=>{};});
   await page.locator('#print-dre').click();await page.locator('#print-dre').click();
   await expect(page.locator('#dre-print-document')).toHaveCount(1);await expect(page.locator('#dre-print-document > .dre-table-wrap > table')).toHaveCount(1);await expect(page.locator('#dre-print-document > .dre-table-wrap thead th')).toHaveCount(5);
   await expect(page.locator('#dre-print-document')).toContainText('EMPRESA SINTÉTICA DRE');await expect(page.locator('#dre-print-document')).toContainText('RBT12 fixa: R$ 150.000,00');
-  expect(await page.locator('#dre-print-page-style').textContent()).toContain('A4 landscape');await expect(page.locator('#dre-print-document')).not.toContainText('Memória de cálculo completa');
+  expect(await page.locator('#dre-print-page-style').textContent()).toContain('A4 landscape');await expect(page.locator('#dre-print-document')).toContainText('Memória consolidada de cálculo');await expect(page.locator('#dre-print-document [data-report-part="monthly"]')).toHaveCount(0);
   await page.emulateMedia({media:'print'});await expect(page.locator('.shell')).toBeHidden();await expect(page.locator('#dre-print-document')).toBeVisible();await page.emulateMedia({media:'screen'});
   await page.evaluate(()=>window.dispatchEvent(new Event('afterprint')));await expect(page.locator('#dre-print-document,#dre-print-page-style')).toHaveCount(0);await expect(page.locator('body')).not.toHaveClass(/dre-print-only/);await expect(page.locator('#print-dre')).toBeFocused();
   await page.locator('#print-dre').click();await page.emulateMedia({media:'print'});await expect(page.locator('.shell')).toBeHidden();await expect(page.locator('#dre-print-document')).toBeVisible();const pdf=info.outputPath('dre-unica-anual.pdf');await page.pdf({path:pdf,preferCSSPageSize:true,printBackground:true});await info.attach('DRE única anual',{path:pdf,contentType:'application/pdf'});await page.emulateMedia({media:'screen'});
@@ -116,11 +118,12 @@ test('Calendário único conserva meses distintos, modo móvel e impressão mens
   await page.setViewportSize({width:1440,height:1100});await page.getByRole('button',{name:'12 meses',exact:true}).click();
   const desktop=info.outputPath('dre-completa-desktop.png');await page.locator('.dre-complete').screenshot({path:desktop});await info.attach('DRE completa desktop',{path:desktop,contentType:'image/png'});
   await page.getByRole('button',{name:'Um mês por vez',exact:true}).click();
-  await page.evaluate(()=>{window.print=()=>{};(window as any).__drePrint=[];window.addEventListener('beforeprint',()=>{const doc=document.querySelector('#dre-print-document')!;(window as any).__drePrint.push({tables:doc.querySelectorAll('table').length,headers:doc.querySelectorAll('thead th').length,mainTables:doc.querySelectorAll(':scope > .dre-table-wrap > table').length,closingRows:doc.querySelectorAll('[data-revenue-reconciliation="dre"] [data-dre-row]').length,text:doc.textContent,page:document.querySelector('#dre-print-page-style')?.textContent});});});
-  await page.locator('#print-dre').click();await expect(page.locator('#dre-print-document > .dre-table-wrap > table')).toHaveCount(1);await expect(page.locator('#dre-print-document > .dre-table-wrap > table > tbody')).toHaveCount(1);
+  await page.locator('#dre-report-period').selectOption('monthly');
+  await page.evaluate(()=>{window.print=()=>{};(window as any).__drePrint=[];window.addEventListener('beforeprint',()=>{const doc=document.querySelector('#dre-print-document')!;(window as any).__drePrint.push({monthlyParts:doc.querySelectorAll('[data-report-part="monthly"]').length,monthlyTables:doc.querySelectorAll('.dre-print-monthly-table > table').length,annualParts:doc.querySelectorAll('[data-report-part="annual"]').length,closingRows:doc.querySelectorAll('[data-revenue-reconciliation="dre"] [data-dre-row]').length,text:doc.textContent,page:document.querySelector('#dre-print-page-style')?.textContent});});});
+  await page.locator('#print-dre').click();await expect(page.locator('#dre-print-document .dre-print-monthly-table > table')).toHaveCount(4);await expect(page.locator('#dre-print-document .dre-print-monthly-table > table > tbody')).toHaveCount(4);
   await page.emulateMedia({media:'print'});await expect(page.locator('.shell')).toBeHidden();await expect(page.locator('#dre-print-document')).toBeVisible();
   const pdf=info.outputPath('dre-unica-mensal.pdf');await page.pdf({path:pdf,preferCSSPageSize:true,printBackground:true});await info.attach('DRE mensal única em PDF',{path:pdf,contentType:'application/pdf'});await page.emulateMedia({media:'screen'});
-  const printed=await page.evaluate(()=>(window as any).__drePrint);expect(printed).toHaveLength(1);expect(printed[0].tables).toBe(2);expect(printed[0].mainTables).toBe(1);expect(printed[0].closingRows).toBe(5);expect(printed[0].headers).toBe(28);expect(printed[0].page).toContain('A3 landscape');
+  const printed=await page.evaluate(()=>(window as any).__drePrint);expect(printed).toHaveLength(1);expect(printed[0].monthlyParts).toBe(4);expect(printed[0].monthlyTables).toBe(4);expect(printed[0].annualParts).toBe(0);expect(printed[0].closingRows).toBe(20);expect(printed[0].page).toContain('A3 landscape');
   for(const value of ['Janeiro','Dezembro','Simples Puro','EMPRESA SINTÉTICA DRE','2027','7.777,77','8.888,88','999.999,99','RBT12 fixa: R$ 150.000,00'])expect(printed[0].text).toContain(value);
   expect(printed[0].text).not.toContain('Memória de cálculo completa');expect(printed[0].text).not.toContain('Janeiro a junho');
   await expect(page.locator('#dre-print-document,#dre-print-page-style')).toHaveCount(0);await expect(page.locator('body')).not.toHaveClass(/dre-print-only/);await expect(page.locator('#dre-month')).toHaveValue('11');await expect(page.locator('#simulation-result details[open]')).toHaveCount(0);
@@ -142,19 +145,21 @@ test('serviços e DIFAL conciliam entre tela e CSV após reabrir histórico sem 
       await expect(cells).toHaveCount(4);
       for(const [index,cell] of (await cells.allTextContents()).entries()) expect(cell).toContain(key==='difal'&&index>1?'0,00':amount);
     }
+    await page.locator('#dre-report-period').selectOption('annual');
     const annual=(await downloadText(page,'#export-dre-csv')).text;
     const annualDifal=annual.split('\r\n').filter(line=>line.includes('DIFAL sobre vendas (10%)'));
     expect(annualDifal).toHaveLength(1);
     expect(annualDifal[0].split(';').slice(5,9)).toEqual(['-3600,00','-3600,00','0,00','0,00']);
-    const annualServices=annual.split('\r\n').filter(line=>line.includes('"Receita de serviços"'));
+    const annualServices=annual.split('\r\n').filter(line=>line.startsWith('"DRE";')&&line.includes('"Receita de serviços"'));
     expect(annualServices).toHaveLength(1);
     expect(annualServices[0].split(';').slice(5,9)).toEqual(Array(4).fill('30000,00'));
     await page.getByRole('button',{name:'Mensal',exact:true}).click();
     await page.getByRole('button',{name:'12 meses',exact:true}).click();
+    await page.locator('#dre-report-period').selectOption('monthly');
     const monthly=(await downloadText(page,'#export-dre-csv')).text;
     const monthlyDifal=monthly.split('\r\n').filter(line=>line.includes('DIFAL sobre vendas (10%)'));
     expect(monthlyDifal).toHaveLength(4);
-    const monthlyServices=monthly.split('\r\n').filter(line=>line.includes('"Receita de serviços"'));
+    const monthlyServices=monthly.split('\r\n').filter(line=>line.includes(';"DRE";')&&line.includes('"Receita de serviços"'));
     expect(monthlyServices).toHaveLength(4);
     for(const line of monthlyServices) expect(line.split(';').slice(6,19)).toEqual([...Array(12).fill('2500,00'),'30000,00']);
     for(const [index,line] of monthlyDifal.entries()) expect(line.split(';').slice(6,19)).toEqual(index<2?[...Array(12).fill('-300,00'),'-3600,00']:Array(13).fill('0,00'));
@@ -188,4 +193,98 @@ test('DRE legada sem DIFAL não inventa valores e receita zero não recebe perce
   await page.locator('#dre-regime').selectOption('hybrid');await expect(page.locator('[data-dre-summary="result"]')).toHaveText('—');
   await expect(page.locator('.dre-result-card')).toHaveClass(/is-unavailable/);await expect(page.locator('.dre-flow-bars')).toHaveCount(0);
   await expect(page.locator('.dre-complete')).not.toContainText('NaN');await expect(page.locator('.dre-complete')).not.toContainText('Infinity');
+});
+
+test('relatório completo inicia no anual e reúne quatro regimes, competência real, diagnóstico e memória',async({page},info)=>{
+  const original=fixture(),draft={...original.draft,rbt12:3300000};
+  const reports=[120000000,110000000,100000000].map((sales,index)=>({operationVersion:'NATURE_OPERATIONS_2026_10_V1',sourceMonth:`2025-0${index+1}`,month:index+1,salesLines:1,purchaseLines:1,
+    operationAudit:{grossSalesCents:sales+100000,serviceSalesCents:0,salesReturnsCents:100000},
+    fields:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:sales,purchasesOptantCents:0,purchasesNonOptantCents:10000000,serviceRevenueCents:0},
+    difal:{version:'DIFAL_ESTIMATE_V2',ratePercent:10,issuerUf:'MG',amountCents:0,baseCents:0,eligibleLines:0,pendingLines:0}}));
+  const period={startMonth:'2025-01',endMonth:'2025-03',months:3},reference={source:'MANUAL',confirmed:true,rbt12Cents:330000000};
+  const computed=calculateMonthlySimulation(draft,reports,reports.map(row=>baselineMonth(row)),original.source.sales.jobId);
+  const saved={...original,...computed,draft,reportMonths:3,periodBasis:'COLUMN_H',rbt12Manual:reference,source:{...original.source,monthlyReports:reports,reportMonths:3,period,fields:computed.projection.annualGroupsCents},monthlyDre:buildMonthlyDre(computed.result,2027,reference,period)};
+  const before=JSON.stringify(saved),errors:string[]=[],writes:string[]=[];
+  page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(request.url().includes('/api/')&&!['GET','HEAD'].includes(request.method()))writes.push(request.method());});
+  await open(page,saved);
+  await expect(page.getByRole('button',{name:'Anual',exact:true})).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('#dre-report-period')).toHaveValue('complete');
+  await expect(page.locator('[data-report-coverage]')).toContainText('3 de 12 competências');
+  await expect(page.locator('[data-simples-diagnostic]')).toContainText('Cálculo disponível');
+  await expect(page.locator('[data-simples-diagnostic]')).toContainText('3.300.000,00');
+  await expect(page.locator('[data-dre-summary="revenue"]')).toHaveText('R$ 3.300.000,00');
+  for(const width of [1280,390,320]){await page.setViewportSize({width,height:1000});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);}
+  await page.locator('[data-simples-diagnostic]').screenshot({path:info.outputPath('simples-33-milhoes-mobile.png')});
+  await page.setViewportSize({width:1440,height:1100});
+  await page.getByRole('button',{name:'Mensal',exact:true}).click();
+  await expect(page.locator('#dre-report-period')).toHaveValue('complete');
+  await expect(page.locator('[data-dre-summary="revenue"]')).toHaveText('R$ 1.200.000,00');
+  const csv=await downloadText(page,'#export-dre-csv');expect(csv.name).toBe('dre-DRE-2027-completo.csv');
+  expect(csv.text).toContain('Relatório completo');expect(csv.text).toContain('3 de 12 competências');
+  const revenueRows=csv.text.split('\r\n').filter(line=>line.includes('"Receita total utilizada"'));
+  expect(revenueRows).toHaveLength(5);expect(revenueRows[0]).toContain(';3300000,00;3300000,00;3300000,00;3300000,00;');
+  for(const row of revenueRows.slice(1))expect(row).toContain(';1200000,00;1100000,00;1000000,00;"Não disponível"');
+  await page.evaluate(()=>{window.print=()=>{};});await page.locator('#print-dre').click();
+  const print=page.locator('#dre-print-document');
+  await expect(print.locator('[data-report-part="annual"]')).toHaveCount(1);await expect(print.locator('[data-report-part="monthly"]')).toHaveCount(4);
+  await expect(print.locator('[data-report-part="references"]')).toHaveCount(1);await expect(print.locator('[data-revenue-reconciliation="dre"]')).toHaveCount(5);
+  await expect(print.locator('[data-revenue-reconciliation="dre"]').first()).toContainText('3.303.000,00');await expect(print.locator('[data-revenue-reconciliation="dre"]').first()).toContainText('3.000,00');
+  await expect(print).toContainText('Cenário 2027');await expect(print).toContainText('Origem: 2025-01');await expect(print).toContainText('CBS de 9,11%');await expect(print).toContainText('R$ 3.300.000,00');
+  const parts=await print.locator('[data-report-part]').evaluateAll(elements=>elements.map(element=>(element as HTMLElement).dataset.reportPart));expect(parts).toEqual(['annual','monthly','monthly','monthly','monthly','references']);
+  await page.emulateMedia({media:'print'});await expect(page.locator('.shell')).toBeHidden();await expect(print).toBeVisible();
+  const pdf=info.outputPath('dre-relatorio-completo-33-milhoes.pdf');await page.pdf({path:pdf,preferCSSPageSize:true,printBackground:true});await info.attach('Relatório completo anual e mensal',{path:pdf,contentType:'application/pdf'});
+  await page.emulateMedia({media:'screen'});await expect(page.locator('#dre-print-document')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Mensal',exact:true})).toHaveAttribute('aria-pressed','true');
+  expect(errors).toEqual([]);expect(writes).toEqual([]);expect(JSON.stringify(saved)).toBe(before);
+});
+
+test('memória histórica completa conserva o anual e oculta valores pendentes ao selecionar um mês válido',async({page})=>{
+  const original=fixture(),reports=[100000,150000].map((sales,index)=>({sourceMonth:`2025-0${index+1}`,month:index+1,salesLines:1,purchaseLines:1,
+    fields:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:sales,purchasesOptantCents:0,purchasesNonOptantCents:20000,serviceRevenueCents:0},
+    difal:{version:'DIFAL_ESTIMATE_V2',ratePercent:10,issuerUf:'MG',baseCents:0,amountCents:0,eligibleLines:0,pendingLines:0}}));
+  const period={startMonth:'2025-01',endMonth:'2025-02',months:2};
+  const computed=calculateMonthlySimulation(original.draft,reports,reports.map(row=>baselineMonth(row)),original.source.sales.jobId);
+  // Emulate an older saved calculation: January is valid, February blocks the annual Simples total,
+  // but its raw memory still contains numeric derived values from the unsupported calculation.
+  for(const result of [computed.result,computed.result.monthlyResults[1].result]){
+    delete result.simplesDiagnostic;
+    for(const regime of result.regimes.filter(item=>['pure','hybrid'].includes(item.id))){
+      regime.available=false;regime.status='2025-02: conferência da RBT12 necessária.';
+    }
+  }
+  const memory=(id:string)=>computed.result.memory.find(item=>item.id===id)!;
+  Object.assign(memory('simples.pureDas'),{unit:'currency',value:98765.43});
+  Object.assign(memory('simples.hybridDas'),{unit:'currency',value:87654.32});
+  Object.assign(memory('dre.pure.netProfit'),{unit:'currency',value:76543.21});
+  Object.assign(memory('summary.pure.taxes'),{unit:'currency',value:65432.10});
+  computed.result.memory.push({...original.result.memory.find(item=>item.id==='summary.pure.margin')!,unit:'percent',value:0.42});
+  memory('dre.actual.revenue').label='Receita bruta total';
+  memory('dre.actual.netRevenue').label='Receita líquida';
+  const saved={...original,...computed,reportMonths:2,periodBasis:'COLUMN_H',source:{...original.source,monthlyReports:reports,reportMonths:2,period,fields:computed.projection.annualGroupsCents},
+    monthlyDre:buildMonthlyDre(computed.result,2027,original.rbt12Manual,period)};
+  const before=JSON.stringify(saved),writes:string[]=[],errors:string[]=[];
+  page.on('request',request=>{if(request.url().includes('/api/')&&!['GET','HEAD'].includes(request.method()))writes.push(request.method());});
+  page.on('pageerror',error=>errors.push(error.message));
+  await open(page,saved);await page.locator('.sim-memory > summary').click();
+  const complete=page.locator('.sim-memory');
+  await expect(complete.locator('[data-memory-id]')).toHaveCount(saved.result.memory.length);
+  await expect(complete.locator('summary')).toContainText(`${saved.result.memory.length} itens`);
+  await expect(complete.locator('[data-memory-id="dre.actual.revenue"] strong')).toHaveText('Receita total utilizada');
+  await expect(complete.locator('[data-memory-id="dre.actual.netRevenue"] strong')).toHaveText('Receita após deduções tributárias');
+  const checkAnnualMemory=async()=>{
+    await expect(complete.locator('[data-memory-id="dre.actual.revenue"] > span')).toHaveText('R$ 2.500,00');
+    for(const key of ['simples.pureDas','simples.hybridDas','dre.pure.netProfit','summary.pure.taxes','summary.pure.margin'])
+      await expect(complete.locator(`[data-memory-id="${key}"] > span`)).toContainText('Não disponível');
+    for(const value of ['98.765,43','87.654,32','76.543,21','65.432,10'])await expect(complete).not.toContainText(value);
+  };
+  await checkAnnualMemory();
+  await page.getByRole('button',{name:'Mensal',exact:true}).click();await page.locator('#dre-regime').selectOption('pure');await page.locator('#dre-month').selectOption('0');
+  await expect(page.locator('[data-dre-summary="revenue"]')).toHaveText('R$ 1.000,00');
+  await expect(complete).toHaveAttribute('open','');await checkAnnualMemory();
+  await page.locator('#dre-month').selectOption('1');await expect(page.locator('[data-dre-summary="revenue"]')).toHaveText('—');await checkAnnualMemory();
+  await page.getByRole('button',{name:'Anual',exact:true}).click();await checkAnnualMemory();
+  const exported=JSON.parse((await downloadText(page,'#export-simulation')).text);
+  expect(exported.result).toEqual(saved.result);expect(exported.result.memory.find((item:any)=>item.id==='simples.pureDas').value).toBe(98765.43);
+  expect(exported.result.memory.find((item:any)=>item.id==='dre.actual.revenue').label).toBe('Receita bruta total');
+  expect(JSON.stringify(saved)).toBe(before);expect(writes).toEqual([]);expect(errors).toEqual([]);
 });

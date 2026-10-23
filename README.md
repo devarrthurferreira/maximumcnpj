@@ -1,4 +1,37 @@
-# Maximum CNPJ · v0.32.2
+# Maximum CNPJ · v0.33.0
+
+## Simples Nacional, receita do período e relatório completo — 23/10/2026
+
+A DRE inicia na visão **Anual**, consolidando as competências importadas, e mantém a alternância **Mensal** para consultar cada mês. O relatório oferece **Completo · anual + mensal** como padrão, **Somente anual** e **Somente mensal**, tanto no PDF por impressão quanto no CSV. Os três formatos incluem os quatro regimes. O completo apresenta a comparação anual primeiro e os calendários mensais depois, seguidos de situação dos regimes, escolhas de DIFAL, premissas, memória consolidada e referências capturadas na versão.
+
+### Correção da receita usada nos limites
+
+O adaptador mensal reaproveitava um motor de projeção de doze meses. Um mês de R$ 550 mil era tratado como R$ 6,6 milhões na verificação do Simples, mesmo com receita total de R$ 3,3 milhões nas doze competências. Agora o contexto de receita vem da soma dos valores efetivos do cenário, após devoluções e ajustes, sem extrapolar o mês. A mesma correção evita acionar o acréscimo dos coeficientes do Lucro Presumido acima de R$ 5 milhões quando apenas a extrapolação de um mês ultrapassa essa referência.
+
+- **Bases distintas:** receita das competências importadas, RBT12 usada nas alíquotas, limite federal de referência de R$ 4,8 milhões e sublimite de ICMS/ISS de R$ 3,6 milhões aparecem separadamente. A receita do período não é declarada como RBA fiscal confirmada. RBA/RBAA, início de atividade, mercados interno e externo, vedações e efeitos de excesso continuam dependendo da conferência fiscal da empresa.
+- **ICMS/ISS explícito:** o cenário permite informar dentro ou fora do DAS. A situação fora do DAS não é ativada automaticamente pela RBT12. A escolha acompanha o rascunho, a nova versão, o cálculo no servidor e a memória, e atualiza também a prévia de DIFAL.
+- **Pendência específica:** RBT12 acima da faixa suportada, receita acima da referência ou cálculo de ICMS/ISS dentro do DAS na sexta faixa recebem causas e orientações próprias. Esses estados significam que falta uma apuração suportada pelo modelo, e não uma declaração de exclusão do Simples. O cenário da sexta faixa com ICMS/ISS fora do DAS explicitamente informado permanece calculável até a referência suportada de R$ 4,8 milhões.
+- **Consolidado íntegro:** o anual soma os meses calculados. Se um regime tiver competências pendentes, seu total permanece sem valor confirmado; meses disponíveis continuam consultáveis. A apresentação não transforma a soma parcial em resultado anual nem usa esse regime no ranking. Cobertura inferior a doze meses é identificada como parcial; meses ausentes não viram zero.
+- **Relatório auditável:** fechamento de receita bruta, devoluções, ajustes e receita utilizada preservado; nenhum abatimento duplicado. O relatório distingue o ano do cenário das competências de origem e conserva somente as fontes, avisos e valores da versão salva.
+
+O simulador continua sendo o modelo gerencial de **2027/2028**, com premissas de CBS/IBS e demais limitações identificadas. O rateio do excedente anual do Lucro Presumido entre competências é uma estimativa do modelo, não a apuração dos limites e ajustes de cada trimestre. Esta entrega não transforma o modelo em PGDAS-D nem decide automaticamente enquadramento ou datas de exclusão.
+
+### Contratos e histórico
+
+Motores `1.8.0-simples-revenue-context`; revisão vinculada `SIMPLES_REVENUE_CONTEXT_2026_10_V8`; diagnóstico `SIMPLES_DIAGNOSTIC_V1`. `draft.icmsOutside` é booleano opcional e validado no servidor. O contexto de receita é derivado das competências validadas, nunca aceito como uma declaração do navegador. Reenvios de versões antigas conservam a omissão original do campo e seu hash. A revisão usa a estrutura já existente para criar novas versões vinculadas, preservando snapshots e escolhas anteriores.
+
+### Validação da entrega
+
+Com Node 22 e MongoDB descartável: tipos, build e versão/documentação conferidos; **278 testes de regras**, **112 verificações nas suítes de integração/projeção/competências** e **171 testes Python/PDF/OCR** aprovados, sem saltos. A rodada completa de navegador passou com **166 testes**. Após o último ajuste da memória histórica, uma rodada direcionada de **21 testes** também passou, incluindo uma regressão adicional e a repetição do fluxo real de R$ 3,3 milhões.
+
+O fluxo real usa doze competências sintéticas: **R$ 3.310.000,00 de receita bruta − R$ 10.000,00 de devoluções = R$ 3.300.000,00**, incluindo janeiro de R$ 550 mil. Simples Puro e Híbrido permanecem disponíveis; o DAS puro é R$ 384.600,00; o anual concilia com a soma dos meses e o DIFAL desmarcado fica zerado. A verificação inclui autenticação, importação, salvamento, reabertura em nova sessão, versões com ICMS/ISS dentro e fora do DAS, CSV e os três formatos de PDF. O histórico pendente conserva todos os itens da memória na tela, mas oculta valores derivados sem confirmação, inclusive ao selecionar um mês válido. PDFs e tela de 320 px foram inspecionados visualmente.
+
+### Referências conferidas
+
+- [LC 123/2006 — arts. 3º, 13-A, 18 e 20](https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp123.htm).
+- [Perguntas e Respostas do Simples Nacional — limites, sublimites e RBT12](https://www8.receita.fazenda.gov.br/simplesnacional/arquivos/manual/perguntaosn.pdf), atualização parcial de 09/10/2026.
+- [Manual do PGDAS-D e DEFIS](https://www8.receita.fazenda.gov.br/simplesnacional/arquivos/manual/manual_pgdas-d_2018_v4.pdf), definição das bases e exemplos de tributação.
+- [Receita Federal — redução dos incentivos e benefícios tributários, versão 5](https://www.gov.br/receitafederal/pt-br/centrais-de-conteudo/publicacoes/perguntas-e-respostas/beneficios-fiscais/perguntas-e-respostas-reducao-dos-incentivos-e-beneficios-tributarios-v5-final.pdf), limites do Lucro Presumido e apuração por trimestre.
 
 ## Fechamento da receita bruta e das devoluções — 23/10/2026
 
@@ -33,7 +66,7 @@ Validação da v0.32.1 com Node 22.16.0: **248 testes de regras, 161 Python/PDF/
 
 ## DIFAL de entrada e saída no Simples, compras por natureza e RBT12 mensal — 23/10/2026
 
-Esta seção descreve o contrato atual. As entregas datadas abaixo documentam o comportamento das versões anteriores.
+Esta seção registra o contrato introduzido na v0.32.0. As mudanças de cálculo e relatório da v0.33.0 estão descritas na seção inicial; as entregas abaixo conservam o histórico das versões anteriores.
 
 - **Naturezas:** catálogo de 619 códigos idêntico ao fornecido, classificado pela coluna **D — OPERAÇÃO**, sem alterações nesta entrega. No relatório de entradas, a classificação lê os quatro primeiros dígitos do campo **Natureza** (coluna L no modelo conhecido). Descrições e sufixos não mudam a classificação. A coluna D do cadastro não é uma coluna monetária: a base financeira continua **Q − Y + AA − AB**, com Z apenas informativa.
 - **Receita:** somente operações VENDA e serviços de venda 9000, abatendo as DEVOLUÇÕES DE VENDA encontradas no relatório de compras, na competência da coluna H. Devoluções de compra e outras operações do relatório de vendas ficam fora dessa base. O enquadramento do documento permanece o capturado na consulta.

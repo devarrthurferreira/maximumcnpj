@@ -1,4 +1,4 @@
-export const MONTHLY_MODEL_VERSION: '1.7.0-difal-directions';
+export const MONTHLY_MODEL_VERSION: '1.8.0-simples-revenue-context';
 import type {ReportFields} from './simulator-projection.js';
 import type {Rbt12Schedule} from './simulator-rbt12.js';
 export const MONTHLY_VERSION: 'REPORT_MONTHS_V1';
