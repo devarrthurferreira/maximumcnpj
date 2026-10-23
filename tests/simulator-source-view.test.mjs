@@ -171,6 +171,47 @@ test('source display honors each month sublimit and leaves unimported months una
   assert.doesNotMatch(renderDifalAppliedSource({view:missing}),/Conforme a versão salva/);
 });
 
+test('ICMS fora do DAS atualiza a prévia de entrada e saída sem alterar escolhas ou fontes',()=>{
+  const reports=difalReports(),policy=defaultDifalPolicy(),before=structuredClone({reports,policy});
+  for(const direction of ['entry','exit']){
+    const inside=sourceView(direction,policy,reports);
+    assert(inside.values.every(row=>row.current>0&&!row.blocked));
+    const outside=sourceView(direction,policy,reports,{icmsOutside:true});
+    assert(outside.values.every(row=>row.current===0&&row.total===0&&row.blocked));
+    assert.match(renderDifalAppliedSource({view:outside}),/fora do DAS/);
+  }
+  const excluded=sourceView('exit',entryOnlyPolicy(),reports,{icmsOutside:true});
+  assert(excluded.values.every(row=>row.excluded&&!row.blocked&&row.current===0));
+  assert.deepEqual({reports,policy},before);
+});
+
+test('histórico com regime parcialmente calculado não apresenta a soma parcial de DIFAL como total confirmado',()=>{
+  const policy=defaultDifalPolicy();
+  const regimes=['pure','hybrid'].map(id=>({id,name:id,available:false,status:'Conferir fevereiro',dre:{difal:-100,icmsAnticipation:-36.6},difalApplication:{enabled:true,operations:policy.operations[id]}}));
+  const first=regimes.map(row=>({...row,available:true,status:'Disponível',difalApplication:{...row.difalApplication,reason:'ENABLED'}}));
+  const second=regimes.map(row=>({...row,dre:{difal:0,icmsAnticipation:0},difalApplication:{...row.difalApplication,blocked:true,reason:'SUBLIMIT'}}));
+  const snapshot={draft:{difalPolicy:policy},result:{method:'REPORT_MONTHS_V1',regimes,monthlyResults:[{month:1,sourceMonth:'2025-01',result:{regimes:first}},{month:2,sourceMonth:'2025-02',result:{regimes:second}}]}};
+  const original=structuredClone(snapshot);
+  for(const direction of ['entry','exit']){
+    const available=sourceView(direction,policy,difalReports(),{snapshot});
+    assert(available.values.every(row=>row.current>0&&row.total===null&&row.pending));
+    const pending=sourceView(direction,policy,difalReports(),{snapshot,monthIndex:1});
+    assert(pending.values.every(row=>row.current===null&&row.total===null&&row.pending));
+    const html=renderDifalAppliedSource({view:pending,sourceHtml:'<strong>Estimativa original R$ 999,00</strong>'});
+    assert.match(html,/Conferir fevereiro/);
+    assert.doesNotMatch(html.split('<details class="sim-difal-source-audit"')[0],/999,00/);
+  }
+  assert.deepEqual(snapshot,original);
+  for(const row of [...regimes,...first,...second]){row.dre.difal=0;row.difalApplication.operations.exit=false;}
+  const excluded=sourceView('exit',policy,difalReports(),{snapshot,monthIndex:1});
+  assert(excluded.values.every(row=>row.current===0&&row.total===0&&row.excluded&&!row.pending));
+  const absent=sourceView('exit',policy,difalReports(),{snapshot,monthIndex:2});
+  assert(absent.values.every(row=>row.current===null&&row.total===0&&!row.excluded&&!row.pending));
+  assert.equal(difalApplicationSummary(absent),'Indisponível');
+  assert.match(difalApplicationSummary(absent,'total'),/R\$\s0,00/);
+  assert(original.result.regimes.every(row=>row.dre.difal===-100));
+});
+
 test('missing or fully pending source cannot appear as a confirmed zero unless the direction is excluded',()=>{
   const reports=difalReports();delete reports[0].difal;delete reports[1].difal;
   const missing=sourceView('exit',defaultDifalPolicy(),reports);

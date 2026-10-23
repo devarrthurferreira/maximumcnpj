@@ -300,7 +300,7 @@ test('sublimit is strict greater-than, with separate preventive projection and a
   assert.equal(result.regimes[0].available, true, 'projected excess alone is preventive and cannot choose effective collection date');
 });
 
-test('Simples above 4.8 million is unavailable and excluded from comparison', () => {
+test('RBT12 além da tabela e projeção acima de R$ 4,8 milhões pedem revisão e ficam fora do ranking', () => {
   const input = example(); input.rbt12 = 4800000.01; input.icmsOutside = true;
   const result = calculateTax(input);
   assert.equal(result.regimes[0].available, false);
@@ -317,6 +317,61 @@ test('positive revenue and zero RBT12 disables only Simples', () => {
   assert.equal(result.regimes[1].available, false);
   assert.equal(result.regimes[2].available, true);
   assert.equal(result.regimes[3].available, true);
+});
+
+test('diagnóstico distingue RBT12, sublimite local e limite de referência sem confirmar exclusão fiscal',()=>{
+  const input=example();input.salesRevenue=100000;input.serviceRevenue=0;
+  for(const [rbt12,icmsOutside,expected] of [
+    [3300000,false,'READY'],[3600000,false,'READY'],[3600000.01,false,'LOCAL_TAX_REVIEW_REQUIRED'],
+    [3600000.01,true,'READY'],[4800000,true,'READY'],[4800000.01,true,'RATE_TABLE_EXCEEDED']
+  ]){
+    const result=calculateTax({...input,rbt12,icmsOutside}),diagnostic=result.simplesDiagnostic;
+    assert.equal(diagnostic.statusCode,expected);
+    assert.equal(diagnostic.available,expected==='READY');
+    assert.equal(diagnostic.eligibilityVerified,false);assert.equal(diagnostic.rbt12,rbt12);
+    assert.equal(diagnostic.federalLimit,4800000);assert.equal(diagnostic.sublimit,3600000);
+    assert.equal(diagnostic.revenueReference,1200000);assert.equal(diagnostic.revenueBasis,'AVERAGE_X12');
+    assert.equal(diagnostic.completeYear,false);
+    if(expected==='LOCAL_TAX_REVIEW_REQUIRED')assert.match(diagnostic.message,/não exclui/);
+    if(expected==='RATE_TABLE_EXCEEDED')assert.match(diagnostic.message,/não confirma exclusão/);
+  }
+  const exceeded=calculateTax({...input,salesRevenue:400000.01,rbt12:3300000});
+  assert.equal(exceeded.simplesDiagnostic.statusCode,'REVENUE_REVIEW_REQUIRED');
+  assert.match(exceeded.simplesDiagnostic.action,/ano-calendário/);
+});
+
+test('opção explícita de ICMS e ISS fora do DAS é validada sem aceitar contexto fiscal no rascunho',()=>{
+  const d=createEmptyDraft();for(const key of Object.keys(d.values))d.values[key]=EXAMPLE_INPUT[key];
+  d.values.salesRevenue=100000;d.values.serviceRevenue=1000;d.values.regularPurchases=0;
+  d.rbt12=4000000;d.icmsOutside=true;
+  const before=structuredClone(d),outside=calculateSimulation(d);
+  assert.equal(draftToInput(d).icmsOutside,true);assert.equal(outside.regimes[0].available,true);
+  assert(outside.regimes[0].dre.icmsNet<0);assert(outside.regimes[0].dre.iss<0);
+  assert.equal(outside.simplesDiagnostic.icmsOutside,true);assert.deepEqual(d,before);
+  assert.equal(calculateSimulation({...d,icmsOutside:false}).simplesDiagnostic.statusCode,'LOCAL_TAX_REVIEW_REQUIRED');
+  assert.equal(draftToInput({...d,icmsOutside:'true'}),null);
+  assert.equal(draftToInput({...d,revenueContext:{revenueCents:0}}),null);
+  const context={version:'SIMPLES_REVENUE_CONTEXT_V1',method:'ACTUAL_REPORT_MONTHS',revenueCents:330000000,sourceMonths:['2025-01']};
+  assert.equal(draftToInput(d,null,null,{...context,revenueCents:NaN}),null);
+  assert.equal(draftToInput(d,null,null,{...context,sourceMonths:['2025-01','2025-01']}),null);
+});
+
+test('memória de cenário Simples pendente não apresenta impostos intermediários ou zeros como confirmados',()=>{
+  const input={...example(),salesRevenue:100000,serviceRevenue:0,rbt12:3700000,icmsOutside:false};
+  const result=calculateTax(input);
+  assert.equal(result.simplesDiagnostic.statusCode,'LOCAL_TAX_REVIEW_REQUIRED');
+  for(const id of ['dre.pure.revenue','dre.pure.netProfit','summary.pure.taxes','summary.hybrid.monthly','simples.pureDas','simples.hybridDas','simples.salesDas','simples.sales.effective','simples.cbsRemoved']){
+    const item=result.memory.find(item=>item.id===id);assert(item,id);
+    assert.equal(item.unit,'text',id);assert.equal(item.availability,'UNAVAILABLE',id);
+    assert.equal(item.value,'Conferência necessária');assert.match(item.formula,/sexta faixa/);
+  }
+  for(const id of ['annual.revenue','simples.revenueReference','rbt12','sublimit','simplesLimit','dre.presumed.netProfit','summary.actual.taxes']){
+    const item=result.memory.find(item=>item.id===id);assert.equal(item.unit,'currency',id);assert.equal(typeof item.value,'number',id);
+  }
+  const outside=calculateTax({...input,icmsOutside:true});
+  assert.equal(outside.regimes[0].available,true);
+  assert.equal(outside.memory.find(item=>item.id==='simples.pureDas').unit,'currency');
+  assert.equal(typeof outside.memory.find(item=>item.id==='simples.pureDas').value,'number');
 });
 
 test('Lucro Presumido signals eligibility and warns above 78 million without deciding the prior-year test', () => {
@@ -421,7 +476,7 @@ test('antecipação de ICMS deduz 7,32% de compras interestaduais somente nos do
  const input={...example(),difalMonthly:100},baseline=calculateTax(input);
  const anticipation={version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73_200}; // R$10.000 ×7,32%.
  const result=calculateTax({...input,icmsAnticipation:anticipation});
- assert.equal(result.version,'1.7.0-difal-directions');assert.equal(baseline.version,'1.7.0-difal-directions');
+ assert.equal(result.version,'1.8.0-simples-revenue-context');assert.equal(baseline.version,'1.8.0-simples-revenue-context');
  assert.deepEqual(result.credits,baseline.credits);close(result.annualRevenue,baseline.annualRevenue);
  for(const regime of result.regimes){
   const old=baseline.regimes.find(row=>row.id===regime.id),d=regime.dre,charge=['pure','hybrid'].includes(regime.id)?8784:0;

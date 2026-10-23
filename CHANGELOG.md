@@ -1,5 +1,16 @@
 # Histórico de alterações
 
+## [0.33.0] — 2026-10-23
+
+- Corrige o bloqueio do Simples em meses sazonais: a verificação usa a soma das competências do cenário, sem comparar mês × 12 ao limite. RBT12, receita do período, limite federal e sublimite passam a ter diagnóstico separado.
+- Acrescenta a escolha explícita de ICMS/ISS dentro ou fora do DAS, validada e preservada entre rascunho, servidor, histórico e nova versão. A prévia de DIFAL acompanha essa condição sem alterar as escolhas das operações.
+- Identifica apurações não suportadas com causas e orientações próprias, sem declarar exclusão fiscal. Totais anuais de regimes com competências pendentes não apresentam soma parcial como resultado confirmado; os meses disponíveis permanecem consultáveis.
+- Memória de cálculo e painel de DIFAL respeitam a disponibilidade do regime, sem apresentar parcelas ou valores intermediários como totais confirmados. Operações explicitamente excluídas conservam seu zero salvo, mesmo ao consultar uma competência ausente.
+- Evita o falso acréscimo dos coeficientes do Lucro Presumido quando um mês extrapolado supera R$ 5 milhões, mas a soma efetiva não. O rateio gerencial acima da referência fica identificado como estimativa, separado da apuração trimestral.
+- DRE abre em Anual e conserva a alternância Mensal. PDF e CSV oferecem relatório completo, somente anual ou somente mensal, sempre para os quatro regimes; completo traz anual primeiro, meses, fechamento da receita, diagnósticos, premissas, memória e referências capturadas.
+- Mostra cobertura parcial, competências de origem e ano do cenário, sem inventar meses nem recalcular históricos. Motores `1.8.0-simples-revenue-context` e revisão vinculada `SIMPLES_REVENUE_CONTEXT_2026_10_V8` preservam os originais.
+- Validação: 278 testes de regras, 112 verificações de integração/projeção/competências e 171 Python/PDF/OCR aprovados. Navegador: 166 testes na rodada completa e 21 na conferência final direcionada, incluindo a nova regressão da memória histórica. Fluxo real de R$ 3,3 milhões, três PDFs, CSV, nova sessão e versões dentro/fora do DAS conferidos; tipos, build, versão e inspeção visual aprovados.
+
 ## [0.32.2] — 2026-10-23
 
 - Fechamento visível da receita bruta de vendas e serviços, devoluções de venda e receita após devoluções, por competência e no período. A DRE apresenta a composição ao final, com ajustes manuais e receita utilizada separados; celular recebe valores empilhados para o regime e período selecionados.

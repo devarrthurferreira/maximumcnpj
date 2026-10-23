@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildDreCsv, buildDreExportPayload} from '../public/simulator-dre-export.js';
-import {buildDrePresentation, unifiedDreRows} from '../public/simulator-dre.js';
+import {buildDrePresentation, unifiedDreRows, dreReportCoverage, dreRegimeStatuses} from '../public/simulator-dre.js';
+import {renderDrePrintDocument,renderAnnualDre} from '../public/simulator-dre-view.js';
 import {buildMonthlyDre, DRE_ROWS} from '../public/simulator-calendar.js';
 
 // A small independent CSV reader checks quoted separators/newlines and exact cell counts.
@@ -112,4 +113,66 @@ test('Integração com a apresentação compartilhada preserva calendário diver
   // Spreadsheet text escaping changes only the protective prefix, never row order.
   assert.deepEqual(dataRows.map(row => row[3].replace(/^'/,'')), unifiedDreRows(presentation).map(row => row.label));
   assert.deepEqual({result,calendar},before);
+});
+
+test('relatório completo inclui anual antes dos meses de todos os regimes e preserva cobertura, causas e premissas',()=>{
+  const data=fixture();data.method='REPORT_MONTHS_V1';
+  data.months=Array.from({length:12},(_,index)=>({number:index+1,label:['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'][index],sourceMonth:index<2?`2025-0${index+1}`:null}));
+  Object.assign(data.regimes[1],{status:'RBT12 não registrada',monthlyAvailability:[true,false,...Array(10).fill(false)],monthlyStatuses:['Calculado','Informe a RBT12',...Array(10).fill('Sem dados importados')]});
+  data.report={modelVersion:'synthetic',sourceMonths:['2025-01','2025-02'],warnings:[{code:'model-period',title:'Cenário de 2027/2028',detail:'CBS de 9,11% e IBS de 0,10% são hipóteses editáveis.'}],memory:[{id:'rbt12',section:'Premissas',label:'RBT12 de referência',formula:'Receitas dos 12 meses anteriores',value:3300000,unit:'currency'}],sources:[{label:'Fonte oficial capturada',url:'https://example.invalid/norma'}]};
+  data.simplesDiagnostic={version:'SIMPLES_DIAGNOSTIC_V1',available:true,statusCode:'READY',message:'Cenário calculado com a receita das competências.',action:'Conferir enquadramento e premissas.',rbt12:3300000,federalLimit:4800000,sublimit:3600000,revenueReference:1200,revenueBasis:'ACTUAL_REPORT_MONTHS',assumptions:['RBT12 determina a faixa; não é a RBA.']};
+  const before=structuredClone(data),calendar={version:'DRE_CALENDAR_V3',year:2027,months:data.months};
+  const annual=renderDrePrintDocument({presentation:data,calendar,year:2027,period:'annual'});
+  assert.match(annual,/DRE anual consolidada/);assert(!annual.includes('data-report-part="monthly"'));
+  const monthly=renderDrePrintDocument({presentation:data,calendar,year:2027,period:'monthly'});
+  assert(!monthly.includes('data-report-part="annual"'));assert.equal((monthly.match(/data-report-part="monthly"/g)||[]).length,2);
+  const complete=renderDrePrintDocument({presentation:data,calendar,year:2027,period:'complete'});
+  assert(complete.indexOf('data-report-part="annual"')<complete.indexOf('data-report-part="monthly"'));
+  assert.equal((complete.match(/data-report-part="monthly"/g)||[]).length,2);
+  assert.equal((complete.match(/data-report-memory="rbt12"/g)||[]).length,1);
+  for(const phrase of ['2 de 12 competências','2025-01 a 2025-02','Origem: 2025-01','Cenário 2027','RBT12 não registrada','Informe a RBT12','CBS de 9,11%','Fonte oficial capturada','4.800.000,00','3.600.000,00'])assert(complete.includes(phrase),phrase);
+  assert(!complete.includes('NaN'));assert(!complete.includes('undefined'));
+  const csv=readCsv(buildDreCsv({presentation:data,period:'complete',year:2027}));
+  assert.equal(csv.filter(row=>row[0]==='Escopo').length,1);assert.equal(csv.filter(row=>row[0]==='Regime').length,1);
+  assert(csv.findIndex(row=>row[0]==='Escopo')<csv.findIndex(row=>row[0]==='Regime'));
+  assert.equal(csv.filter(row=>row[0]==='DRE'&&row[2]==='DAS').length,1);
+  assert.equal(csv.filter(row=>row[1]==='DRE'&&row[3]==='DAS').length,2);
+  assert.equal(csv.filter(row=>row[0]==='Memória').length,1);
+  assert.match(renderAnnualDre({presentation:data,calendar,year:2027}),/value="complete" selected/);
+  assert.deepEqual(data,before);
+});
+
+test('cobertura só confirma exercício completo com doze meses do mesmo ano e diagnóstico não reinterpreta legado',()=>{
+  const data=fixture();data.method='REPORT_MONTHS_V1';
+  const months=Array.from({length:12},(_,index)=>`2025-${String(index+1).padStart(2,'0')}`);
+  data.report={sourceMonths:months};assert.equal(dreReportCoverage(data).completeYear,true);
+  data.report.sourceMonths=['2024-12',...months.slice(0,11)];assert.equal(dreReportCoverage(data).completeYear,false);
+  data.report.sourceMonths=['2025-01','2025-01'];assert.equal(dreReportCoverage(data).count,1);
+  data.report.sourceMonths=[];assert.match(dreReportCoverage(data).detail,/não está disponível/);
+  const legacy=fixture();assert.equal(dreReportCoverage(legacy).actual,false);
+  assert(!renderDrePrintDocument({presentation:legacy,year:2027}).includes('data-simples-diagnostic'));
+  assert.equal(dreRegimeStatuses(legacy)[1].status,'Motivo não registrado nesta versão.');
+});
+
+test('relatório escapa texto e não transforma referência inválida em link executável',()=>{
+  const data=fixture();data.report={warnings:[{code:'test',title:'<script>alert(1)</script>',detail:'Texto <b>não confiável</b>'}],sources:[{label:'@origem',url:'javascript:alert(1)'}]};
+  const html=renderDrePrintDocument({presentation:data,year:2027,period:'complete',company:{name:'<img src=x onerror=alert(1)>'}});
+  assert(!html.includes('<script>'));assert(!html.includes('<img '));assert(!html.includes('href="javascript:'));
+  assert.match(html,/&lt;script&gt;/);assert.match(html,/&lt;img/);
+  const csv=readCsv(buildDreCsv({presentation:data,period:'complete',company:{name:'=1+1'}}));
+  assert.equal(csv.find(row=>row[0]==='Empresa')[1],"'=1+1");
+  assert.equal(csv.find(row=>row[0]==='Referência normativa')[1],"'@origem");
+});
+
+test('memória histórica do Simples pendente não publica imposto não confirmado como valor calculado',()=>{
+  const data=fixture();data.regimes[1].id='pure';
+  data.report={memory:[{id:'simples.pureDas',section:'Simples Nacional',label:'DAS puro',formula:'Valor histórico não confirmado',value:98765.43,unit:'currency'},
+    {id:'simples.sales.deduction',section:'Simples Nacional',label:'Parcela a deduzir da tabela',formula:'Parâmetro',value:87300,unit:'currency'}]};
+  const before=structuredClone(data);
+  const html=renderDrePrintDocument({presentation:data,year:2027,period:'annual'});
+  assert(!html.includes('98.765,43'));assert.match(html,/Não disponível: o cálculo do Simples exige conferência/);assert.match(html,/87.300,00/);
+  const rows=readCsv(buildDreCsv({presentation:data}));
+  assert.match(rows.find(row=>row[0]==='Memória'&&row[2]==='DAS puro')[4],/Não disponível/);
+  assert.equal(rows.find(row=>row[0]==='Memória'&&row[2]==='Parcela a deduzir da tabela')[4],'87300,00');
+  assert.deepEqual(data,before);
 });

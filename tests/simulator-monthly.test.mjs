@@ -100,7 +100,7 @@ test('opções DIFAL persistem por competência e anual soma somente deduções 
  const policy=defaultDifalPolicy();policy.enabled.hybrid=false;policy.enabled.actual=false;
  const selected={...draft,difalPolicy:policy},inputs=rows.map(row=>baselineMonth(row)),before=structuredClone({selected,rows,inputs});
  const out=calculateMonthlySimulation(selected,rows,inputs,'sales');
- assert.equal(out.result.version,'1.7.0-difal-directions');assert.deepEqual(out.result.difalPolicy,policy);
+ assert.equal(out.result.version,'1.8.0-simples-revenue-context');assert.deepEqual(out.result.difalPolicy,policy);
  for(const entry of out.engineInput.months)assert.deepEqual(entry.input.difalPolicy,policy);
  for(const id of ['hybrid','actual']){
   const regime=out.result.regimes.find(row=>row.id===id);assert.equal(regime.dre.difal,0);assert.equal(regime.dre.icmsAnticipation,0);
@@ -161,4 +161,120 @@ test('memória anual não atribui a todo período a parcela a deduzir de uma ún
  const manual=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales');
  assert.equal(manual.result.memory.find(item=>item.id==='rbt12').value,draft.rbt12);
  assert.equal(manual.result.memory.find(item=>item.id==='simples.sales.deduction').value,13860);
+});
+
+test('R$ 3,3 milhões com sazonalidade mantém Simples e soma mensal sem criar excesso de receita',()=>{
+ const revenues=[500000,300000,...Array(10).fill(250000)];
+ const rows=revenues.map((revenue,index)=>make(index+1,revenue*100,0,0,0));
+ const inputs=rows.map(row=>baselineMonth(row)),before=structuredClone({rows,inputs});
+ const {result,engineInput}=calculateMonthlySimulation({...draft,rbt12:3300000},rows,inputs,'sales');
+ assert.equal(result.annualRevenue,3300000);
+ assert(result.regimes.every(regime=>regime.available));
+ assert(result.monthlyResults.every(month=>month.result.regimes[0].available));
+ close(result.regimes[0].dre.das,-384600);close(result.regimes[0].dre.netProfit,2915400);
+ close(result.regimes[1].dre.das,-324987);close(result.regimes[1].dre.netProfit,2671083);
+ close(result.regimes[2].dre.irpj,-42000);close(result.regimes[2].dre.csll,-35640);close(result.regimes[2].dre.netProfit,2324430);
+ const d=result.simplesDiagnostic;assert.equal(d.statusCode,'READY');assert.equal(d.available,true);
+ assert.equal(d.revenueReference,3300000);assert.equal(d.revenueBasis,'ACTUAL_REPORT_MONTHS');assert.equal(d.completeYear,true);
+ assert.equal(d.coveredMonths,12);assert.equal(d.eligibilityVerified,false);assert.equal(d.months.length,12);
+ for(const month of result.monthlyResults){
+  assert.equal(month.result.simplesDiagnostic.revenueReference,3300000);
+  assert.equal(month.result.memory.find(item=>item.id==='simples.revenueReference').value,3300000);
+  assert.equal(month.result.memory.find(item=>item.id==='presumed.excessRevenue').value,0);
+  assert.equal(month.result.memory.find(item=>item.id==='presumed.irIncrease').value,0);
+ }
+ assert.equal(result.memory.find(item=>item.id==='simples.revenueReference').value,3300000);
+ assert.equal(engineInput.months[0].input.revenueContext.revenueCents,330000000);
+ assert(!result.warnings.some(item=>['projection','presumption-increase','simples-unavailable','sublimit'].includes(item.code)));
+ for(const regime of result.regimes)for(const key of ['revenue','das','icmsNet','netProfit','irpj','csll'])
+  close(regime.dre[key],result.monthlyResults.reduce((sum,month)=>sum+month.result.regimes.find(item=>item.id===regime.id).dre[key],0));
+ assert.deepEqual({rows,inputs},before);
+});
+
+test('competências parciais e limites exatos não anualizam receita nem fabricam enquadramento',()=>{
+ for(const total of [3300000,3599999.99,3600000,3600000.01,4799999.99,4800000,4800000.01]){
+  const rows=[make(8,Math.round(total*100),0,0,0)];
+  const {result}=calculateMonthlySimulation({...draft,rbt12:3300000},rows,rows.map(row=>baselineMonth(row)),'sales');
+  const expected=total<=4800000;
+  assert.equal(result.regimes[0].available,expected);assert.equal(result.simplesDiagnostic.available,expected);
+  assert.equal(result.simplesDiagnostic.revenueReference,total);assert.equal(result.simplesDiagnostic.completeYear,false);
+  assert.equal(result.simplesDiagnostic.coveredMonths,1);assert.equal(result.simplesDiagnostic.eligibilityVerified,false);
+  assert.equal(result.simplesDiagnostic.statusCode,expected?'READY':'REVENUE_REVIEW_REQUIRED');
+  assert(result.simplesDiagnostic.assumptions.some(item=>/não cobre um ano-calendário completo/.test(item)));
+ }
+ const acrossYears=Array.from({length:12},(_,index)=>({...make(index+1,10000,0,0,0),sourceMonth:`${index<6?'2026':'2025'}-${String(index+1).padStart(2,'0')}`}));
+ const cross=calculateMonthlySimulation(draft,acrossYears,acrossYears.map(row=>baselineMonth(row)),'sales');
+ assert.equal(cross.result.simplesDiagnostic.completeYear,false);
+});
+
+test('sexta faixa usa escolha local explícita e conserva motivo de cada competência no consolidado',()=>{
+ const rows=[make(1,50000000,0,0,0),make(2,30000000,0,0,0),make(3,25000000,0,0,0)];
+ const schedule={version:'RBT12_MONTHLY_SECTION_22_V1',sourceSection:'2.2',rows:rows.map((row,index)=>({sourceMonth:row.sourceMonth,status:'CONFIRMED',rbt12Cents:[330000000,400000000,490000000][index]}))};
+ const inputs=rows.map(row=>baselineMonth(row));
+ const out=calculateMonthlySimulation({...draft,icmsOutside:false},rows,inputs,'sales',schedule);
+ assert.deepEqual(out.result.simplesDiagnostic.months.map(item=>item.statusCode),['READY','LOCAL_TAX_REVIEW_REQUIRED','RATE_TABLE_EXCEEDED']);
+ assert.equal(out.result.simplesDiagnostic.rbt12,null);assert.equal(out.result.simplesDiagnostic.rbt12Min,3300000);
+ assert.equal(out.result.simplesDiagnostic.rbt12Max,4900000);assert.equal(out.result.simplesDiagnostic.statusCode,'MULTIPLE_MONTH_STATUSES');
+ assert.equal(out.result.regimes[0].available,false);assert.equal(out.result.regimes[0].margin,null);
+ assert.match(out.result.regimes[0].status,/2025-02/);assert.match(out.result.regimes[0].status,/2025-03/);
+ const warnings=out.result.warnings.filter(item=>item.code==='simples-unavailable');
+ assert(warnings.some(item=>item.detail.includes('2025-02')&&item.detail.includes('sexta faixa')));
+ assert(warnings.some(item=>item.detail.includes('2025-03')&&item.detail.includes('4.800.000')));
+ const full=Array.from({length:12},(_,index)=>make(index+1,[500000,300000,...Array(10).fill(250000)][index]*100,0,0,0));
+ const outside=calculateMonthlySimulation({...draft,rbt12:4800000,icmsOutside:true},full,full.map(row=>baselineMonth(row)),'sales');
+ assert(outside.result.regimes[0].available);close(outside.result.regimes[0].dre.das,-363825);
+ close(outside.result.regimes[0].dre.icmsNet,-594000);close(outside.result.regimes[0].dre.netProfit,2342175);
+ close(outside.result.regimes[1].dre.das,-240051.735);close(outside.result.regimes[1].dre.netProfit,2162018.265);
+ assert.equal(outside.result.memory.find(item=>item.id==='outside').value,'Sim');assert.equal(outside.engineInput.icmsOutside,true);
+ assert(outside.result.monthlyResults.every(month=>month.result.simplesDiagnostic.icmsOutside===true));
+});
+
+test('excedente gerencial do Presumido acima de R$ 5 milhões é rateado uma vez pelo período real',()=>{
+ const rows=[1000000,1000000,...Array(10).fill(400000)].map((revenue,index)=>make(index+1,revenue*100,0,0,0));
+ for(const mixed of [false,true]){
+  const selected=structuredClone(rows);
+  if(mixed){selected[0].fields.serviceRevenueCents=selected[0].fields.salesCpfCents;selected[0].fields.salesCpfCents=0;}
+  const {result}=calculateMonthlySimulation({...draft,rbt12:3300000},selected,selected.map(row=>baselineMonth(row)),'sales');
+  const value=id=>result.memory.find(item=>item.id===`presumed.${id}`).value;
+  close(value('excessRevenue'),1000000);close(value('irIncrease'),mixed?12000:8000);close(value('csIncrease'),mixed?15333.333333333334:12000);
+  close(result.regimes[2].dre.irpj,mixed?-159000:-98000);close(result.regimes[2].dre.csll,mixed?-84180:-65880);
+  close(result.regimes[2].dre.netProfit,mixed?4254220:4203520);
+  assert(result.warnings.some(item=>item.code==='presumption-increase'&&/não substitui a apuração/.test(item.detail)));
+ }
+});
+
+test('mês inicial sem receita não atribui receita zero ao consolidado dos meses seguintes',()=>{
+ const rows=[make(1,0,0,0,0),make(2,10000000,0,0,0)];
+ const {result}=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales');
+ assert.equal(result.annualRevenue,100000);assert(result.regimes.every(item=>item.available));
+ for(const regime of result.regimes)assert.doesNotMatch(regime.status,/receita zero/);
+ assert.equal(result.simplesDiagnostic.available,true);assert.equal(result.simplesDiagnostic.rbt12,draft.rbt12);
+ assert.deepEqual(result.simplesDiagnostic.months.map(item=>item.statusCode),['ZERO_REVENUE','READY']);
+});
+
+test('memória anual não confirma valores parciais ou tributos de meses Simples pendentes',()=>{
+ const rows=[make(1,10000000,0,0,0),make(2,10000000,0,0,0)];
+ for(const rbt12s of [[330000000,370000000],[370000000,330000000]]){
+  const schedule={version:'RBT12_MONTHLY_SECTION_22_V1',source:'SIMPLES_SECTION_22',sourceSection:'2.2',rows:rows.map((row,index)=>({sourceMonth:row.sourceMonth,status:'CONFIRMED',rbt12Cents:rbt12s[index]}))};
+  const {result}=calculateMonthlySimulation({...draft,icmsOutside:false},rows,rows.map(row=>baselineMonth(row)),'sales',schedule);
+  assert.equal(result.regimes[0].available,false);assert.equal(result.annualRevenue,200000);
+  const pendingIndex=rbt12s.findIndex(value=>value>360000000),confirmedIndex=1-pendingIndex;
+  for(const id of ['dre.pure.revenue','dre.pure.netProfit','summary.pure.taxes','dre.hybrid.das','summary.hybrid.taxes','simples.pureDas','simples.hybridDas','simples.salesDas','simples.cbsRemoved']){
+    const item=result.memory.find(item=>item.id===id);assert(item,id);
+    assert.equal(item.unit,'text',id);assert.equal(item.availability,'UNAVAILABLE',id);assert.equal(item.value,'Conferência necessária');
+    assert(item.formula.includes(rows[pendingIndex].sourceMonth));assert.match(item.formula,/sexta faixa/);
+    const confirmed=result.monthlyResults[confirmedIndex].result.memory.find(item=>item.id===id);
+    assert.equal(confirmed.unit,'currency',id);assert.equal(typeof confirmed.value,'number',id);
+    const pending=result.monthlyResults[pendingIndex].result.memory.find(item=>item.id===id);
+    assert.equal(pending.unit,'text',id);assert.equal(pending.availability,'UNAVAILABLE');
+  }
+  assert.equal(result.memory.find(item=>item.id==='annual.revenue').value,200000);
+  assert.equal(result.memory.find(item=>item.id==='simples.revenueReference').value,200000);
+  assert.equal(typeof result.memory.find(item=>item.id==='dre.presumed.netProfit').value,'number');
+  const presentation=buildDrePresentation({result,calendar:buildMonthlyDre(result,2027),projection:monthlyProjection(rows),source:{monthlyReports:rows}});
+  const csv=buildDreCsv({presentation,period:'complete',year:2027});
+  assert.match(csv,/Conferência necessária/);
+  assert(!csv.includes('20338,33'));assert(!csv.includes('15577,65'));
+  assert(result.memory.every(item=>typeof item.value!=='number'||Number.isFinite(item.value)));
+ }
 });

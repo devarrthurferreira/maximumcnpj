@@ -1,5 +1,17 @@
 /** Types for the shared, dependency-free calculator used by browser and server. */
 export const MODEL_VERSION: string;
+export const SIMPLES_DIAGNOSTIC_VERSION:'SIMPLES_DIAGNOSTIC_V1';
+export const REVENUE_CONTEXT_VERSION:'SIMPLES_REVENUE_CONTEXT_V1';
+/** Derived by the monthly calculation from validated rows; never accepted in a draft. */
+export type SimplesRevenueContext={version:'SIMPLES_REVENUE_CONTEXT_V1';method:'ACTUAL_REPORT_MONTHS';revenueCents:number;sourceMonths:string[]};
+export type SimplesDiagnostic={
+  version:'SIMPLES_DIAGNOSTIC_V1';available:boolean;
+  statusCode:'READY'|'ZERO_REVENUE'|'MISSING_RBT12'|'RATE_TABLE_EXCEEDED'|'LOCAL_TAX_REVIEW_REQUIRED'|'REVENUE_REVIEW_REQUIRED'|'MULTIPLE_MONTH_STATUSES';
+  message:string;action:string;rbt12:number|null;rbt12Min?:number;rbt12Max?:number;
+  federalLimit:number;sublimit:number;revenueReference:number;revenueBasis:'ACTUAL_REPORT_MONTHS'|'AVERAGE_X12';
+  sourceMonths:string[];coveredMonths:number;completeYear:boolean;icmsOutside:boolean;eligibilityVerified:false;assumptions:string[];
+  months?:Array<SimplesDiagnostic & {sourceMonth:string}>;
+};
 export const ICMS_ANTICIPATION_VERSION: 'ICMS_ANTICIPATION_DRE_V1';
 export const DIFAL_POLICY_VERSION: 'DIFAL_SCENARIOS_V2';
 export type SimulationRegimeId = 'pure' | 'hybrid' | 'presumed' | 'actual';
@@ -31,6 +43,8 @@ export type SimulationDraft = {
   serviceAnnex: 3 | 4 | 5;
   /** Opcional apenas para reabrir snapshots legados; novas simulações enviam RBT12 explícita. */
   rbt12?: number;
+  /** User-confirmed local tax treatment. Absence preserves the historical inside-DAS premise. */
+  icmsOutside?: boolean;
   difalPolicy?: DifalPolicy;
   values: Record<SimulationValueField, number>;
 };
@@ -50,9 +64,10 @@ export type SimulationResult = {
   version: string; annualRevenue: number; regimes: SimulationRegime[];
   credits: Record<string, Record<string, number>>;
   warnings: Array<{code: string; severity: string; title: string; detail: string}>;
-  memory: Array<{id: string; section: string; label: string; formula: string; value: number | string; unit: string}>;
+  memory: Array<{id: string; section: string; label: string; formula: string; value: number | string; unit: string;availability?:'UNAVAILABLE'}>;
   bestRegimeId: string | null; difference: number;
   difalPolicy?: DifalPolicy;
+  simplesDiagnostic?: SimplesDiagnostic;
 };
-export function draftToInput(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null): Record<string, unknown> | null;
-export function calculateSimulation(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null): SimulationResult;
+export function draftToInput(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null, revenueContext?: SimplesRevenueContext|null): Record<string, unknown> | null;
+export function calculateSimulation(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null, revenueContext?: SimplesRevenueContext|null): SimulationResult;

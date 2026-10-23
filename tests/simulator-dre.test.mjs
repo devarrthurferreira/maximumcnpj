@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildDreSummary,buildDreEvolution} from '../public/simulator-dre-summary.js';
-import {buildDrePresentation,unifiedDreRows,DRE_PRESENTATION_VERSION,dreDifalNotes} from '../public/simulator-dre.js';
+import {buildDrePresentation,unifiedDreRows,DRE_PRESENTATION_VERSION,dreDifalNotes,dreReportMemory} from '../public/simulator-dre.js';
 import {calculateSimulation,calculateTax,draftToInput,defaultDifalPolicy} from '../public/simulator-engine.js';
 import {annualizeReports,projectDifal} from '../public/simulator-projection.js';
 import {buildMonthlyDre,dreRows} from '../public/simulator-calendar.js';
@@ -443,12 +443,11 @@ test('ajuste de receita fica separado da fonte em cada mês, com a devolução j
  }
 });
 
-test('fechamento fica aberto ao final da DRE anual, mensal e impressão e termina o CSV',()=>{
+test('fechamento fica aberto ao final de cada DRE e antes das referências no relatório',()=>{
  const input=revenueReturnsFixture(100),p=buildDrePresentation(input),keys=p.revenueReconciliation.rows.map(row=>row.key);
  for(const html of [renderAnnualDre({presentation:p,calendar:input.calendar,year:2027}),
   renderCompleteMonthlyDre({presentation:p,calendar:input.calendar,year:2027,regimeId:'pure',month:1}),
-  renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027,period:'annual'}),
-  renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027,period:'monthly',regimeId:'pure'})]){
+  renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027,period:'annual'})]){
   assert.equal((html.match(/data-revenue-reconciliation="dre"/g)||[]).length,1);
   const closing=html.slice(html.indexOf('data-revenue-reconciliation="dre"'));
   assert(!closing.includes('<details'));assert.match(closing,/<h3>Fechamento da receita<\/h3>/);
@@ -457,9 +456,13 @@ test('fechamento fica aberto ao final da DRE anual, mensal e impressão e termin
   assert.match(closing,/já estão abatidas/);assert.match(closing,/não altera nem deduz novamente/);
   assert.doesNotMatch(html,/Percentuais sobre a receita bruta/);
  }
+ const monthlyPrint=renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027,period:'monthly',regimeId:'pure'});
+ assert.equal((monthlyPrint.match(/data-revenue-reconciliation="dre"/g)||[]).length,4);
+ for(const key of keys)assert.equal((monthlyPrint.match(new RegExp(`data-dre-row="${key}"`,'g'))||[]).length,4);
+ assert(monthlyPrint.lastIndexOf('data-revenue-reconciliation="dre"')<monthlyPrint.indexOf('data-report-part="references"'));
  const annual=buildDreCsv({presentation:p}),lines=annual.trim().split('\r\n');
  const closing=lines.filter(line=>line.startsWith('"Conferência da receita"'));
- assert.equal(closing.length,5);assert.deepEqual(lines.slice(-5),closing);
+ assert.equal(closing.length,5);assert(lines.indexOf(closing[4])<lines.findIndex(line=>line.startsWith('"Premissas e referências do cálculo"')));
  assert.match(closing[0],/;2200,00;2200,00;2200,00;2200,00;/);
  assert.match(closing[1],/;-400,00;-400,00;-400,00;-400,00;/);
  assert.match(closing[2],/;1800,00;1800,00;1800,00;1800,00;/);
@@ -467,6 +470,24 @@ test('fechamento fica aberto ao final da DRE anual, mensal e impressão e termin
  assert.match(closing[4],/;1900,00;1900,00;1900,00;1900,00;/);
  const monthly=buildDreCsv({presentation:p,period:'monthly'}).split('\r\n').filter(line=>line.startsWith('"Simples Puro";"Conferência da receita"'));
  assert.equal(monthly.length,5);assert.match(monthly[1],/;-150,00;-250,00;"Não disponível"/);assert.match(monthly[4],/;1150,00;750,00;"Não disponível"/);
+});
+
+test('ICMS fora do DAS nas competências usa a escolha capturada e mostra créditos conciliados no anual',()=>{
+ const source=revenueReturnsFixture(),draft={...source.draft,icmsOutside:true};
+ const computed=calculateMonthlySimulation(draft,source.source.monthlyReports,source.source.monthlyReports.map(row=>baselineMonth(row)),'saved-sales');
+ const input={...source,...computed,calendar:buildMonthlyDre(computed.result,2027)},before=structuredClone(input);
+ const p=buildDrePresentation(input);
+ for(const id of ['pure','hybrid']){
+  near(find(p,'icms.debit').values[id],computed.result.credits.icms.debit);
+  near(find(p,'icms.used').values[id],computed.result.credits.icms.used);
+  near(find(p,'icms.debit').monthlyValues[id][0],computed.result.monthlyResults[0].result.credits.icms.debit);
+ }
+ assert.deepEqual(input,before);
+ const inconsistent=structuredClone(input);inconsistent.result.monthlyResults[1].engineInput.icmsOutside=false;
+ const checked=buildDrePresentation(inconsistent);
+ assert.equal(find(checked,'icms.debit').values.pure,null);
+ assert.equal(find(checked,'icms.debit').monthlyValues.pure[1],null);
+ assert.notEqual(find(checked,'icms.debit').monthlyValues.pure[0],null);
 });
 
 test('legado ou fonte divergente não inventa bruto, devolução zero ou ajuste; receita salva continua intacta',()=>{
@@ -515,4 +536,29 @@ test('fechamento móvel usa o regime e a competência selecionados, conservando 
  assert.match(value(month,'revenueUsed'),/data-revenue-mobile-annual>Total anual: R\$ 1.900,00/);
  const print=renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027,period:'monthly',regimeId:'hybrid'});
  assert(!print.includes('data-revenue-mobile'));assert(print.includes('data-dre-row="revenueSourceGross"'));assert(print.includes('R$ 2.200,00'));
+});
+
+test('memória completa mantém itens anuais e normaliza rótulos legados sem confirmar valores de regime pendente',()=>{
+ const input=fixture(),pending=input.result.regimes.find(regime=>regime.id==='pure');
+ pending.available=false;pending.status='Uma competência exige conferência da RBT12.';
+ const saved=id=>input.result.memory.find(item=>item.id===id);
+ Object.assign(saved('simples.pureDas'),{value:98765.43,unit:'currency'});
+ Object.assign(saved('dre.pure.revenue'),{label:'Receita bruta total',value:123456.78,unit:'currency'});
+ Object.assign(saved('dre.actual.revenue'),{label:'Receita bruta total'});
+ Object.assign(saved('dre.actual.netRevenue'),{label:'Receita líquida'});
+ Object.assign(saved('summary.pure.margin'),{value:0.42,unit:'percent'});
+ const before=structuredClone(input);freeze(input);
+ const presentation=buildDrePresentation(input),complete=dreReportMemory(presentation,{includeDre:true}),reported=dreReportMemory(presentation);
+ assert.equal(complete.length,input.result.memory.length);
+ for(const id of ['simples.pureDas','dre.pure.revenue','summary.pure.taxes','summary.pure.margin']){
+  const item=complete.find(row=>row.id===id);assert.equal(item.unit,'text');assert.match(item.value,/Não disponível/);
+ }
+ assert.equal(complete.find(row=>row.id==='dre.pure.revenue').label,'Receita total utilizada');
+ assert.equal(complete.find(row=>row.id==='dre.actual.revenue').label,'Receita total utilizada');
+ assert.equal(complete.find(row=>row.id==='dre.actual.netRevenue').label,'Receita após deduções tributárias');
+ assert.equal(complete.find(row=>row.id==='dre.actual.revenue').value,saved('dre.actual.revenue').value);
+ assert.equal(complete.find(row=>row.id==='simples.sales.deduction').value,saved('simples.sales.deduction').value);
+ assert(!reported.some(row=>/^(?:dre|summary)\./.test(row.id)));
+ assert.equal(reported.find(row=>row.id==='simples.pureDas').unit,'text');
+ assert.deepEqual(input,before);assert.deepEqual(presentation.report.memory,input.result.memory);
 });

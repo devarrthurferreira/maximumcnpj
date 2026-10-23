@@ -38,6 +38,11 @@ const open=async(page:Page)=>page.goto(`/simulator.html?generation=${generation}
 async function manual(page:Page,value='100000'){
   await page.locator('#rbt12-manual').click();await page.locator('#rbt12').fill(value);await page.locator('#rbt12-manual-confirm').check();
 }
+async function showMonthlyDre(page:Page){
+  await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('#dre-report-period')).toHaveValue('complete');
+  await page.getByRole('button',{name:'Mensal',exact:true}).click();
+}
 async function capturePanel(page:Page,selector:string,path:string){
   const panel=page.locator(selector);
   await panel.evaluate(element=>window.scrollTo({top:window.scrollY+element.getBoundingClientRect().top-96,behavior:'instant'}));
@@ -148,6 +153,7 @@ test('entrada no Puro e saída no Híbrido persistem no rascunho, histórico e e
   await expect(page.locator('[data-difal-monthly]')).toHaveText('Por cenário');
   await expect(page.locator('[data-difal-applied-regime="pure"] [data-difal-applied-month]')).toContainText('0,00');
   await expect(page.locator('[data-difal-applied-regime="hybrid"] [data-difal-applied-month]')).toContainText('100,00');
+  await showMonthlyDre(page);
   await page.locator('#dre-regime').selectOption('pure');await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('0,00');
   await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('36,60');
   await page.locator('#dre-regime').selectOption('hybrid');await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('100,00');
@@ -188,6 +194,7 @@ test('saída desmarcada some dos KPIs e da impressão; entrada e histórico mant
   await page.setViewportSize({width:1280,height:900});await page.goto(`/simulator.html?simulation=${saved._id}`);
   await expect(exit.locator('[data-difal-application-status]')).toHaveText('Não incluído');
   await expect(exit.locator('[data-difal-monthly]')).toContainText('0,00');await expect(entry.locator('[data-anticipation-monthly]')).toContainText('36,60');
+  await showMonthlyDre(page);
   await page.locator('#dre-month').selectOption('1');await expect(exit.locator('[data-difal-monthly]')).toContainText('0,00');await expect(entry.locator('[data-anticipation-monthly]')).toContainText('73,20');
   await page.locator('#dre-month').selectOption('2');await expect(exit.locator('[data-difal-monthly]')).toHaveText('Indisponível');
   expect(JSON.stringify(saved)).toBe(frozen);expect(state.sourceReads).toBe(2);expect(state.writes).toHaveLength(1);
@@ -270,6 +277,7 @@ test('RBT12 de cada competência bloqueia os Simples e preserva escolhas para os
   expect(saved.result.regimes.map((row:any)=>row.dre.difal)).toEqual([-100,-100,0,0]);
   await page.goto(`/simulator.html?simulation=${saved._id}`);
   await expect(page.locator('#sim-difal-options input')).toHaveCount(0);await expect(page.locator('[data-difal-option="pure"]')).toHaveAttribute('data-state','ENABLED');
+  await showMonthlyDre(page);
   await page.locator('#dre-month').selectOption('1');await expect(page.locator('[data-difal-option="pure"]')).toHaveAttribute('data-state','SUBLIMIT');await expect(page.locator('[data-difal-option="pure"]')).toContainText('Incluído por escolha');
   expect(state.sourceReads).toBe(1);expect(state.writes).toHaveLength(1);
   await capturePanel(page,'#sim-difal-options',info.outputPath('difal-opcoes-historico.png'));
@@ -294,6 +302,7 @@ test('histórico sem opções registradas mostra valores congelados sem inferir 
   const before=JSON.stringify(snapshot);state.snapshots.set(snapshot._id,snapshot);
   await page.goto(`/simulator.html?simulation=${snapshot._id}`);
   await expect(page.locator('[data-difal-legacy]')).toContainText('não registrava opções de DIFAL');await expect(page.locator('#sim-difal-options input')).toHaveCount(0);
+  await showMonthlyDre(page);
   await page.locator('#dre-month').selectOption('1');await expect(page.locator('[data-difal-legacy]')).toBeVisible();
   expect(JSON.stringify(snapshot)).toBe(before);expect(state.sourceReads).toBe(0);expect(state.writes).toHaveLength(0);
   await page.locator('#create-version').click();await expect(page.locator('#difal-enabled-pure')).not.toBeChecked();await expect(page.locator('#difal-enabled-actual')).toHaveCount(0);await expect(page.locator('#difal-enabled-hybrid')).toBeChecked();

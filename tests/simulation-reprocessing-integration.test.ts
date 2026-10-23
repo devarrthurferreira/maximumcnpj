@@ -156,7 +156,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const original=await save({...input,draft:{...input.draft,difalPolicy:policy}},80);
    const jobs=await collection('lookupJobs'),lines=await collection('purchaseLines');
    const sourcesBefore={jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({_id:1}).toArray()};
-   const done=await reprocessSimulations(actor,{});assert.equal(done.version,'DIFAL_DIRECTIONS_2026_10_V7');
+   const done=await reprocessSimulations(actor,{});assert.equal(done.version,'SIMPLES_REVENUE_CONTEXT_2026_10_V8');
    assert.deepEqual(done.counts,{queued:0,processing:0,ok:1,pending:0,failed:0});
    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id));
    assert.deepEqual(child.draft.difalPolicy,policy);assert.deepEqual(child.result.difalPolicy,policy);

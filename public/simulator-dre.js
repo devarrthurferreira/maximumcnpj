@@ -34,6 +34,50 @@ export function dreDifalNotes(presentation,{sourceMonth=null}={}) {
   });
 }
 
+/** Describes captured coverage, without completing missing months or changing a saved result. */
+export function dreReportCoverage(presentation) {
+  if(presentation?.method!=='REPORT_MONTHS_V1')return {actual:false,sourceMonths:[],count:null,completeYear:false,
+    label:'Projeção anual salva',detail:'Os valores mensais representam a projeção capturada nesta versão; não são movimentos históricos de cada mês.'};
+  const candidates=presentation.report?.sourceMonths||presentation.months?.map(month=>month.sourceMonth)||[];
+  const sourceMonths=[...new Set(candidates.filter(value=>typeof value==='string'&&/^\d{4}-(0[1-9]|1[0-2])$/.test(value)))].sort();
+  const count=sourceMonths.length,years=new Set(sourceMonths.map(value=>value.slice(0,4))),completeYear=count===12&&years.size===1;
+  const label=completeYear?'Ano de origem completo · 12 de 12 competências':count===12?'12 competências em mais de um ano de origem':`Período parcial · ${count} de 12 competências`;
+  return {actual:true,sourceMonths,count,completeYear,label,
+    detail:count?`Base dos relatórios: ${sourceMonths[0]} a ${sourceMonths.at(-1)}. O total consolida somente as competências importadas, sem médias nem projeção dos meses ausentes. ${completeYear?'As 12 competências da origem estão presentes.':'Este total não representa um exercício de origem completo.'}`:'A cobertura das competências não está disponível nesta versão. Não é possível afirmar que o total corresponde a um exercício completo.'};
+}
+
+/** Keep the exact captured cause visible beside availability, including partial annual blocks. */
+export function dreRegimeStatuses(presentation,{sourceMonth=null}={}) {
+  return (presentation?.regimes||[]).map(regime=>{
+    const groups=new Map();
+    for(const [index,month] of (presentation.months||[]).entries()){
+      if(!month.sourceMonth||(sourceMonth&&sourceMonth!==month.sourceMonth))continue;
+      const status=regime.monthlyStatuses?.[index];
+      if(!status)continue;
+      const available=regime.monthlyAvailability?.[index]===true,key=`${available}:${status}`;
+      if(!groups.has(key))groups.set(key,{available,status,months:[]});
+      groups.get(key).months.push(month.sourceMonth);
+    }
+    return {id:regime.id,name:regime.name,available:regime.available===true,
+      status:regime.status||(regime.available?'Calculado':'Motivo não registrado nesta versão.'),months:[...groups.values()]};
+  });
+}
+
+/** Historical unsupported Simples calculations are never promoted to confirmed payable amounts. */
+export function dreReportMemory(presentation,{includeDre=false}={}) {
+  const simplesPending=(presentation?.regimes||[]).some(regime=>['pure','hybrid'].includes(regime.id)&&regime.available!==true);
+  const unavailable=new Map((presentation?.regimes||[]).filter(regime=>regime.available!==true).map(regime=>[regime.id,regime]));
+  return (presentation?.report?.memory||[]).filter(item=>includeDre||!/^dre\.|^summary\./.test(item.id)).map(item=>{
+    const key=/^dre\.[^.]+\.(revenue|netRevenue)$/.exec(item.id)?.[1];
+    const label=key==='revenue'?'Receita total utilizada':key==='netRevenue'?'Receita após deduções tributárias':item.label;
+    const pending=unavailable.get(/^(?:dre|summary)\.([^.]+)\./.exec(item.id)?.[1]);
+    if(pending&&typeof item.value==='number')return {...item,label,unit:'text',value:`Não disponível: ${pending.status||'o cálculo deste regime exige conferência neste período.'}`};
+    if(simplesPending&&item.unit==='currency'&&/^simples\./.test(item.id)&&!/(?:\.deduction$|^simples\.revenueReference$)/.test(item.id))
+      return {...item,label,unit:'text',value:'Não disponível: o cálculo do Simples exige conferência neste período.'};
+    return label!==item.label?{...item,label}:item;
+  });
+}
+
 /** One continuous display/export order, retaining the original row objects and values. */
 export function unifiedDreRows(presentation) {
   const base=(presentation?.sections||[]).flatMap(section=>section.rows||[]);
@@ -56,7 +100,7 @@ export function unifiedDreRows(presentation) {
   return rows;
 }
 
-export function buildDrePresentation({result,monthlyGroups,projection,source,reportMonths,engineInput,reprocessing,calendar}={}) {
+export function buildDrePresentation({result,monthlyGroups,projection,source,reportMonths,engineInput,reprocessing,calendar,taxSources}={}) {
   const originals = Array.isArray(result?.regimes) ? result.regimes : [];
   const hasCalendar = calendar != null;
   const validCalendar = ['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3'].includes(calendar?.version) && Array.isArray(calendar.months) && calendar.months.length===12;
@@ -85,9 +129,12 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
       }
     };
   }
-  const regimes = originals.map(r=>({id:r.id,name:r.name,available:r.available===true,
+  const regimes = originals.map(r=>({id:r.id,name:r.name,available:r.available===true,status:typeof r.status==='string'?r.status:r.available===true?'Calculado':'Motivo não registrado nesta versão.',
     ...(capturedDifalVersion(r.difalApplication)?{difalApplication:structuredClone(r.difalApplication)}:{}),
-    ...(actual?{monthlyAvailability:months.map((_,index)=>frame(r,'month',index).available)}:{})}));
+    ...(actual?{monthlyAvailability:months.map((_,index)=>frame(r,'month',index).available),monthlyStatuses:months.map((_,index)=>{
+      const f=frame(r,'month',index);
+      return !f.monthlyEntry?'Sem dados importados para esta competência.':typeof f.regime.status==='string'?f.regime.status:f.available?'Calculado':'Motivo não registrado nesta versão.';
+    })}:{})}));
   function checkedFrame(f,compute) {
     if(!f.available)return missing(actual&&f.kind==='month'&&!f.monthlyEntry?'Sem dados importados para esta competência.':f.regime.available===true?'Calendário salvo não disponível para este regime.':f.regime.status&&!/^Disponível/.test(f.regime.status)?f.regime.status:'Regime indisponível neste cenário.');
     const cell=compute(f);
@@ -152,12 +199,22 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     if(!finite(serviceBaseline)||!finite(annual)||!close(annual*f.scale,f.get('services')))return missing('A base de serviços não está disponível ou não concilia com o cenário salvo.');
     return good((adjustment?annual-serviceBaseline:serviceBaseline)*f.scale);
   };
-  const outsideMemory=unique(result?.memory,'id','outside');
-  const outsideText=outsideMemory?.unit==='text'&&['Sim','Não'].includes(outsideMemory.value)?outsideMemory.value==='Sim':null;
-  const outsideInput=typeof engineInput?.icmsOutside==='boolean'?engineInput.icmsOutside:null;
-  const outside=outsideInput!==null&&outsideText!==null&&outsideInput!==outsideText?null:outsideInput??outsideText;
+  const capturedOutside=(input,entries)=>{
+    const entry=unique(entries,'id','outside');
+    const text=entry?.unit==='text'&&['Sim','Não'].includes(entry.value)?entry.value==='Sim':null;
+    const flag=typeof input?.icmsOutside==='boolean'?input.icmsOutside:null;
+    return flag!==null&&text!==null&&flag!==text?null:flag??text;
+  };
+  const outsideBase=capturedOutside(engineInput,result?.memory);
+  const outsideForMonth=entry=>capturedOutside(entry?.engineInput||engineInput?.months?.find(item=>item.sourceMonth===entry?.sourceMonth)?.input,entry?.result?.memory);
+  const outsideForFrame=f=>{
+    if(!actual)return outsideBase;
+    if(f.monthlyEntry)return outsideForMonth(f.monthlyEntry);
+    const flags=(result.monthlyResults||[]).map(outsideForMonth);
+    return flags.length&&flags.every(flag=>typeof flag==='boolean'&&flag===flags[0])?flags[0]:null;
+  };
   function creditCell(tax,field){return f=>{
-    const id=f.regime.id;
+    const id=f.regime.id,outside=outsideForFrame(f);
     if(!['pure','hybrid','presumed','actual'].includes(id))return missing('Aplicabilidade do crédito não disponível nesta versão.');
     if((tax!=='icms'&&id==='pure')||(tax==='icms'&&['pure','hybrid'].includes(id)&&outside===false))return missing('Incluído no DAS; sem crédito externo neste regime.');
     if(tax==='icms'&&['pure','hybrid'].includes(id)&&outside===null)return missing('A opção de ICMS fora do DAS não está confirmada nesta versão.');
@@ -244,6 +301,13 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
       row('revenueUsed','= Receita utilizada na simulação','subtotal',f=>currency(f.get('revenue')),{informative:true,notes:['Valor preservado na DRE. A base dos tributos, margens e percentuais permanece a mesma.'],sourceRefs:['result.regimes[].dre.revenue']})
     ]};
   return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,revenueReconciliation,months,calendarYear,
+    ...(result?.simplesDiagnostic?.version==='SIMPLES_DIAGNOSTIC_V1'?{simplesDiagnostic:structuredClone(result.simplesDiagnostic)}:{}),
+    report:{modelVersion:typeof result?.version==='string'?result.version:null,
+      sourceMonths:actual?(result.monthlyResults||[]).map(row=>row.sourceMonth):[],
+      warnings:structuredClone(Array.isArray(result?.warnings)?result.warnings:[]),
+      memory:structuredClone(Array.isArray(result?.memory)?result.memory:[]),
+      sources:structuredClone(Array.isArray(taxSources)?taxSources:[]),
+      reportPeriod:structuredClone(calendar?.reportPeriod??source?.period??null)},
     ...(capturedDifalVersion(result?.difalPolicy)?{difalPolicy:structuredClone(result.difalPolicy)}:{}),
     ...(calendar?.rbt12Schedule?{rbt12Schedule:structuredClone(calendar.rbt12Schedule)}:{}),
     calendarReference:calendar?.rbt12Reference??null,calendarRounding:calendar?.rounding??'Valores completos preservados; exibição com duas casas decimais.',

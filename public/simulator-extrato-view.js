@@ -33,7 +33,7 @@ export function renderSection22(data) {
     </tbody><tfoot><tr><th scope="row">RBT12 · soma das 12 competências</th><td>${money(data.rbt12Basis?.internalCents/100)}</td><td>${money(data.rbt12Basis?.externalCents/100)}</td><td>${money(data.rbt12Cents/100)}</td></tr></tfoot></table></div></div></details>
     ${(data.warnings||[]).map(w=>`<p class="sim-extrato-warning" role="note">${esc(w)}</p>`).join('')}</div>`;
 }
-export function renderMonthlyDre({result,year,reference,period,regimeId,calendar,presentation,showPercent=false,monthView=true,month=0}) {
+export function renderMonthlyDre({result,year,reference,period,regimeId,calendar,presentation,showPercent=false,monthView=true,month=0,reportPeriod='complete'}) {
   const data=['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3'].includes(calendar?.version)?calendar:buildMonthlyDre(result,year,reference,period);
-  return renderCompleteMonthlyDre({presentation:presentation||buildDrePresentation({result,calendar:data}),calendar:data,year:data.year,regimeId,showPercent,monthView,month});
+  return renderCompleteMonthlyDre({presentation:presentation||buildDrePresentation({result,calendar:data}),calendar:data,year:data.year,regimeId,showPercent,monthView,month,reportPeriod});
 }

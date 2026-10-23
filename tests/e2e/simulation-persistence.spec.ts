@@ -124,6 +124,8 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   // Compare cells consistently: innerText adds table separators and CSS uppercase,
   // while Playwright's default toHaveText reads the underlying textContent.
   const originalDre = await page.locator('.sim-dre tbody tr > *').allTextContents();
+  await expect(page.locator('[data-period="annual"]')).toHaveAttribute('aria-pressed','true');
+  await page.locator('[data-period="monthly"]').click();
   await expect(page.locator('#dre-month')).toHaveValue('7');
   await expect(page.locator('.sim-dre [data-dre-row="revenue"]').locator('td')).toHaveText(['R$ 13.250,50','R$ 13.250,50']);
   await page.getByRole('button',{name:'12 meses',exact:true}).click();
