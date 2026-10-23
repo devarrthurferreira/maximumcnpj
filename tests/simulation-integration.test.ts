@@ -14,7 +14,7 @@ import { createGeneration, deleteGeneration, attachGenerationPurchase, attachGen
 import { uploadLookup, finalizeLookup, processLookup } from '../src/lookup-jobs.ts';
 import { routeV4 } from '../src/lookup-http.ts';
 import { createSimulation, deleteSimulation, getSimulation, simulationHistory } from '../src/simulation-history.ts';
-import { calculateSimulation, draftToInput, MODEL_VERSION, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES } from '../public/simulator-engine.js';
+import { calculateSimulation, draftToInput, MODEL_VERSION, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES, defaultDifalPolicy, upgradeDifalPolicy } from '../public/simulator-engine.js';
 import { digits } from '../src/domain.ts';
 import { digest, token } from '../src/security.ts';
 import { handler } from '../src/server.ts';
@@ -66,7 +66,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
     const monthlySource=await generationSimulator(generationId,clientId);
     input.monthlyInputs=monthlySource.monthlyReports!.map(row=>{const entry=baselineMonth(row,draft.values);entry.values.serviceRevenue=5000;return entry;});
     const extraction=section22Year2025(),rbt12Schedule=buildRbt12Schedule(extraction,monthlySource.monthlyReports!.map(row=>row.sourceMonth));
-    const expected=(d:any,entries=input.monthlyInputs,schedule:ReturnType<typeof buildRbt12Schedule>|null=rbt12Schedule)=>calculateMonthlySimulation(d,monthlySource.monthlyReports!,entries,monthlySource.sales.jobId,schedule);
+    const expected=(d:any,entries=input.monthlyInputs,schedule:ReturnType<typeof buildRbt12Schedule>|null=rbt12Schedule)=>calculateMonthlySimulation({...d,difalPolicy:upgradeDifalPolicy(d.difalPolicy)},monthlySource.monthlyReports!,entries,monthlySource.sales.jobId,schedule);
     assert.equal(providerCalls, 4);
     await (await collection('simplesExtractions')).insertOne({...scope(),_id:input.rbt12ExtractionId,clientId,parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result:extraction});
     let saved: any;
@@ -110,7 +110,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.deepEqual(saved.result, expected(draft).result);
       assert.deepEqual(saved.engineInput, expected(draft).engineInput);
       assert.deepEqual(saved.taxSources, TAX_SOURCES);
-      assert.deepEqual(saved.draft, draft);
+      assert.deepEqual(saved.draft, {...draft,difalPolicy:defaultDifalPolicy()});
       assert.deepEqual(saved.monthlyGroups, monthlyGroups);
       assert.deepEqual(saved.baselineMonthlyGroups, baselineMonth(monthlySource.monthlyReports![0]).groups);
       assert.equal(saved.monthlyGroupsUnit, 'BRL');
@@ -478,11 +478,18 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       const policy = {version:'DIFAL_SCENARIOS_V1', enabled:{pure:false, hybrid:true, presumed:false, actual:true}};
       const records = await collection('simulations'), count = await records.countDocuments(scope());
       const original = await records.findOne(scope({_id:saved._id}));
+      const directions = defaultDifalPolicy();
       for (const bad of [undefined, null, [], {}, true,
         {...policy,version:'UNKNOWN'}, {...policy,extra:true}, {...policy,enabled:null},
         {...policy,enabled:{pure:false,hybrid:true,presumed:false}},
         {...policy,enabled:{...policy.enabled,other:true}},
-        ...['false', 0, 1, null, undefined].map(pure => ({...policy,enabled:{...policy.enabled,pure}}))]) {
+        ...['false', 0, 1, null, undefined].map(pure => ({...policy,enabled:{...policy.enabled,pure}})),
+        {...directions, enabled:{...directions.enabled,presumed:true}},
+        {...directions, enabled:{...directions.enabled,actual:true}},
+        {...directions, operations:undefined},
+        {...directions, operations:{...directions.operations,pure:{entry:true}}},
+        {...directions, operations:{...directions.operations,hybrid:{entry:false,exit:'true'}}},
+        {...directions, operations:{...directions.operations,actual:{entry:false,exit:false}}}]) {
         await assert.rejects(createSimulation(actor,{...input,simulationId:randomUUID(),draft:{...draft,difalPolicy:bad}}),code('VALIDATION'));
       }
       assert.equal(await records.countDocuments(scope()),count);
@@ -492,8 +499,8 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       const before = structuredClone(requested);
       const [configured,concurrent] = await Promise.all([createSimulation(actor,requested),createSimulation(actor,requested)]);
       assert.deepEqual(configured,concurrent);assert.deepEqual(requested,before);
-      assert.deepEqual(configured.draft.difalPolicy,policy);
-      assert.equal(JSON.stringify(configured.draft.difalPolicy),JSON.stringify(policy),'A política recebe ordem canônica antes do hash.');
+      assert.deepEqual(configured.draft.difalPolicy,upgradeDifalPolicy(policy));
+      assert.equal(JSON.stringify(configured.draft.difalPolicy),JSON.stringify(upgradeDifalPolicy(policy)),'O snapshot registra a política efetiva atual, sem mudar o hash do pedido legado.');
       assert.deepEqual(configured.result,expected({...draft,difalPolicy:policy}).result);
       assert.deepEqual(configured.engineInput,expected({...draft,difalPolicy:policy}).engineInput);
       assert.deepEqual(await createSimulation(actor,{...requested,draft:{...draft,difalPolicy:policy}}),configured);
@@ -502,11 +509,30 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       await assert.rejects(createSimulation(actor,{...requested,draft}),code('SIMULATION_EXISTS'));
       const revision = await createSimulation(operator,{...input,simulationId:randomUUID(),parentSimulationId:configured._id,
         draft:{...draft,difalPolicy:structuredClone(configured.draft.difalPolicy)}});
-      assert.equal(revision.parentSimulationId,configured._id);assert.deepEqual(revision.draft.difalPolicy,policy);
+      assert.equal(revision.parentSimulationId,configured._id);assert.deepEqual(revision.draft.difalPolicy,upgradeDifalPolicy(policy));
       assert.deepEqual(await getSimulation(configured._id),configured);
       assert.deepEqual(await getSimulation(saved._id),saved);assert.deepEqual(await createSimulation(actor,input),saved);
       assert.deepEqual(await records.findOne(scope({_id:saved._id})),original,'A escolha nova não reescreve o snapshot nem o hash anterior.');
-      assert.equal(Object.hasOwn(saved.draft,'difalPolicy'),false,'A ausência histórica continua ausente.');
+      assert.deepEqual(saved.draft.difalPolicy,defaultDifalPolicy(),'Novos snapshots registram a política efetiva mesmo quando o pedido a omitiu.');
+    });
+
+    await t.test('leituras e retries V1 ou sem política devolvem o snapshot histórico sem recalcular', async () => {
+      const records = await collection('simulations');
+      for (const policy of [undefined, {version:'DIFAL_SCENARIOS_V1',enabled:{pure:false,hybrid:true,presumed:true,actual:true}}]) {
+        const legacyRequest = {...input,simulationId:randomUUID(),draft:{...draft,...(policy ? {difalPolicy:policy} : {})}};
+        await createSimulation(actor,legacyRequest);
+        const legacy = (await records.findOne(scope({_id:legacyRequest.simulationId})))!;
+        legacy.modelVersion='1.6.0-difal-scenarios';
+        if (policy) legacy.draft.difalPolicy=structuredClone(policy); else delete legacy.draft.difalPolicy;
+        legacy.result.version='1.6.0-difal-scenarios';
+        legacy.result.difalPolicy=policy || {version:'DIFAL_SCENARIOS_V1',enabled:{pure:true,hybrid:true,presumed:true,actual:true}};
+        legacy.result.regimes.find((regime:any)=>regime.id==='actual').dre.difal=-42.25;
+        await records.replaceOne(scope({_id:legacy._id}),legacy);
+        const frozen=await getSimulation(legacy._id);
+        assert.equal(frozen.result.regimes.find((regime:any)=>regime.id==='actual').dre.difal,-42.25);
+        assert.deepEqual(await createSimulation(actor,legacyRequest),frozen,'Reenvio depois da atualização não normaliza o snapshot existente.');
+        assert.deepEqual(await records.findOne(scope({_id:legacy._id})),legacy);
+      }
     });
 
     await t.test('HTTP exige sessão, origem válida e permissão de escrita; viewer pode reabrir', async () => {

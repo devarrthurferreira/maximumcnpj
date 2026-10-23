@@ -13,6 +13,8 @@ import { routeV4 } from '../src/lookup-http.ts';
 import { generationSimulator } from '../src/simulator-store.ts';
 import { digits } from '../src/domain.ts';
 import { defaultDifalPolicy } from '../public/simulator-engine.js';
+import { baselineMonth } from '../public/simulator-monthly.js';
+import { createSimulation, getSimulation } from '../src/simulation-history.ts';
 
 test('MongoDB gerações: DIFAL por empresa, validação estrita, retry imutável e origem do simulador', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
   const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
@@ -20,7 +22,8 @@ test('MongoDB gerações: DIFAL por empresa, validação estrita, retry imutáve
   process.env.WORKSPACE_ID = 'generation_policy_test'; resetLookupIndexes();
   const actor = {_id: 'tester', role: 'admin', name: 'Teste', email: 'test@example.test'};
   const errorCode = (code: string) => (error: any) => error.code === code;
-  const mixed = {...defaultDifalPolicy(), enabled: {pure: false, hybrid: true, presumed: false, actual: true}};
+  const mixed = {...defaultDifalPolicy(), enabled: {pure: false, hybrid: true, presumed: false, actual: false},
+    operations: {pure: {entry: true, exit: false}, hybrid: {entry: false, exit: true}}};
   const excluded = {...defaultDifalPolicy(), enabled: {pure: false, hybrid: false, presumed: false, actual: false}};
   const createUrl = new URL('https://test/api/v4/generations');
   try {
@@ -35,7 +38,13 @@ test('MongoDB gerações: DIFAL por empresa, validação estrita, retry imutáve
       [{clientId: first, difalPolicy: {...mixed, extra: true}}],
       [{clientId: first, difalPolicy: {...mixed, enabled: {...mixed.enabled, actual: 'false'}}}],
       [{clientId: first, difalPolicy: {...mixed, enabled: {pure: false}}}],
-      [{clientId: first, difalPolicy: {...mixed, enabled: {...mixed.enabled, unknown: false}}}]];
+      [{clientId: first, difalPolicy: {...mixed, enabled: {...mixed.enabled, unknown: false}}}],
+      [{clientId: first, difalPolicy: {...mixed, enabled: {...mixed.enabled, actual: true}}}],
+      [{clientId: first, difalPolicy: {...mixed, enabled: {...mixed.enabled, presumed: true}}}],
+      [{clientId: first, difalPolicy: {...mixed, operations: undefined}}],
+      [{clientId: first, difalPolicy: {...mixed, operations: {...mixed.operations, hybrid: {entry: 'false', exit: true}}}}],
+      [{clientId: first, difalPolicy: {...mixed, operations: {...mixed.operations, pure: {entry: true}}}}],
+      [{clientId: first, difalPolicy: {...mixed, operations: {...mixed.operations, actual: {entry: false, exit: false}}}}]];
     for (const companyDifalPolicies of invalidPolicies) {
       await assert.rejects(routeV4(actor, 'POST', createUrl, {...input, companyDifalPolicies}), errorCode('VALIDATION'));
     }
@@ -48,12 +57,14 @@ test('MongoDB gerações: DIFAL por empresa, validação estrita, retry imutáve
     assert.deepEqual(saved.companies[1].difalPolicy, excluded);
     assert.equal(Object.hasOwn(saved.companies[2], 'difalPolicy'), false);
     const original = await generations.findOne(scope({_id: saved._id}));
-    const reordered = {version: mixed.version, enabled: {actual: true, presumed: false, hybrid: true, pure: false}};
+    const reordered = {operations: {hybrid: {exit: true, entry: false}, pure: {exit: false, entry: true}},
+      enabled: {actual: false, presumed: false, hybrid: true, pure: false}, version: mixed.version};
     assert.equal((await createGeneration(actor, {...input, clientIds: [third, second, first],
       companyDifalPolicies: [{clientId: second, difalPolicy: excluded}, {clientId: first, difalPolicy: reordered}]}))._id, saved._id);
     for (const companyDifalPolicies of [[], [{clientId: first, difalPolicy: mixed}],
       [{clientId: first, difalPolicy: defaultDifalPolicy()}, {clientId: second, difalPolicy: excluded}],
-      [{clientId: second, difalPolicy: mixed}, {clientId: first, difalPolicy: excluded}]]) {
+      [{clientId: second, difalPolicy: mixed}, {clientId: first, difalPolicy: excluded}],
+      [{clientId: first, difalPolicy: {...mixed, operations: {...mixed.operations, hybrid: {entry: true, exit: true}}}}, {clientId: second, difalPolicy: excluded}]]) {
       await assert.rejects(createGeneration(actor, {...input, companyDifalPolicies}), errorCode('GENERATION_EXISTS'));
     }
     await assert.rejects(createGeneration(actor, {generationId: saved._id, clientIds: input.clientIds}), errorCode('GENERATION_EXISTS'));
@@ -90,6 +101,42 @@ test('MongoDB gerações: DIFAL por empresa, validação estrita, retry imutáve
     assert.deepEqual(source.monthlyReports, sourceWithoutPolicy.monthlyReports, 'A opção não modifica bases nem estimativas dos relatórios.');
     assert.equal(source.sales.difal?.amountCents, 1000);
     assert.equal(source.monthlyReports[0].anticipation.amountCents, 732);
+
+    const monthlyInputs = source.monthlyReports.map(report => baselineMonth(report)), firstMonth = monthlyInputs[0];
+    const simulationRequest = {simulationId: randomUUID(), generationId: saved._id, clientId: first,
+      reportMonths: 1, periodConfirmed: true, monthlyGroups: firstMonth.groups, monthlyInputs,
+      rbt12Source: 'MANUAL', rbt12ManualConfirmed: true,
+      draft: {year: 2027, salesAnnex: 1, serviceAnnex: 3, rbt12: 100000, values: {...firstMonth.values,
+        salesRevenue: 100, simplePurchases: 0, regularPurchases: 100}}};
+    const inherited = await createSimulation(actor, simulationRequest);
+    assert.deepEqual(inherited.draft.difalPolicy, mixed, 'O pedido sem política herda as escolhas desta empresa.');
+    assert.deepEqual(inherited.result.difalPolicy, mixed);
+    for (const regime of inherited.result.regimes) {
+      assert.equal(regime.dre.difal, regime.id === 'hybrid' ? -10 : 0);
+      assert.equal(regime.dre.icmsAnticipation, 0, 'A entrada desmarcada não é deduzida no híbrido.');
+    }
+    assert.deepEqual(await getSimulation(inherited._id), inherited);
+    assert.deepEqual(await createSimulation(actor, simulationRequest), inherited, 'Retry sem política usa o hash do pedido original.');
+    const directions = {...mixed, enabled: {...mixed.enabled, pure: true}};
+    const directedRequest = {...simulationRequest, simulationId: randomUUID(), parentSimulationId: inherited._id,
+      draft: {...simulationRequest.draft, difalPolicy: directions}};
+    const directed = await createSimulation(actor, directedRequest);
+    for (const regime of directed.result.regimes) {
+      assert.equal(regime.dre.difal, regime.id === 'hybrid' ? -10 : 0);
+      assert.equal(regime.dre.icmsAnticipation, regime.id === 'pure' ? -7.32 : 0);
+      assert.equal(regime.difalApplication.months[0].reason, ['pure', 'hybrid'].includes(regime.id) ? 'ENABLED' : 'NOT_APPLICABLE');
+    }
+    assert.deepEqual(directed.draft.difalPolicy, directions);
+    assert.deepEqual(await getSimulation(directed._id), directed);
+    assert.deepEqual(await getSimulation(inherited._id), inherited, 'A nova direção não modifica a versão anterior.');
+    await assert.rejects(createSimulation(actor, {...directedRequest,
+      draft: {...directedRequest.draft, difalPolicy: {...directions, operations: {...directions.operations, pure: {entry: false, exit: true}}}}}), errorCode('SIMULATION_EXISTS'));
+    const cleared = await createSimulation(actor, {...simulationRequest, simulationId: randomUUID(),
+      draft: {...simulationRequest.draft, difalPolicy: excluded}});
+    assert.deepEqual(cleared.draft.difalPolicy, excluded, 'Escolha explícita prevalece sobre a política da empresa.');
+    for (const regime of cleared.result.regimes) {assert.equal(regime.dre.difal, 0); assert.equal(regime.dre.icmsAnticipation, 0);}
+    const unselected = await createSimulation(actor, {...simulationRequest, simulationId: randomUUID(), clientId: third});
+    assert.deepEqual(unselected.draft.difalPolicy, defaultDifalPolicy(), 'Empresa sem política não herda opções de outra empresa.');
     const repeated = await recheckLookup(actor, source.purchases.jobId, {importId: randomUUID()});
     assert.equal(repeated.generationId, undefined);
     assert.deepEqual(await generations.findOne(scope({_id: saved._id})), beforeSource, 'Reconsultar o relatório preserva a política da geração original.');

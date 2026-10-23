@@ -15,10 +15,10 @@ import type {ReportGroup} from '../public/simulator-projection.js';
 
 import {baselineMonth, calculateMonthlySimulation, MONTHLY_MODEL_VERSION as MODEL_VERSION} from '../public/simulator-monthly.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
-import {resolveDifalApplication} from '../public/simulator-engine.js';
+import {resolveDifalApplication, upgradeDifalPolicy} from '../public/simulator-engine.js';
 
 
-export const REPROCESS_VERSION = 'DIFAL_SCENARIOS_2026_10_V6';
+export const REPROCESS_VERSION = 'DIFAL_DIRECTIONS_2026_10_V7';
 export const SERVICE_REVENUE_MIGRATION_REVISION = 'LEGACY_ADDITIONAL_SERVICES_V1';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const PAGE_SIZE = 100;
@@ -76,6 +76,10 @@ export function planReprocessing(original: any, source: any, workspaceId: string
     return [field, adjusted / 100];
   })) as Record<ReportGroup,number>;
   const draft = structuredClone(original.draft), priorService = moneyCents(draft.values.serviceRevenue);
+  // Upgrade only the linked revision. Frozen requests and original snapshots retain
+  // their exact legacy policy, while the new draft records the current directions.
+  try { draft.difalPolicy = upgradeDifalPolicy(Object.hasOwn(draft, 'difalPolicy') ? draft.difalPolicy : original.source?.difalPolicy); }
+  catch (error) { throw new AppError(409, 'REPROCESS_ADJUSTMENT', error instanceof Error ? error.message : 'Opções de DIFAL inválidas.'); }
   const oldSplit = original.source?.revenueSplit?.version === 'SALES_SERVICES_V1';
   if(!oldSplit)pending(!Object.hasOwn(original.source,'revenueSplit') &&
     !Object.hasOwn(original.source.fields || {},'serviceRevenueCents') && original.baselineServiceRevenue == null &&
@@ -163,8 +167,10 @@ export function planReprocessing(original: any, source: any, workspaceId: string
       pending(report.difal, 'DIFAL_SOURCE_MISSING', `O relatório original não possui os dados necessários para confirmar o DIFAL em ${report.sourceMonth}.`);
       pending(report.difal.pendingLines === 0, 'DIFAL_UF_PENDING', `Há linhas aguardando UF para confirmar o DIFAL em ${report.sourceMonth}.`);
     }
-    if (applications.some((application: any) => application.purchaseAnticipation))
-      pending(!report.anticipation || report.anticipation.pendingLines === 0, 'ANTICIPATION_UF_PENDING', `Há compras aguardando UF para confirmar a antecipação de ICMS em ${report.sourceMonth}.`);
+    if (applications.some((application: any) => application.purchaseAnticipation)) {
+      pending(report.anticipation, 'ANTICIPATION_SOURCE_MISSING', `O relatório original não possui os dados necessários para confirmar o DIFAL de entrada em ${report.sourceMonth}.`);
+      pending(report.anticipation.pendingLines === 0, 'ANTICIPATION_UF_PENDING', `Há compras aguardando UF para confirmar a antecipação de ICMS em ${report.sourceMonth}.`);
+    }
   }
   const alreadyCurrent=modern&&isDeepStrictEqual(original.result,computed.result)&&isDeepStrictEqual(original.projection,computed.projection)&&
     isDeepStrictEqual(original.difalProjection,computed.difalProjection)&&isDeepStrictEqual(original.engineInput,computed.engineInput)&&
@@ -238,7 +244,7 @@ async function reprocessItem(actor: LookupActor, item: Doc) {
   if (plan.alreadyCurrent) return {childId:null,status:'OK',code:'ALREADY_CURRENT',message:'Simulação conferida: cálculos e fontes já correspondem às regras atuais.'};
   const child = await createReprocessedSimulation(actor, plan.input, plan.context);
   const migration = plan.context.serviceRevenueMigration;
-  return {childId:child._id,status:'OK',code:'UPDATED',message:'Simulação refeita com serviços separados e DIFAL na DRE. Original preservado.' +
+  return {childId:child._id,status:'OK',code:'UPDATED',message:'Simulação refeita com DIFAL de entrada e saída somente no Simples puro e híbrido, conforme as escolhas. Original preservado.' +
     (migration && migration.priorMonthlyServiceCents > 0 ? ' ' + migration.warning : '')};
 }
 

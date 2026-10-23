@@ -1,7 +1,7 @@
 import {REPORT_GROUPS} from './simulator-projection.js';
 import {calculateSimulation, draftToInput, SIMULATION_VALUE_FIELDS} from './simulator-engine.js';
 
-export const MONTHLY_MODEL_VERSION='1.6.0-difal-scenarios';
+export const MONTHLY_MODEL_VERSION='1.7.0-difal-directions';
 export const MONTHLY_VERSION='REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS=Object.freeze([...REPORT_GROUPS,'serviceRevenueCents']);
 const sum=values=>values.reduce((a,b)=>a+b,0);
@@ -103,7 +103,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     const dre=Object.fromEntries(Object.keys(regime.dre).map(key=>[key,sum(all.map(item=>item.dre[key]))]));
     const totalTaxes=sum(all.map(item=>item.totalTaxes));
     return {...regime,available:all.every(item=>item.available),...(all.some(item=>!item.available)?{status:`Indisponível em: ${monthlyResults.filter((row,index)=>!all[index].available).map(row=>row.sourceMonth).join(', ')}`} : {}),annualProfit:dre.netProfit,monthlyProfit:null,totalTaxes,dre,
-      difalApplication:{version:regime.difalApplication.version,enabled:regime.difalApplication.enabled,
+      difalApplication:{version:regime.difalApplication.version,enabled:regime.difalApplication.enabled,operations:{...regime.difalApplication.operations},
         months:all.map((item,index)=>({sourceMonth:monthlyResults[index].sourceMonth,...item.difalApplication}))},
       margin:annualRevenue>0?dre.netProfit/annualRevenue:null,taxBurden:annualRevenue>0?totalTaxes/annualRevenue:null};
   });
@@ -115,7 +115,9 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     value:sum(monthlyResults.map(row=>row.result.memory.find(entry=>entry.id===item.id)?.value||0))}));
   for(const regime of regimes){
     const choices=regime.difalApplication.months;
-    memory.push({id:`difal.option.${regime.id}`,section:`DIFAL · ${regime.name}`,label:'Opção de DIFAL do cenário',formula:'Escolha preservada em todas as competências; bloqueios automáticos são avaliados por mês.',value:regime.difalApplication.enabled?'Incluir':'Excluir',unit:'text'},
+    const simple=['pure','hybrid'].includes(regime.id),operations=regime.difalApplication.operations;
+    memory.push({id:`difal.option.${regime.id}`,section:`DIFAL · ${regime.name}`,label:'Opção de DIFAL do cenário',formula:'Escolha somente no Simples Puro e Híbrido, preservada em todas as competências; bloqueios automáticos são avaliados por mês.',value:!simple?'Não aplicável':regime.difalApplication.enabled?'Incluir':'Excluir',unit:'text'},
+      {id:`difal.operations.${regime.id}`,section:`DIFAL · ${regime.name}`,label:'Operações de DIFAL selecionadas',formula:'Entrada e saída são opções independentes por cenário; a seleção não altera os relatórios de origem.',value:!simple?'Não aplicável':['entry','exit'].filter(operation=>operations[operation]).map(operation=>operation==='entry'?'Entrada':'Saída').join(' e ')||'Nenhuma',unit:'text'},
       {id:`difal.status.${regime.id}`,section:`DIFAL · ${regime.name}`,label:'Aplicação por competência',formula:'Cada mês usa sua RBT12 e conserva o motivo de inclusão, exclusão ou bloqueio.',value:choices.map(item=>`${item.sourceMonth}: ${item.message}`).join(' '),unit:'text'});
   }
   const warnings=[...new Map(monthlyResults.flatMap(row=>row.result.warnings.map(item=>({...item,detail:`${row.sourceMonth}: ${item.detail}`}))).filter(item=>!['difal-estimate'].includes(item.code)).map(item=>[item.code,item])).values()];

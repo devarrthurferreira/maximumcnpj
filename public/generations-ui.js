@@ -3,20 +3,26 @@ import {defaultDifalPolicy,parseDifalPolicy} from './simulator-engine.js';
 const $=q=>document.querySelector(q),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const n=v=>Number(v||0).toLocaleString('pt-BR'),dt=v=>v?new Date(v).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}):'—';
 const S={user:null,clients:[],selected:new Set(),generation:null,page:1,seq:0,busy:false,pendingId:null,pendingClientIds:null,reports:new Set(['PURCHASES','SALES']),pendingReports:null,difalPolicies:new Map(),difalExpanded:new Set(),pendingDifalPolicies:null,historyItems:[],deleteTarget:null,deleteTrigger:null,deleting:false};
-const DIFAL_REGIMES=[['pure','Simples puro'],['hybrid','Simples híbrido'],['presumed','Lucro Presumido'],['actual','Lucro Real']];
+const DIFAL_REGIMES=[['pure','Simples puro'],['hybrid','Simples híbrido']];
+const DIFAL_OPERATIONS=[['entry','DIFAL de entrada','Compras · antecipação de ICMS'],['exit','DIFAL de saída','Vendas']];
 function companyDifalPolicy(clientId){
  if(!S.difalPolicies.has(clientId))S.difalPolicies.set(clientId,defaultDifalPolicy());
  return S.difalPolicies.get(clientId);
 }
 function difalChoices(clientId=''){
  const prefix=clientId?`${esc(clientId)}-`:'';
- return `<section class="generation-difal-options" aria-labelledby="generation-difal-heading-${prefix}"><h2 id="generation-difal-heading-${prefix}">DIFAL nos cenários</h2><p>Escolha em quais cenários deseja incluir o DIFAL desta empresa. Você poderá revisar as opções no simulador.</p><fieldset class="generation-difal-choices"><legend class="sr-only">Cenários com DIFAL</legend>${DIFAL_REGIMES.map(([id,name])=>`<label for="generation-difal-${prefix}${id}"><input type="checkbox" id="generation-difal-${prefix}${id}" data-generation-difal-client="${esc(clientId)}" data-generation-difal-regime="${id}" checked aria-label="Incluir DIFAL no ${name}"><span><strong>${name}</strong><small>${['pure','hybrid'].includes(id)?'Vendas e antecipação de entradas':'Vendas'}</small></span></label>`).join('')}</fieldset><p class="generation-difal-note">No Simples, os valores ficam zerados nos meses com RBT12 a partir de R$ 3,6 milhões ou ICMS fora do DAS, mesmo com a opção marcada.</p></section>`;
+ return `<section class="generation-difal-options" aria-labelledby="generation-difal-heading-${prefix}"><h2 id="generation-difal-heading-${prefix}">DIFAL nos cenários</h2><p>Deseja gerar DIFAL para o Simples puro, híbrido ou ambos? Marque entrada, saída ou as duas operações em cada cenário. Para não incluir DIFAL, desmarque o cenário.</p><fieldset class="generation-difal-choices"><legend class="sr-only">Cenários com DIFAL</legend>${DIFAL_REGIMES.map(([id,name])=>`<article class="generation-difal-scenario"><label class="generation-difal-target" for="generation-difal-${prefix}${id}"><input type="checkbox" id="generation-difal-${prefix}${id}" data-generation-difal-client="${esc(clientId)}" data-generation-difal-regime="${id}" checked aria-label="Incluir DIFAL no ${name}"><strong>${name}</strong></label><fieldset class="generation-difal-operations"><legend>Onde incluir no ${name}?</legend>${DIFAL_OPERATIONS.map(([operation,label,description])=>`<label for="generation-difal-${operation}-${prefix}${id}"><input type="checkbox" id="generation-difal-${operation}-${prefix}${id}" data-generation-difal-client="${esc(clientId)}" data-generation-difal-operation-regime="${id}" data-generation-difal-operation="${operation}" checked aria-label="${label} no ${name}"><span><strong>${label}</strong><small>${description}</small></span></label>`).join('')}</fieldset></article>`).join('')}</fieldset><p class="generation-difal-note">Nesta simulação, o DIFAL é aplicado somente ao Simples puro e híbrido. Os valores ficam zerados nos meses com RBT12 a partir de R$ 3,6 milhões ou ICMS fora do DAS, mesmo com as opções marcadas. Você poderá revisar a escolha no simulador.</p></section>`;
 }
 function restoreCompanyDifal(){
  document.querySelectorAll('[data-generation-difal-regime]').forEach(input=>{
   const clientId=input.dataset.generationDifalClient||[...S.selected][0];
   input.checked=companyDifalPolicy(clientId).enabled[input.dataset.generationDifalRegime];input.disabled=S.busy||!!S.pendingId;
-  input.onchange=()=>{if(S.busy||S.pendingId)return;companyDifalPolicy(clientId).enabled[input.dataset.generationDifalRegime]=input.checked;};
+  input.onchange=()=>{if(S.busy||S.pendingId)return;companyDifalPolicy(clientId).enabled[input.dataset.generationDifalRegime]=input.checked;restoreCompanyDifal();};
+ });
+ document.querySelectorAll('[data-generation-difal-operation]').forEach(input=>{
+  const clientId=input.dataset.generationDifalClient||[...S.selected][0],policy=companyDifalPolicy(clientId),regime=input.dataset.generationDifalOperationRegime,operation=input.dataset.generationDifalOperation;
+  input.checked=policy.operations[regime][operation];input.disabled=S.busy||!!S.pendingId||!policy.enabled[regime];
+  input.onchange=()=>{if(S.busy||S.pendingId||!policy.enabled[regime])return;policy.operations[regime][operation]=input.checked;};
  });
 }
 function drawMultipleDifal(){
@@ -79,7 +85,7 @@ async function createGuided(){
  S.busy=true;S.pendingId??=crypto.randomUUID();S.pendingClientIds??=[...S.selected];S.pendingReports??=['PURCHASES','SALES'].filter(type=>S.reports.has(type));
  S.pendingDifalPolicies??=S.pendingClientIds.map(clientId=>({clientId,difalPolicy:parseDifalPolicy(companyDifalPolicy(clientId))}));
  const button=$('#generation-create');button.disabled=true;button.textContent='Preparando…';$('#generation-reports-back').disabled=true;
- document.querySelectorAll('[data-guided-report],[data-generation-difal-regime]').forEach(input=>input.disabled=true);
+ document.querySelectorAll('[data-guided-report],[data-generation-difal-regime],[data-generation-difal-operation]').forEach(input=>input.disabled=true);
  $('#generation-reports-error').textContent='';$('#generation-reports-status').textContent='Preparando o envio dos relatórios…';$('#generation-reports-dialog').setAttribute('aria-busy','true');
  try{
   const generation=await api('/api/v4/generations','POST',{generationId:S.pendingId,clientIds:S.pendingClientIds,requiredReports:S.pendingReports,companyDifalPolicies:S.pendingDifalPolicies});
@@ -87,12 +93,12 @@ async function createGuided(){
  }catch(error){
   $('#generation-reports-error').textContent=error.message;
   const rejected=isRejectedGeneration(error);
-  if(rejected){resetPendingGeneration();document.querySelectorAll('[data-guided-report],[data-generation-difal-regime]').forEach(input=>input.disabled=false);}
+  if(rejected){resetPendingGeneration();document.querySelectorAll('[data-guided-report]').forEach(input=>input.disabled=false);}
   $('#generation-reports-status').textContent=rejected?'Revise os relatórios ou escolha outra empresa para continuar.':'Tente novamente para retomar a mesma geração.';
   button.disabled=false;button.textContent=rejected?'Confirmar e continuar':'Tentar novamente';
   $('#generation-reports-back').disabled=false;$('#generation-reports-back').textContent=rejected?'Trocar empresa':'Voltar ao Histórico';
  }
- finally{S.busy=false;$('#generation-reports-dialog').setAttribute('aria-busy','false');}
+ finally{S.busy=false;restoreCompanyDifal();$('#generation-reports-dialog').setAttribute('aria-busy','false');}
 }
 function startMultiple(){
  heading('Tudo começa pelas empresas.','Selecione as empresas, leia os arquivos de compras e vendas e abra a simulação com os valores preenchidos.');
