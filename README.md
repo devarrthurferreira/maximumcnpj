@@ -1,4 +1,14 @@
-# Maximum CNPJ · v0.34.0
+# Maximum CNPJ · v0.34.1
+
+## DRE: retirada das composições de crédito de CBS e IBS — 23/10/2026
+
+As quatro linhas informativas **Crédito potencial de CBS**, **Crédito utilizado de CBS**, **Crédito potencial de IBS** e **Crédito utilizado de IBS**, identificadas como composição, deixam de aparecer na DRE. A alteração vale para anual, mensal e os três formatos de CSV e PDF, inclusive ao consultar simulações já salvas.
+
+A apresentação compartilhada retira somente esses quatro detalhes. As linhas principais de crédito de CBS/IBS, os débitos, valores líquidos, saldos e o quadro final de ICMS continuam conciliados. Valores, percentuais, lucro, fontes e memória capturada permanecem preservados; não há recálculo nem criação de nova revisão fiscal por essa alteração visual.
+
+Validação da v0.34.1 com Node 22 e MongoDB descartável: tipos, build e versão/documentação conferidos; **295 testes de regras**, **64 verificações de integração/projeção**, **172 testes Python/PDF/OCR** e **27 casos direcionados de navegador** aprovados, sem saltos. Os cenários cobrem DRE anual/mensal, três formatos de exportação, reabertura do histórico e o fluxo real de ICMS. O teste de nova tentativa do histórico aguarda a conclusão da atualização automática antes de simular recuperação manual, eliminando a corrida identificada no trace do CI sem alterar a produção.
+
+Os PDFs anual, mensal e completo foram renderizados e conferidos visualmente: as quatro composições saíram das tabelas, os créditos principais e o quadro final de ICMS permaneceram, e cabeçalhos, valores e quebras de página conservaram a diagramação.
 
 ## ICMS por natureza, UF e devoluções — 23/10/2026
 

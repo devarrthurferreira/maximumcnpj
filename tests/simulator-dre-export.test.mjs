@@ -179,22 +179,34 @@ test('memória histórica do Simples pendente não publica imposto não confirma
 
 test('CSV anual, mensal e completo terminam a DRE com apuração informativa de ICMS sem duplicar o abatimento',()=>{
   const dre=Object.fromEntries(DRE_ROWS.map(([key])=>[key,0]));
-  Object.assign(dre,{sales:2700,revenue:2700,icmsNet:-264,netRevenue:2436,cmvRegular:-1400,cmv:-1400,grossProfit:1036,preTax:1036,netProfit:1036,icmsUsed:156,icmsBalance:0});
-  const result={version:'histórico sintético',annualRevenue:2700,credits:{icms:{debit:420,potential:156,used:156,due:264,balance:0}},
+  Object.assign(dre,{sales:2700,revenue:2700,cbsDebit:-120,ibsDebit:-12,cbsUsed:120,ibsUsed:12,icmsNet:-264,netRevenue:2304,cmvRegular:-1400,cmv:-1400,grossProfit:1036,preTax:1036,netProfit:1036,icmsUsed:156,icmsBalance:0});
+  const capturedCredits=['cbs','ibs'].flatMap(tax=>['potential','used'].map(field=>({id:tax+'.'+field,section:'Apuração de '+tax.toUpperCase(),label:`Crédito ${field==='potential'?'potencial':'utilizado'} de ${tax.toUpperCase()}`,formula:'Memória capturada',value:tax==='cbs'?120:12,unit:'currency'})));
+  const result={version:'histórico sintético',annualRevenue:2700,credits:{cbs:{debit:120,potential:120,used:120,due:0,balance:0},ibs:{debit:12,potential:12,used:12,due:0,balance:0},icms:{debit:420,potential:156,used:156,due:264,balance:0}},
     memory:[{id:'icms.purchaseCredit',section:'Apuração de ICMS',label:'Crédito das compras',formula:'Memória capturada',value:114,unit:'currency'},
-      {id:'icms.returnCredit',section:'Apuração de ICMS',label:'Crédito das devoluções',formula:'Memória capturada',value:42,unit:'currency'}],
+      {id:'icms.returnCredit',section:'Apuração de ICMS',label:'Crédito das devoluções',formula:'Memória capturada',value:42,unit:'currency'},...capturedCredits],
     regimes:[{id:'actual',name:'Lucro Real',available:true,dre,annualProfit:1036,totalTaxes:264,margin:1036/2700,taxBurden:264/2700}]};
-  const presentation=buildDrePresentation({result,calendar:buildMonthlyDre(result,2027)}),before=structuredClone(presentation);
+  const original=structuredClone(result),presentation=buildDrePresentation({result,calendar:buildMonthlyDre(result,2027)}),before=structuredClone(presentation);
   const labels=presentation.icmsReconciliation.rows.map(row=>row.label),scope='Apuração do crédito de ICMS';
   for(const period of ['annual','monthly','complete']){
     const csv=readCsv(buildDreCsv({presentation,period,year:2027}));
     const annual=csv.filter(row=>row[0]===scope),monthly=csv.filter(row=>row[0]==='Lucro Real'&&row[1]===scope);
+    const details=csv.flatMap(row=>row[0]==='Detalhamento informativo'?[row[2]]:row[1]==='Detalhamento informativo'?[row[3]]:[]);
+    const printed=renderDrePrintDocument({presentation,period,year:2027});
+    for(const item of capturedCredits){
+      assert(!details.includes(item.label),item.label);
+      assert(!printed.includes(`data-dre-row="${item.id}"`),item.id);
+      assert(printed.includes(`data-report-memory="${item.id}"`),item.id);
+      assert.equal(csv.find(row=>row[0]==='Memória'&&row[2]===item.label)[4],item.value===120?'120,00':'12,00');
+    }
+    for(const tax of ['cbs','ibs'])for(const label of ['Débito','Valor líquido a recolher','Saldo credor potencial'])assert(details.includes(label+' de '+tax.toUpperCase()));
+    for(const key of ['cbsUsed','ibsUsed'])assert.equal((printed.match(new RegExp(`data-dre-row="${key}"`,'g'))||[]).length,period==='complete'?2:1);
     assert.equal(annual.length,period==='monthly'?0:7);assert.equal(monthly.length,period==='annual'?0:7);
     if(annual.length){
       assert.deepEqual(annual.map(row=>row[2]),labels);assert.deepEqual(annual.map(row=>row[5]),['420,00','156,00','114,00','42,00','156,00','264,00','0,00']);
       assert(csv.indexOf(annual[0])>csv.findIndex(row=>row[0]==='Conferência da receita'&&row[2].includes('Receita utilizada')));
       assert.equal(csv.find(row=>row[0]==='DRE'&&row[2]==="'− ICMS líquido fora do DAS")[5],'-264,00');
       assert.equal(csv.find(row=>row[0]==='DRE'&&row[2]==='Resultado líquido')[5],'1036,00');
+      for(const [tax,value] of [['CBS','120,00'],['IBS','12,00']])assert.equal(csv.find(row=>row[0]==='DRE'&&row[2]===`'+ Crédito ${tax} utilizado`)[5],value);
     }
     if(monthly.length){
       assert.deepEqual(monthly.map(row=>row[3]),labels);
@@ -202,8 +214,9 @@ test('CSV anual, mensal e completo terminam a DRE com apuração informativa de 
       assert.deepEqual(monthly[2].slice(6,19),[...Array(12).fill('9,50'),'114,00']);
       assert.deepEqual(monthly[3].slice(6,19),[...Array(12).fill('3,50'),'42,00']);
       assert(csv.indexOf(monthly[0])>csv.findIndex(row=>row[1]==='Conferência da receita'&&row[3].includes('Receita utilizada')));
+      for(const [tax,value,total] of [['CBS','10,00','120,00'],['IBS','1,00','12,00']])assert.deepEqual(csv.find(row=>row[1]==='DRE'&&row[3]===`'+ Crédito ${tax} utilizado`).slice(6,19),[...Array(12).fill(value),total]);
     }
     for(const row of [...annual,...monthly])assert(row.at(-2).includes('não somar novamente'));
   }
-  assert.deepEqual(presentation,before);
+  assert.deepEqual(presentation,before);assert.deepEqual(result,original);
 });
