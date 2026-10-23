@@ -62,9 +62,12 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
   const catalog=await post('/api/v4/clients/import',{rows:[{code,name,uf:'SP'}]});expect(catalog.success).toBe(1);const realClient=catalog.items[0].id;
   await page.goto('/generations.html');await page.locator('#generation-search').fill(code);
   await screenshots(page,info,'guided-company-search');await page.locator(`[data-select-company="${realClient}"]`).click();
+  const difalPolicy={version:'DIFAL_SCENARIOS_V1',enabled:{pure:false,hybrid:true,presumed:true,actual:false}};
+  await page.locator('#generation-difal-pure').uncheck();await page.locator('#generation-difal-actual').uncheck();
   await screenshots(page,info,'guided-report-types');
   const created=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/v4/generations'&&r.request().method()==='POST');
   await page.locator('#generation-create').click();const creation=await created;expect(creation.ok()).toBe(true);const generation={_id:creation.request().postDataJSON().generationId};
+  expect(creation.request().postDataJSON().companyDifalPolicies).toEqual([{clientId:realClient,difalPolicy}]);
   await expect(page).toHaveURL(/purchases\.html\?.*guided=1/);expect(new URL(page.url()).searchParams.get('client')).toBe(realClient);
   for(const [kind,total] of [['purchases',450000],['sales',1200000]] as const){
     await expect(page.locator('#purchase-file')).toBeEnabled();
@@ -78,6 +81,7 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
     await page.locator('[data-guided-continue]').click();
   }
   await expect(page.locator('#guided-rbt12-stage')).toBeVisible();await expect(page.locator('#simulator-form')).toBeHidden();
+  await expect(page.locator('[data-guided-difal-summary]')).toContainText('Excluído em: Simples puro, Lucro Real');
   await page.locator('#guided-rbt12-skip').click();await expect(page.locator('#simulator-form')).toBeVisible();
   await expect(page.locator('#rbt12')).toBeEditable();await expect(page.locator('#rbt12')).toHaveValue('');
   await expect(page.locator('#serviceRevenue')).toHaveValue('0.00');
@@ -92,12 +96,13 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
   await page.locator('#rbt12').fill('150000');await page.locator('#rbt12-manual-confirm').check();
   const saving=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/v4/simulations'&&r.request().method()==='POST');
   await page.locator('#generate-simulation').click();const response=await saving;expect(response.ok(),await response.text()).toBe(true);const snapshot=await response.json();
-  expect(snapshot).toMatchObject({generationId:generation._id,clientId:realClient,rbt12Source:'MANUAL',reportMonths:1,periodBasis:'COLUMN_H',draft:{rbt12:150000,values:{salesRevenue:12000,serviceRevenue:0,regularPurchases:4500}},source:{revenueSplit:{version:'SALES_SERVICES_V1'},fields:{serviceRevenueCents:0},purchases:{totalCents:450000},sales:{totalCents:1200000}}});
+  expect(snapshot).toMatchObject({generationId:generation._id,clientId:realClient,rbt12Source:'MANUAL',reportMonths:1,periodBasis:'COLUMN_H',draft:{rbt12:150000,difalPolicy,values:{salesRevenue:12000,serviceRevenue:0,regularPurchases:4500}},source:{difalPolicy,revenueSplit:{version:'SALES_SERVICES_V1'},fields:{serviceRevenueCents:0},purchases:{totalCents:450000},sales:{totalCents:1200000}}});
   expect(snapshot.rbt12Extraction).toBeFalsy();expect(snapshot.rbt12ExtractionId).toBeFalsy();expect(snapshot.result.method).toBe('REPORT_MONTHS_V1');expect(snapshot.result.annualRevenue).toBe(12000);
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');await screenshots(page,info,'guided-result');
   const mongo=new MongoClient(process.env.MONGODB_URI!);
   try{await mongo.connect();const db=mongo.db(process.env.MONGODB_DB),workspaceId=process.env.WORKSPACE_ID||'maximum';
     const stored=await db.collection<any>('simulations').findOne({_id:snapshot._id,workspaceId});expect(stored?.rbt12Source).toBe('MANUAL');expect(stored?.draft.rbt12).toBe(150000);
+    expect(stored?.draft.difalPolicy).toEqual(difalPolicy);const storedGeneration=await db.collection<any>('generations').findOne({_id:generation._id,workspaceId});expect(storedGeneration?.companies.find((item:any)=>item.clientId===realClient).difalPolicy).toEqual(difalPolicy);
     expect(await db.collection('purchaseLines').countDocuments({workspaceId,jobId:{$in:[snapshot.source.purchases.jobId,snapshot.source.sales.jobId]}})).toBe(2);
   }finally{await mongo.close();}
   const fresh=await browser.newContext({baseURL});
@@ -105,8 +110,10 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
     const login=await fresh.request.post('/api/auth/login',{data:{email:process.env.ADMIN_EMAIL,password:process.env.ADMIN_PASSWORD},headers:{Origin:origin}});expect(login.ok()).toBe(true);
     const reopened=await fresh.newPage();await reopened.goto(`/simulator.html?simulation=${snapshot._id}`);
     await expect(reopened.locator('#simulation-snapshot')).toContainText('informada manualmente');await expect(reopened.locator('#simulator-form')).toHaveCount(0);
+    await expect(reopened.locator('[data-difal-option="pure"]')).toContainText('Não incluído por escolha');
     await expect(reopened.locator('.sim-dre')).toContainText('12.000,00');await expect(reopened.locator('.sim-regime')).toHaveCount(4);
     await reopened.locator('#create-version').click();await expect(reopened.locator('#rbt12')).toBeEditable();
+    await expect(reopened.locator('#difal-enabled-pure')).not.toBeChecked();await expect(reopened.locator('#difal-enabled-actual')).not.toBeChecked();await expect(reopened.locator('#difal-enabled-hybrid')).toBeChecked();
     await reopened.locator('#rbt12-use-pdf').click();await readStatement(reopened);
     await reopened.reload();await expect(reopened.locator('#rbt12')).toHaveValue('150000.00');
     await expect(reopened.locator('#rbt12')).toHaveAttribute('readonly','');

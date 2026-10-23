@@ -47,6 +47,44 @@ test('purchase preview deduplicates valid CNPJs without discarding any purchase 
   assert.equal(report.errors.length, 0);
 });
 
+test('compras seleciona pelo catálogo da natureza, exclui devoluções e conserva o total original', () => {
+  const input = ['2102001','1202001','6202002','2949001','8000102','9999001'].map((nature,index) => {
+    const value = row('11222333000181','Fornecedor sintético','99',`${index + 1}00,00`);
+    value[11] = nature;
+    value[14] = index === 0 ? 'Devolução na descrição do produto' : 'Compra na descrição do produto';
+    return value;
+  });
+  input[0][24] = '10,00'; input[0][25] = '999,00'; input[0][26] = '5,00'; input[0][27] = '2,00';
+  const parsed = parsePurchaseMatrix([header,...input]);
+  assert.deepEqual(parsed.errors,[]);
+  assert.equal(parsed.totalCents,209300);
+  assert.equal(parsed.rows.length,6);
+  const selection = parsed.purchaseSelection;
+  assert.equal(selection.available,true);
+  assert.equal(selection.origin,'PREVIEW');
+  assert.equal(selection.reportTotalCents,209300);
+  assert.equal(selection.totals.totalCents,59300);
+  assert.equal(selection.totals.lines,2);
+  assert.equal(selection.excludedTotalCents,150000);
+  assert.equal(selection.excludedLines,4);
+  assert.equal(selection.components.totalCents,59300);
+  assert.equal(selection.components.accessoryCents,99900);
+  assert.equal(selection.totals.totalCents + selection.excludedTotalCents,parsed.totalCents);
+});
+
+test('compras sem natureza não apresenta seleção indisponível como zero e vendas não ganha novo filtro', () => {
+  const input = row('11222333000181','Fornecedor sintético','1','100,00');
+  const missing = parsePurchaseMatrix([header,input]);
+  assert.equal(missing.purchaseSelection.available,false);
+  assert.equal(missing.purchaseSelection.totals,null);
+  input[11] = '2102001';
+  const legacy = parsePurchaseMatrix([header,input],0,{operationVersion:null});
+  assert.equal(legacy.purchaseSelection.available,false);
+  const sales = parsePurchaseMatrix([header,input],0,{type:'SALES'});
+  assert.equal(Object.hasOwn(sales,'purchaseSelection'),false);
+  assert.equal(sales.totalCents,10000);
+});
+
 test('purchase preview blocks missing names/amounts, formulas and excessive quantities', () => {
   const report = parsePurchaseMatrix([header,
     row('11222333000181','','1','1,00'),

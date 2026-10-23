@@ -49,6 +49,7 @@ NATURE_LABELS = {
     'OUTRAS': 'Outras operações', 'SERVICO_COMPRA': 'Serviços de compra (8000)',
     'SERVICO_VENDA': 'Vendas de serviços (9000)', 'NAO_CLASSIFICADA': 'Não classificada',
 }
+PURCHASE_SELECTION_VERSION = 'PURCHASE_NATURES_V1'
 
 
 @lru_cache(maxsize=1)
@@ -136,6 +137,98 @@ def _document_kind(document):
     return 'CNPJ' if _valid_cnpj(document) else 'INVALIDO'
 
 
+def select_purchase_snapshot(rows, statuses, calculation_version):
+    """Select purchases after raw reconciliation, without altering the frozen source."""
+    nature_totals, selected_documents = {}, {}
+    report_total = selected_total = selected_lines = 0
+    complete = True
+    components = {key: 0 for key in (*COMPONENT_FIELDS, 'totalCents')} if calculation_version == 'NET_V2' else None
+    for row in rows:
+        total = _integer(row['totalCents'])
+        report_total = _integer(report_total + total)
+        nature = row.get('natureCode')
+        present = isinstance(nature, str) and re.fullmatch(r'[0-9]{4}', nature) is not None
+        complete = complete and present
+        code = nature if present else ''
+        operation = classify_operation_nature(nature)
+        eligible = present and operation in ('COMPRAS', 'SERVICO_COMPRA')
+        reason = operation if present else 'MISSING_NATURE'
+        audit = nature_totals.setdefault(code, {'natureCode': code, 'operation': operation,
+            'eligible': bool(eligible) if present else None, 'reason': reason, 'lines': 0, 'totalCents': 0,
+            'consideredCents': 0 if present else None, 'excludedCents': 0 if present else None})
+        audit['lines'] += 1
+        audit['totalCents'] = _integer(audit['totalCents'] + total)
+        if present:
+            audit['consideredCents' if eligible else 'excludedCents'] = _integer(
+                audit['consideredCents' if eligible else 'excludedCents'] + total)
+        if not eligible:
+            continue
+        selected_total = _integer(selected_total + total)
+        selected_lines += 1
+        if components is not None:
+            for key in components:
+                components[key] = _integer(components[key] + row[key])
+        identity = ('CNPJ', row['cnpj']) if row['valid'] else (
+            (row['documentKind'], row['document']) if row['document'] else ('AUSENTE', row['index']))
+        document = selected_documents.setdefault(identity, {'valid': row['valid'], 'cnpj': row['cnpj'],
+            'documentKind': row['documentKind'], 'lines': 0, 'totalCents': 0})
+        document['lines'] += 1
+        document['totalCents'] = _integer(document['totalCents'] + total)
+    base = {'version': PURCHASE_SELECTION_VERSION, 'catalogVersion': OPERATION_CATALOG_VERSION,
+            'available': bool(complete), 'origin': 'DERIVED_FROM_SNAPSHOT' if complete else 'UNAVAILABLE',
+            'reason': 'CLASSIFIED' if complete else 'MISSING_NATURE',
+            'reportTotalCents': report_total, 'reportLines': len(rows),
+            'natureTotals': [nature_totals[code] for code in sorted(nature_totals)]}
+    if not complete:
+        return {**base, **{key: None for key in ('excludedTotalCents', 'excludedLines', 'totals',
+                                               'components', 'groups', 'reportingGroups', 'excluded')}}
+    groups = {status: {'status': status, 'count': 0, 'lines': 0, 'totalCents': 0,
+                      'countPercent': 0, 'valuePercent': 0}
+              for status in ('OPTANTE', 'NAO_OPTANTE', 'NAO_CONFIRMADO')}
+    excluded_by_kind = {}
+    cnpj_lines = cnpj_cents = unique_cnpjs = 0
+    for document in selected_documents.values():
+        if document['valid']:
+            status = statuses.get(document['cnpj'])
+            _check(status in groups)
+            group = groups[status]
+            unique_cnpjs += 1
+            cnpj_lines += document['lines']
+            cnpj_cents = _integer(cnpj_cents + document['totalCents'])
+        else:
+            kind = document['documentKind']
+            group = excluded_by_kind.setdefault(kind, {'documentKind': kind, 'count': 0,
+                                                       'lines': 0, 'totalCents': 0})
+        group['count'] += 1
+        group['lines'] += document['lines']
+        group['totalCents'] = _integer(group['totalCents'] + document['totalCents'])
+    unique_documents = len(selected_documents)
+    non_cnpj_documents, non_cnpj_cents = unique_documents - unique_cnpjs, selected_total - cnpj_cents
+    for group in groups.values():
+        group['countPercent'] = percentage(group['count'], unique_cnpjs)
+        group['valuePercent'] = percentage(group['totalCents'], cnpj_cents)
+    optant, other, unknown = (groups[status] for status in ('OPTANTE', 'NAO_OPTANTE', 'NAO_CONFIRMADO'))
+    count_bp = (optant['count'] * 20_000 + unique_documents) // (unique_documents * 2) if unique_documents else 0
+    value_bp = (optant['totalCents'] * 20_000 + selected_total) // (selected_total * 2) if selected_total else 0
+    reporting_groups = [
+        {**optant, 'countPercent': count_bp / 100, 'valuePercent': value_bp / 100,
+         'unconfirmedCount': 0, 'unconfirmedCents': 0, 'nonCnpjCount': 0, 'nonCnpjCents': 0},
+        {'status': 'NAO_OPTANTE', 'count': other['count'] + unknown['count'] + non_cnpj_documents,
+         'lines': selected_lines - optant['lines'], 'totalCents': selected_total - optant['totalCents'],
+         'countPercent': (10000 - count_bp) / 100 if unique_documents else 0,
+         'valuePercent': (10000 - value_bp) / 100 if selected_total else 0,
+         'unconfirmedCount': unknown['count'], 'unconfirmedCents': unknown['totalCents'],
+         'nonCnpjCount': non_cnpj_documents, 'nonCnpjCents': non_cnpj_cents},
+    ]
+    return {**base, 'excludedTotalCents': report_total - selected_total, 'excludedLines': len(rows) - selected_lines,
+            'totals': {'lines': selected_lines, 'uniqueCnpjs': unique_cnpjs, 'uniqueDocuments': unique_documents,
+                'nonCnpjDocumentCount': non_cnpj_documents, 'cnpjLines': cnpj_lines,
+                'nonCnpjLines': selected_lines - cnpj_lines, 'totalCents': selected_total,
+                'cnpjCents': cnpj_cents, 'nonCnpjCents': non_cnpj_cents},
+            'components': components, 'groups': list(groups.values()), 'reportingGroups': reporting_groups,
+            'excluded': list(excluded_by_kind.values())}
+
+
 def reconcile_purchase_snapshot(job, lines, items, workspace):
     """Pure reconciliation also exercised by synthetic tests; never trusts cached UI totals."""
     _check(job.get('workspaceId') == workspace and job.get('mode') in FINANCIAL_MODES)
@@ -188,6 +281,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     _integer(financial.get('cnpjCents'))
 
     by_cnpj, indexes, non_cnpj_documents, cpf_documents = {}, set(), set(), set()
+    selection_rows, statuses = [], {}
     total_raw_cents = total_cents = non_cnpj_cents = excluded_lines = cpf_cents = cpf_lines = 0
     operation_totals = {key: {'operation': key, 'lines': 0, 'totalCents': 0, 'balanceCents': 0} for key in ('VENDA','SERVICO','DEVOLUCAO','OUTRAS')}
     nature_totals = {}
@@ -287,6 +381,9 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         qty = row.get('quantity')
         _check(isinstance(qty, str) and re.fullmatch(r'\d{1,9}(?:\.\d{1,6})?', qty))
         quantity += Decimal(qty)
+        if not sales:
+            selection_rows.append({key: row.get(key) for key in ('natureCode', 'valid', 'cnpj', 'document',
+                'documentKind', 'index', *COMPONENT_FIELDS, 'totalCents')})
         total_raw_cents = _integer(total_raw_cents + raw_cents)
         total_cents = _signed_integer(total_cents + balance_cents) if sales else _integer(total_cents + balance_cents)
         if valid:
@@ -351,6 +448,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         checks.append(checked_at)
         sources.add(snapshot_source(item, job))
         group = groups[item['status']]
+        statuses[cnpj] = item['status']
         group['suppliers'] += 1
         group['lines'] += supplier['lines']
         group['totalCents'] += supplier['balanceCents'] if sales else supplier['totalCents']
@@ -416,6 +514,7 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
             'difalOrigin': difal_origin,
             'anticipation': anticipation,
             'anticipationOrigin': anticipation_origin,
+            **({'purchaseSelection': select_purchase_snapshot(selection_rows, statuses, version)} if not sales else {}),
             'operationVersion': operation_version,
             'natureTotals': [nature_totals[code] for code in sorted(nature_totals)] if operation_version else None,
             'quantityDisplay': quantity_text.replace('.', ','), 'generatedAt': utcnow(), 'sources': sorted(sources),
@@ -485,10 +584,31 @@ def purchase_table(rows, fractions, width, styles, total_row=False, padding=7):
     return table
 
 
+def purchase_selection_view(meta):
+    """Presentation-only selection; the reconciled metadata remains unchanged."""
+    selection = meta.get('purchaseSelection')
+    if not selection or not selection['available']:
+        return None
+    totals = selection['totals']
+    labels = {'OPTANTE': 'Simples', 'NAO_OPTANTE': 'Não optante'}
+    groups = [{**group, 'label': labels[group['status']], 'suppliers': group['count'],
+               'supplierPercent': group['countPercent'], 'fileValuePercent': group['valuePercent']}
+              for group in selection['reportingGroups']]
+    unknown = next(group for group in selection['groups'] if group['status'] == 'NAO_CONFIRMADO')
+    return {**meta, **{key: totals[key] for key in ('totalCents', 'cnpjCents', 'nonCnpjCents',
+                                                  'uniqueDocuments', 'nonCnpjDocumentCount')},
+            'lineCount': totals['lines'], 'uniqueSuppliers': totals['uniqueCnpjs'],
+            'reportingGroups': selection['reportingGroups'], 'managerialGroups': groups,
+            'unconfirmed': {**unknown, 'suppliers': unknown['count']}, 'components': selection['components']}
+
+
 def purchase_story(meta, width, styles):
     """The same reconciled per-company memory is used in single and consolidated PDFs."""
     job = meta['job']
     sales = job.get('mode') == SALES_MODE
+    selection = None if sales else meta.get('purchaseSelection')
+    selected = None if sales else purchase_selection_view(meta)
+    display = selected or meta
     report_label, partner = ('Vendas', 'comprador') if sales else ('Compras', 'fornecedor')
     p = lambda value, style='body': purchase_paragraph(value, styles, style)
     title = f'{job.get("clientCode") or "Sem código"} - {job.get("clientName") or "Empresa"}'
@@ -499,16 +619,34 @@ def purchase_story(meta, width, styles):
     story = [p(f'{report_label} - enquadramento e memória de cálculo', 'heading'), p(title, 'title'),
              p(f'Arquivo: {job.get("fileName") or "Não informado"}'), p(period_text, 'small'),
              p(f'Consulta: {job["_id"]} | Conclusão: {display_date(job.get("completedAt"))} | '
-               f'Emissão: {display_date(meta["generatedAt"])}', 'small'),
-             p(f'Total: {money(meta["totalCents"])} | {number(meta["lineCount"])} linhas | '
-               f'{number(meta["uniqueDocuments"])} documentos na base | Cálculo {calculation_label}', 'heading')]
-    rows = [['Grupo gerencial', 'Documentos', '% dos documentos', 'Linhas', f'Valor de {report_label.lower()}', '% do valor total']]
-    for group in meta['managerialGroups']:
+               f'Emissão: {display_date(meta["generatedAt"])}', 'small')]
+    if not sales and selected is None:
+        story += [p('Compras consideradas: indisponível neste histórico', 'heading'),
+                  p('Há naturezas ausentes ou incompletas nas linhas salvas. Reimporte as compras para aplicar '
+                    'o catálogo. O valor original abaixo é mantido para conferência e não representa a base de compras selecionada.', 'small'),
+                  p('Conferência do arquivo original — sem seleção por natureza', 'heading')]
+    total_label = 'Total' if sales else 'Compras consideradas' if selected is not None else 'Total do arquivo original'
+    story.append(p(f'{total_label}: {money(display["totalCents"])} | {number(display["lineCount"])} linhas | '
+                   f'{number(display["uniqueDocuments"])} documentos na base | Cálculo {calculation_label}', 'heading'))
+    value_label = f'Valor de {report_label.lower()}' if sales else 'Compras consideradas' if selected is not None else 'Valor do arquivo original'
+    rows = [['Grupo gerencial', 'Documentos', '% dos documentos', 'Linhas', value_label, '% do valor total']]
+    for group in display['managerialGroups']:
         rows.append([group['label'], number(group['count']), percent(group['countPercent']), number(group['lines']),
                      money(group['totalCents']), percent(group['valuePercent'])])
-    rows.append(['TOTAL', number(meta['uniqueDocuments']), percent(100 if meta['uniqueDocuments'] else 0),
-                 number(meta['lineCount']), money(meta['totalCents']), percent(100 if meta['totalCents'] else 0)])
-    story += [purchase_table(rows, (.24, .12, .16, .08, .24, .16), width, styles, True), Spacer(1, 6)]
+    rows.append(['TOTAL', number(display['uniqueDocuments']), percent(100 if display['uniqueDocuments'] else 0),
+                 number(display['lineCount']), money(display['totalCents']), percent(100 if display['totalCents'] else 0)])
+    story += [purchase_table(rows, (.24, .12, .16, .08, .24, .16), width, styles, True,
+                             padding=5 if selected is not None else 7), Spacer(1, 6)]
+    if selected is not None:
+        rows = [['Conciliação da seleção', 'Linhas', 'Valor'],
+                ['Arquivo original', number(selection['reportLines']), money(selection['reportTotalCents'])],
+                ['Fora das compras consideradas', number(selection['excludedLines']), money(selection['excludedTotalCents'])],
+                ['Compras consideradas', number(selected['lineCount']), money(selected['totalCents'])]]
+        story += [p('Compras por natureza de operação', 'heading'),
+                  purchase_table(rows, (.55, .15, .30), width, styles, True, padding=5), Spacer(1, 5),
+                  p('Somente naturezas classificadas como COMPRAS e serviços de prefixo 8000 entram nos valores, '
+                    'documentos e percentuais de compras. Devoluções, outras operações e naturezas não classificadas '
+                    'ficam fora dessa base e permanecem na conferência do arquivo original.', 'small')]
     if sales:
         story += difal_story(meta.get('difal'), width, styles, meta.get('difalOrigin'))
     else:
@@ -519,7 +657,21 @@ def purchase_story(meta, width, styles):
         for item in meta['operationTotals']:
             operation_rows.append([operation_labels.get(item['operation'], item['operation']), number(item['lines']), money(item['totalCents']), money(item['balanceCents'])])
         story += [p('Vendas, serviços, devoluções e outras', 'heading'), purchase_table(operation_rows, (.32,.12,.28,.28), width, styles), Spacer(1, 6)]
-    if meta.get('natureTotals') is not None:
+    if not sales and selection and (selection['available'] or any(item['natureCode'] for item in selection['natureTotals'])):
+        nature_rows = [['Natureza', 'Operação', 'Linhas', 'Valor do arquivo', 'Tratamento nas bases']]
+        for item in selection['natureTotals']:
+            treatment = ('Compras consideradas' if item['eligible'] else
+                'Fora de compras; Abate a receita de vendas' if item['operation'] == 'DEVOLUCAO_VENDA' else
+                'Indisponível — natureza ausente' if item['reason'] == 'MISSING_NATURE' else 'Fora das bases da DRE')
+            nature_rows.append([item['natureCode'] or 'Ausente', NATURE_LABELS[item['operation']], number(item['lines']),
+                                money(item['totalCents']), treatment])
+        story += [p('Conferência das naturezas de operação', 'heading'),
+                  purchase_table(nature_rows, (.10, .26, .09, .22, .33), width, styles, padding=5), Spacer(1, 5),
+                  p('Classificação pelos quatro primeiros dígitos, conforme a coluna D (OPERAÇÃO) do catálogo. '
+                    'Esta conferência conserva todas as naturezas e os valores do arquivo original. '
+                    'Somente COMPRAS e serviços de natureza 8000 integram as compras consideradas; '
+                    'as devoluções de venda identificadas aqui abatem a receita de vendas na DRE.', 'small')]
+    if sales and meta.get('natureTotals') is not None:
         nature_rows = [['Natureza', 'Operação', 'Linhas', 'Valor do arquivo', 'Destino na DRE']]
         destinations = ({'VENDA': 'Receita de vendas', 'SERVICO_VENDA': 'Receita de serviços'} if sales else
                         {'COMPRAS': 'Compras', 'SERVICO_COMPRA': 'Compras', 'DEVOLUCAO_VENDA': 'Abate a receita de vendas'})
@@ -532,7 +684,7 @@ def purchase_story(meta, width, styles):
                     'Os totais deste relatório reconciliam o arquivo completo. Na DRE, as vendas e os serviços de venda '
                     'compõem a receita; as devoluções de venda encontradas nas compras abatem essa receita. '
                     'As compras consideradas incluem apenas operações de compra e serviços de natureza 8000.', 'small')]
-    unknown = meta['unconfirmed']
+    unknown = display['unconfirmed']
     if sales:
         story.append(p(f'Já incluídos em Não optantes SN: não confirmados na fonte = {number(unknown["suppliers"])} CNPJs '
                        f'e {money(unknown["totalCents"])}; outros documentos não consultáveis = '
@@ -543,12 +695,23 @@ def purchase_story(meta, width, styles):
     else:
         story.append(p(f'Já incluídos em Não optante: não confirmados na fonte = {number(unknown["suppliers"])} CNPJs '
                        f'e {money(unknown["totalCents"])}; CPF e demais documentos não consultáveis = '
-                       f'{number(meta["nonCnpjDocumentCount"])} documentos e {money(meta["nonCnpjCents"])}. {MANAGEMENT_NOTE}', 'small'))
+                       f'{number(display["nonCnpjDocumentCount"])} documentos e {money(display["nonCnpjCents"])}. {MANAGEMENT_NOTE}' +
+                       (' Os subtotais acima abrangem somente as compras consideradas.' if selected is not None else
+                        ' Os subtotais acima pertencem ao arquivo original, sem seleção de compras disponível.'), 'small'))
+    if selected is not None and selected['components'] is not None:
+        values = selected['components']
+        memory = [list(COMPONENT_LABELS), [money(values[key]) for key in (*COMPONENT_FIELDS, 'totalCents')]]
+        story += [Spacer(1, 3), p('Memória das compras consideradas', 'heading'),
+                  purchase_table(memory, (.17, .16, .18, .16, .16, .17), width, styles, padding=5), Spacer(1, 5),
+                  p(f'Q - Y + AA - AB nas linhas incluídas = {money(values["grossCents"])} - '
+                    f'{money(values["discountCents"])} + {money(values["freightCents"])} - '
+                    f'{money(values["abatementCents"])} = {money(values["totalCents"])}. Z permanece apenas informativa.', 'small')]
     story += [Spacer(1, 3), p('Memória dos valores importados', 'heading')]
     if meta['components'] is not None:
         values = meta['components']
         memory = [list(COMPONENT_LABELS), [money(values[key]) for key in (*COMPONENT_FIELDS, 'totalCents')]]
-        story += [purchase_table(memory, (.17, .16, .18, .16, .16, .17), width, styles), Spacer(1, 5),
+        story += [purchase_table(memory, (.17, .16, .18, .16, .16, .17), width, styles,
+                                padding=5 if selected is not None else 7), Spacer(1, 5),
                   p(f'Q - Y + AA - AB = {money(values["grossCents"])} - {money(values["discountCents"])} + '
                     f'{money(values["freightCents"])} - {money(values["abatementCents"])} = {money(values["totalCents"])}. '
                     'Z é apenas informativa e não entra na fórmula.', 'small')]
@@ -557,13 +720,17 @@ def purchase_story(meta, width, styles):
                     'Os ajustes Y, Z, AA e AB não foram armazenados neste lote. Reimporte o arquivo em uma nova consulta '
                     'para aplicar Q - Y + AA - AB; este histórico mantém o cálculo original.', 'small')]
     story += [
-        p(f'Bases dos percentuais: {number(meta["uniqueDocuments"])} documentos e '
-          f'{money(meta["totalCents"])} do arquivo completo, incluindo CPF e demais documentos. '
-          f'Cada {partner} conta uma vez por documento; todas as suas linhas compõem o valor. '
+        p(f'Bases dos percentuais: {number(display["uniqueDocuments"])} documentos e '
+          f'{money(display["totalCents"])} ' +
+          ('das compras consideradas, incluindo CPF e demais documentos nas naturezas elegíveis. ' if selected is not None else
+           'do arquivo completo, incluindo CPF e demais documentos. ') +
+          f'Cada {partner} conta uma vez por documento; ' +
+          ('somente suas linhas de compras e serviços 8000 compõem o valor. ' if selected is not None else
+           'todas as suas linhas compõem o valor. ') +
           'Cada linha sem documento conta separadamente. Base de valor zero resulta em 0,00%.' +
           (' Percentuais distribuídos em centésimos pelo maior resto para totalizar 100,00%.' if sales else ''), 'small'),
         p(('Valores somados por linha. A = CNPJ comprador; I = comprador; ' if sales else
-           f'Valores somados por linha, sem multiplicar por P. Quantidade P total: {meta["quantityDisplay"]}. '
+           f'Valores somados por linha, sem multiplicar por P. Quantidade P total no arquivo original: {meta["quantityDisplay"]}. '
            'A = CNPJ fornecedor; I = razão social; P = quantidade; ') + 'Q = valor bruto; Y = desconto; '
           'Z = despesa acessória; AA = frete; AB = abatimento não tributado.', 'small'),
         p(f'Fontes: {", ".join(meta["sources"]) or "Nenhuma consulta CNPJ neste relatório"}. '

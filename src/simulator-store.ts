@@ -82,6 +82,8 @@ export async function generationSimulator(id: string, clientId: string) {
   const selectedSalesTotalCents=exactCents(salesNetCents+fields.serviceRevenueCents);
   const selectedPurchasesTotalCents=exactCents(fields.purchasesOptantCents+fields.purchasesNonOptantCents);
   return {projection, monthlyReports, operationVersion:OPERATION_CATALOG_VERSION, operationAudit, revenueSplit: {version: 'SALES_SERVICES_V1'}, generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
+    // This optional preference seeds a new draft; it does not change source amounts or historical drafts.
+    ...(company.difalPolicy ? {difalPolicy: company.difalPolicy} : {}),
     purchases: {...sourceMetadata(purchases),selectedTotalCents:selectedPurchasesTotalCents},
     sales: {...sourceMetadata(sales),selectedTotalCents:selectedSalesTotalCents,difal:difal?{...monthlyReports[0].difal,amountCents:difal.sourceAmountCents,baseCents:difal.sourceBaseCents,eligibleLines:difal.eligibleLines,pendingLines:difal.pendingLines}:null},
     fields, classification, warnings};

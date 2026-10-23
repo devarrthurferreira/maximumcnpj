@@ -32,6 +32,27 @@
 .generation-reports-dialog h2{font-size:23px;letter-spacing:-.6px;line-height:1.3;margin:0 0 14px}
 .generation-reports-dialog p{font-size:13px;line-height:1.65;color:#706772}
 .generation-reports-dialog .generation-reports-company{display:block;margin:0 0 14px;padding:11px 13px;border-radius:8px;background:#f7f5f8;color:#473b49;overflow-wrap:anywhere;font-weight:600;border:1px solid #eae6ec}
+.generation-difal-options{padding:6px 0 20px;margin-bottom:22px;border-bottom:1px solid #ebe6ed}
+.generation-difal-options h2{font-size:20px;margin-bottom:8px}
+.generation-difal-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0;border:0;margin:16px 0;min-width:0}
+.generation-difal-choices label{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid #ded8e0;border-radius:9px;cursor:pointer;min-width:0}
+.generation-difal-choices label:has(input:checked){background:#fbf5f6;border-color:#a86a76}
+.generation-difal-choices input{margin:1px 0 0;width:20px;height:20px;flex:none;accent-color:#750207}
+.generation-difal-choices input:focus-visible{outline:3px solid #b57b35;outline-offset:3px}
+.generation-difal-choices strong{display:block;font-size:13px;line-height:1.45}
+.generation-difal-choices small{display:block;font-size:11px;line-height:1.5;color:#716575;font-weight:400;margin-top:4px}
+.generation-difal-options .generation-difal-note{font-size:12px;margin:0;padding:10px 12px;background:#faf7f8;border-radius:8px}
+.generation-difal-choices .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.generation-reports-dialog[aria-busy=true] .generation-difal-choices{opacity:.65}
+.generation-company-difal-list{margin:24px 0;padding-top:20px;border-top:1px solid #e3dce6}
+.generation-company-difal-list[hidden]{display:none}
+.generation-company-difal-list>h2{font-size:19px;margin-bottom:8px}
+.generation-company-difal{border:1px solid #ded8e0;border-radius:10px;margin-top:12px;padding:0 16px}
+.generation-company-difal>summary{padding:15px 0;font-size:13px;font-weight:600;cursor:pointer;overflow-wrap:anywhere}
+.generation-company-difal>summary:focus-visible{outline:3px solid #b57b35;outline-offset:3px}
+.generation-company-difal .generation-difal-options{border-top:1px solid #ebe6ed;border-bottom:0;margin-bottom:0;padding-top:16px}
+.generation-company-difal .generation-difal-options>h2{font-size:15px}
+.generation-company-difal .generation-difal-options p{font-size:12px;line-height:1.65}
 .generation-report-choices{border:0;padding:0;margin:22px 0 14px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;min-width:0}
 .generation-report-choices label{position:relative;display:flex;align-items:flex-start;gap:12px;cursor:pointer;padding:18px 14px;border:1px solid #ded8e0;border-radius:11px;background:#fff;min-height:95px;transition:border-color .15s,background .15s}
 .generation-report-choices label:hover{border-color:#aa7883;background:#fcf9fa}
@@ -65,6 +86,7 @@
  .generation-field-help{margin-bottom:20px}
  .generation-reports-dialog{padding:22px 18px;border-radius:12px}
  .generation-report-choices{grid-template-columns:1fr;gap:10px}
+ .generation-difal-choices{grid-template-columns:1fr}
  .generation-report-choices label{min-height:80px;padding:15px}
  .generation-reports-actions{flex-direction:column-reverse}
  .generation-reports-actions button{width:100%}

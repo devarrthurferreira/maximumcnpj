@@ -9,7 +9,8 @@ from .core import require, utcnow, display_date, number
 from .anticipation import ANTICIPATION_VERSION
 from .difal import DIFAL_VERSION
 from .purchases import (PURCHASES_MODE, SALES_MODE, purchase_metadata, purchase_pdf_styles, purchase_story,
-                        purchase_page_callback, purchase_paragraph, purchase_table, money, _check, _integer)
+                        purchase_page_callback, purchase_paragraph, purchase_table, money, _check, _integer,
+                        purchase_selection_view, PURCHASE_SELECTION_VERSION)
 
 GENERATION_PART_SIZE = 10
 GENERATION_COMPANY_LIMIT = 50
@@ -74,6 +75,11 @@ def generation_metadata(db, generation_id, workspace, part=1):
         totals_by_type['PURCHASES']['anticipation'] = {'baseCents': 0, 'amountCents': 0, 'eligibleLines': 0,
             'pendingLines': 0, 'unavailableReports': 0, 'legacyReports': 0, 'derivedReports': 0,
             'importedReports': 0, 'version': ANTICIPATION_VERSION, 'ratePercent': 7.32, 'sourceVersions': []}
+        totals_by_type['PURCHASES']['purchaseSelection'] = {
+            'version': PURCHASE_SELECTION_VERSION, 'availableReports': 0, 'unavailableReports': 0,
+            'unavailableTotalCents': 0, 'unavailableLines': 0, 'complete': True,
+            **{key: None for key in ('totalCents', 'lineCount', 'optantCents', 'nonoptantCents',
+                                    'unconfirmedCents', 'excludedTotalCents', 'excludedLines')}}
     for company in selected:
         reports = {}
         for report_type in required:
@@ -87,6 +93,22 @@ def generation_metadata(db, generation_id, workspace, part=1):
             for group in meta['reportingGroups']:
                 key = {'OPTANTE': 'optantCents', 'NAO_OPTANTE': 'nonoptantCents', 'CPF': 'cpfCents'}[group['status']]
                 totals[key] = _integer(totals[key] + group['totalCents'])
+            if report_type == 'PURCHASES':
+                selection, selection_totals = meta.get('purchaseSelection'), totals['purchaseSelection']
+                if not selection or not selection['available']:
+                    selection_totals['unavailableReports'] += 1
+                    selection_totals['complete'] = False
+                    selection_totals['unavailableTotalCents'] = _integer(selection_totals['unavailableTotalCents'] + meta['totalCents'])
+                    selection_totals['unavailableLines'] += meta['lineCount']
+                else:
+                    selection_totals['availableReports'] += 1
+                    values = {'totalCents': selection['totals']['totalCents'], 'lineCount': selection['totals']['lines'],
+                              'excludedTotalCents': selection['excludedTotalCents'], 'excludedLines': selection['excludedLines'],
+                              'unconfirmedCents': selection['reportingGroups'][1]['unconfirmedCents'],
+                              **{key: group['totalCents'] for key, group in
+                                 zip(('optantCents', 'nonoptantCents'), selection['reportingGroups'])}}
+                    for key, value in values.items():
+                        selection_totals[key] = _integer((selection_totals[key] or 0) + value)
             tax_key = 'difal' if report_type == 'SALES' else 'anticipation'
             estimate, tax_totals = meta.get(tax_key), totals[tax_key]
             source_version = meta['job'].get(f'{tax_key}Version')
@@ -130,19 +152,27 @@ def render_generation_pdf(meta):
     headers = ['Código / Empresa']
     for report_type in required:
         label = REPORTS[report_type]['label']
-        headers.extend([f'Linhas de {label.lower()}', f'Total de {label.lower()}'])
+        headers.extend([f'Linhas de {label.lower()}', 'Compras consideradas' if report_type == 'PURCHASES' else f'Total de {label.lower()}'])
     rows = [headers]
     for section in meta['sections']:
         first = section['reports'][required[0]]['job']
         row = [f'{first.get("clientCode") or "Sem código"} - {first.get("clientName") or "Empresa"}']
         for report_type in required:
             financial = section['reports'][report_type]
-            row.extend([number(financial['lineCount']), money(financial['totalCents'])])
+            if report_type == 'PURCHASES':
+                financial = purchase_selection_view(financial)
+            row.extend([number(financial['lineCount']), money(financial['totalCents'])] if financial is not None else
+                       ['Indisponível', 'Naturezas ausentes'])
         rows.append(row)
     final = [f'TOTAL {scope.upper()}']
     for report_type in required:
         totals = meta['totalsByType'][report_type]
-        final.extend([number(totals['lineCount']), money(totals['totalCents'])])
+        if report_type == 'PURCHASES':
+            selected = totals['purchaseSelection']
+            final.extend([number(selected['lineCount']), ('Parcial: ' if not selected['complete'] else '') + money(selected['totalCents'])]
+                         if selected['availableReports'] else ['Indisponível', 'Naturezas ausentes'])
+        else:
+            final.extend([number(totals['lineCount']), money(totals['totalCents'])])
     rows.append(final)
     fractions = (.4, .12, .18, .12, .18) if len(required) == 2 else (.50, .20, .30)
     story += [purchase_table(rows, fractions, width, styles, True, padding=5), Spacer(1, 8)]
@@ -154,12 +184,37 @@ def render_generation_pdf(meta):
                            ['Faturamento de vendas a não optantes SN', money(totals['nonoptantCents'])],
                            ['Faturamento de vendas a CPFs', money(totals['cpfCents'])]])
         else:
-            groups.extend([['Compras de empresas do Simples Nacional', money(totals['optantCents'])],
-                           ['Compras de empresas fora do Simples', money(totals['nonoptantCents'])]])
-        groups.append(['TOTAL', money(totals['totalCents'])])
-        story += [purchase_table(groups, (.70, .30), width, styles, True, padding=5), Spacer(1, 6),
-                  p(f'{REPORTS[report_type]["label"]} {scope}: não confirmados na fonte já incluídos em '
-                    f'Não optante = {money(totals["unconfirmedCents"])}.', 'small')]
+            selected = totals['purchaseSelection']
+            if selected['availableReports']:
+                groups[0][0] = 'Compras consideradas por natureza'
+                groups.extend([['Compras de empresas do Simples Nacional', money(selected['optantCents'])],
+                               ['Compras de empresas fora do Simples', money(selected['nonoptantCents'])]])
+        financial_totals = totals if report_type == 'SALES' else totals['purchaseSelection']
+        if report_type == 'SALES' or financial_totals['availableReports']:
+            label = 'TOTAL PARCIAL — RELATÓRIOS CLASSIFICÁVEIS' if report_type == 'PURCHASES' and not financial_totals['complete'] else 'TOTAL'
+            groups.append([label, money(financial_totals['totalCents'])])
+            story += [purchase_table(groups, (.70, .30), width, styles, True, padding=5), Spacer(1, 6),
+                      p(f'{REPORTS[report_type]["label"]} {scope}: não confirmados na fonte já incluídos em '
+                        f'Não optante = {money(financial_totals["unconfirmedCents"])}.', 'small')]
+        elif report_type == 'PURCHASES':
+            story.append(p('Compras consideradas: indisponível nesta parte. Os relatórios não conservam '
+                           'as naturezas necessárias; os valores originais permanecem na conferência abaixo.', 'small'))
+        if report_type == 'PURCHASES':
+            selected = totals['purchaseSelection']
+            rows = [['Conferência das compras', f'Valor {scope}'],
+                    ['Arquivo original de todas as empresas', money(totals['totalCents'])],
+                    ['Compras consideradas nos relatórios classificáveis',
+                     money(selected['totalCents']) if selected['availableReports'] else 'Indisponível'],
+                    ['Fora das compras nos relatórios classificáveis',
+                     money(selected['excludedTotalCents']) if selected['availableReports'] else 'Indisponível'],
+                    ['Arquivo original sem seleção disponível', money(selected['unavailableTotalCents'])]]
+            story += [purchase_table(rows, (.70, .30), width, styles, padding=5), Spacer(1, 5),
+                      p('Compras consideradas incluem somente operações COMPRAS e serviços de prefixo 8000. '
+                        'Devoluções e outras operações ficam fora dos grupos e percentuais de compras.', 'small')]
+            if selected['unavailableReports']:
+                story.append(p(f'{number(selected["unavailableReports"])} relatórios sem seleção por natureza disponível. '
+                               'Se houver valores parciais acima, eles abrangem somente os relatórios classificáveis; '
+                               'os demais não foram tratados como compras de valor zero.', 'small'))
         if report_type == 'SALES':
             difal = totals['difal']
             story += [p(f'DIFAL sobre vendas (10%) {scope}', 'heading')]
@@ -210,7 +265,8 @@ def render_generation_pdf(meta):
                 'os percentuais não são somados entre empresas ou entre compras e vendas. A situação original dos não '
                 'confirmados continua identificada no subtotal individual. Em vendas, CPFs têm grupo próprio; '
                 'em compras, integram Não optante. Outros documentos não consultáveis integram Não optante nos dois '
-                'relatórios. Todos compõem as bases dos percentuais. Cada linha sem documento conta separadamente.', 'small'),
+                'relatórios. Nas compras, apenas as naturezas de compra e serviços 8000 compõem a base apresentada. '
+                'Cada linha sem documento conta separadamente.', 'small'),
               p('Este documento usa somente os snapshots salvos e reconciliados da parte indicada.', 'small')]
     if parts > 1:
         story.append(p(f'Arquivo dividido em {parts} partes de até {GENERATION_PART_SIZE} empresas. '

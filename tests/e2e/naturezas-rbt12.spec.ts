@@ -56,12 +56,16 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
     if(name==='compras.csv'){
       await expect(page.locator('#purchase-report-view [data-anticipation-amount]')).toContainText('549,00');
       await expect(page.locator('#purchase-report-view .purchase-anticipation')).toContainText('7.500,00');
-      await expect(page.locator('#purchase-report-view .purchase-hero')).toContainText('9.200,00');
+      await expect(page.locator('#purchase-report-view [data-purchase-considered-total]')).toContainText('7.500,00');
+      await expect(page.locator('#purchase-report-view [data-purchase-original-total]')).toContainText('9.200,00');
+      await expect(page.locator('#purchase-report-view [data-purchase-excluded-total]')).toContainText('1.700,00');
       const detailed=await page.context().newPage();
       try{
         await detailed.goto((await page.locator('.purchase-guided-detail').getAttribute('href'))!);
         await expect(detailed.locator('#purchase-report-view [data-anticipation-amount]')).toContainText('549,00');
+        await expect(detailed.locator('#purchase-report-view [data-purchase-considered-total]')).toContainText('7.500,00');
         await detailed.locator('#purchase-view-filter').selectOption('lines');
+        await expect(detailed.locator('#purchase-result-list tbody tr')).toHaveCount(8);
         const legalEntity=detailed.locator('#purchase-result-list tbody tr').filter({hasText:'Fornecedor CNPJ sintético'});
         await expect(legalEntity).toContainText('3.000,00');await expect(legalEntity).toContainText('219,60');await expect(legalEntity).not.toContainText('Não se aplica');
         const downloading=detailed.waitForEvent('download');await detailed.locator('#purchase-csv').click();const download=await downloading,stream=await download.createReadStream(),parts:Buffer[]=[];
@@ -72,6 +76,14 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
         expect(at(cnpj,'Total calculado (R$)')).toBe('3000,00');expect(at(cnpj,'Base DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('3000,00');expect(at(cnpj,'DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('219,60');expect(at(cnpj,'Situação DIFAL de entrada — Antecipação de ICMS')).toBe('ELIGIBLE');
         expect(at(cnpj,'Versão DIFAL de entrada — Antecipação de ICMS')).toBe('ICMS_ANTICIPATION_V3');
         expect(at(cnpj,'Origem DIFAL de entrada')).toBe('IMPORTED');
+        expect(at(cnpj,'Compras consideradas (R$)')).toBe('3000,00');
+        expect(at(cnpj,'Versão da seleção de compras')).toBe('PURCHASE_NATURES_V1');
+        const sourceRows=csvRows.slice(1);
+        expect(sourceRows).toHaveLength(8);
+        expect(sourceRows.reduce((sum,row)=>sum+Number(at(row,'Total calculado (R$)').replace(',','.')),0)).toBe(9200);
+        expect(sourceRows.reduce((sum,row)=>sum+Number(at(row,'Compras consideradas (R$)').replace(',','.')),0)).toBe(7500);
+        for(const row of sourceRows.filter(row=>['1202','1949'].includes(at(row,'Natureza / CFOP'))))expect(at(row,'Compras consideradas (R$)')).toBe('0,00');
+        expect(sourceRows.filter(row=>at(row,'Natureza / CFOP')==='8000').map(row=>at(row,'Compras consideradas (R$)'))).toEqual(['200,00','300,00']);
         expect(csvRows.slice(1).reduce((sum,row)=>sum+Number(String(at(row,'DIFAL de entrada — Antecipação de ICMS (R$)')||'0').replace(',','.')),0)).toBeCloseTo(549,2);
       }finally{await detailed.close();}
     }else{
@@ -137,6 +149,7 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
     await expect(reopened.locator('#sim-difal-options [data-difal-option="pure"]')).toContainText('Incluído por escolha');
     await reopened.locator('#create-version').click();await expect(reopened.locator('#simulator-form')).toBeVisible();
     await expect(reopened.locator('#difal-enabled-pure')).toBeChecked();
+    await reopened.locator('.sim-difal-review > summary').click();
     await reopened.locator('#difal-enabled-pure').uncheck();await reopened.locator('#difal-enabled-actual').uncheck();
     await reopened.locator('#rbt12-manual').click();await reopened.locator('#rbt12').fill('100000');await reopened.locator('#rbt12-manual-confirm').check();
     const childSaving=reopened.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/simulations'&&response.request().method()==='POST');

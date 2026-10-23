@@ -1,6 +1,9 @@
 import {ANTICIPATION_VERSION,calculateAnticipation,isAnticipationVersion,summarizeAnticipation,type AnticipationSummary,type AnticipationOrigin} from './icms-anticipation.ts';
 import { calculateDifal, salesOperation, normalizeUf, summarizeDifal, DIFAL_VERSION, isDifalVersion, type DifalSummary, type DifalOrigin } from './difal.ts';
 import {OPERATION_CATALOG_VERSION, normalizeOperationNature, classifyOperationNature} from './operation-catalog.ts';
+import { PURCHASE_SELECTION_VERSION, selectPurchaseLine, summarizePurchaseSelection, type PurchaseSelectionSummary } from './purchase-selection.ts';
+import { normalizeCnpj } from './domain.ts';
+import { documentKind } from './lookup-domain.ts';
 import { collection, scope, audit } from './store.ts';
 import type { Doc } from './store.ts';
 import { getJob } from './lookup-db.ts';
@@ -247,7 +250,25 @@ export async function purchaseSummary(id: string, requireComplete = true, mode: 
   const servicesTotalCents = exactCents(serviceGroups.reduce((sum, group) => sum + group.totalCents, 0));
   if (mode === SALES_MODE) need(servicesTotalCents === exactCents(operationTotals.find(row => row._id === 'SERVICO')?.totalCents ?? 0),
     'Receita de serviços divergente das operações do relatório. Emissão bloqueada.', 409, 'PURCHASE_TOTAL');
-  return {job, ...(mode === SALES_MODE ? {difal,difalOrigin, serviceGroups, servicesTotalCents} : {}), ...(mode===PURCHASE_MODE?{anticipation,anticipationOrigin}:{}), calculationVersion: version, formula, components, period, operationTotals: operationTotals.map(row => ({operation: row._id, lines: row.lines, totalCents: exactCents(row.totalCents), balanceCents: exactSignedCents(row.balanceCents)})),
+  // The complete import above remains the reconciliation contract for historical
+  // scenarios, retries and rechecks. Only this explicit view filters purchases.
+  let purchaseSelection: PurchaseSelectionSummary | undefined;
+  if (mode === PURCHASE_MODE) {
+    const sourceRows = await (await collection('purchaseLines')).find(scope({jobId: id}))
+      .project({index: 1, document: 1, documentKind: 1, valid: 1, cnpj: 1, natureCode: 1, totalCents: 1, ...Object.fromEntries(COMPONENT_FIELDS.map(field => [field, 1]))})
+      .sort({index: 1}).maxTimeMS(20000).toArray();
+    need(sourceRows.length === lines && sourceRows.every((row, index) => row.index === index) &&
+      sourceRows.reduce((sum, row) => sum + row.totalCents, 0) === rawTotalCents,
+      'Linhas da seleção de compras divergentes do relatório.', 409, 'PURCHASE_TOTAL');
+    need(sourceRows.every(row => {
+      if (typeof row.document !== 'string' || row.document !== row.document.trim().replace(/[.\/\-\s]/g, '').toUpperCase()) return false;
+      const checked = normalizeCnpj(row.document);
+      return row.valid === checked.valid && row.documentKind === documentKind(row.document) && row.cnpj === (checked.valid ? checked.cnpj : '');
+    }), 'Identidade do documento divergente do snapshot de compras. Emissão bloqueada.', 409, 'RESULT_COUNT');
+    purchaseSelection = summarizePurchaseSelection(sourceRows.map(row => ({...row, totalCents: row.totalCents, status: indexed.get(row.cnpj)?.status})),
+      {origin: 'DERIVED_FROM_SNAPSHOT', includeGroups: true, calculationVersion: version});
+  }
+  return {job, ...(mode === SALES_MODE ? {difal,difalOrigin, serviceGroups, servicesTotalCents} : {}), ...(mode===PURCHASE_MODE?{anticipation,anticipationOrigin,purchaseSelection}:{}), calculationVersion: version, formula, components, period, operationTotals: operationTotals.map(row => ({operation: row._id, lines: row.lines, totalCents: exactCents(row.totalCents), balanceCents: exactSignedCents(row.balanceCents)})),
     reportingGroups: reportingGroups(groups, uniqueDocuments, totalCents, {count: nonCnpjDocumentCount, lines: lines - cnpjLines, totalCents: nonCnpjCents}, excludedByKind.get('CPF') || {count: 0, lines: 0, totalCents: 0}, mode),
     totals: {lines, uniqueCnpjs: valid.length, uniqueDocuments, nonCnpjDocumentCount, cnpjLines, nonCnpjLines: lines - cnpjLines, totalCents, cnpjCents, nonCnpjCents}, groups, excluded,
     denominators: {count: 'Documentos distintos do relatório, incluindo CPF, CNO e inválidos. Cada linha sem documento conta separadamente.', value: `Soma de ${formula} de todas as linhas do relatório. Apenas optantes confirmados entram em Simples; ${mode === SALES_MODE ? 'CPF tem grupo próprio nas vendas; os demais, incluindo não confirmados e outros documentos, integram Não optantes.' : 'todo o restante integra Não optantes no agrupamento gerencial.'}`},
@@ -262,7 +283,7 @@ export async function purchaseHistory(clientId: string, page: number, mode: Fina
   const jobs = await collection('lookupJobs');
   return {items: await jobs.find(query).sort({createdAt: -1, _id: 1}).skip((page - 1) * 30).limit(30).toArray(), total: await jobs.countDocuments(query), page};
 }
-type FinancialTaxView = {anticipation?:AnticipationSummary|null;anticipationOrigin?:AnticipationOrigin;difal?:DifalSummary|null;difalOrigin?:DifalOrigin};
+type FinancialTaxView = {anticipation?:AnticipationSummary|null;anticipationOrigin?:AnticipationOrigin;difal?:DifalSummary|null;difalOrigin?:DifalOrigin;purchaseSelection?:PurchaseSelectionSummary};
 async function financialPage(id: string, status: string, page: number, pageSize: number, grouped = false, mode: FinancialMode = PURCHASE_MODE, view:FinancialTaxView = {}) {
   const tax=mode===SALES_MODE?'difal':'anticipation', taxOrigin=(mode===SALES_MODE?view.difalOrigin:view.anticipationOrigin)||'UNAVAILABLE';
   const taxSummary=mode===SALES_MODE?view.difal:view.anticipation;
@@ -303,7 +324,7 @@ async function financialPage(id: string, status: string, page: number, pageSize:
     ...stages, {$facet: {items: pageStages, count: [{$count: 'total'}]}}
   ], {allowDiskUse: true, maxTimeMS: 20000}).toArray();
   const items=result?.items||[], derivedGroups=new Map<string,Record<string,any>[]>();
-  if(grouped&&taxOrigin==='DERIVED_FROM_SNAPSHOT'&&items.length){
+  if(grouped&&(taxOrigin==='DERIVED_FROM_SNAPSHOT'||mode===PURCHASE_MODE&&view.purchaseSelection?.available)&&items.length){
     // Read only the documents in this page. Sum the rounded estimate of each frozen
     // line, never an estimate recalculated from a document's combined amount.
     const sourceRows=await (await collection('purchaseLines')).aggregate([
@@ -332,6 +353,23 @@ async function financialPage(id: string, status: string, page: number, pageSize:
       }else row[tax]=mode===SALES_MODE?
         calculateDifal({...row,operation:undefined,issuerUf:taxSummary.issuerUf}):calculateAnticipation({...row,issuerUf:taxSummary.issuerUf});
     }else if(taxOrigin!=='IMPORTED')row[tax]=null;
+    if (mode === PURCHASE_MODE) {
+      const selection = view.purchaseSelection;
+      let selected = selectPurchaseLine(row, !!selection?.available);
+      if (grouped && selection?.available) {
+        const sourceRows = derivedGroups.get(row._id) || [];
+        need(sourceRows.length === row.occurrences && sourceRows.reduce((sum, source) => sum + source.totalCents, 0) === row.totalCents,
+          'Linhas da seleção de compras divergentes do relatório.', 409, 'PURCHASE_TOTAL');
+        const parts = sourceRows.map(source => selectPurchaseLine({...source, totalCents: source.totalCents}));
+        const selectedLines = parts.reduce((sum, part) => sum + part.selectedLines!, 0);
+        const operations = [...new Set(parts.map(part => part.operation))];
+        selected = {available: true, eligible: selectedLines > 0, consideredCents: exactCents(parts.reduce((sum, part) => sum + part.consideredCents!, 0)),
+          selectedLines, reason: operations.length === 1 ? operations[0] : 'MIXED_OPERATIONS', operation: operations.length === 1 ? operations[0] : 'MISTAS'};
+      }
+      row.purchaseSelection = {version: PURCHASE_SELECTION_VERSION, origin: selection?.origin || 'UNAVAILABLE', ...selected};
+      row.consideredCents = selected.consideredCents;
+      row.selectedLines = selected.selectedLines;
+    }
     return {...(grouped ? row : {...row, occurrences: 1}), reportingCents: mode === SALES_MODE ? exactSignedCents(row.balanceCents ?? row.totalCents) : exactCents(row.totalCents)};
   }), total: result?.count?.[0]?.total || 0, page, pageSize};
 }
