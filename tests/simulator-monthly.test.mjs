@@ -27,7 +27,7 @@ test('competências distintas, mês sem movimento e período parcial: nenhuma m�
  close(cells[0],1000.01);assert.equal(cells[1],0);close(cells[2],4000.09);assert.equal(cells[3],null);
  const source={monthlyReports:reports,revenueSplit:{version:'SALES_SERVICES_V1'}};
  const presentation=buildDrePresentation({result,calendar,projection,source}),rows=unifiedDreRows(presentation);
- for(const key of ['salesCpfCents','serviceReport','cbs.used','irpjBasic','irpjAdditional']){
+ for(const key of ['salesCpfCents','serviceReport','cbs.due','irpjBasic','irpjAdditional']){
   const row=rows.find(row=>row.key===key);assert(row,key);const id=key.startsWith('irpj')?'actual':key.startsWith('cbs')?'hybrid':'pure';
   assert.equal(typeof row.monthlyValues[id][0],'number',`${key} missing month`);assert.equal(row.monthlyValues[id][3],null);
   close(row.values[id],row.monthlyValues[id].slice(0,3).reduce((a,b)=>a+b,0));

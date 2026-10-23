@@ -66,7 +66,7 @@ test('DRE única conserva composição, escolhas, exportação e impressão anua
   const saved=fixture();saved.result.regimes[0].dre.netProfit=123456.78;saved.result.regimes[0].annualProfit=123456.78;
   await open(page,saved);
   await expect(page.locator('.dre-complete > .dre-table-wrap > table')).toHaveCount(1);await expect(page.locator('.dre-complete > .dre-table-wrap > table > tbody')).toHaveCount(1);
-  await expect(page.locator('.dre-complete > .dre-table-wrap [data-dre-row]')).toHaveCount(55);
+  await expect(page.locator('.dre-complete > .dre-table-wrap [data-dre-row]')).toHaveCount(51);
   await expect(page.locator('[data-revenue-reconciliation="dre"] table')).toHaveCount(1);await expect(page.locator('[data-revenue-reconciliation="dre"] [data-dre-row]')).toHaveCount(5);
   await expect(page.locator('[data-revenue-reconciliation="dre"] [data-revenue-unavailable]')).toContainText('projeção histórica');
   await expect(page.locator('.dre-complete details,.dre-section-row')).toHaveCount(0);
@@ -297,10 +297,15 @@ test('crédito de ICMS fica no quadro final em anual, mensal, CSV e PDF sem alte
   const before=JSON.stringify(saved),writes:string[]=[],errors:string[]=[];
   const money=(value:number)=>value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}).replace(/\u00a0/g,' ');
   const keys=['icms.debit','icms.potential','icms.purchaseCredit','icms.returnCredit','icms.used','icms.due','icms.balance'];
+  const omitted=['cbs.potential','cbs.used','ibs.potential','ibs.used'];
+  const retained=['cbs.debit','cbs.due','cbs.balance','ibs.debit','ibs.due','ibs.balance','cbsUsed','ibsUsed'];
   page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(request.url().includes('/api/')&&!['GET','HEAD'].includes(request.method()))writes.push(request.method());});
   await open(page,saved);await page.locator('#dre-regime').selectOption('actual');
   const section=page.locator('#dre-demonstrativo [data-icms-reconciliation="dre"]');
   await expect(section).toHaveCount(1);await expect(section.getByRole('heading',{name:'Apuração do crédito de ICMS',exact:true})).toBeVisible();
+  for(const key of omitted)await expect(page.locator(`#dre-demonstrativo [data-dre-row="${key}"]`)).toHaveCount(0);
+  for(const key of retained)await expect(page.locator(`#dre-demonstrativo [data-dre-row="${key}"]`)).toHaveCount(1);
+  for(const key of ['cbsUsed','ibsUsed'] as const)await expect(page.locator(`#dre-demonstrativo [data-dre-row="${key}"] td`).nth(3)).toHaveText(money(actual.dre[key]));
   await expect(page.locator('.dre-complete > .dre-table-wrap [data-dre-row^="icms."]')).toHaveCount(0);
   await expect(section.locator('[data-dre-row]')).toHaveCount(7);
   const order=await page.locator('#dre-demonstrativo [data-dre-row]').evaluateAll(rows=>rows.map(row=>(row as HTMLElement).dataset.dreRow));
@@ -335,17 +340,33 @@ test('crédito de ICMS fica no quadro final em anual, mensal, CSV e PDF sem alte
   await page.locator('#dre-regime').selectOption('pure');await expect(mobileReasons).toHaveText(dasReason);await expect(mobileReasons).toBeVisible();
   await page.locator('#dre-regime').selectOption('presumed');await expect(mobileReasons).toHaveCount(0);
   await page.locator('#dre-regime').selectOption('actual');await expect(mobileReasons).toHaveCount(0);
+  for(const key of omitted)await expect(page.locator(`#dre-demonstrativo [data-dre-row="${key}"]`)).toHaveCount(0);
+  for(const key of retained)await expect(page.locator(`#dre-demonstrativo [data-dre-row="${key}"]`)).toHaveCount(1);
+  for(const key of ['cbsUsed','ibsUsed'] as const){
+    await expect(page.locator(`#dre-demonstrativo [data-dre-row="${key}"] td`).first()).toHaveText(money(actual.dre[key]/12));
+    await expect(page.locator(`#dre-demonstrativo [data-dre-row="${key}"] td`).last()).toHaveText(money(actual.dre[key]));
+  }
   await expect(section.locator('[data-icms-mobile-row="icms.potential"] [data-icms-mobile-value]')).toHaveText(money(credit.potential/12));
   await expect(section.locator('[data-icms-mobile-row="icms.potential"] [data-icms-mobile-annual]')).toContainText(money(credit.potential));
   await expect(page.locator('[data-dre-summary="result"]')).toHaveText(money(actual.dre.netProfit/12));
   await page.setViewportSize({width:1440,height:1100});await page.locator('#dre-report-period').selectOption('complete');
   const csv=(await downloadText(page,'#export-dre-csv')).text.split('\r\n'),scope='Apuração do crédito de ICMS';
+  for(const key of omitted){
+    const captured=saved.result.memory.find(row=>row.id===key)!;
+    expect(csv.filter(row=>row.includes('"Detalhamento informativo";')).some(row=>row.includes(`"${captured.label}"`))).toBe(false);
+    expect(csv.some(row=>row.startsWith('"Memória";')&&row.includes(`"${captured.label}"`))).toBe(true);
+  }
   expect(csv.filter(row=>row.startsWith(`"${scope}";`))).toHaveLength(7);
   expect(csv.filter(row=>row.includes(`;"${scope}";"${scope}";`))).toHaveLength(28);
   await page.evaluate(()=>{window.print=()=>{};});
   for(const [period,count] of [['annual',1],['monthly',4],['complete',5]] as const){
     await page.locator('#dre-report-period').selectOption(period);await page.locator('#print-dre').click();
     const printed=page.locator('#dre-print-document');await expect(printed.locator('[data-icms-reconciliation="dre"]')).toHaveCount(count);
+    for(const key of omitted){
+      await expect(printed.locator(`[data-dre-row="${key}"]`)).toHaveCount(0);
+      await expect(printed.locator(`[data-report-memory="${key}"]`)).toHaveCount(1);
+    }
+    for(const key of retained)await expect(printed.locator(`[data-dre-row="${key}"]`)).toHaveCount(count);
     for(const key of keys)await expect(printed.locator(`[data-dre-row="${key}"]`)).toHaveCount(count);
     await expect(printed.locator('.dre-print-annual-table [data-dre-row^="icms."],.dre-print-monthly-table [data-dre-row^="icms."]')).toHaveCount(0);
     if(period==='complete'){

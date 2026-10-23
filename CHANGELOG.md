@@ -1,5 +1,12 @@
 # Histórico de alterações
 
+## [0.34.1] — 2026-10-23
+
+- Retira da DRE as quatro linhas de composição de crédito potencial e utilizado de CBS e IBS, conforme as imagens indicadas. A mesma apresentação atende anual, mensal, CSV e PDF, inclusive para históricos.
+- Preserva as linhas principais de créditos, os valores efetivos do resultado, as demais composições, a memória capturada e o quadro final de ICMS. A alteração visual não recalcula tributos nem modifica snapshots.
+- Sincroniza o teste de nova tentativa do histórico com a conclusão da atualização automática, corrigindo a corrida confirmada no trace do CI; mantém a produção e as verificações de erro, clique explícito, escape de título e sessão.
+- Valida tipos, build e versão/documentação, 295 testes de regras, 172 de Python/PDF/OCR, 64 verificações de integração/projeção e 27 casos direcionados de navegador, sem saltos.
+
 ## [0.34.0] — 2026-10-23
 
 - Exclui todas as naturezas de prefixo 8000 da antecipação e do crédito de ICMS, preservando seus custos. Antecipação V4 conserva 7,32% nas demais compras elegíveis e valida exatamente as regras históricas V1/V2/V3.

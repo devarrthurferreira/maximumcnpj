@@ -19,7 +19,13 @@ test('Simulation history searches, filters, paginates and exposes direct detail 
 test('History handles empty data, escaped titles, server failure and session gate without showing stale items',async({page})=>{
  await session(page);let failure=true;
  await page.route('**/api/v4/simulations?*',r=>failure?r.fulfill({status:503,json:{message:'Falha temporária'}}):r.fulfill({json:{items:[],total:0,page:1,pageSize:20}}));
- await page.goto('/simulations.html');await expect(page.locator('#simulations-error')).toContainText('Falha temporária');failure=false;await page.getByRole('button',{name:'Tentar novamente'}).click();await expect(page.getByRole('heading',{name:'Seu histórico começa aqui.'})).toBeVisible();
+ await page.goto('/simulations.html');
+ // The completed batch refreshes history once. Keep both reads failing until
+ // its callback finishes, so the manual retry cannot race an automatic recovery.
+ await expect(page.locator('#history-reprocess').getByRole('heading',{name:'Verificação concluída',exact:true})).toBeVisible();
+ await expect(page.locator('#simulations-error')).toContainText('Falha temporária');
+ const retry=page.getByRole('button',{name:'Tentar novamente',exact:true});await expect(retry).toBeVisible();
+ failure=false;await retry.click();await expect(page.getByRole('heading',{name:'Seu histórico começa aqui.'})).toBeVisible();
  await page.route('**/api/v4/simulations?*',r=>r.fulfill({json:{items:[{...item,title:'<img src=x onerror=alert(1)>',company:{code:'936',name:'<script>bad</script>'},bestAnnualProfit:null,bestRegimeName:null}],total:1,page:1,pageSize:20}}));await page.reload();await expect(page.locator('.history-title')).toHaveText('<img src=x onerror=alert(1)>');await expect(page.locator('.history-title img')).toHaveCount(0);await expect(page.locator('.history-financials')).toContainText('Sem ranking neste cenário');
  await session(page,null);await page.reload();await expect(page.getByRole('heading',{name:'Entre para continuar'})).toBeVisible();await expect(page.locator('.history-item')).toHaveCount(0);
 });

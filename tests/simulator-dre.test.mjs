@@ -28,6 +28,11 @@ test('apresentação preserva linhas e resultados, sem mutar entradas ou recalcu
  for(const r of input.result.regimes)for(const [key] of dreRows(input.result)){
   assert.equal(find(p,key).values[r.id],r.dre[key]);near(find(p,key).monthlyValues[r.id][0],r.dre[key]/12);
  }
+ for(const tax of ['cbs','ibs']){
+  assert.deepEqual(p.details.find(group=>group.key===tax+'Credits').rows.map(row=>row.key),['debit','due','balance'].map(field=>tax+'.'+field));
+  for(const field of ['potential','used'])assert.equal(find(p,tax+'.'+field),undefined);
+ }
+ assert.deepEqual(p.report.memory,input.result.memory);
  for(const row of allRows(p)){assert.equal(row.monthlyValues.actual.length,12);assert(Array.isArray(row.notes));assert(Array.isArray(row.sourceRefs));}
  assert.deepEqual(input,before);
 });
@@ -200,9 +205,12 @@ test('composição usa grupos efetivos e base congelada de serviços, com ajuste
 
 test('créditos globais só aparecem nos regimes aplicáveis e nunca aumentam o lucro novamente',()=>{
  const input=fixture(),p=buildDrePresentation(input);
- assert.equal(find(p,'cbs.used').values.pure,null);assert.match(find(p,'cbs.used').reasonByRegime.pure,/DAS/);
+ assert.equal(find(p,'cbs.due').values.pure,null);assert.match(find(p,'cbs.due').reasonByRegime.pure,/DAS/);
  assert.equal(find(p,'icms.used').values.hybrid,null);
- for(const id of ['hybrid','presumed','actual'])near(find(p,'cbs.used').values[id],input.result.credits.cbs.used);
+ for(const id of ['hybrid','presumed','actual'])for(const tax of ['cbs','ibs']){
+  near(find(p,tax+'.due').values[id],input.result.credits[tax].due);
+  near(find(p,tax+'Used').values[id],input.result.credits[tax].used);
+ }
  near(find(p,'icms.used').values.actual,input.result.regimes[3].dre.icmsUsed);
  const outside={...input.engineInput,icmsOutside:true,salesRevenue:1000,regularPurchases:5000};
  outside.credits={...outside.credits,regular:{...outside.credits.regular,base:5000}};
@@ -212,7 +220,7 @@ test('créditos globais só aparecem nos regimes aplicáveis e nunca aumentam o 
  assert(find(q,'icms.balance').values.pure>0);
  assert.equal(find(q,'icms.used').informative,true);
  const broken=structuredClone(input);broken.result.credits.cbs.used+=1;
- assert.equal(find(buildDrePresentation(broken),'cbs.used').values.actual,null);
+ assert.equal(find(buildDrePresentation(broken),'cbs.due').values.actual,null);
 });
 
 test('IRPJ normal/adicional usa somente memória anual única, válida e conciliada',()=>{
@@ -234,7 +242,7 @@ test('IRPJ normal/adicional usa somente memória anual única, válida e concili
 test('legado sem DIFAL ou detalhes conserva totais e usa indisponível, sem zeros fabricados',()=>{
  const {draft}=fixture(),result=calculateSimulation(draft);delete result.memory;delete result.credits;
  const p=buildDrePresentation({result});assert.equal(find(p,'difal'),undefined);
- for(const key of ['serviceReport','serviceAdjustment','salesCpfCents','irpjBasic','cbs.used'])assert.equal(find(p,key).values.actual,null,key);
+ for(const key of ['serviceReport','serviceAdjustment','salesCpfCents','irpjBasic','cbs.due'])assert.equal(find(p,key).values.actual,null,key);
  assert.equal(find(p,'revenue').values.actual,result.regimes[3].dre.revenue);
  assert.notEqual(find(p,'revenueDeductions').values.actual,null);
 });
