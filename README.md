@@ -26,6 +26,8 @@ Com Node 22 e MongoDB descartável: tipos, build e versão/documentação confer
 
 O fluxo real usa doze competências sintéticas: **R$ 3.310.000,00 de receita bruta − R$ 10.000,00 de devoluções = R$ 3.300.000,00**, incluindo janeiro de R$ 550 mil. Simples Puro e Híbrido permanecem disponíveis; o DAS puro é R$ 384.600,00; o anual concilia com a soma dos meses e o DIFAL desmarcado fica zerado. A verificação inclui autenticação, importação, salvamento, reabertura em nova sessão, versões com ICMS/ISS dentro e fora do DAS, CSV e os três formatos de PDF. O histórico pendente conserva todos os itens da memória na tela, mas oculta valores derivados sem confirmação, inclusive ao selecionar um mês válido. PDFs e tela de 320 px foram inspecionados visualmente.
 
+Os jobs de navegador usam `ubuntu-24.04`, versão suportada pelo Playwright 1.55.1 fixado no projeto. A imagem móvel `ubuntu-latest` passou a selecionar Ubuntu 26.04 e impediu a instalação do Chromium no CI; a correção fixa o ambiente sem remover etapas de validação.
+
 ### Referências conferidas
 
 - [LC 123/2006 — arts. 3º, 13-A, 18 e 20](https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp123.htm).

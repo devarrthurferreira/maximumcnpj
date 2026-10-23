@@ -10,6 +10,7 @@
 - DRE abre em Anual e conserva a alternância Mensal. PDF e CSV oferecem relatório completo, somente anual ou somente mensal, sempre para os quatro regimes; completo traz anual primeiro, meses, fechamento da receita, diagnósticos, premissas, memória e referências capturadas.
 - Mostra cobertura parcial, competências de origem e ano do cenário, sem inventar meses nem recalcular históricos. Motores `1.8.0-simples-revenue-context` e revisão vinculada `SIMPLES_REVENUE_CONTEXT_2026_10_V8` preservam os originais.
 - Validação: 278 testes de regras, 112 verificações de integração/projeção/competências e 171 Python/PDF/OCR aprovados. Navegador: 166 testes na rodada completa e 21 na conferência final direcionada, incluindo a nova regressão da memória histórica. Fluxo real de R$ 3,3 milhões, três PDFs, CSV, nova sessão e versões dentro/fora do DAS conferidos; tipos, build, versão e inspeção visual aprovados.
+- Fixa os jobs de navegador no Ubuntu 24.04, compatível com o Playwright 1.55.1 instalado. Corrige a falha de preparação do Chromium causada pela migração de `ubuntu-latest` para Ubuntu 26.04, mantendo as verificações obrigatórias.
 
 ## [0.32.2] — 2026-10-23
 
