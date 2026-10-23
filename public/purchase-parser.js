@@ -4,6 +4,7 @@ import {documentKind} from './lookup-domain.js';
 import {calculateDifal, normalizeUf, salesOperation, summarizeDifal, DIFAL_VERSION, DIFAL_PREVIOUS_VERSION, isDifalVersion} from './difal.js';
 import {classifyOperationNature, normalizeOperationNature, OPERATION_CATALOG_VERSION} from './operation-catalog.js';
 import {ANTICIPATION_VERSION, isAnticipationVersion, calculateAnticipation, summarizeAnticipation} from './icms-anticipation.js';
+import {summarizePurchaseSelection} from './purchase-selection.js';
 
 export function decimal(value, places, field) {
   if (typeof value === 'number') {
@@ -212,7 +213,10 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   if (!errors.length && rows.length && net) {
     try { period = fiscalPeriod(rows); } catch (error) { errors.push({line:headerIndex + 1, message:error.message}); }
   }
-  return {...(type === 'SALES' ? {difal:difalEnabled ? summarizeDifal(rows, options.issuerUf, difalVersion) : null} : {anticipation:anticipationEnabled ? summarizeAnticipation(rows, options.issuerUf, anticipationVersion) : null}), rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, balanceCents:type === 'SALES' ? balanceCents : totalCents, operations:type === 'SALES' ? operations : null, components, period, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
+  return {...(type === 'SALES' ? {difal:difalEnabled ? summarizeDifal(rows, options.issuerUf, difalVersion) : null} : {
+    anticipation:anticipationEnabled ? summarizeAnticipation(rows, options.issuerUf, anticipationVersion) : null,
+    purchaseSelection:summarizePurchaseSelection(rows,{origin:'PREVIEW',includeGroups:false,calculationVersion:version})
+  }), rows, errors, repairs, repairedCount:repairs.length, ignored, uniqueCnpjs:unique.size, nonCnpjLines, totalCents, balanceCents:type === 'SALES' ? balanceCents : totalCents, operations:type === 'SALES' ? operations : null, components, period, reportType:type, calculationVersion:version, formula:net ? 'Q - Y + AA - AB' : 'Q'};
 }
 
 export function decodePurchaseCsv(buffer, encoding = 'auto') {

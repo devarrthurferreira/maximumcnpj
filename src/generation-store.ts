@@ -2,13 +2,15 @@ import { normalizeUf } from './difal.ts';
 import { randomUUID } from 'node:crypto';
 import { collection, scope, audit } from './store.ts';
 import type { Doc } from './store.ts';
-import { need, text, integer } from './security.ts';
+import { AppError, need, text, integer } from './security.ts';
 import { VERSION, MAX_ROWS } from './domain.ts';
 import { write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { createLookup } from './lookup-jobs.ts';
 import { PURCHASE_MODE, SALES_MODE } from './purchase-domain.ts';
 import { assertGenerationNotDeleted, generationDeletion, reserveGenerationDeletion, reserveDeletedLookups } from './generation-deletion.ts';
+import { parseDifalPolicy } from '../public/simulator-engine.js';
+import type { DifalPolicy } from '../public/simulator-engine.js';
 
 const PAGE_SIZE = 20;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -21,7 +23,22 @@ const JOB_PROJECTION = {
 const REPORT_TYPES = ['PURCHASES', 'SALES'] as const;
 type ReportType = typeof REPORT_TYPES[number];
 type GenerationCompany = {clientId: string; code: string | null; name: string; purchaseJobId: string | null; purchaseJobIds: string[];
-  salesJobId: string | null; salesJobIds: string[]};
+  salesJobId: string | null; salesJobIds: string[]; difalPolicy?: DifalPolicy};
+
+function companyDifalPolicies(value: unknown, clientIds: string[]) {
+  need(Array.isArray(value) && value.length <= clientIds.length, 'Informe as opções de DIFAL somente para as empresas selecionadas.');
+  const policies = new Map<string, DifalPolicy>();
+  for (const entry of value) {
+    need(entry && typeof entry === 'object' && !Array.isArray(entry) &&
+      Object.keys(entry).length === 2 && Object.hasOwn(entry, 'clientId') && Object.hasOwn(entry, 'difalPolicy'),
+    'Informe a empresa e as opções de DIFAL, sem campos adicionais.');
+    const clientId = uuid(entry.clientId);
+    need(clientIds.includes(clientId) && !policies.has(clientId), 'As opções de DIFAL devem corresponder a uma única empresa selecionada.');
+    try { policies.set(clientId, parseDifalPolicy(entry.difalPolicy)); }
+    catch (error) { throw new AppError(400, 'VALIDATION', error instanceof Error ? error.message : 'Opções de DIFAL inválidas.'); }
+  }
+  return policies;
+}
 
 function requiredReports(value: unknown, legacy = false): ReportType[] {
   if (value === undefined) return legacy ? ['PURCHASES'] : [...REPORT_TYPES];
@@ -40,6 +57,10 @@ function validateRecord(generation: Doc) {
   'Geração com empresas inconsistentes.', 409, 'GENERATION_INCONSISTENT');
   const linkedIds: string[] = [];
   for (const company of generation.companies as GenerationCompany[]) {
+    if (Object.hasOwn(company, 'difalPolicy')) {
+      try { company.difalPolicy = parseDifalPolicy(company.difalPolicy); }
+      catch { need(false, 'Geração com opções de DIFAL inconsistentes.', 409, 'GENERATION_INCONSISTENT'); }
+    }
     // v0.7 generations only persisted purchase slots.
     if (company.salesJobId === undefined && company.salesJobIds === undefined) {
       company.salesJobId = null;
@@ -120,15 +141,21 @@ export async function generationHistory(page: number) {
 
 export async function createGeneration(actor: LookupActor, input: any) {
   write(actor);
+  need(input && typeof input === 'object' && !Array.isArray(input) &&
+    Object.keys(input).every(key => ['generationId', 'clientIds', 'requiredReports', 'companyDifalPolicies'].includes(key)),
+  'Informe os dados da geração, sem campos adicionais.');
   const id = uuid(input.generationId), reports = requiredReports(input.requiredReports);
   await assertGenerationNotDeleted(id);
   need(Array.isArray(input.clientIds) && input.clientIds.length >= 1 && input.clientIds.length <= 50, 'Selecione de 1 a 50 empresas.');
   const clientIds = input.clientIds.map(uuid) as string[];
   need(new Set(clientIds).size === clientIds.length, 'A mesma empresa não pode ser selecionada duas vezes.');
+  const policies = Object.hasOwn(input, 'companyDifalPolicies') ? companyDifalPolicies(input.companyDifalPolicies, clientIds) : new Map<string, DifalPolicy>();
   const c = await generations();
   const sameInput = (old: Doc) => {
     validateRecord(old);
-    need(old.createdBy === actor._id && old.requiredReports.join(',') === reports.join(',') && old.companies.length === clientIds.length && old.companies.every((company: GenerationCompany) => clientIds.includes(company.clientId)),
+    need(old.createdBy === actor._id && old.requiredReports.join(',') === reports.join(',') && old.companies.length === clientIds.length &&
+      old.companies.every((company: GenerationCompany) => clientIds.includes(company.clientId) &&
+        JSON.stringify(company.difalPolicy) === JSON.stringify(policies.get(company.clientId))),
       'Identificador já utilizado por outra geração.', 409, 'GENERATION_EXISTS');
   };
   const existing = await c.findOne(scope({_id: id}));
@@ -140,7 +167,8 @@ export async function createGeneration(actor: LookupActor, input: any) {
   const generation = {_id: id, ...scope(), createdBy: actor._id, createdAt: now, updatedAt: now, version: VERSION, requiredReports: reports,
     companies: clientIds.map(clientId => {
       const client = companyById.get(clientId)!;
-      return {clientId, code: client.code || null, name: client.name, purchaseJobId: null, purchaseJobIds: [], salesJobId: null, salesJobIds: []};
+      return {clientId, code: client.code || null, name: client.name, purchaseJobId: null, purchaseJobIds: [], salesJobId: null, salesJobIds: [],
+        ...(policies.has(clientId) ? {difalPolicy: policies.get(clientId)!} : {})};
     })};
   try { await c.insertOne(generation); }
   catch (error: any) {

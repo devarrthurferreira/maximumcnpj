@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.31.0] — 2026-10-23
+
+- Resumo de compras/entradas considera somente naturezas classificadas como COMPRAS e serviços 8000; exclui devoluções, outras operações e naturezas não classificadas.
+- Classificação usa os quatro primeiros dígitos do campo Natureza do relatório de entradas, preservando o catálogo de 619 códigos fornecido e a fórmula financeira original.
+- Visão derivada `purchaseSelection` (`PURCHASE_NATURES_V1`) concilia total bruto, selecionado e excluído por natureza. Totais e percentuais do resumo identificam sua base selecionada; todas as linhas permanecem na consulta e no CSV, com seleção, motivo e valor considerado, sem modificar o snapshot. Legado sem evidência de natureza suficiente fica indisponível, sem zero confirmado.
+- Opções de DIFAL dos quatro regimes aparecem em modal após escolher a empresa e antes dos relatórios. A política é salva por empresa em `generation.companies[].difalPolicy` e encaminhada em `source.difalPolicy` ao simulador; retomadas mantêm a política original e históricos sem o campo preservam sua ausência.
+- Relatórios de vendas, composição atual da DRE e dados originais preservados. Documentos e dados reais de clientes não são versionados.
+- Validação: tipos, build, versão e diff conferidos; 237 testes de regras, 155 Python/PDF/OCR e todos os comandos de integração com MongoDB descartável aprovados. Navegador: 135 casos únicos aprovados, incluindo reexecução de 10 casos após corrigir a leitura de uma resposta de navegação no teste. Paridade Node/Python em 1.454 casos e 16.122 linhas; PDFs e telas desktop/mobile conferidos. Revisão corrigiu paginação do consolidado, precedência de opções na cópia de legado e bloqueio de identidade documental divergente.
+
 ## [0.30.0] — 2026-10-22
 
 - Opção independente de DIFAL para Simples puro, Simples híbrido, Lucro Presumido e Lucro Real, persistida em `draft.difalPolicy` com o contrato `DIFAL_SCENARIOS_V1` e mapa booleano `enabled`.

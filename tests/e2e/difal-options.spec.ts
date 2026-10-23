@@ -17,16 +17,17 @@ const source:any={generationId:generation,clientId:client,company:{code:'OPCOES'
   purchases:{jobId:purchaseId,fileName:'compras.csv',totalCents:150000,formula:'Q - Y + AA - AB',calculationVersion:'NET_V2'},
   sales:{jobId:salesId,fileName:'vendas.csv',totalCents:300000,formula:'Q - Y + AA - AB',calculationVersion:'NET_V2',difal:{...reports[0].difal,baseCents:300000,amountCents:30000,eligibleLines:2}}};
 const blankDraft=()=>({year:2027,salesAnnex:1,serviceAnnex:3,rbt12:100000,values:{salesRevenue:1000,serviceRevenue:0,simplePurchases:0,regularPurchases:500,salaries:0,benefits:0,adminExpenses:0,rent:0,cardExpenses:0}});
-async function mount(page:Page){
+async function mount(page:Page,initialPolicy?:any){
+  const currentSource=initialPolicy?{...source,difalPolicy:initialPolicy}:source;
   const state:{writes:any[];snapshots:Map<string,any>;extraction:any;sourceReads:number}={writes:[],snapshots:new Map(),extraction:null,sourceReads:0};
   await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'difal-options',role:'operator',name:'Teste'}}}));
-  await page.route('**/api/v4/generations/*/simulator?*',r=>{state.sourceReads++;return r.fulfill({json:source});});
+  await page.route('**/api/v4/generations/*/simulator?*',r=>{state.sourceReads++;return r.fulfill({json:currentSource});});
   await page.route('**/api/v4/simulations',r=>{
     const body=r.request().postDataJSON();state.writes.push(body);
     const schedule=body.rbt12ExtractionId?buildRbt12Schedule(state.extraction,reports.map(row=>row.sourceMonth)):null;
     const computed=calculateMonthlySimulation(body.draft,reports,body.monthlyInputs,salesId,schedule);
     const reference=body.rbt12ExtractionId?{...state.extraction,extractionId}:{source:'MANUAL',confirmed:true,rbt12Cents:Math.round(body.draft.rbt12*100)};
-    const saved={...body,...computed,_id:body.simulationId,source,company:source.company,createdAt:'2026-10-22T12:00:00Z',createdBy:{id:'difal-options',name:'Teste'},modelVersion:computed.result.version,
+    const saved={...body,...computed,_id:body.simulationId,source:currentSource,company:source.company,createdAt:'2026-10-22T12:00:00Z',createdBy:{id:'difal-options',name:'Teste'},modelVersion:computed.result.version,
       rbt12Source:body.rbt12ExtractionId?'SIMPLES_SECTION_22':'MANUAL',...(body.rbt12ExtractionId?{rbt12Extraction:reference}:{rbt12Manual:reference}),monthlyDre:buildMonthlyDre(computed.result,2027,reference,source.period)};
     state.snapshots.set(saved._id,saved);return r.fulfill({json:saved});
   });
@@ -42,6 +43,73 @@ async function capturePanel(page:Page,selector:string,path:string){
   await panel.evaluate(element=>window.scrollTo({top:window.scrollY+element.getBoundingClientRect().top-96,behavior:'instant'}));
   await panel.screenshot({path});
 }
+
+const selectedPolicy={version:'DIFAL_SCENARIOS_V1',enabled:{pure:false,hybrid:true,presumed:true,actual:false}};
+const secondClient='a2000000-0000-4000-8000-000000000006';
+async function companySelection(page:Page){
+  const requests:any[]=[];
+  await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'difal-options',role:'operator',name:'Teste'}}}));
+  await page.route('**/api/v4/clients',r=>r.fulfill({json:{items:[{_id:client,code:'101',name:'Empresa A sintética',active:true},{_id:secondClient,code:'202',name:'Empresa B sintética',active:true}]}}));
+  await page.route('**/api/v4/generations',r=>{requests.push(r.request().postDataJSON());return r.fulfill({status:requests.length===1?422:503,json:{message:requests.length===1?'Revise a seleção sintética.':'Falha temporária sintética.'}});});
+  return requests;
+}
+
+test('DIFAL aparece após escolher a empresa, mantém escolhas separadas e congela o retry',async({page},info)=>{
+  const requests=await companySelection(page);await page.goto('/generations.html');await page.locator('#generation-search').fill('Empresa');
+  await page.locator(`[data-select-company="${client}"]`).click();
+  await expect(page.locator('#generation-difal-pure')).toBeFocused();
+  for(const id of ['pure','hybrid','presumed','actual'])await expect(page.locator(`#generation-difal-${id}`)).toBeChecked();
+  expect(await page.locator('.generation-difal-options').evaluate(element=>!!(element.compareDocumentPosition(document.querySelector('#generation-reports-heading')!)&Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await page.locator('#generation-difal-pure').uncheck();await page.locator('#generation-difal-actual').uncheck();
+  for(const width of [1280,390,320]){
+    await page.setViewportSize({width,height:900});await page.locator('#generation-reports-dialog').evaluate(element=>element.scrollTop=0);
+    expect(await page.locator('#generation-reports-dialog').evaluate(element=>element.scrollWidth<=element.clientWidth+1)).toBe(true);
+    await page.screenshot({path:info.outputPath(`difal-escolha-empresa-${width}.png`)});
+  }
+  await page.locator('#generation-reports-back').click();await page.locator(`[data-select-company="${secondClient}"]`).click();
+  for(const id of ['pure','hybrid','presumed','actual'])await expect(page.locator(`#generation-difal-${id}`)).toBeChecked();
+  await page.locator('#generation-difal-hybrid').uncheck();await page.locator('#generation-reports-back').click();
+  await page.locator(`[data-select-company="${client}"]`).click();await expect(page.locator('#generation-difal-pure')).not.toBeChecked();await expect(page.locator('#generation-difal-actual')).not.toBeChecked();await expect(page.locator('#generation-difal-hybrid')).toBeChecked();
+  expect(requests).toHaveLength(0);await page.locator('#generation-create').click();await expect(page.locator('#generation-reports-error')).toContainText('Revise a seleção');
+  expect(requests[0].companyDifalPolicies).toEqual([{clientId:client,difalPolicy:selectedPolicy}]);await expect(page.locator('#generation-difal-pure')).toBeEnabled();
+  await page.locator('#generation-reports-back').click();await page.locator(`[data-select-company="${secondClient}"]`).click();await expect(page.locator('#generation-difal-hybrid')).not.toBeChecked();
+  await page.locator('#generation-create').click();await expect(page.locator('#generation-reports-error')).toContainText('Falha temporária');
+  for(const id of ['pure','hybrid','presumed','actual'])await expect(page.locator(`#generation-difal-${id}`)).toBeDisabled();
+  await page.locator('#generation-create').click();await expect.poll(()=>requests.length).toBe(3);
+  expect(requests[2]).toEqual(requests[1]);expect(requests[1].generationId).not.toBe(requests[0].generationId);
+  expect(requests[1].companyDifalPolicies).toEqual([{clientId:secondClient,difalPolicy:{version:'DIFAL_SCENARIOS_V1',enabled:{pure:true,hybrid:false,presumed:true,actual:true}}}]);
+});
+
+test('seleção de várias empresas mantém DIFAL independente e envia apenas as empresas selecionadas',async({page})=>{
+  const requests=await companySelection(page);await page.goto('/generations.html?multiple=1');
+  await page.locator(`.generation-company-option input[value="${client}"]`).check();await page.locator(`#generation-difal-${client}-pure`).uncheck();
+  await page.locator(`.generation-company-option input[value="${secondClient}"]`).check();await page.locator(`#generation-difal-${secondClient}-actual`).uncheck();
+  await expect(page.locator(`#generation-difal-${secondClient}-pure`)).toBeChecked();await expect(page.locator(`#generation-difal-${client}-actual`)).toBeChecked();
+  await page.locator(`.generation-company-option input[value="${client}"]`).uncheck();await expect(page.locator(`[data-company-difal="${client}"]`)).toHaveCount(0);
+  await page.locator('#generation-create').click();await expect(page.locator('#generation-error')).toContainText('Revise a seleção');
+  expect(requests[0].clientIds).toEqual([secondClient]);expect(requests[0].companyDifalPolicies).toEqual([{clientId:secondClient,difalPolicy:{version:'DIFAL_SCENARIOS_V1',enabled:{pure:true,hybrid:true,presumed:true,actual:false}}}]);
+  await page.locator(`.generation-company-option input[value="${client}"]`).check();await expect(page.locator(`#generation-difal-${client}-pure`)).not.toBeChecked();
+  await page.setViewportSize({width:320,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await page.locator('#generation-create').click();await expect(page.locator('#generation-error')).toContainText('Falha temporária');
+  await expect(page.locator('[data-generation-difal-regime]:enabled')).toHaveCount(0);await page.locator('#generation-create').click();await expect.poll(()=>requests.length).toBe(3);
+  expect(requests[2]).toEqual(requests[1]);expect(requests[1].companyDifalPolicies).toHaveLength(2);expect(requests[1].companyDifalPolicies[1].difalPolicy.enabled.pure).toBe(false);
+});
+
+test('opções iniciais da empresa chegam ao extrato, ao rascunho e à versão salva sem substituir ajustes',async({page})=>{
+  const initial=structuredClone(selectedPolicy),state=await mount(page,initial);
+  await page.goto(`/simulator.html?generation=${generation}&client=${client}&guided=1&step=extrato`);
+  await expect(page.locator('[data-guided-difal-summary]')).toContainText('Excluído em: Simples puro, Lucro Real');await expect(page.locator('#simulator-form')).toBeHidden();
+  await page.locator('#guided-rbt12-skip').click();await expect(page.locator('.sim-difal-review')).not.toHaveAttribute('open','');await expect(page.locator('[data-difal-selection-summary]')).toContainText('Excluído em: Simples puro, Lucro Real');
+  await page.locator('.sim-difal-review>summary').click();await expect(page.locator('#difal-enabled-pure')).not.toBeChecked();await expect(page.locator('#difal-enabled-hybrid')).toBeChecked();
+  await page.locator('#rbt12').fill('3600000');await expect(page.locator('[data-difal-option="pure"]')).toHaveAttribute('data-state','SUBLIMIT');await expect(page.locator('#difal-enabled-pure')).not.toBeChecked();
+  await page.locator('#rbt12').fill('100000');await page.locator('#rbt12-manual-confirm').check();await page.locator('#difal-enabled-hybrid').uncheck();
+  await page.reload();await expect(page.locator('#simulator-form')).toBeVisible();await expect(page.locator('[data-difal-selection-summary]')).toContainText('Excluído em: Simples puro, Simples híbrido, Lucro Real');
+  await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('salva');
+  const saved=state.snapshots.get(state.writes[0].simulationId),expected={version:'DIFAL_SCENARIOS_V1',enabled:{pure:false,hybrid:false,presumed:true,actual:false}};
+  expect(saved.draft.difalPolicy).toEqual(expected);expect(initial).toEqual(selectedPolicy);expect(saved.result.regimes.map((row:any)=>row.dre.difal)).toEqual([0,0,-300,0]);
+  const frozen=JSON.stringify(saved);await page.goto(`/simulator.html?simulation=${saved._id}`);await expect(page.locator('#sim-difal-options input')).toHaveCount(0);await expect(page.locator('[data-difal-option="hybrid"]')).toContainText('Não incluído por escolha');
+  await page.locator('#create-version').click();await expect(page.locator('#difal-enabled-hybrid')).not.toBeChecked();await expect(page.locator('#difal-enabled-pure')).not.toBeChecked();expect(JSON.stringify(saved)).toBe(frozen);expect(state.writes).toHaveLength(1);
+});
 
 test('opções independentes de DIFAL persistem no rascunho e alterações exigem nova simulação',async({page},info)=>{
   const state=await mount(page);await open(page);
@@ -123,8 +191,8 @@ test('extração com RBT12 divergente das receitas mensais não preenche nem con
 });
 
 test('histórico sem opções registradas mostra valores congelados sem inferir escolhas',async({page})=>{
-  const state=await mount(page),draft=blankDraft(),monthlyInputs=reports.map(row=>baselineMonth(row));
-  const computed=calculateMonthlySimulation(draft,reports,monthlyInputs,salesId),snapshot:any={...computed,_id:'a2000000-0000-4000-8000-000000000005',draft,monthlyInputs,monthlyGroups:monthlyInputs[0].groups,source,company:source.company,reportMonths:2,createdAt:'2026-10-22T12:00:00Z',createdBy:{id:'legacy',name:'Teste'},rbt12Source:'MANUAL',rbt12Manual:{source:'MANUAL',confirmed:true,rbt12Cents:10000000},modelVersion:'1.5.0-cpf-cnpj'};
+  const state=await mount(page,selectedPolicy),draft=blankDraft(),monthlyInputs=reports.map(row=>baselineMonth(row));
+  const computed=calculateMonthlySimulation(draft,reports,monthlyInputs,salesId),snapshot:any={...computed,_id:'a2000000-0000-4000-8000-000000000005',generationId:generation,clientId:client,draft,monthlyInputs,monthlyGroups:monthlyInputs[0].groups,source,company:source.company,reportMonths:2,createdAt:'2026-10-22T12:00:00Z',createdBy:{id:'legacy',name:'Teste'},rbt12Source:'MANUAL',rbt12Manual:{source:'MANUAL',confirmed:true,rbt12Cents:10000000},modelVersion:'1.5.0-cpf-cnpj'};
   delete snapshot.result.difalPolicy;
   for(const regime of snapshot.result.regimes)delete regime.difalApplication;
   for(const row of snapshot.result.monthlyResults){delete row.result.difalPolicy;for(const regime of row.result.regimes)delete regime.difalApplication;}
@@ -134,4 +202,6 @@ test('histórico sem opções registradas mostra valores congelados sem inferir 
   await expect(page.locator('[data-difal-legacy]')).toContainText('não registrava opções de DIFAL');await expect(page.locator('#sim-difal-options input')).toHaveCount(0);
   await page.locator('#dre-month').selectOption('1');await expect(page.locator('[data-difal-legacy]')).toBeVisible();
   expect(JSON.stringify(snapshot)).toBe(before);expect(state.sourceReads).toBe(0);expect(state.writes).toHaveLength(0);
+  await page.locator('#create-version').click();await expect(page.locator('#difal-enabled-pure')).not.toBeChecked();await expect(page.locator('#difal-enabled-actual')).not.toBeChecked();await expect(page.locator('#difal-enabled-hybrid')).toBeChecked();
+  expect(JSON.stringify(snapshot)).toBe(before);expect(state.sourceReads).toBe(1);expect(state.writes).toHaveLength(0);
 });

@@ -121,6 +121,9 @@
 .sim-difal-options.is-readonly { padding:22px; }
 .sim-difal-options h4 { margin:0 0 8px; font-size:14px; }
 .sim-difal-choice { font-size:12px; }
+.sim-difal-selection-summary,.sim-guided-difal-summary { font-size:12px;line-height:1.7;padding:12px 14px;background:#faf6f8;border:1px solid #eadfe4;border-radius:9px; }
+.sim-difal-review>summary { cursor:pointer;font-size:13px;font-weight:600;line-height:1.5;padding:10px 0;color:#750207; }
+.sim-difal-review>summary:focus-visible { outline:3px solid #b57b35;outline-offset:3px; }
 @media (max-width:1100px) { .sim-difal-options-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:500px) {
   .sim-difal-options-grid { grid-template-columns:1fr; gap:10px; }

@@ -1,4 +1,6 @@
 import {test, expect, type Page} from '@playwright/test';
+import {digits} from '../../src/domain.ts';
+import {summarizePurchaseSelection} from '../../src/purchase-selection.ts';
 
 const clientId='00000000-0000-4000-8000-000000000201';
 const generationId='00000000-0000-4000-8000-000000000202';
@@ -8,7 +10,15 @@ const company={_id:clientId,code:'201',name:'EMPRESA SINTÉTICA DE RECUPERAÇÃO
 const baseJob={_id:jobId,generationId,clientId,clientCode:company.code,clientName:company.name,mode:'PURCHASES_V1',status:'COMPLETED',fileName:'recuperacao-sintetica.csv',calculationVersion:'NET_V2',received:25,uploaded:30,expectedRows:30,summary:{unique:25,lines:30},createdAt:'2026-10-09T12:00:00Z'};
 const guidedUrl=`/purchases.html?generation=${generationId}&client=${clientId}&job=${jobId}&guided=1`;
 function summary(job=baseJob, unknown=true) {
+  // Every synthetic source line is a canonical purchase; recovery changes only the provider status.
+  const rows=Array.from({length:29},(_,index)=>{
+    const base='12345678'+String(index%25+1).padStart(4,'0'),totalCents=index===28?6000:3000;
+    return {document:base+digits(base),natureCode:'1102',status:unknown?'NAO_CONFIRMADO':'OPTANTE',grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents};
+  });
+  rows.push({document:'12345678900',natureCode:'1102',status:'NAO_OPTANTE',grossCents:10000,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:10000});
+  const purchaseSelection=summarizePurchaseSelection(rows,{includeGroups:true,calculationVersion:'NET_V2'});
   return {job,calculationVersion:'NET_V2',components:{grossCents:100000,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:100000},
+    purchaseSelection,
     totals:{lines:30,uniqueDocuments:26,uniqueCnpjs:25,nonCnpjDocumentCount:1,nonCnpjLines:1,totalCents:100000},
     groups:[{status:'NAO_CONFIRMADO',count:unknown?25:0}],
     reportingGroups:[{status:'OPTANTE',count:unknown?0:25,lines:unknown?0:29,totalCents:unknown?0:90000,countPercent:unknown?0:96.15,valuePercent:unknown?0:90},
@@ -40,6 +50,9 @@ test('Guided failed consultation warns from saved totals, exposes reasons and pr
   await expect(page.locator('.purchase-lookup-warning')).toContainText('não comprova que estejam fora do Simples');
   await expect(page.locator('.purchase-group[data-status="NAO_OPTANTE"]')).toContainText('1.000,00');
   await expect(page.locator('.purchase-group[data-status="NAO_OPTANTE"]')).toContainText('Inclui 25 não confirmado(s)');
+  await expect(page.locator('[data-purchase-considered-total]')).toContainText('1.000,00');
+  await expect(page.locator('[data-purchase-original-total]')).toContainText('1.000,00');
+  await expect(page.locator('[data-purchase-excluded-total]')).toContainText('0,00');
   await expect(page.locator('[data-diagnostics]')).toContainText('25 CNPJ(s): Fonte indisponível');
   await expect(page.getByRole('button',{name:'Consultar CNPJs novamente'})).toBeVisible();
   await expect(page.locator('#lookup-live table,#lookup-live select')).toHaveCount(0);
@@ -54,7 +67,7 @@ test('Guided failed consultation warns from saved totals, exposes reasons and pr
 
 test('Historical saved unknowns remain a warning even when the diagnostics endpoint is unavailable',async({page})=>{
   await session(page);
-  const old=summary();delete (old as any).groups;
+  const old=summary();delete (old as any).groups;delete (old as any).purchaseSelection;
   await page.route(`**/api/v4/purchases/${jobId}/summary`,r=>r.fulfill({json:old}));
   await page.route(`**/api/v4/lookups/${jobId}/progress?*`,r=>r.fulfill({status:503,json:{message:'Acompanhamento temporariamente indisponível.'}}));
   await page.goto(guidedUrl);
@@ -62,6 +75,9 @@ test('Historical saved unknowns remain a warning even when the diagnostics endpo
   await expect(page.locator('.purchase-lookup-warning')).toContainText('Nenhum CNPJ teve o enquadramento confirmado');
   await expect(page.locator('#lookup-live [data-error]')).toContainText('temporariamente indisponível');
   await expect(page.locator('.purchase-guided-success')).toHaveCount(0);
+  await expect(page.locator('[data-purchase-considered-total]')).toHaveText('Indisponível');
+  await expect(page.locator('[data-purchase-original-total]')).toContainText('1.000,00');
+  await expect(page.locator('.purchase-group')).toHaveCount(0);
 });
 
 test('Rechecking retries one request identity, opens a separate report and starts consultation automatically',async({page})=>{
@@ -86,7 +102,7 @@ test('Rechecking retries one request identity, opens a separate report and start
   await page.getByRole('button',{name:'Consultar CNPJs novamente'}).click();
   await expect(page).toHaveURL(new RegExp(`job=${freshId}`));
   await expect.poll(()=>processCalls).toBe(1);
-  await expect(page.getByRole('heading',{name:'Total de compras do relatório'})).toBeVisible();
+  await expect(page.locator('.purchase-hero').getByRole('heading',{name:'Compras consideradas',exact:true})).toBeVisible();
   expect(ids).toHaveLength(2);expect(ids[0]).toMatch(/^[a-f0-9-]{36}$/);expect(ids[1]).toBe(ids[0]);
   expect(new URL(page.url()).searchParams.has('generation')).toBe(false);
   expect(new URL(page.url()).searchParams.has('auto')).toBe(false);
@@ -130,5 +146,5 @@ for (const rejection of [{status:422,code:'VALIDATION'},{status:409,code:'RECHEC
   await page.getByRole('button',{name:'Consultar CNPJs novamente'}).click();
   await expect(page).toHaveURL(new RegExp(`job=${freshId}`));
   expect(ids).toHaveLength(2);expect(ids[1]).not.toBe(ids[0]);
-  await expect(page.getByRole('heading',{name:'Total de compras do relatório'})).toBeVisible();
+  await expect(page.locator('.purchase-hero').getByRole('heading',{name:'Compras consideradas',exact:true})).toBeVisible();
 });

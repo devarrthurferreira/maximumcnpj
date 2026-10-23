@@ -5,13 +5,111 @@ import { database, collection, scope, closeDatabase } from '../src/store.ts';
 import { resetLookupIndexes, getJob, withJob } from '../src/lookup-db.ts';
 import { importCatalog } from '../src/lookup-catalog.ts';
 import { createGeneration, getGeneration, generationHistory, attachGenerationPurchase, attachGenerationSale, withGeneration, deleteGeneration } from '../src/generation-store.ts';
-import { createLookup, uploadLookup, finalizeLookup, cancelLookup, processLookup } from '../src/lookup-jobs.ts';
+import { createLookup, uploadLookup, finalizeLookup, cancelLookup, processLookup, recheckLookup } from '../src/lookup-jobs.ts';
 import { PURCHASE_MODE } from '../src/purchase-domain.ts';
 import { generationDeletion } from '../src/generation-deletion.ts';
 import { purchaseSummary, purchaseHistory } from '../src/purchase-store.ts';
 import { routeV4 } from '../src/lookup-http.ts';
 import { generationSimulator } from '../src/simulator-store.ts';
 import { digits } from '../src/domain.ts';
+import { defaultDifalPolicy } from '../public/simulator-engine.js';
+
+test('MongoDB gerações: DIFAL por empresa, validação estrita, retry imutável e origem do simulador', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
+  const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
+  process.env.MONGODB_DB = 'maximum_generation_policy_test_' + randomUUID().replaceAll('-', '');
+  process.env.WORKSPACE_ID = 'generation_policy_test'; resetLookupIndexes();
+  const actor = {_id: 'tester', role: 'admin', name: 'Teste', email: 'test@example.test'};
+  const errorCode = (code: string) => (error: any) => error.code === code;
+  const mixed = {...defaultDifalPolicy(), enabled: {pure: false, hybrid: true, presumed: false, actual: true}};
+  const excluded = {...defaultDifalPolicy(), enabled: {pure: false, hybrid: false, presumed: false, actual: false}};
+  const createUrl = new URL('https://test/api/v4/generations');
+  try {
+    const catalog = await importCatalog(actor, ['A', 'B', 'C', 'D'].map((name, index) => ({code: String(936 + index), name: `Empresa ${name}`})));
+    const [first, second, third, outside] = catalog.items.map((client: any) => client.id);
+    const input = {generationId: randomUUID(), clientIds: [first, second, third],
+      companyDifalPolicies: [{clientId: first, difalPolicy: mixed}, {clientId: second, difalPolicy: excluded}]};
+    const invalidPolicies = [undefined, null, {}, [null], [{}], [{clientId: first}],
+      [{clientId: first, difalPolicy: mixed, extra: true}], [{clientId: outside, difalPolicy: mixed}],
+      [{clientId: first, difalPolicy: mixed}, {clientId: first, difalPolicy: mixed}],
+      [{clientId: first, difalPolicy: null}], [{clientId: first, difalPolicy: {...mixed, version: 'OTHER'}}],
+      [{clientId: first, difalPolicy: {...mixed, extra: true}}],
+      [{clientId: first, difalPolicy: {...mixed, enabled: {...mixed.enabled, actual: 'false'}}}],
+      [{clientId: first, difalPolicy: {...mixed, enabled: {pure: false}}}],
+      [{clientId: first, difalPolicy: {...mixed, enabled: {...mixed.enabled, unknown: false}}}]];
+    for (const companyDifalPolicies of invalidPolicies) {
+      await assert.rejects(routeV4(actor, 'POST', createUrl, {...input, companyDifalPolicies}), errorCode('VALIDATION'));
+    }
+    await assert.rejects(createGeneration(actor, {...input, difalPolicies: input.companyDifalPolicies}), errorCode('VALIDATION'));
+    assert.equal(await (await collection('generations')).countDocuments(scope()), 0);
+    const copies = await Promise.all([routeV4(actor, 'POST', createUrl, input), createGeneration(actor, input)]) as any[];
+    assert(copies.every(copy => copy._id === input.generationId));
+    const saved = copies[0], generations = await collection('generations');
+    assert.deepEqual(saved.companies[0].difalPolicy, mixed);
+    assert.deepEqual(saved.companies[1].difalPolicy, excluded);
+    assert.equal(Object.hasOwn(saved.companies[2], 'difalPolicy'), false);
+    const original = await generations.findOne(scope({_id: saved._id}));
+    const reordered = {version: mixed.version, enabled: {actual: true, presumed: false, hybrid: true, pure: false}};
+    assert.equal((await createGeneration(actor, {...input, clientIds: [third, second, first],
+      companyDifalPolicies: [{clientId: second, difalPolicy: excluded}, {clientId: first, difalPolicy: reordered}]}))._id, saved._id);
+    for (const companyDifalPolicies of [[], [{clientId: first, difalPolicy: mixed}],
+      [{clientId: first, difalPolicy: defaultDifalPolicy()}, {clientId: second, difalPolicy: excluded}],
+      [{clientId: second, difalPolicy: mixed}, {clientId: first, difalPolicy: excluded}]]) {
+      await assert.rejects(createGeneration(actor, {...input, companyDifalPolicies}), errorCode('GENERATION_EXISTS'));
+    }
+    await assert.rejects(createGeneration(actor, {generationId: saved._id, clientIds: input.clientIds}), errorCode('GENERATION_EXISTS'));
+    const reopened: any = await routeV4({...actor, role: 'viewer'}, 'GET', new URL(`${createUrl}/${saved._id}`), {});
+    assert.deepEqual(reopened.companies.map((company: any) => company.difalPolicy), [mixed, excluded, undefined]);
+    assert.deepEqual((await generationHistory(1)).items[0].companies[0].difalPolicy, mixed);
+    assert.deepEqual(await generations.findOne(scope({_id: saved._id})), original, 'Leituras e retries não alteram a geração salva.');
+
+    const legacyInput = {generationId: randomUUID(), clientIds: [first]};
+    await createGeneration(actor, legacyInput);
+    const legacy = await generations.findOne(scope({_id: legacyInput.generationId}));
+    await createGeneration(actor, legacyInput);
+    await createGeneration(actor, {...legacyInput, companyDifalPolicies: []});
+    await assert.rejects(createGeneration(actor, {...legacyInput, companyDifalPolicies: [{clientId: first, difalPolicy: defaultDifalPolicy()}]}), errorCode('GENERATION_EXISTS'));
+    assert.equal(Object.hasOwn((await getGeneration(legacyInput.generationId)).companies[0], 'difalPolicy'), false);
+    assert.deepEqual(await generations.findOne(scope({_id: legacyInput.generationId})), legacy, 'Retry legado não injeta o padrão explícito.');
+
+    const row = {document: '00000000000191', name: 'Empresa sintética', serviceDate: '2026-08-15', quantity: '1',
+      grossCents: 10000, totalCents: 10000, discountCents: 0, accessoryCents: 0, freightCents: 0, abatementCents: 0, recipientUf: 'SP'};
+    for (const clientId of [first, third]) {
+      for (const sales of [false, true]) {
+        const attachment = await (sales ? attachGenerationSale : attachGenerationPurchase)(actor, saved._id,
+          {clientId, importId: randomUUID(), fileName: sales ? 'vendas.csv' : 'compras.csv', expectedRows: 1, issuerUf: 'MG'});
+        await uploadLookup(actor, attachment.job._id, {offset: 0, rows: [{...row, natureCode: sales ? '6102' : '1102'}]});
+        await finalizeLookup(actor, attachment.job._id);
+        await (await collection('providerControl')).deleteMany({});
+        await processLookup(actor, attachment.job._id, (async () => Response.json({cnpj: row.document, opcao_pelo_simples: false})) as typeof fetch);
+      }
+    }
+    const beforeSource = await generations.findOne(scope({_id: saved._id}));
+    const source = await generationSimulator(saved._id, first), sourceWithoutPolicy = await generationSimulator(saved._id, third);
+    assert.deepEqual(source.difalPolicy, mixed);
+    assert.equal(Object.hasOwn(sourceWithoutPolicy, 'difalPolicy'), false);
+    assert.deepEqual(source.monthlyReports, sourceWithoutPolicy.monthlyReports, 'A opção não modifica bases nem estimativas dos relatórios.');
+    assert.equal(source.sales.difal?.amountCents, 1000);
+    assert.equal(source.monthlyReports[0].anticipation.amountCents, 732);
+    const repeated = await recheckLookup(actor, source.purchases.jobId, {importId: randomUUID()});
+    assert.equal(repeated.generationId, undefined);
+    assert.deepEqual(await generations.findOne(scope({_id: saved._id})), beforeSource, 'Reconsultar o relatório preserva a política da geração original.');
+    source.difalPolicy!.enabled.pure = true;
+    assert.deepEqual((await generationSimulator(saved._id, first)).difalPolicy, mixed);
+    await generations.updateOne(scope({_id: saved._id}), {$set: {'companies.0.difalPolicy.enabled.pure': 'false'}});
+    await assert.rejects(getGeneration(saved._id), errorCode('GENERATION_INCONSISTENT'));
+    await assert.rejects(generationSimulator(saved._id, first), errorCode('GENERATION_INCONSISTENT'));
+    await generations.updateOne(scope({_id: saved._id}), {$set: {'companies.0.difalPolicy': mixed}});
+    process.env.WORKSPACE_ID = 'another_workspace';
+    await assert.rejects(getGeneration(saved._id), errorCode('NOT_FOUND'));
+    await assert.rejects(generationSimulator(saved._id, first), errorCode('NOT_FOUND'));
+    assert.equal((await generationHistory(1)).total, 0);
+    process.env.WORKSPACE_ID = 'generation_policy_test';
+  } finally {
+    await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
+    if (oldDb === undefined) delete process.env.MONGODB_DB; else process.env.MONGODB_DB = oldDb;
+    if (oldWs === undefined) delete process.env.WORKSPACE_ID; else process.env.WORKSPACE_ID = oldWs;
+  }
+});
 
 test('MongoDB gerações: empresas, retomada, concorrência, conclusão conjunta e isolamento', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
   const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;

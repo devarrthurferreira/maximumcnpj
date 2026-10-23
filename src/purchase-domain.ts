@@ -4,6 +4,7 @@ import { normalizeCnpj, csvEncode } from './domain.ts';
 import { documentKind } from './lookup-domain.ts';
 import { need } from './security.ts';
 import { classifyOperationNature, normalizeOperationNature, OPERATION_CATALOG_VERSION, type CatalogOperation } from './operation-catalog.ts';
+import { PURCHASE_SELECTION_VERSION, type PurchaseSelectionSummary } from './purchase-selection.ts';
 
 export const PURCHASE_MODE = 'PURCHASES_V1';
 export const SALES_MODE = 'SALES_V1';
@@ -178,7 +179,13 @@ export function moneyText(cents: number): string {
   const sign = cents < 0 ? '-' : '', value = Math.abs(cents);
   return `${sign}${Math.floor(value / 100)},${String(value % 100).padStart(2, '0')}`;
 }
-type FinancialCsvView = {anticipation?:AnticipationSummary|null;anticipationOrigin?:AnticipationOrigin;difal?:DifalSummary|null;difalOrigin?:DifalOrigin};
+type FinancialCsvView = {anticipation?:AnticipationSummary|null;anticipationOrigin?:AnticipationOrigin;difal?:DifalSummary|null;difalOrigin?:DifalOrigin;purchaseSelection?:PurchaseSelectionSummary};
+function selectionCsvFields(row: any, view: FinancialCsvView) {
+  const selection = row.purchaseSelection;
+  if (!view.purchaseSelection?.available || !selection?.available)
+    return ['', '', 'Indisponível', 'Natureza ausente — reimporte as compras', PURCHASE_SELECTION_VERSION, 'UNAVAILABLE'];
+  return [moneyText(selection.consideredCents), selection.selectedLines, selection.eligible ? 'SIM' : 'NÃO', selection.reason, PURCHASE_SELECTION_VERSION, view.purchaseSelection.origin];
+}
 function anticipationCsvFields(job:any,row:any,view:FinancialCsvView) {
   const version=view.anticipation?.version||(isAnticipationVersion(job.anticipationVersion)?job.anticipationVersion:undefined);
   const origin=view.anticipationOrigin||(isAnticipationVersion(job.anticipationVersion)?'IMPORTED':'UNAVAILABLE');
@@ -202,11 +209,11 @@ function difalCsvFields(job:any,row:any,view:FinancialCsvView) {
 export function purchaseCsv(job: any, rows: any[], view:FinancialCsvView = {}): string {
   const version = calculationVersion(job), net = version === 'NET_V2', sales = job.mode === SALES_MODE;
   return csvEncode([
-    ['Código da empresa', 'Empresa', 'Consulta', 'Arquivo', 'Conclusão', 'Linha importada', 'Data Escrituração/Serviço (H)', sales ? 'Documento do comprador (A)' : 'Documento do fornecedor (A)', 'Tipo de documento', sales ? 'Comprador (I)' : 'Razão social informada (I)', 'Natureza / CFOP', 'Descrição da operação', 'Operação', sales ? 'Quantidade (P) — opcional' : 'Quantidade (P)', 'Valor bruto Q (R$)', 'Desconto Y (R$)', 'Despesa acessória Z — informativa (R$)', 'Frete AA (R$)', 'Abatimento AB (R$)', 'Total calculado (R$)', 'Saldo da operação (R$)', 'Fórmula', 'Versão do cálculo', 'Grupo gerencial', 'Situação Simples na fonte', 'Data da consulta', 'Fonte', ...(sales ? ['UF emitente', 'UF destinatário (J)', 'DIFAL estimado — alíquota média (%)', 'Base DIFAL (R$)', 'DIFAL estimado (R$)', 'Situação DIFAL', 'Versão DIFAL', 'Origem DIFAL'] : ['UF estabelecimento comprador', 'UF fornecedor (J)', 'DIFAL de entrada — Antecipação de ICMS — alíquota média (%)', 'Base DIFAL de entrada — Antecipação de ICMS (R$)', 'DIFAL de entrada — Antecipação de ICMS (R$)', 'Situação DIFAL de entrada — Antecipação de ICMS', 'Versão DIFAL de entrada — Antecipação de ICMS', 'Origem DIFAL de entrada']), 'Versão do catálogo de naturezas'],
+    ['Código da empresa', 'Empresa', 'Consulta', 'Arquivo', 'Conclusão', 'Linha importada', 'Data Escrituração/Serviço (H)', sales ? 'Documento do comprador (A)' : 'Documento do fornecedor (A)', 'Tipo de documento', sales ? 'Comprador (I)' : 'Razão social informada (I)', 'Natureza / CFOP', 'Descrição da operação', 'Operação', sales ? 'Quantidade (P) — opcional' : 'Quantidade (P)', 'Valor bruto Q (R$)', 'Desconto Y (R$)', 'Despesa acessória Z — informativa (R$)', 'Frete AA (R$)', 'Abatimento AB (R$)', 'Total calculado (R$)', 'Saldo da operação (R$)', 'Fórmula', 'Versão do cálculo', 'Grupo gerencial', 'Situação Simples na fonte', 'Data da consulta', 'Fonte', ...(sales ? ['UF emitente', 'UF destinatário (J)', 'DIFAL estimado — alíquota média (%)', 'Base DIFAL (R$)', 'DIFAL estimado (R$)', 'Situação DIFAL', 'Versão DIFAL', 'Origem DIFAL'] : ['UF estabelecimento comprador', 'UF fornecedor (J)', 'DIFAL de entrada — Antecipação de ICMS — alíquota média (%)', 'Base DIFAL de entrada — Antecipação de ICMS (R$)', 'DIFAL de entrada — Antecipação de ICMS (R$)', 'Situação DIFAL de entrada — Antecipação de ICMS', 'Versão DIFAL de entrada — Antecipação de ICMS', 'Origem DIFAL de entrada']), 'Versão do catálogo de naturezas', ...(!sales ? ['Compras consideradas (R$)', 'Linhas consideradas em compras', 'Elegível para compras', 'Motivo da seleção de compras', 'Versão da seleção de compras', 'Origem da seleção de compras'] : [])],
     ...rows.map(row => [job.clientCode || '', job.clientName, job._id, job.fileName, job.completedAt?.toISOString?.() || job.completedAt || '', row.index + 1, row.serviceDate || '',
       row.document, row.documentKind, row.name, row.natureCode || '', row.description || '', row.natureOperation || row.operation || '', row.quantity, moneyText(net ? row.grossCents : row.totalCents),
       ...['discountCents', 'accessoryCents', 'freightCents', 'abatementCents'].map(field => net ? moneyText(row[field]) : ''),
       moneyText(row.totalCents), moneyText(row.balanceCents ?? row.totalCents), purchaseFormula(version), version, financialReportingStatus(row, sales ? SALES_MODE : PURCHASE_MODE), row.status,
-      row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado', ...(sales ? difalCsvFields(job,row,view) : anticipationCsvFields(job,row,view)), row.operationVersion || ''])
+      row.checkedAt?.toISOString?.() || row.checkedAt || '', row.documentKind === 'CNPJ' ? 'Minha Receita' : 'Não consultado', ...(sales ? difalCsvFields(job,row,view) : anticipationCsvFields(job,row,view)), row.operationVersion || '', ...(!sales ? selectionCsvFields(row,view) : [])])
   ]);
 }

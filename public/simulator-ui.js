@@ -43,13 +43,19 @@ function savedDifalPolicy(snapshot){
   if(!value)return null;
   try{return parseDifalPolicy(value);}catch{return null;}
 }
+function difalSelectionSummary(policy){
+  const included=DIFAL_REGIMES.filter(([id])=>policy.enabled[id]).map(([,name])=>name),excluded=DIFAL_REGIMES.filter(([id])=>!policy.enabled[id]).map(([,name])=>name);
+  return [included.length?`Incluído em: ${included.join(', ')}.`:'DIFAL excluído dos quatro cenários.',excluded.length&&included.length?`Excluído em: ${excluded.join(', ')}.`:''].filter(Boolean).join(' ');
+}
 function difalOptions(snapshot=null){
-  const readonly=!!snapshot,policy=readonly?savedDifalPolicy(snapshot):S.difalPolicy;
-  const intro=readonly?'Escolhas registradas nesta versão. Os valores e os estados de aplicação permanecem como foram salvos.':'Escolha os regimes em que deseja incluir o DIFAL. A opção vale para todas as competências desta simulação.';
-  return `<section id="sim-difal-options" class="sim-difal-options${readonly?' card is-readonly':''}" aria-labelledby="sim-difal-options-title"><h3 id="sim-difal-options-title">DIFAL nos cenários</h3><p class="sim-help">${intro}</p>${policy?`<div class="sim-difal-options-grid">${DIFAL_REGIMES.map(([id,name])=>`<article class="sim-difal-option" data-difal-option="${id}">${readonly?`<h4>${name}</h4><strong class="sim-difal-choice">${policy.enabled[id]?'Incluído por escolha':'Não incluído por escolha'}</strong>`:`<label for="difal-enabled-${id}"><input id="difal-enabled-${id}" data-difal-regime="${id}" type="checkbox" aria-label="Incluir DIFAL no ${name}" ${policy.enabled[id]?'checked':''}><span>${name}</span></label>`}<p class="sim-difal-scope">${['pure','hybrid'].includes(id)?'Vendas e antecipação de entradas':'Vendas'}</p><p class="sim-difal-option-state" data-difal-state="${id}" role="status"></p></article>`).join('')}</div><p class="sim-help" id="difal-options-context"></p>${readonly?'':'<p class="sim-help">No Simples, o DIFAL fica zerado quando a RBT12 da competência alcança R$ 3,6 milhões ou o ICMS está fora do DAS. Sua escolha permanece salva para os meses em que a aplicação é permitida.</p>'}`:'<p class="sim-help" data-difal-legacy>Esta versão não registrava opções de DIFAL por regime. Consulte os valores preservados na DRE; o histórico não foi recalculado.</p>'}</section>`;
+  const readonly=!!snapshot,policy=readonly?savedDifalPolicy(snapshot):S.difalPolicy,initial=!readonly&&!!S.source.difalPolicy;
+  const intro=readonly?'Escolhas registradas nesta versão. Os valores e os estados de aplicação permanecem como foram salvos.':initial?'As opções escolhidas no início acompanham esta simulação. Revise abaixo se quiser alterar algum cenário.':'Escolha os regimes em que deseja incluir o DIFAL. A opção vale para todas as competências desta simulação.';
+  const controls=policy?`<div class="sim-difal-options-grid">${DIFAL_REGIMES.map(([id,name])=>`<article class="sim-difal-option" data-difal-option="${id}">${readonly?`<h4>${name}</h4><strong class="sim-difal-choice">${policy.enabled[id]?'Incluído por escolha':'Não incluído por escolha'}</strong>`:`<label for="difal-enabled-${id}"><input id="difal-enabled-${id}" data-difal-regime="${id}" type="checkbox" aria-label="Incluir DIFAL no ${name}" ${policy.enabled[id]?'checked':''}><span>${name}</span></label>`}<p class="sim-difal-scope">${['pure','hybrid'].includes(id)?'Vendas e antecipação de entradas':'Vendas'}</p><p class="sim-difal-option-state" data-difal-state="${id}" role="status"></p></article>`).join('')}</div><p class="sim-help" id="difal-options-context"></p>${readonly?'':'<p class="sim-help">No Simples, o DIFAL fica zerado quando a RBT12 da competência alcança R$ 3,6 milhões ou o ICMS está fora do DAS. Sua escolha permanece salva para os meses em que a aplicação é permitida.</p>'}`:'<p class="sim-help" data-difal-legacy>Esta versão não registrava opções de DIFAL por regime. Consulte os valores preservados na DRE; o histórico não foi recalculado.</p>';
+  return `<section id="sim-difal-options" class="sim-difal-options${readonly?' card is-readonly':''}" aria-labelledby="sim-difal-options-title"><h3 id="sim-difal-options-title">DIFAL nos cenários</h3><p class="sim-help">${intro}</p>${initial?`<p class="sim-difal-selection-summary" data-difal-selection-summary>${esc(difalSelectionSummary(policy))}</p><details class="sim-difal-review"><summary>Revisar DIFAL nos cenários</summary>${controls}</details>`:controls}</section>`;
 }
 function updateDifalOptions(){
   const host=$('#sim-difal-options');if(!host||host.querySelector('[data-difal-legacy]'))return;
+  const selection=host.querySelector('[data-difal-selection-summary]');if(selection)selection.textContent=difalSelectionSummary(S.difalPolicy);
   let sourceMonth,rbt12=null,regimes=null;
   if(S.readonly){
     const monthly=S.snapshot.result?.method==='REPORT_MONTHS_V1';
@@ -142,7 +148,7 @@ function section(number,title,subtitle,content,id) {
 function display(prefill=null) {
   S.readonly=false; S.result=null; S.snapshot=null; S.pending=null; S.rbt12Mode='PDF'; S.serviceMigration=servicesMigration(prefill)?{previousServices:Number(prefill.draft.values.serviceRevenue)||0}:null;S.draftMigrationNotice=null;clearRbt12();
   S.entry=0;S.monthlyInputs=[];
-  S.difalPolicy=defaultDifalPolicy();
+  S.difalPolicy=S.source.difalPolicy===undefined?defaultDifalPolicy():parseDifalPolicy(S.source.difalPolicy);
   const automaticPeriod=S.source.periodBasis==='COLUMN_H'&&Number.isInteger(S.source.reportMonths);
   if(automaticPeriod)S.months=S.source.reportMonths;
   const periodText=automaticPeriod ? `<details class="card sim-source sim-period-details"><summary>Período confirmado · ${S.months} ${S.months===1?'mês':'meses'}<span>${esc(S.source.period.startMonth)} a ${esc(S.source.period.endMonth)}</span></summary><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months" disabled><option value="${S.months}">${S.months} ${S.months===1?'mês':'meses'}</option></select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" checked disabled>Confirmado pela coluna H. Compras e vendas podem ter dias diferentes na mesma competência.</label></div><p id="period-explanation" class="sim-help"></p></details>` :
@@ -368,7 +374,7 @@ function setRbt12Mode(mode,{preserveValue=false}={}) {
 }
 function setupGuidedRbt12() {
   S.guidedStage=true;
-  $('#simulator-intro').insertAdjacentHTML('afterend',`<section class="card sim-guided-rbt12" id="guided-rbt12-stage" aria-labelledby="guided-rbt12-title"><div class="eyebrow">COMPRAS E VENDAS CONCLUÍDAS</div><h2 id="guided-rbt12-title" tabindex="-1">Agora, o extrato do Simples</h2><p>Se tiver o PDF, adicione abaixo. Vamos ler a seção 2.2 e preencher a RBT12 automaticamente.</p><div id="guided-rbt12-reader"></div><div class="sim-guided-actions"><button type="button" id="guided-rbt12-skip">Não tenho o extrato agora</button><button type="button" class="primary" id="guided-rbt12-continue" disabled>Continuar com a RBT12</button></div><p class="sim-guided-note">Sem o PDF, você poderá informar a RBT12 nos próximos dados.</p></section>`);
+  $('#simulator-intro').insertAdjacentHTML('afterend',`<section class="card sim-guided-rbt12" id="guided-rbt12-stage" aria-labelledby="guided-rbt12-title"><div class="eyebrow">COMPRAS E VENDAS CONCLUÍDAS</div><h2 id="guided-rbt12-title" tabindex="-1">Agora, o extrato do Simples</h2><p>Se tiver o PDF, adicione abaixo. Vamos ler a seção 2.2 e preencher a RBT12 automaticamente.</p>${S.source.difalPolicy?`<p class="sim-guided-difal-summary" data-guided-difal-summary><strong>DIFAL dos cenários</strong> ${esc(difalSelectionSummary(S.difalPolicy))} Você poderá revisar essas opções nos dados da simulação.</p>`:''}<div id="guided-rbt12-reader"></div><div class="sim-guided-actions"><button type="button" id="guided-rbt12-skip">Não tenho o extrato agora</button><button type="button" class="primary" id="guided-rbt12-continue" disabled>Continuar com a RBT12</button></div><p class="sim-guided-note">Sem o PDF, você poderá informar a RBT12 nos próximos dados.</p></section>`);
   const reader=$('#guided-rbt12-reader');
   for(const selector of ['.sim-pdf-grid','#rbt12-details','#rbt12-schedule'])reader.append($(selector));
   if(S.rbt12Mode==='MANUAL'){
@@ -639,7 +645,7 @@ function renderNotices() {
   host.innerHTML=`<details class="sim-notices" ${open?'open':''}><summary><span>${unique.length} ${unique.length===1?'aviso':'avisos'} e premissas</span><span class="sim-notices-toggle">Detalhes <span aria-hidden="true">⌄</span></span></summary><div class="sim-notices-content">${unique.map(w=>`<article><strong>${esc(w.title)}</strong><p>${esc(w.detail)}</p></article>`).join('')}</div></details>`;
 }
 function fillSnapshot(snapshot) {
-  applyDifalPolicy(savedDifalPolicy(snapshot)||undefined);
+  const policy=savedDifalPolicy(snapshot);if(policy)applyDifalPolicy(policy);
   S.months=S.source.periodBasis==='COLUMN_H'?S.source.reportMonths:snapshot.reportMonths; $('#period-months').value=String(S.months); applyReports();
   if(actualMonths()){
     const split=snapshot.source?.revenueSplit?.version==='SALES_SERVICES_V1';
