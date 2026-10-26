@@ -76,9 +76,10 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   const textLine = cells => lines.push(cells.map(textCell).join(';'));
   const monthly = period === 'monthly',complete=period==='complete';
   const regimes = presentation.regimes;
+  const regimeScope=regimes.length===4?'todos os regimes':regimes.length===1?'regime selecionado':'regimes selecionados';
   const rows = unifiedDreRows(presentation);
   const contexts = rowContexts(presentation);
-  textLine(['DRE completa', complete?'Relatório completo · DRE anual e mensal · todos os regimes':monthly ? 'Mensal · janeiro a dezembro · todos os regimes' : 'Anual · comparação de todos os regimes']);
+  textLine(['DRE completa', complete?`Relatório completo · DRE anual e mensal · ${regimeScope}`:monthly ? `Mensal · janeiro a dezembro · ${regimeScope}` : `Anual · ${regimeScope}`]);
   textLine(['Empresa', company.name || '', 'Código', company.code || '', 'CNPJ', company.cnpj || '']);
   textLine(['Ano do cenário', year ?? presentation.year ?? presentation.calendarYear ?? '', 'Versão da apresentação', presentation.version || '']);
   textLine(['Unidades', 'Valores monetários em BRL (R$); percentuais em %.']);
@@ -121,7 +122,7 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
     }
   };
   const monthlyTable=()=>{
-    if(complete){lines.push('');textLine(['Demonstrativos mensais · todos os regimes']);}
+    if(complete){lines.push('');textLine([`Demonstrativos mensais · ${regimeScope}`]);}
     const months = Array.from({length:12}, (_, index) => presentation.months?.[index]?.label || MONTHS[index]);
     const columns = [...months, 'Total anual / indicador anual'];
     textLine(['Regime','Escopo','Seção','Indicador','Tipo','Unidade', ...columns.flatMap(label => showPercent ? [label, `${label} · % da receita`] : [label]), 'Observações','Referências']);

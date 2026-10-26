@@ -1,5 +1,19 @@
 # Histórico de alterações
 
+## [0.35.0] — 2026-10-26
+
+- Nova área Análises com empresa, setor Fiscal/Contábil, ano e seleção de um a quatro regimes. Carteira única por empresa e navegação Visão geral, Empresas, Análises, Relatórios e Versões salvas.
+- Persiste os setores separadamente com revisões, autor, data e confirmação. Contábil reúne salários/pró-labore, aluguéis, taxas de cartões, benefícios e outras despesas por competência; campos vazios não viram zero nem médias automáticas.
+- Geração exige ambos os setores concluídos, cobertura exata das competências e fontes da mesma empresa. O servidor calcula com dados salvos e valida revisões/fingerprint novamente antes da publicação, com proteção contra edições concorrentes e repetição idempotente.
+- Um resultado corrente por empresa e versões anteriores imutáveis. Editar marca o resultado como desatualizado; recalcular cria versão vinculada. Histórico e DRE oferecem retorno ao trabalho da empresa, sem permitir exclusão das versões geridas.
+- Extrato e RBT12 são exigidos somente quando Puro ou Híbrido fazem parte da análise. LP/LR usam `NOT_REQUIRED`, sem extração, cronograma, diagnóstico ou memória de RBT12 fabricados. PDF e referência manual confirmada permanecem disponíveis quando há Simples.
+- Contrato `REGIME_SELECTION_V1` e motor mensal `1.10.0-regime-selection`: cálculo, ranking, gráficos, DRE anual/mensal, CSV e PDF contêm apenas os regimes escolhidos, inclusive uma única coluna. Os valores financeiros dos mesmos regimes são preservados.
+- Importação fiscal captura a política de DIFAL efetiva dos regimes selecionados, mantendo preferências no rascunho. Documentos históricos conservam suas escolhas; novas simulações usam a seleção atual confirmada. Naturezas 8000, ICMS por UF/devoluções e conciliações permanecem.
+- Adoção explícita preserva simulações legadas, ajustes mensais e fontes originais. Snapshots sem distribuição mensal suficiente ficam consultáveis e deixam os setores pendentes. GET não migra dados; fluxo antigo conserva retries e compatibilidade antes da ativação da análise.
+- Formulários preservam valores em falhas de validação e conflitos. Importador avança de entradas para saídas e retorna ao Fiscal, com retomada entre sessões e sem etapa de extrato para LP/LR.
+- Acrescenta integração Mongo de análises, matriz das 15 seleções de regimes e fluxo real de navegador com dois setores, histórico, conflito, CSV/PDF e telas móveis. Mantém os gates existentes e inclui a nova integração no CI.
+- Validação: tipos, build, versão/documentação, 308 testes de regras, 124 verificações de integração/projeção/competências e 172 Python/PDF/OCR aprovados. Rodada ampla com 173 casos de navegador, duas expectativas dos novos rótulos corrigidas e conferência final direcionada de 19 casos; cobertura total passa a 174, incluindo vínculo/retomada do PDF na nova tela. PDFs com um e dois regimes e telas móveis conferidos visualmente.
+
 ## [0.34.1] — 2026-10-23
 
 - Retira da DRE as quatro linhas de composição de crédito potencial e utilizado de CBS e IBS, conforme as imagens indicadas. A mesma apresentação atende anual, mensal, CSV e PDF, inclusive para históricos.

@@ -4,6 +4,7 @@ import { normalizeCnpj, reportingStatus } from './domain.ts';
 import { routePurchases } from './purchase-http.ts';
 import { routeGenerations } from './generation-http.ts';
 import { routeSimulations } from './simulation-http.ts';
+import { routeAnalyses } from './analysis-http.ts';
 import { PURCHASE_MODE, SALES_MODE, isFinancialMode } from './purchase-domain.ts';
 import { ensureLookupIndexes, getJob } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
@@ -34,6 +35,7 @@ async function dashboard(clientId:string){
 export async function routeV4(actor:LookupActor,method:string,url:URL,input:any){
   await ensureLookupIndexes();
   if(url.pathname==='/api/v4/simples-documents' || url.pathname.startsWith('/api/v4/simples-documents/')) return routeSimplesDocuments(actor,method,url,input);
+  if(url.pathname==='/api/v4/analyses' || url.pathname.startsWith('/api/v4/analyses/'))return routeAnalyses(actor,method,url,input);
   if(url.pathname==='/api/v4/simulations' || url.pathname.startsWith('/api/v4/simulations/'))return routeSimulations(actor,method,url,input);
   if(url.pathname==='/api/v4/generations' || url.pathname.startsWith('/api/v4/generations/'))return routeGenerations(actor,method,url,input);
   if(/^\/api\/v4\/(?:purchases|sales)(?:\/|$)/.test(url.pathname))return routePurchases(actor,method,url,input);

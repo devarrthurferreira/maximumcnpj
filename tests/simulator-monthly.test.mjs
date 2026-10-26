@@ -100,7 +100,7 @@ test('opções DIFAL persistem por competência e anual soma somente deduções 
  const policy=defaultDifalPolicy();policy.enabled.hybrid=false;policy.enabled.actual=false;
  const selected={...draft,difalPolicy:policy},inputs=rows.map(row=>baselineMonth(row)),before=structuredClone({selected,rows,inputs});
  const out=calculateMonthlySimulation(selected,rows,inputs,'sales');
- assert.equal(out.result.version,'1.9.0-icms-operations');assert.deepEqual(out.result.difalPolicy,policy);
+ assert.equal(out.result.version,'1.10.0-regime-selection');assert.deepEqual(out.result.difalPolicy,policy);
  for(const entry of out.engineInput.months)assert.deepEqual(entry.input.difalPolicy,policy);
  for(const id of ['hybrid','actual']){
   const regime=out.result.regimes.find(row=>row.id===id);assert.equal(regime.dre.difal,0);assert.equal(regime.dre.icmsAnticipation,0);

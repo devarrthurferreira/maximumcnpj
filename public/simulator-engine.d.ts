@@ -1,4 +1,5 @@
 /** Types for the shared, dependency-free calculator used by browser and server. */
+import type {RegimeId,RegimeSelection} from './regime-selection.js';
 export const MODEL_VERSION: string;
 export const SIMPLES_DIAGNOSTIC_VERSION:'SIMPLES_DIAGNOSTIC_V1';
 export const REVENUE_CONTEXT_VERSION:'SIMPLES_REVENUE_CONTEXT_V1';
@@ -14,7 +15,7 @@ export type SimplesDiagnostic={
 };
 export const ICMS_ANTICIPATION_VERSION: 'ICMS_ANTICIPATION_DRE_V1';
 export const DIFAL_POLICY_VERSION: 'DIFAL_SCENARIOS_V2';
-export type SimulationRegimeId = 'pure' | 'hybrid' | 'presumed' | 'actual';
+export type SimulationRegimeId = RegimeId;
 export type DifalOperations = {entry:boolean;exit:boolean};
 export type LegacyDifalPolicy = {version:'DIFAL_SCENARIOS_V1';enabled:Record<SimulationRegimeId,boolean>};
 export type CurrentDifalPolicy = {version:'DIFAL_SCENARIOS_V2';enabled:{pure:boolean;hybrid:boolean;presumed:false;actual:false};operations:Record<'pure'|'hybrid',DifalOperations>};
@@ -24,14 +25,14 @@ export type DifalApplication = {
   /** V1 historical applications predate independent directions. */
   operations?:DifalOperations;
   reason:'SUBLIMIT'|'ICMS_OUTSIDE_DAS'|'USER_EXCLUDED'|'ENABLED'|'NOT_APPLICABLE'|'NO_OPERATIONS'; message:string;
-  rbt12:number; icmsOutside:boolean;
+  rbt12:number|null; icmsOutside:boolean;
   /** Potential permission, independent of missing sources, pending lines or zero amounts. */
   salesDifal:boolean; purchaseAnticipation:boolean;
 };
 export function defaultDifalPolicy(): CurrentDifalPolicy;
 export function parseDifalPolicy(value:unknown): DifalPolicy;
 export function upgradeDifalPolicy(value?:unknown): CurrentDifalPolicy;
-export function resolveDifalApplication(input:{policy?:DifalPolicy;regimeId:SimulationRegimeId;rbt12:number;icmsOutside?:boolean}): DifalApplication & {version:'DIFAL_SCENARIOS_V2';operations:DifalOperations};
+export function resolveDifalApplication(input:{policy?:DifalPolicy;regimeId:SimulationRegimeId;rbt12:number|null;icmsOutside?:boolean}): DifalApplication & {version:'DIFAL_SCENARIOS_V2';operations:DifalOperations};
 export const CALCULATOR_SOURCE_COMMIT: string;
 export const TAX_SOURCES: ReadonlyArray<{label: string; url: string}>;
 export const SIMULATION_VALUE_FIELDS: readonly SimulationValueField[];
@@ -41,8 +42,10 @@ export type SimulationDraft = {
   year: 2027 | 2028;
   salesAnnex: 1 | 2;
   serviceAnnex: 3 | 4 | 5;
-  /** Opcional apenas para reabrir snapshots legados; novas simulações enviam RBT12 explícita. */
-  rbt12?: number;
+  /** Required for an explicit selection containing Simples; unnecessary for LP/LR alone. */
+  rbt12?: number|null;
+  /** Omission preserves the four historical regimes. New analyses store an explicit selection. */
+  regimeSelection?: RegimeSelection;
   /** User-confirmed local tax treatment. Absence preserves the historical inside-DAS premise. */
   icmsOutside?: boolean;
   difalPolicy?: DifalPolicy;
@@ -68,6 +71,8 @@ export type SimulationResult = {
   bestRegimeId: string | null; difference: number;
   difalPolicy?: DifalPolicy;
   simplesDiagnostic?: SimplesDiagnostic;
+  /** Omitted only in snapshots created before regime selection. */
+  regimeSelection?: RegimeSelection;
 };
 export function draftToInput(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null, revenueContext?: SimplesRevenueContext|null,icmsOperations?:import('./simulator-icms.js').IcmsOperations|null): Record<string, unknown> | null;
 export function calculateSimulation(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null, revenueContext?: SimplesRevenueContext|null,icmsOperations?:import('./simulator-icms.js').IcmsOperations|null): SimulationResult;

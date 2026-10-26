@@ -1,3 +1,5 @@
+import {resolveRegimeSelection} from './regime-selection.js';
+
 /** Presentation only: input and monthlyGroups are monthly BRL, engine results are annual BRL. */
 const escape = value => String(value ?? '').replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
 const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -86,7 +88,8 @@ export function renderSimulationCharts({input = {}, result = {}, monthlyGroups =
   const total=(kind,key)=>(monthlyEntries||[]).reduce((sum,row)=>sum+(row[kind]?.[key]||0),0);
   const values = actualMonths?Object.fromEntries(['serviceRevenue','salesRevenue','simplePurchases','regularPurchases','salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,total('values',key)])):input?.values || input || {};
   const groups = actualMonths?Object.fromEntries(['salesOptantCents','salesNonOptantCents','salesCpfCents'].map(key=>[key,total('groups',key)])):monthlyGroups || {};
-  const regimes = Array.isArray(result?.regimes) ? result.regimes.filter(regime => regime && typeof regime === 'object') : [];
+  const selected=result?.regimeSelection===undefined?null:resolveRegimeSelection(result.regimeSelection).selected;
+  const regimes = Array.isArray(result?.regimes) ? result.regimes.filter(regime => regime && typeof regime === 'object'&&(!Array.isArray(selected)||selected.includes(regime.id))) : [];
   const revenue = [
     {label:'Receita de serviços', value:scaled(values.serviceRevenue,inputFactor)},
     {label:'Vendas a Optantes SN', value:scaled(groups.salesOptantCents,inputFactor)},

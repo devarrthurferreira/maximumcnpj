@@ -1,4 +1,5 @@
-import { createSimulation, deleteSimulation, getSimulation, simulationHistory } from './simulation-history.ts';
+import { deleteSimulation, getSimulation, simulationHistory } from './simulation-history.ts';
+import {createLegacySimulation} from './analysis-store.ts';
 import { need, integer } from './security.ts';
 import { rateLimit, workspace } from './store.ts';
 import type { LookupActor } from './lookup-db.ts';
@@ -14,7 +15,7 @@ export async function routeSimulations(actor: LookupActor, method: string, url: 
     search: url.searchParams.get('search') || undefined,
     year: url.searchParams.get('year') || undefined
   });
-  if (!path && method === 'POST') return createSimulation(actor, input);
+  if (!path && method === 'POST') return createLegacySimulation(actor, input);
   const match = path.match(/^\/([a-f0-9-]{36})$/);
   if (match && method === 'GET') return getSimulation(match[1]);
   if (match && method === 'DELETE') return deleteSimulation(actor, match[1]);

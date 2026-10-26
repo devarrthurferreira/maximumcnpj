@@ -140,3 +140,6 @@
   .simulator-clean .sim-memory-section { break-inside: avoid; }
   #simulation-print-context .sim-projection { break-inside: auto; }
 }
+
+/* A comparação ocupa a largura disponível com um a quatro regimes escolhidos. */
+.simulator-clean .sim-regimes { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }

@@ -261,3 +261,56 @@ test('legacy historical values including other regimes and captured calendar cel
   for(const regime of snapshot.result.regimes)delete regime.dre.difal;
   assert.equal(sourceView('exit',defaultDifalPolicy(),difalReports(),{snapshot}),null);
 });
+
+test('seleção sem Simples informa não aplicável e mantém a estimativa bruta apenas na auditoria',()=>{
+  for(const selected of [['presumed'],['actual'],['presumed','actual']]){
+    const regimeSelection={version:'REGIME_SELECTION_V1',selected};
+    const regimes=selected.map(id=>({id,name:id,available:true,dre:{difal:0,icmsAnticipation:0}}));
+    const snapshot={draft:{regimeSelection,difalPolicy:defaultDifalPolicy()},result:{regimeSelection,method:'REPORT_MONTHS_V1',regimes,
+      monthlyResults:[{month:1,sourceMonth:'2025-01',result:{regimes}}]}};
+    const before=structuredClone(snapshot),reports=difalReports(),sourceBefore=structuredClone(reports);
+    for(const direction of ['entry','exit']){
+      const prefix=direction==='exit'?'difal':'anticipation',view=sourceView(direction,defaultDifalPolicy(),reports,{snapshot});
+      assert.deepEqual(view.values,[]);assert.equal(view.notApplicable,true);assert(view.historical);
+      assert.equal(difalApplicationSummary(view),'Não aplicável aos regimes selecionados');
+      assert.equal(difalApplicationSummary(view,'total'),'Não aplicável aos regimes selecionados');
+      const sourceHtml=`<section id="sim-${prefix}-title"><strong data-${prefix}-monthly>R$ 999,99</strong><strong data-${prefix}-total>R$ 2.999,97</strong></section>`;
+      const html=renderDifalAppliedSource({view,sourceHtml}),[display,audit]=html.split('<details class="sim-difal-source-audit"');
+      assert.match(display,/Não aplicável aos regimes selecionados/);assert.doesNotMatch(display,/999,99|2\.999,97|R\$/);
+      assert.doesNotMatch(html,/-applied-regime=|-applied-month>|-applied-total>/);
+      assert(audit.includes(`data-${prefix}-source-monthly>R$ 999,99`));assert(audit.includes(`data-${prefix}-source-total>R$ 2.999,97`));
+      assert.doesNotMatch(audit.split('>')[0],/open/);
+      assert.match(renderDifalAppliedSource({view,sourceHtml,auditOpen:true}),new RegExp(`data-${prefix}-audit open`));
+      assert.doesNotMatch(renderDifalAppliedSource({view}),/<details|Indisponível|R\$/);
+    }
+    assert.deepEqual(snapshot,before);assert.deepEqual(reports,sourceBefore);
+  }
+});
+
+test('somente Puro escolhido apresenta suas células salvas sem criar cartão Híbrido nem reapurar DIFAL',()=>{
+  const regimeSelection={version:'REGIME_SELECTION_V1',selected:['pure']},policy=defaultDifalPolicy();
+  const make=(id,difal,icmsAnticipation)=>({id,name:id==='pure'?'Simples Puro':'Simples Híbrido',available:true,dre:{difal,icmsAnticipation},
+    difalApplication:{enabled:true,operations:{entry:true,exit:true},reason:'ENABLED',blocked:false,message:'Decisão capturada.'}});
+  const regimes=[make('pure',-123.45,-67.89),make('hybrid',-8888,-7777)];
+  const snapshot={draft:{regimeSelection,difalPolicy:policy},result:{method:'REPORT_MONTHS_V1',regimes,
+    monthlyResults:[{month:1,sourceMonth:'2025-01',result:{regimes:[make('pure',-23.45,-7.89),make('hybrid',-888,-777)]}}]}};
+  const before=structuredClone(snapshot),reports=difalReports();
+  for(const [direction,current,total] of [['exit',23.45,123.45],['entry',7.89,67.89]]){
+    const view=sourceView(direction,entryOnlyPolicy(),reports,{snapshot,rbt12ByMonth:{'2025-01':9_000_000}});
+    assert.deepEqual(view.values.map(row=>[row.id,row.current,row.total]),[['pure',current,total]]);
+    assert.equal(view.notApplicable,undefined);
+    const html=renderDifalAppliedSource({view});
+    assert.match(html,/-applied-regime="pure"/);assert.doesNotMatch(html,/-applied-regime="hybrid"|Simples Híbrido|8888|7777/);
+  }
+  assert.deepEqual(snapshot,before);
+});
+
+test('seleção capturada no resultado prevalece na leitura e a ausência mantém comportamento V2 legado',()=>{
+  const policy=defaultDifalPolicy(),regimes=['pure','hybrid','actual'].map(id=>({id,name:id,dre:{difal:-120}}));
+  const snapshot={draft:{difalPolicy:policy},result:{regimeSelection:{version:'REGIME_SELECTION_V1',selected:['actual']},regimes}};
+  assert.equal(sourceView('exit',policy,difalReports(),{snapshot}).notApplicable,true);
+  delete snapshot.result.regimeSelection;
+  assert.deepEqual(sourceView('exit',policy,difalReports(),{snapshot}).values.map(row=>row.id),['pure','hybrid']);
+  snapshot.engineInput={regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure']}};
+  assert.deepEqual(sourceView('exit',policy,difalReports(),{snapshot}).values.map(row=>row.id),['pure']);
+});

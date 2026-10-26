@@ -1,4 +1,5 @@
 import {mountNavigation} from './navigation.js';
+import {requiresSimplesReference} from './regime-selection.js';
 import {difalDirectionSelection} from './difal-policy.js';
 import {renderRevenueReconciliation} from './revenue-reconciliation-view.js';
 import {formatCnpj,REPORTING_LABELS} from './domain.js';
@@ -26,7 +27,7 @@ const groupingHelp = sales ? 'Vendas separadas em três grupos: optantes pelo Si
 const reportName = sales ? 'Vendas' : 'Compras', reportLower = reportName.toLowerCase();
 const party = sales ? 'comprador' : 'fornecedor', parties = sales ? 'compradores' : 'fornecedores';
 const partyHeading = sales ? 'Comprador' : 'Razão social';
-const S = {generation:null, generationDetails:null, resume:null, user:null, clients:[], company:'', issuerUf:'', worker:null, file:null, review:null, pending:null, busy:false, job:null, summary:null, historyPage:1, historyTotal:0, status:'ALL', page:1, total:0, view:'suppliers', seq:0, rowsSeq:0, jobsSeq:0, running:false, paused:true, timer:null};
+const S = {generation:null, generationDetails:null, analysis:null, resume:null, user:null, clients:[], company:'', issuerUf:'', worker:null, file:null, review:null, pending:null, busy:false, job:null, summary:null, historyPage:1, historyTotal:0, status:'ALL', page:1, total:0, view:'suppliers', seq:0, rowsSeq:0, jobsSeq:0, running:false, paused:true, timer:null};
 const writable = () => ['admin','operator'].includes(S.user?.role);
 const path = suffix => `/api/v4/${sales ? 'sales' : 'purchases'}${suffix || ''}`;
 
@@ -127,10 +128,11 @@ function selectedTaxPanel(value,preview,origin,direction){
 function difalPanel(value,preview=false,origin){return sales?selectedTaxPanel(value,preview,origin,'exit'):'';}
 function anticipationPanel(value,preview=false,origin){return sales?'':selectedTaxPanel(value,preview,origin,'entry');}
 
-function urlParams(extra = {}) { return new URLSearchParams({...(sales ? {type:'SALES'} : {}), ...(S.generation ? {generation:S.generation} : {}), client:S.company, ...(guided ? {guided:'1'} : {}), ...extra}); }
+const analysisReturnUrl=()=>'/analyses.html?'+new URLSearchParams({id:S.analysis.id,sector:'fiscal'});
+function urlParams(extra = {}) { return new URLSearchParams({...(sales ? {type:'SALES'} : {}), ...(S.generation ? {generation:S.generation} : {}), client:S.company, ...(guided ? {guided:'1'} : {}), ...(S.analysis?{analysis:S.analysis.id}:{}), ...extra}); }
 function guidedShell() {
   document.body.classList.add('purchases-guided');
-  $('#purchase-app').innerHTML = `<div class="generation-back"><a href="/generations.html?id=${encodeURIComponent(S.generation)}">← Voltar à geração</a><span>Progresso salvo automaticamente</span></div><div id="purchase-flow"></div>
+  $('#purchase-app').innerHTML = `<div class="generation-back"><a href="${S.analysis?analysisReturnUrl():'/generations.html?id='+encodeURIComponent(S.generation)}">${S.analysis?'← Voltar ao Fiscal da análise':'← Voltar à geração'}</a><span>Progresso salvo automaticamente</span></div><div id="purchase-flow"></div>
     <div hidden><select id="purchase-company"><option value=""></option>${S.clients.map(c => `<option value="${esc(c._id)}">${esc(c.name)}</option>`).join('')}</select><div id="purchase-history-list"></div><button id="purchase-history-prev"></button><span id="purchase-history-page"></span><button id="purchase-history-next"></button></div>
     ${writable() ? `<section id="purchase-import" class="card purchase-guided-import" aria-labelledby="purchase-import-title"><span class="purchase-guided-icon" aria-hidden="true">${sales ? '↗' : '↙'}</span><div class="eyebrow">RELATÓRIO DE ${reportName.toUpperCase()}</div><h2 id="purchase-import-title">Adicione o arquivo de ${reportLower}</h2><p id="purchase-guided-company"></p>${issuerUfField()}<label class="purchase-dropzone" id="purchase-dropzone"><input type="file" id="purchase-file" accept=".csv,.xlsx,.xls" disabled><span class="purchase-upload-icon" aria-hidden="true">↑</span><strong id="purchase-file-label">Clique para selecionar ou arraste o arquivo aqui</strong><span>CSV, XLSX ou XLS · até 10 MiB</span></label><p class="hint">A leitura e a consulta começam automaticamente.</p><select id="purchase-encoding" hidden><option value="auto">Automática</option></select><div id="purchase-file-preview"></div><div id="purchase-review"></div><p id="purchase-progress-text" class="purchase-status" role="status" aria-live="polite"></p></section>` : '<p class="warning info">Seu acesso permite consultar os relatórios existentes.</p>'}
     <div id="purchase-report-view"></div><div id="purchase-next-step" aria-live="polite"></div>`;
@@ -149,7 +151,7 @@ function guidedShell() {
 function shell() {
   if (guided) { guidedShell(); return; }
   $('#purchase-app').innerHTML = `
-    ${S.generation ? `<div class="generation-back"><a href="/generations.html?id=${encodeURIComponent(S.generation)}">← Voltar à geração e às outras empresas</a><span class="badge">Progresso salvo no Histórico</span></div>` : '<div class="generation-back"><a href="/generations.html?view=history">← Histórico de gerações</a><a href="/generations.html?multiple=1">Iniciar geração com várias empresas →</a></div>'}
+    ${S.generation ? `<div class="generation-back"><a href="${S.analysis?analysisReturnUrl():'/generations.html?id='+encodeURIComponent(S.generation)}">${S.analysis?'← Voltar ao Fiscal da análise':'← Voltar à geração e às outras empresas'}</a><span class="badge">Progresso salvo no Histórico</span></div>` : '<div class="generation-back"><a href="/generations.html?view=history">← Histórico de gerações</a><a href="/generations.html?multiple=1">Iniciar geração com várias empresas →</a></div>'}
     <div id="purchase-flow"></div><div class="purchase-types" role="group" aria-label="Tipo de relatório"><button type="button" data-report-type="PURCHASES" aria-pressed="${!sales}">Compras <span aria-hidden="true">↙</span></button><button type="button" data-report-type="SALES" aria-pressed="${sales}">Vendas <span aria-hidden="true">↗</span></button></div>
     <section id="purchase-company-card" class="card stack"><h2 class="purchase-step"><span>1</span> Selecione a empresa</h2><label>Empresa responsável (Código / ID)<select id="purchase-company"><option value="">Escolha uma empresa cadastrada</option>${S.clients.map(c => `<option value="${esc(c._id)}">${esc(c.code || 'Sem código')} · ${esc(c.name)}${c.active ? '' : ' (inativa)'}</option>`).join('')}</select></label><p class="hint">O relatório ficará vinculado somente à empresa escolhida. Seus cadastros atuais continuam disponíveis.</p>${S.clients.length ? '' : '<p>Nenhuma empresa cadastrada. <a href="/#clients">Cadastre ou importe suas empresas no painel</a> para continuar.</p>'}</section>
     ${writable() ? `<section id="purchase-import" class="card stack purchase-section"><h2 class="purchase-step"><span>2</span> Importe o relatório de ${reportLower}</h2>${issuerUfField()}<div class="purchase-grid"><label>Arquivo de ${reportLower} (.csv, .xlsx ou .xls)<input type="file" id="purchase-file" accept=".csv,.xlsx,.xls" disabled></label><label>Codificação do CSV<select id="purchase-encoding" disabled><option value="auto">Detectar automaticamente</option><option value="windows-1252">Windows-1252 (Excel em português)</option><option value="utf-8">UTF-8</option></select></label></div><p class="hint">Até 10 MiB e 50.000 linhas. O arquivo original fica no navegador; somente os campos abaixo são importados.</p><div class="purchase-map"><div><strong>A</strong>CNPJ do ${party}<small>CPF e demais documentos incluídos</small></div><div><strong>I</strong>${partyHeading}<small>Nome informado no relatório</small></div><div><strong>J</strong>UF do ${sales ? 'destinatário' : 'fornecedor'}<small>Estado usado no cálculo interestadual</small></div><div><strong>L</strong>Natureza / CFOP<small>Primeiros 4 dígitos; operação conforme coluna D do catálogo</small></div><div><strong>O</strong>Descrição<small>Preservada para conferência</small></div><div><strong>P</strong>Quantidade<small>${sales ? 'Opcional no relatório de vendas' : 'Preservada por linha'}</small></div><div><strong>Q</strong>Valor Total<small>Valor bruto em reais</small></div><div><strong>Y</strong>Desconto<small>Subtrair do valor</small></div><div><strong>Z</strong>Despesa acessória<small>Somente informativa</small></div><div><strong>AA</strong>Frete<small>Somar ao valor</small></div><div><strong>AB</strong>Abatimento não tributado<small>Subtrair do valor</small></div></div><p class="hint">Novo total = Q − Y + AA − AB. A despesa acessória (Z) fica registrada para conferência e não entra nesta conta. A quantidade (P) não multiplica o valor. Documentos repetidos somam os valores e contam uma vez entre ${parties}.</p><div id="purchase-file-preview"></div><div id="purchase-review"></div><p id="purchase-progress-text" class="purchase-status" role="status" aria-live="polite"></p></section>` : '<div class="warning info purchase-readonly">Seu acesso permite consultar e baixar os relatórios existentes.</div>'}
@@ -172,7 +174,7 @@ function renderFlow() {
   const purchaseDone = company?.purchase?.status === 'COMPLETED' || (!sales && S.job?.status === 'COMPLETED');
   const salesDone = company?.sales?.status === 'COMPLETED' || (sales && S.job?.status === 'COMPLETED');
   const required = S.generationDetails?.requiredReports || ['PURCHASES','SALES'];
-  const steps = guided ? [{label:'Empresa',done:!!S.company},...(required.includes('PURCHASES') ? [{label:'Compras',done:purchaseDone,current:!sales}] : []),...(required.includes('SALES') ? [{label:'Vendas',done:salesDone,current:sales}] : []),...(required.length === 2 ? [{label:'Extrato e simulador',done:false,current:purchaseDone && salesDone}] : [])] : [{label:'Empresa selecionada',done:!!S.company},{label:'Ler compras',done:purchaseDone,current:!sales},{label:'Ler vendas',done:salesDone,current:sales},{label:'Conferir e simular',done:false,current:purchaseDone && salesDone}];
+  const steps = S.analysis ? [{label:'Empresa',done:!!S.company},{label:'Entradas',done:purchaseDone,current:!sales},{label:'Saídas',done:salesDone,current:sales},{label:'Concluir Fiscal',done:false,current:purchaseDone&&salesDone}] : guided ? [{label:'Empresa',done:!!S.company},...(required.includes('PURCHASES') ? [{label:'Compras',done:purchaseDone,current:!sales}] : []),...(required.includes('SALES') ? [{label:'Vendas',done:salesDone,current:sales}] : []),...(required.length === 2 ? [{label:'Extrato e simulador',done:false,current:purchaseDone && salesDone}] : [])] : [{label:'Empresa selecionada',done:!!S.company},{label:'Ler compras',done:purchaseDone,current:!sales},{label:'Ler vendas',done:salesDone,current:sales},{label:'Conferir e simular',done:false,current:purchaseDone && salesDone}];
   container.innerHTML = `<div class="generation-steps" aria-label="Etapas da simulação">${steps.map((step,i) => `<div class="${step.done ? 'complete' : step.current ? 'current' : ''}"${step.current && !step.done ? ' aria-current="step"' : ''}><span>${step.done ? '✓' : i + 1}</span>${step.label}</div>`).join('')}</div>`;
 }
 async function renderNextStep(seq) {
@@ -187,11 +189,12 @@ async function renderNextStep(seq) {
     S.generationDetails = generation; renderFlow();
     if (guided) { renderGuidedNext(generation, company); return; }
     const ready = company.purchase?.status === 'COMPLETED' && company.sales?.status === 'COMPLETED';
+    if(S.analysis&&ready){renderGuidedNext(generation,company);return;}
     const nextType = company.purchase?.status === 'COMPLETED' ? 'SALES' : 'PURCHASES';
     const nextJob = nextType === 'SALES' ? company.sales : company.purchase;
     const nextJobId = nextType === 'SALES' ? company.salesJobId : company.purchaseJobId;
     const nextName = nextType === 'SALES' ? 'vendas' : 'compras';
-    const params = new URLSearchParams({generation:S.generation,client:companyId,...(nextType === 'SALES' ? {type:'SALES'} : {}),...(nextJobId ? {job:nextJobId} : {})});
+    const params = new URLSearchParams({generation:S.generation,client:companyId,...(nextType === 'SALES' ? {type:'SALES'} : {}),...(nextJobId ? {job:nextJobId} : {}),...(S.analysis?{analysis:S.analysis.id}:{})});
     $('#purchase-next-step').innerHTML = `<section class="card generation-simulator purchase-section ${ready ? 'ready' : ''}"><div><div class="eyebrow">${ready ? 'OS DOIS RELATÓRIOS ESTÃO PRONTOS' : 'PRÓXIMO PASSO'}</div><h2>${ready ? 'Agora, simule com os valores desta empresa.' : `Continue com o relatório de ${nextName}.`}</h2><p>${ready ? 'Vendas de mercadorias, serviços identificados e compras serão preenchidos separadamente no simulador. Confira o período, os serviços e complete as despesas.' : `O relatório de ${reportLower} foi concluído. ${nextJob?.status === 'PROCESSING' ? 'Retome a consulta' : 'Selecione e confira o arquivo'} de ${nextName} da mesma empresa para liberar a simulação.`}</p><a href="/generations.html?id=${encodeURIComponent(S.generation)}">Conferir todos os relatórios da geração</a></div>${ready ? `<a class="primary report-links" href="/simulator.html?${new URLSearchParams({generation:S.generation,client:companyId})}">Ir para o simulador <span aria-hidden="true">→</span></a>` : writable() ? `<a class="primary report-links" href="/purchases.html?${params}">Continuar: ${nextJob?.status === 'PROCESSING' ? 'consultar' : nextJob?.status === 'UPLOADING' ? 'retomar' : 'importar'} ${nextName} <span aria-hidden="true">→</span></a>` : '<p class="hint">Aguardando a conclusão do outro relatório.</p>'}</section>`;
   } catch (e) {
     if (seq !== S.seq || companyId !== S.company) return;
@@ -206,13 +209,18 @@ function renderGuidedNext(generation, company) {
   let href, label, title, description;
   if (unfinished) {
     const next = slot(company, unfinished), name = unfinished === 'SALES' ? 'vendas' : 'compras';
-    href = '/purchases.html?' + new URLSearchParams({generation:S.generation,client:S.company,type:unfinished,guided:'1',...(next.id ? {job:next.id} : {})});
+    href = '/purchases.html?' + new URLSearchParams({generation:S.generation,client:S.company,type:unfinished,guided:'1',...(next.id ? {job:next.id} : {}),...(S.analysis?{analysis:S.analysis.id}:{})});
     label = `Continuar: ${name}`; title = `${reportName} concluídas.`;
     description = `Agora, adicione o relatório de ${name} desta empresa.`;
   } else if (company.purchase?.status === 'COMPLETED' && company.sales?.status === 'COMPLETED') {
-    href = '/simulator.html?' + new URLSearchParams({generation:S.generation,client:S.company,guided:'1',step:'extrato'});
-    label = 'Continuar para o extrato'; title = 'Compras e vendas prontas.';
-    description = 'No próximo passo, adicione o extrato do Simples Nacional para preencher a RBT12.';
+    if(S.analysis){
+      href=analysisReturnUrl();label='Voltar para o Fiscal';title='Entradas e saídas prontas.';
+      description=requiresSimplesReference(S.analysis.config.regimeSelection)?'Volte à análise para conferir o extrato e concluir o setor Fiscal. O trabalho Contábil continua salvo na mesma empresa.':'Volte à análise para conferir os documentos e concluir o setor Fiscal. O trabalho Contábil continua salvo na mesma empresa.';
+    }else{
+      href = '/simulator.html?' + new URLSearchParams({generation:S.generation,client:S.company,guided:'1',step:'extrato'});
+      label = 'Continuar para o extrato'; title = 'Compras e vendas prontas.';
+      description = 'No próximo passo, adicione o extrato do Simples Nacional para preencher a RBT12.';
+    }
   } else {
     const nextCompany = generation.companies.find(item => item.clientId !== S.company && required.some(type => slot(item,type).job?.status !== 'COMPLETED'));
     if (nextCompany) {
@@ -234,6 +242,7 @@ function renderGuidedNext(generation, company) {
 async function switchReportType(type) {
   if (type === reportType || S.busy || S.pending) return;
   const params = new URLSearchParams({...(type === 'SALES' ? {type} : {}), ...(S.company ? {client:S.company} : {})});
+  if(S.analysis)params.set('analysis',S.analysis.id);
   if (S.generation) {
     const generation = await api('/api/v4/generations/' + encodeURIComponent(S.generation));
     const company = generation.companies.find(c => c.clientId === S.company);
@@ -670,6 +679,13 @@ async function boot() {
     S.generation = query.get('generation');
     if (S.generation && !/^[a-f0-9-]{36}$/i.test(S.generation)) throw new Error('Identificação da geração inválida.');
     if (guided && (!S.generation || !client)) throw new Error('Selecione a empresa em Iniciar para abrir esta etapa.');
+    const analysisId=query.get('analysis');
+    if(analysisId){
+      if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(analysisId)||!client||!S.generation)throw new Error('Abra os documentos pelo setor Fiscal da análise.');
+      const linked=(await api('/api/v4/analyses/'+encodeURIComponent(analysisId))).analysis;
+      if(linked?.id!==analysisId||linked.clientId!==client||linked.fiscal?.data?.generationId!==S.generation)throw new Error('Estes documentos não correspondem à empresa e à análise selecionadas. Volte ao setor Fiscal.');
+      S.analysis=linked;
+    }
     mountNavigation(S.user,S.generation ? 'start' : 'history');
     S.clients = (await api('/api/v4/clients')).items; shell();
     let selected = client, loadedJob = null;

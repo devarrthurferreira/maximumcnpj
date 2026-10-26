@@ -1,0 +1,11 @@
+export const REGIME_SELECTION_VERSION:'REGIME_SELECTION_V1';
+export type RegimeId='pure'|'hybrid'|'presumed'|'actual';
+export type RegimeSelection={version:'REGIME_SELECTION_V1';selected:RegimeId[]};
+export const REGIME_IDS:readonly RegimeId[];
+export const REGIME_LABELS:Readonly<Record<RegimeId,string>>;
+export function defaultRegimeSelection():RegimeSelection;
+export function parseRegimeSelection(value:unknown):RegimeSelection;
+export function resolveRegimeSelection(value?:unknown):RegimeSelection;
+export function requiresSimplesReference(value?:unknown):boolean;
+export function regimeMemoryApplies(id:string,selection?:unknown):boolean;
+export function regimeWarningApplies(code:string,selection?:unknown):boolean;

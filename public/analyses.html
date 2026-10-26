@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#750207">
+  <meta name="description" content="Organize os documentos e o trabalho Fiscal e Contábil de cada empresa no Maximum CNPJ.">
+  <title>Análises por empresa · Maximum CNPJ</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/maximum-brand.css">
+  <link rel="stylesheet" href="/simulator-extrato.css">
+  <link rel="stylesheet" href="/analyses.css">
+  <script type="module" src="/analyses-ui.js"></script>
+</head>
+<body class="analyses-page">
+  <a class="skip" href="#content">Pular para o conteúdo</a>
+  <div class="shell">
+    <aside class="sidebar"></aside>
+    <div class="main">
+      <header class="topbar">
+        <button id="toggle-nav" type="button" aria-label="Alternar navegação" aria-expanded="false">☰</button>
+        <span class="crumb">Maximum CNPJ / Análises</span>
+      </header>
+      <main id="content" class="content" tabindex="-1">
+        <div id="analysis-error" class="analysis-message is-error" role="alert" hidden></div>
+        <div id="analysis-feedback" class="analysis-message" role="status" aria-live="polite" hidden></div>
+        <div id="analyses-app"><div class="initial">Conferindo seu acesso e as análises da equipe…</div></div>
+      </main>
+    </div>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <noscript>Ative o JavaScript para acessar as análises por empresa.</noscript>
+</body>
+</html>

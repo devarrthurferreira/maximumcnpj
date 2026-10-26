@@ -1,4 +1,41 @@
-# Maximum CNPJ · v0.34.1
+# Maximum CNPJ · v0.35.0
+
+## Análises compartilhadas entre Fiscal e Contábil — 26/10/2026
+
+A entrada principal passa a ser **Análises**. Ao abrir um trabalho, escolha a empresa, o setor **Fiscal** ou **Contábil**, o ano do cenário e um ou mais regimes: **Simples Nacional Puro**, **Simples Nacional Híbrido**, **Lucro Presumido** e **Lucro Real**. Se a empresa já tiver uma análise, o sistema retoma o mesmo trabalho sem substituir seus dados e escolhas. A navegação reúne Visão geral, Empresas, Análises, Relatórios e Versões salvas.
+
+Cada empresa tem **uma análise corrente**, garantida por índice único no workspace. Os setores salvam rascunhos independentes no servidor, com revisão, autor e data. O setor escolhido indica onde a pessoa vai trabalhar; as permissões de administrador, operador e consulta continuam vigentes. É possível começar pelo Contábil e continuar o Fiscal em outra sessão. A geração exige que os dois setores estejam concluídos e que as competências coincidam exatamente.
+
+| Setor | Dados e conclusão |
+| --- | --- |
+| Fiscal | Relatórios de entradas e saídas, conferência da receita e dos ajustes por competência, opções fiscais e extrato do Simples quando aplicável. Os documentos pertencem à mesma empresa e geração. |
+| Contábil | Salários e pró-labore, aluguéis, taxas de cartões, benefícios e outras despesas em cada competência. Campos vazios permanecem pendentes; zero exige informação ou confirmação explícita. |
+
+Os valores contábeis são próprios de cada mês, sem distribuir médias nem repetir despesas automaticamente. Salvar permite retomar o preenchimento; concluir registra a conferência do setor. Alterar regimes ou ano exige conferir os setores novamente. Editar os dados mantém o último resultado disponível e sinaliza a atualização pendente até a nova geração.
+
+### Regimes e extrato condicional
+
+`REGIME_SELECTION_V1` registra de um a quatro regimes e acompanha o cálculo, o ranking, os gráficos, a DRE, o CSV e o PDF. Somente os regimes escolhidos aparecem na comparação; com apenas um, a apresentação identifica o resultado individual. O motor e o adaptador mensal passam a `1.10.0-regime-selection`, preservando os valores dos mesmos regimes quando calculados na comparação completa.
+
+Sem Puro ou Híbrido, o Fiscal não solicita extrato nem RBT12. O contrato registra `NOT_REQUIRED`, não busca uma extração, não fabrica um cronograma e mantém a RBT12 efetiva nula. Com Simples selecionado, permanecem a leitura da seção 2.2 do PDF e a alternativa manual expressamente confirmada; o extrato deve cobrir as competências usadas. Retirar Simples ou trocar PDF por referência manual limpa os vínculos ativos correspondentes, sem apagar documentos ou versões históricas.
+
+As preferências de DIFAL ficam salvas no Fiscal. Cada nova importação captura uma política efetiva somente para os regimes selecionados; retirar temporariamente um regime não perde suas preferências. Os relatórios antigos conservam as opções da própria importação, e o novo cálculo usa as escolhas atuais após a conclusão do Fiscal. As regras de naturezas 8000, créditos por UF, devoluções, fechamento da receita e abatimento único dos créditos permanecem.
+
+### Resultado atual e versões preservadas
+
+Recalcular a análise cria uma versão imutável ligada à anterior e atualiza o resultado corrente. O histórico permite consultar a DRE e exportar os dados que realmente foram salvos em cada versão. Repetir a mesma solicitação ou gerar novamente sem alteração não duplica o resultado. As versões geridas e a versão corrente adotada são protegidas contra exclusão no histórico comum.
+
+A primeira abertura explícita de uma empresa pode incorporar a última simulação legada. Snapshots mensais conservam ajustes de grupos, serviços e despesas de cada competência. Registros antigos sem dados mensais suficientes continuam legíveis; seus setores aguardam preenchimento, sem inventar a distribuição dos valores. Consultar um GET não migra nem reescreve snapshots. O fluxo avulso anterior continua compatível enquanto a empresa ainda não tiver ativado a análise compartilhada; depois disso, novas escritas passam pelo trabalho dos setores.
+
+Revisões independentes impedem que um setor sobrescreva alterações concorrentes do outro. Um conflito no mesmo setor preserva os campos digitados e oferece recarregar o trabalho salvo. A geração recompõe os dados no servidor e confere novamente revisões, identidades e fingerprint das fontes antes de publicar o resultado. Um cálculo interrompido não aparece como versão concluída.
+
+### API e verificação
+
+`/api/v4/analyses` oferece carteira paginada e abertura por empresa. As rotas de cada análise permitem consultar, salvar configuração, salvar/concluir Fiscal e Contábil, preparar importação, gerar o resultado e consultar versões. Todas conservam autenticação, workspace e controles de escrita existentes. A evidência da versão inclui revisão da análise, revisões dos setores, autores, confirmações e fingerprint das fontes.
+
+Os testes dedicados estão em `tests/analysis-integration.test.ts`, `tests/regime-selection.test.mjs`, `tests/e2e/analyses-workflow.spec.ts` e `tests/e2e/analyses-extrato.spec.ts`. Cobrem unicidade, concorrência, meses efetivos, zeros explícitos, referências condicionais, seleção dos regimes, reabertura em outra sessão, versões imutáveis, CSV/PDF e navegação móvel, além dos gates existentes do projeto.
+
+Validação com Node 22 e MongoDB descartável: tipos, build e versão/documentação conferidos; **308 testes de regras**, **124 verificações de integração/projeção/competências** e **172 testes Python/PDF/OCR** aprovados. A rodada ampla de navegador executou 173 casos; duas expectativas de rótulos foram atualizadas para a nova navegação, e a conferência final direcionada reúne 19 casos, incluindo o novo fluxo do PDF. A suíte passa a ter 174 cenários. PDFs anual/mensal com um e dois regimes e telas de 320/390 px foram inspecionados visualmente. No teste de vinculação do extrato, Node e Mongo são reais e somente as fronteiras Blob/Python são simuladas com registros sintéticos coerentes; o parser e OCR são verificados pela suíte Python.
 
 ## DRE: retirada das composições de crédito de CBS e IBS — 23/10/2026
 

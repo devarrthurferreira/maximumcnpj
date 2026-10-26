@@ -17,6 +17,8 @@ import {baselineMonth, calculateMonthlySimulation, MONTHLY_MODEL_VERSION as MODE
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import {resolveDifalApplication, upgradeDifalPolicy} from '../public/simulator-engine.js';
 import {REPROCESS_VERSION} from '../public/simulation-reprocess-contract.js';
+import {requiresSimplesReference} from '../public/regime-selection.js';
+import {promoteReprocessedAnalysis} from './analysis-store.ts';
 
 
 export {REPROCESS_VERSION};
@@ -112,11 +114,18 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   draft.values.regularPurchases = monthlyGroups.purchasesNonOptantCents;
   pending(original.result?.method==='REPORT_MONTHS_V1'||(draft.values.salesRevenue >= 0 && draft.values.serviceRevenue >= 0), 'REPROCESS_ADJUSTMENT',
     'Os ajustes antigos produziriam receita negativa após separar mercadorias e serviços.');
-  pending(draft.rbt12 !== undefined, 'RBT12_REQUIRED', 'O histórico não conserva uma RBT12 efetiva. A receita mensal projetada em doze meses não substitui essa informação.');
-  moneyCents(draft.rbt12);
+  const needsReference=requiresSimplesReference(draft.regimeSelection);
+  if(needsReference){
+    pending(draft.rbt12 !== undefined, 'RBT12_REQUIRED', 'O histórico não conserva uma RBT12 efetiva. A receita mensal projetada em doze meses não substitui essa informação.');
+    moneyCents(draft.rbt12);
+  }
   let rbt12Extraction = null, rbt12Manual = null;
-  let rbt12Source: 'MANUAL' | 'SIMPLES_SECTION_22';
-  if (original.rbt12Source === 'MANUAL') {
+  let rbt12Source: 'MANUAL' | 'SIMPLES_SECTION_22' | 'NOT_REQUIRED';
+  if(!needsReference){
+    pending(original.rbt12Source==='NOT_REQUIRED' && draft.rbt12==null && !original.rbt12Extraction && !original.rbt12Manual,
+      'RBT12_SOURCE','A versão sem Simples contém uma referência fiscal incompatível. Revise os regimes selecionados.');
+    rbt12Source='NOT_REQUIRED';
+  } else if (original.rbt12Source === 'MANUAL') {
     pending(original.rbt12Manual?.source === 'MANUAL' && original.rbt12Manual?.confirmed === true &&
       original.rbt12Manual.rbt12Cents === moneyCents(draft.rbt12) && original.rbt12Manual.confirmedBy?.id && original.rbt12Manual.confirmedAt,
       'RBT12_REQUIRED', 'A confirmação original da RBT12 manual não está disponível.');
@@ -179,7 +188,7 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   const input = {simulationId: reprocessedSimulationId(workspaceId, original._id), generationId: original.generationId,
     clientId: original.clientId, parentSimulationId: original._id, title: String(original.title || source.company.name).slice(0,140) + ' · Atualizada',
     reportMonths: original.reportMonths, periodConfirmed: true, monthlyGroups, draft, monthlyInputs,
-    ...(rbt12Source === 'MANUAL' ? {rbt12Source, rbt12ManualConfirmed: true} : {rbt12ExtractionId: rbt12Extraction!.id})};
+    ...(rbt12Source === 'MANUAL' ? {rbt12Source, rbt12ManualConfirmed: true} : rbt12Source==='NOT_REQUIRED'?{rbt12Source}:{rbt12ExtractionId: rbt12Extraction!.id})};
   return {alreadyCurrent, input, context: {version: REPROCESS_VERSION, originalId: original._id, source, rbt12Extraction, rbt12Manual, serviceRevenueMigration}};
 }
 
@@ -201,7 +210,7 @@ async function status(page = 1, retryAfterMs = 0) {
 export async function simulationReprocessingStatus(page = 1) { return status(page); }
 
 async function inventory(batch: Doc) {
-  const records = await (await collection('simulations')).find(scope({deletedAt:{$exists:false},reprocessing:{$exists:false},
+  const records = await (await collection('simulations')).find(scope({deletedAt:{$exists:false},reprocessing:{$exists:false},analysisPublication:{$ne:'PENDING'},
     createdAt:{$lte:batch.startedAt},...(batch.cursor ? {_id:{$gt:batch.cursor}} : {})})).project({_id:1,title:1,company:1}).sort({_id:1}).limit(500).toArray();
   if (records.length) await (await collection('simulationReprocessItems')).bulkWrite(records.map(record=>({updateOne:{
     filter:scope({_id:itemId(record._id)}),update:{$setOnInsert:{...scope(),_id:itemId(record._id),batchId:key(),originalId:record._id,
@@ -228,6 +237,7 @@ async function reprocessItem(actor: LookupActor, item: Doc) {
     pending(child.parentSimulationId === original._id && child.clientId === original.clientId && child.generationId === original.generationId,
       'REPROCESS_SOURCE', 'A versão corrigida não corresponde ao histórico original.');
     pending(planReprocessing(child,child.source,scope().workspaceId).alreadyCurrent,'REPROCESS_CHILD_INVALID','A versão corrigida existente não passou na conferência dos cálculos armazenados.');
+    await promoteReprocessedAnalysis(actor,original._id,child);
     return {childId:targetId,status:'OK',code:'UPDATED',message:'Versão corrigida já criada e preservada.'};
   }
   const purchaseJobId = original.source?.purchases?.jobId, salesJobId = original.source?.sales?.jobId;
@@ -244,6 +254,7 @@ async function reprocessItem(actor: LookupActor, item: Doc) {
   }
   if (plan.alreadyCurrent) return {childId:null,status:'OK',code:'ALREADY_CURRENT',message:'Simulação conferida: cálculos e fontes já correspondem às regras atuais.'};
   const child = await createReprocessedSimulation(actor, plan.input, plan.context);
+  await promoteReprocessedAnalysis(actor,original._id,child);
   const migration = plan.context.serviceRevenueMigration;
   return {childId:child._id,status:'OK',code:'UPDATED',message:'Simulação refeita com DIFAL de entrada e saída somente no Simples puro e híbrido, conforme as escolhas. Original preservado.' +
     (migration && migration.priorMonthlyServiceCents > 0 ? ' ' + migration.warning : '')};
