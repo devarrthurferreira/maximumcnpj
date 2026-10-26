@@ -15,6 +15,8 @@ import { CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
 import type { SimulationDraft } from '../public/simulator-engine.js';
 import {parseRegimeSelection,requiresSimplesReference} from '../public/regime-selection.js';
 import {withLegacyAnalysisDeletion} from './analysis-store.ts';
+import {assertAnalysisNotDeleted,simulationAnalysisDeletionStarted} from './analysis-deletion.ts';
+import type {AnalysisDeletionReceipt} from './analysis-deletion.ts';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const PAGE_SIZE = 20;
@@ -103,6 +105,7 @@ async function simulations() {
     c.createIndex({workspaceId: 1, createdAt: -1, _id: -1}),
     c.createIndex({workspaceId: 1, clientId: 1, createdAt: -1, _id: -1}),
     c.createIndex({workspaceId: 1, year: 1, createdAt: -1, _id: -1}),
+    c.createIndex({workspaceId: 1, analysisId: 1, createdAt: -1, _id: -1}),
     c.createIndex({workspaceId: 1, parentSimulationId: 1, createdAt: -1, _id: -1})
   ]);
   return c;
@@ -121,7 +124,7 @@ async function deletionReceipt(id: string) {
   return (await collection('audit')).findOne(scope({_id: deletionAuditId(id), action: 'simulation.delete', target: id}));
 }
 
-async function requireUnremovedId(id: string) {
+export async function assertSimulationNotDeleted(id: string) {
   need(!await deletionReceipt(id), 'Esta simulação foi excluída. Use um novo identificador para salvar outra simulação.',
     409, 'SIMULATION_DELETED');
 }
@@ -131,6 +134,7 @@ export async function getSimulation(id: string) {
   const c = await simulations();
   const record = await c.findOne(scope({_id: uuid(id), deletedAt: {$exists: false}}));
   need(record && !await deletionReceipt(id), 'Simulação não encontrada.', 404, 'NOT_FOUND');
+  need(!await simulationAnalysisDeletionStarted(record),'Simulação não encontrada.',404,'NOT_FOUND');
   if(record.analysisPublication==='PENDING')need(await(await collection('analyses')).findOne(scope({_id:record.analysisId,'currentSimulation.id':id})),
     'Esta versão ainda não foi publicada pela análise.',404,'NOT_FOUND');
   const parentDeleted = record.parentSimulationId && !await c.findOne(scope({
@@ -146,24 +150,31 @@ export async function deleteSimulation(actor: LookupActor, id: string) {
   write(actor);
   const simulationId = uuid(id), c = await simulations();
   const managed=await c.findOne(scope({_id:simulationId,analysisId:{$exists:true}}),{projection:{_id:1}});
-  need(!managed,'As versões de uma análise são preservadas. Edite os setores e gere uma nova versão para registrar alterações.',409,'ANALYSIS_VERSION_PROTECTED');
+  need(!managed,'Para remover as versões vinculadas, use Excluir simulação na página da análise da empresa.',409,'ANALYSIS_VERSION_PROTECTED');
   return withLegacyAnalysisDeletion(simulationId,actor,()=>removeSimulationSnapshot(actor,simulationId));
 }
-async function removeSimulationSnapshot(actor:LookupActor,simulationId:string){
+/** Server-only cascade; callers determine membership from the persisted analysis and verified lineage. */
+export async function removeAnalysisSimulationSnapshot(actor:LookupActor,simulationId:string,receipt:AnalysisDeletionReceipt){
+  write(actor);
+  return removeSimulationSnapshot(actor,simulationId,receipt);
+}
+async function removeSimulationSnapshot(actor:LookupActor,simulationId:string,analysisReceipt?:AnalysisDeletionReceipt){
   const c=await simulations();
-  const claimed = await c.findOneAndUpdate(scope({_id: simulationId, deletedAt: {$exists: false}}), {
-    $set: {deletedAt: new Date(), deletedBy: {id: actor._id, name: actor.name}}
+  const ownership=analysisReceipt?{clientId:analysisReceipt.clientId}:{};
+  const claimed = await c.findOneAndUpdate(scope({_id: simulationId,...ownership, deletedAt: {$exists: false}}), {
+    $set: {deletedAt: analysisReceipt?.createdAt||new Date(), deletedBy: analysisReceipt?{id:analysisReceipt.actor}:{id: actor._id, name: actor.name}}
   }, {returnDocument: 'after', projection: {_id: 1, workspaceId: 1, deletedAt: 1, deletedBy: 1, reprocessing: 1}});
-  const deleted = claimed || await c.findOne(scope({_id: simulationId, deletedAt: {$exists: true}}), {
+  const deleted = claimed || await c.findOne(scope({_id: simulationId,...ownership, deletedAt: {$exists: true}}), {
     projection: {_id: 1, workspaceId: 1, deletedAt: 1, deletedBy: 1, reprocessing: 1}
   });
   if (deleted) {
     // Save the receipt before removal, so retries can finish an interrupted deletion without retaining fiscal data.
     await (await collection('audit')).updateOne(scope({_id: deletionAuditId(simulationId)}), {$setOnInsert: {
-      ...scope(), actor: deleted.deletedBy.id, action: 'simulation.delete', target: simulationId, createdAt: deleted.deletedAt
+      ...scope(), actor: deleted.deletedBy.id, action: 'simulation.delete', target: simulationId, createdAt: deleted.deletedAt,
+      ...(analysisReceipt?{analysisId:analysisReceipt.target}:{})
     }}, {upsert: true});
   } else need(await deletionReceipt(simulationId), 'Simulação não encontrada.', 404, 'NOT_FOUND');
-  await c.deleteOne(scope({_id: simulationId}));
+  await c.deleteOne(scope({_id: simulationId,...ownership}));
   const reprocessingItems = await collection('simulationReprocessItems');
   await reprocessingItems.deleteMany(scope({originalId: simulationId}));
   await reprocessingItems.updateMany(scope({$or:[{childId:simulationId},...(deleted?.reprocessing?.originalId ? [{originalId:deleted.reprocessing.originalId}] : [])]}),
@@ -199,7 +210,8 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   const requestHash = digest(JSON.stringify(validated));
   const c = await simulations();
   const repeated = async (record: Doc) => {
-    await requireUnremovedId(simulationId);
+    await assertSimulationNotDeleted(simulationId);
+    need(!await simulationAnalysisDeletionStarted(record),'Esta análise foi excluída. Abra uma nova análise da empresa para continuar.',409,'ANALYSIS_DELETED');
     need(!Object.hasOwn(record, 'deletedAt'), 'Esta simulação foi excluída. Use um novo identificador para salvar outra simulação.',
       409, 'SIMULATION_DELETED');
     const sameReprocessing = reprocessing && record.reprocessing?.version === reprocessing.version && record.reprocessing?.originalId === reprocessing.originalId;
@@ -208,7 +220,7 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
       'Este identificador já pertence a outra simulação. Gere uma nova versão para guardar alterações.', 409, 'SIMULATION_EXISTS');
     return visible(record);
   };
-  await requireUnremovedId(simulationId);
+  await assertSimulationNotDeleted(simulationId);
   const existing = await c.findOne(scope({_id: simulationId}));
   if (existing) return repeated(existing);
   await assertGenerationNotDeleted(generationId);
@@ -265,7 +277,8 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
     year: draft.year, annualRevenue: result.annualRevenue, bestRegimeId: result.bestRegimeId,
     bestRegimeName: best?.name || null, bestAnnualProfit: best?.annualProfit ?? null};
   const requireSources = async () => {
-    await requireUnremovedId(simulationId);
+    await assertSimulationNotDeleted(simulationId);
+    if(analysis?.analysisId || parent?.analysisId)await assertAnalysisNotDeleted(analysis?.analysisId||parent.analysisId);
     await assertGenerationNotDeleted(generationId);
     if (reprocessing) await Promise.all([assertLookupNotDeleted(source.purchases.jobId), assertLookupNotDeleted(source.sales.jobId)]);
     if (parentSimulationId) await getSimulation(parentSimulationId);
@@ -275,7 +288,7 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   try { await c.insertOne(snapshot); }
   catch (error: any) {
     if (error.code !== 11000) throw error;
-    await requireUnremovedId(simulationId);
+    await assertSimulationNotDeleted(simulationId);
     const concurrent = await c.findOne(scope({_id: simulationId}));
     need(concurrent, 'Identificador de simulação indisponível. Gere um novo identificador.', 409, 'SIMULATION_EXISTS');
     return repeated(concurrent);
@@ -284,7 +297,7 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   // Discard a late insert before returning or auditing it as a new simulation.
   try { await requireSources(); }
   catch (error: any) {
-    if (['SIMULATION_DELETED', 'GENERATION_DELETED', 'LOOKUP_DELETED', 'NOT_FOUND'].includes(error.code)) {
+    if (['SIMULATION_DELETED', 'ANALYSIS_DELETED', 'GENERATION_DELETED', 'LOOKUP_DELETED', 'NOT_FOUND'].includes(error.code)) {
       await c.deleteOne(scope({_id: simulationId}));
     }
     throw error;
