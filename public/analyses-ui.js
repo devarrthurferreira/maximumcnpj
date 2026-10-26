@@ -7,7 +7,7 @@ import {analysisDocumentStatus,loadAnalysisExtraction,retryAnalysisExtraction,up
 import {parseAccountingPaste,planAccountingPaste,ACCOUNTING_IMPORT_CSV_TEMPLATE} from './analysis-accounting-import.js';
 import {renderAccountingPaste} from './analyses-accounting-paste.js';
 import {analysisGuidance} from './analyses-guidance.js';
-import {wizardSteps,wizardStep,initialWizardStep} from './analyses-wizard.js';
+import {wizardStep,initialWizardStep,normalizeWizardStep} from './analyses-wizard.js';
 import {createAnalysisModal,restoreAnalysisNotices} from './analyses-modal.js';
 import {ACCOUNTING_FIELDS,ADJUSTMENT_FIELDS,esc,money,monthLabel,sectorName,analysisUrl,companyResults,
   renderNewAnalysis,renderNewCompanyContext,renderAnalysisList,renderAnalysisDetail,renderAnalysisVersions,
@@ -35,6 +35,7 @@ function feedback(message,kind='') {
 }
 function clearError(){const host=$('#analysis-error');host.replaceChildren();host.hidden=true;}
 function showError(error) {
+  feedback('');
   const host=$('#analysis-error');host.replaceChildren();host.hidden=false;
   const conflict=error?.status===409&&error?.code==='ANALYSIS_CONFLICT';
   const message=document.createElement('p');
@@ -55,8 +56,17 @@ function markDirty(sector) {
   S[sector+'Dirty']=true;S.generateRequest=null;
   if(sector==='accounting')invalidatePastePreview('Os valores do formulário mudaram. Confira novamente a colagem antes de aplicá-la.');
   const generate=$('#analysis-generate');if(generate)generate.disabled=true;
-  feedback('Há alterações ainda não salvas. Salve o trabalho do setor para compartilhá-las com a equipe.','info');
+  feedback('');
   refreshGuidance();
+}
+function refreshDraftStatus() {
+  const host=$('#analysis-draft-status');if(!host)return;
+  if(S.modalKind==='new'){host.textContent='';return;}
+  if(!writable()){host.textContent='Somente consulta';host.dataset.state='saved';return;}
+  const pending=S.modalKind==='accounting'&&S.paste.pending;
+  const changed=S[S.modalKind+'Dirty'];
+  host.textContent=pending?'Colagem aguardando aplicação':changed?'Alterações não salvas':S.modalKind==='config'?'Escolhas salvas':S.analysis?.[S.modalKind]?.updatedAt?'Dados salvos':'Salve para continuar depois';
+  host.dataset.state=pending||changed?'pending':'saved';
 }
 function setBusy(value,message='') {
   S.busy=value;$('#analyses-app').setAttribute('aria-busy',String(value));
@@ -73,9 +83,8 @@ function setBusy(value,message='') {
 
 function currentWizardState() {
   const kind=S.modalKind,resume=kind==='new'&&!!S.newExisting;
-  let step=S.modalSteps[kind];
-  const steps=wizardSteps(kind,{resume});
-  if(!steps.some(item=>item.id===step)){
+  let step=normalizeWizardStep(kind,S.modalSteps[kind]);
+  if(!step){
     step=initialWizardStep(kind,{resume,hasDocuments:!!S.source?.monthlyReports?.length,hasMonths:!!S.accountingDraft?.months?.length}).id;
   }
   S.modalSteps[kind]=step;return wizardStep(kind,step,{resume});
@@ -134,21 +143,7 @@ function validateWizardAdvance(state) {
       if(S.newCheckingCompany)throw new Error('Aguarde a conferência da análise desta empresa.');
       if(S.newCompanyError)throw new Error('Tente novamente a conferência da empresa antes de continuar.');
     }
-    if(state.id==='sector'&&!['fiscal','accounting'].includes(S.newSector)){
-      $('#analysis-new-form input[name=sector]')?.focus();throw new Error('Escolha o setor Fiscal ou Contábil antes de continuar.');
-    }
-    if(state.id==='regimes'){
-      S.newSelection=selectionFrom($('#analysis-new-form'));
-      if(![2027,2028].includes(S.newYear))throw new Error('Escolha um ano válido para o cenário.');
-    }
-  }else if(S.modalKind==='accounting'){
-    if(state.id==='months'&&writable()){
-      if(S.paste.pending){focusSection('#analysis-accounting-paste-panel');throw new Error('Confira e aplique a colagem ou use Limpar colagem antes de continuar para as despesas.');}
-      if(!S.accountingDraft.months.length){$('#analysis-new-month')?.focus();throw new Error('Adicione pelo menos uma competência ou aplique uma colagem para continuar.');}
-    }
-    if(state.id==='values')captureAccounting();
-  }else if(S.modalKind==='fiscal'&&state.id==='tax')captureFiscal();
-  else if(S.modalKind==='config'&&state.id==='choices')captureConfig();
+  }
 }
 function advanceWizard() {
   if(S.busy||S.pdfBusy||!S.modalKind)return;
@@ -159,7 +154,6 @@ function closeWizard() {
   if(S.busy||S.pdfBusy||!S.modalOpen)return;
   // Keep the dialog and its raw inputs mounted. Closing/back never parses or saves a draft.
   S.modalOpen=false;modal?.close();syncWizardUrl();
-  if(hasLocalWork())feedback('O preenchimento continua nesta página. Reabra o setor e salve o trabalho antes de sair.','info');
 }
 function bindWizard() {
   const dialog=$('#analysis-wizard');if(!dialog||!S.modalKind)return;
@@ -168,14 +162,19 @@ function bindWizard() {
     onPrevious:step=>setWizardStep(step),onClose:closeWizard});
   modal.sync(currentWizardState());
   if(S.modalOpen)modal.open(currentWizardState());
+  refreshDraftStatus();
   dialog.addEventListener('keydown',event=>{
-    if(event.key==='Enter'&&event.target.matches('input:not([type=file]):not([type=checkbox]):not([type=radio])')&&!currentWizardState().isLast){event.preventDefault();advanceWizard();}
+    if(event.key!=='Enter'||event.isComposing||!event.target.matches('input:not([type=file])'))return;
+    event.preventDefault();
+    if(S.busy||S.pdfBusy)return;
+    if(event.target.id==='analysis-new-month'){$('#analysis-add-month')?.click();return;}
+    if(!event.target.matches('[type=checkbox],[type=radio]')&&!currentWizardState().isLast)advanceWizard();
   });
 }
 function openWizard(kind,{step=null}={}) {
   if(S.busy||S.pdfBusy)return false;
   try {
-    clearError();
+    clearError();feedback('');
     const same=S.modalKind===kind&&$('#analysis-wizard')?.dataset.wizardKind===kind;
     if(!same)captureAll();
     if(!document.activeElement?.closest('dialog'))S.modalReturn=document.activeElement;
@@ -233,7 +232,7 @@ function bindCompanyResults() {
     if(S.busy)return;
     captureNewChoices();
     S.newClient=button.dataset.analysisClient;$('#analysis-new-client').value=S.newClient;
-    S.newExisting=null;S.newCompanyError='';refreshCompanies();void checkNewCompany();
+    S.newExisting=null;S.newCompanyError='';refreshCompanies();void checkNewCompany({advance:true});
   });
 }
 function captureNewChoices() {
@@ -254,13 +253,14 @@ function refreshNewCompanyState() {
   $('#analysis-new-year').value=String(S.newExisting?.config.year||S.newYear);
   const button=$('#analysis-open-company');button.disabled=S.busy||!writable()||!uuid(S.newClient)||S.newCheckingCompany||!!S.newCompanyError;
   $('#analysis-company-search').disabled=S.busy;
-  button.textContent=S.newCheckingCompany?'Conferindo empresa…':S.newExisting?'Continuar análise existente':'Abrir análise da empresa';
-  if($('#analysis-company-retry'))$('#analysis-company-retry').onclick=()=>void checkNewCompany();
+  button.textContent=S.newCheckingCompany?'Conferindo empresa…':['fiscal','accounting'].includes(S.newSector)?`${S.newExisting?'Continuar':'Começar'} no ${sectorName(S.newSector)}`:S.newExisting?'Continuar análise':'Começar análise';
+  if($('#analysis-company-retry'))$('#analysis-company-retry').onclick=()=>void checkNewCompany({advance:true});
   if(modal&&S.modalKind==='new'){modal.sync(currentWizardState());if(currentWizardState().isLast)refreshWizardReview();}
 }
-async function checkNewCompany() {
+async function checkNewCompany({advance=false}={}) {
   const clientId=S.newClient,ticket=++S.companyCheckSequence;
   if(!uuid(clientId))return;
+  clearError();
   S.newExisting=null;S.newCheckingCompany=true;S.newCompanyError='';refreshNewCompanyState();
   try {
     const response=await analysisRequest(apiPath('?'+new URLSearchParams({clientId,page:'1'})));
@@ -269,7 +269,10 @@ async function checkNewCompany() {
     if(response.items.some(item=>item.clientId!==clientId))throw new Error('A resposta não corresponde à empresa escolhida. Selecione a empresa novamente.');
     const found=response.items[0];S.newExisting=found?assertAnalysis(found):null;
   } catch(error){if(ticket===S.companyCheckSequence&&S.newClient===clientId)S.newCompanyError=error.message;}
-  finally{if(ticket===S.companyCheckSequence&&S.newClient===clientId){S.newCheckingCompany=false;refreshNewCompanyState();}}
+  finally{if(ticket===S.companyCheckSequence&&S.newClient===clientId){
+    S.newCheckingCompany=false;clearError();refreshNewCompanyState();
+    if(advance&&!S.newCompanyError&&S.modalOpen&&S.modalKind==='new'&&currentWizardState().id==='company')setWizardStep('setup');
+  }}
 }
 function refreshCompanies() {
   const results=companyResults(S.clients||[],S.newClient,S.newSearch);
@@ -292,7 +295,7 @@ async function openNew(clientId='') {
     captureNewChoices();S.newSearch=event.target.value;S.newClient='';S.newExisting=null;S.newCompanyError='';
     S.newCheckingCompany=false;S.companyCheckSequence++;$('#analysis-new-client').value='';refreshCompanies();refreshNewCompanyState();
   };
-  $('#analysis-new-form').onchange=()=>captureNewChoices();bindCompanyResults();refreshNewCompanyState();
+  $('#analysis-new-form').onchange=()=>{captureNewChoices();refreshNewCompanyState();};bindCompanyResults();refreshNewCompanyState();
   $('#analysis-new-form').onsubmit=async event=>{
     event.preventDefault();if(S.busy||!writable())return;
     if(!currentWizardState().isLast){advanceWizard();return;}
@@ -303,7 +306,11 @@ async function openNew(clientId='') {
       captureNewChoices();
       const selection=S.newExisting?.config.regimeSelection||selectionFrom(form),year=S.newExisting?.config.year||S.newYear;
       if(!S.newExisting)S.newSelection=selection;
-      if(!['fiscal','accounting'].includes(S.newSector))throw new Error('Escolha o setor Fiscal ou Contábil para começar.');
+      if(!['fiscal','accounting'].includes(S.newSector)){
+        const field=form.querySelector('input[name=sector]');revealWizardField(field);field?.focus();
+        throw new Error('Escolha o setor Fiscal ou Contábil para começar.');
+      }
+      if(![2027,2028].includes(year))throw new Error('Escolha um ano válido para o cenário.');
       const clientId=S.newClient,sector=S.newSector;
       setBusy(true,'Abrindo a análise desta empresa…');
       const response=await analysisRequest(apiPath(),{method:'POST',body:{clientId,year,regimeSelection:selection}});
@@ -314,7 +321,7 @@ async function openNew(clientId='') {
   };
   $('#analysis-resume-new').onclick=()=>{S.modalReturn=$('#analysis-resume-new');S.modalOpen=true;modal.open(currentWizardState());};
   bindWizard();
-  if(clientId&&!S.newExisting&&!S.newCheckingCompany)await checkNewCompany();
+  if(clientId&&!S.newExisting&&!S.newCheckingCompany)await checkNewCompany({advance:true});
 }
 
 async function openCompany(clientId) {
@@ -370,7 +377,7 @@ async function openAnalysis(id) {
   await loadEvidence(id,sequence);if(!currentContext(id,sequence))return;
   S.modalKind=query.get('view')==='settings'?'config':S.sector;
   S.modalOpen=!!S.modalKind;
-  if(S.modalKind&&wizardSteps(S.modalKind).some(item=>item.id===query.get('step')))S.modalSteps[S.modalKind]=query.get('step');
+  if(S.modalKind){const step=normalizeWizardStep(S.modalKind,query.get('step'));if(step)S.modalSteps[S.modalKind]=step;}
   clearError();renderDetail();
   if(query.get('resumed')==='1')feedback('Esta empresa já tinha uma análise. Retomamos o trabalho e preservamos os regimes e dados já salvos.','info');
   if(S.versionsOpen){await loadVersions(1);$('#analysis-versions')?.scrollIntoView({block:'start',behavior:'instant'});}
@@ -404,10 +411,13 @@ function refreshGuidance() {
     const status=guidance.sectors[host.dataset.analysisSectorStatus];
     if(status)host.innerHTML=`<span class="analysis-tag is-${status.kind}">${esc(status.label)}</span>`;
   });
+  const issuesOpen=$('#analysis-pending-issues')?.open;
   if($('#analysis-generation'))$('#analysis-generation').outerHTML=renderAnalysisGeneration(options);
+  if(issuesOpen!==undefined&&$('#analysis-pending-issues'))$('#analysis-pending-issues').open=issuesOpen;
   if($('#analysis-generate'))$('#analysis-generate').onclick=()=>void generate();
   document.querySelectorAll('#analysis-fiscal-form button[value="complete"],#analysis-accounting-form button[value="complete"]').forEach(button=>button.disabled=S.configDirty||S.busy||!writable());
   bindAnalysisActions();
+  refreshDraftStatus();
 }
 function focusSection(selector) {
   const target=$(selector);if(!target)return;
@@ -427,7 +437,7 @@ async function handleAnalysisAction(action) {
     if(action==='config'){openWizard('config',{step:'choices'});return;}
     if(['fiscal','accounting'].includes(action)){
       if(switchSector(action)&&action==='accounting'&&S.paste.pending){
-        setWizardStep('months');
+        setWizardStep('values');
         $('#analysis-accounting-paste-panel').open=true;focusSection('#analysis-accounting-paste-panel');
       }
       return;
@@ -436,7 +446,7 @@ async function handleAnalysisAction(action) {
       const sector=action.slice(5);if(switchSector(sector))await saveSector(sector,false);return;
     }
     if(action==='accounting-months'){
-      if(!openWizard('accounting',{step:'months'}))return;
+      if(!openWizard('accounting',{step:'values'}))return;
       const missing=expectedAccountingMonths().filter(month=>!S.accountingDraft.months.some(row=>row.sourceMonth===month));
       if(missing.length&&writable())addMonths(missing);
       focusSection('#analysis-add-month');
@@ -471,6 +481,7 @@ function renderDetail() {
   if($('#analysis-fiscal-form'))bindFiscal();
   if($('#analysis-accounting-form'))bindAccounting();
   bindWizard();
+  if($('#analysis-accounting-tools')&&(S.paste.pending||!S.accountingDraft.months.length))$('#analysis-accounting-tools').open=true;
   if(S.busy)setBusy(true);
 }
 
@@ -549,10 +560,15 @@ async function patchSector(sector,data,complete) {
 async function saveSector(sector,complete) {
   if(S.busy||!writable())return;
   try {
-    clearError();captureConfig();const data=sector==='fiscal'?captureFiscal():captureAccounting();
+    clearError();
+    if(complete&&sector==='accounting'&&S.paste.pending){
+      focusSection('#analysis-accounting-paste-panel');
+      throw new Error('Confira e aplique a colagem ou use Limpar colagem antes de concluir o Contábil.');
+    }
+    captureConfig();const data=sector==='fiscal'?captureFiscal():captureAccounting();
     if(complete&&S.configDirty)throw new Error('Salve primeiro os regimes e o ano da análise, depois conclua o setor.');
     if(complete&&sector==='accounting'){
-      if(!data.months.length){setWizardStep('months');throw new Error('Adicione pelo menos uma competência com os dados contábeis.');}
+      if(!data.months.length){focusSection('#analysis-new-month');throw new Error('Adicione pelo menos uma competência com os dados contábeis.');}
       for(const row of data.months){const missing=ACCOUNTING_FIELDS.find(([key])=>row[key]===null);if(missing){
         const field=document.querySelector(`[data-accounting-month="${row.sourceMonth}"] [data-accounting-field="${missing[0]}"]`);
         revealWizardField(field);field?.focus();
@@ -561,12 +577,15 @@ async function saveSector(sector,complete) {
     }
     setBusy(true,`${complete?'Concluindo':'Salvando'} o trabalho ${sectorName(sector)}…`);
     await patchSector(sector,data,complete);
-    if(complete)S.modalOpen=false;
+    if(complete){S.modalOpen=false;if(sector==='accounting')collapseAccountingTools();}
     feedback(complete?`${sectorName(sector)} concluído. ${hasLocalWork()?'Há preenchimentos locais que ainda precisam ser conferidos e salvos.':S.analysis.readiness.ready?'Os dois setores estão prontos para gerar a análise.':'Acompanhe abaixo o que ainda falta para gerar.'}`:`Trabalho ${sectorName(sector)} salvo. Você pode continuar depois nesta mesma análise.`);
   } catch(error){
     if(sector==='fiscal'&&String(error.code||'').startsWith('RBT12_'))S.modalSteps.fiscal='tax';
     if(sector==='fiscal'&&['ANALYSIS_FISCAL_INCOMPLETE','SIMULATOR_INCOMPLETE'].includes(error.code))S.modalSteps.fiscal='documents';
-    if(sector==='accounting'&&error.code==='ACCOUNTING_MONTHS_MISMATCH')S.modalSteps.accounting='months';
+    if(sector==='accounting'&&error.code==='ACCOUNTING_MONTHS_MISMATCH'){
+      S.modalSteps.accounting='values';S.detailOpen['analysis-accounting-tools']=true;
+      if($('#analysis-accounting-tools'))$('#analysis-accounting-tools').open=true;
+    }
     showError(error);
   }
   finally{if(S.busy){setBusy(false);renderDetail();if(!S.modalOpen)wizardReturnTarget()?.focus();}}
@@ -744,8 +763,9 @@ function renderPaste() {
       const count=preview.parsed.monthCount;
       S.modalSteps.accounting='values';
       markDirty('accounting');renderDetail();
-      feedback(`${count} competência(s) aplicada(s) ao formulário. Confira as despesas e use Salvar trabalho Contábil ou Concluir Contábil.`,'info');
-      focusSection('#analysis-expenses');
+      collapseAccountingTools();
+      feedback(`${count} competência(s) aplicada(s). Confira os valores e use Salvar rascunho ou Salvar e concluir.`,'info');
+      focusSection(`[data-accounting-month="${preview.parsed.months[0].sourceMonth}"] [data-accounting-field]`);
     } catch(error){S.paste.error=error.message;S.paste.open=true;renderPaste();}
   };
   if($('#analysis-cancel-accounting-paste'))$('#analysis-cancel-accounting-paste').onclick=()=>{
@@ -761,6 +781,10 @@ function renderPaste() {
     setTimeout(()=>URL.revokeObjectURL(url),1000);
   };
 }
+function collapseAccountingTools() {
+  const panel=$('#analysis-accounting-tools');if(panel)panel.open=false;
+  S.detailOpen['analysis-accounting-tools']=false;
+}
 function addMonths(months) {
   captureAll();const current=new Set(S.accountingDraft.months.map(row=>row.sourceMonth));
   for(const month of months){
@@ -770,6 +794,8 @@ function addMonths(months) {
   if(current.size>12)throw new Error('A análise aceita até 12 competências. Confira os meses antes de continuar.');
   for(const month of months)if(!S.accountingDraft.months.some(row=>row.sourceMonth===month))S.accountingDraft.months.push(blankMonth(month));
   S.accountingDraft.months.sort((a,b)=>a.sourceMonth.localeCompare(b.sourceMonth));markDirty('accounting');renderDetail();
+  collapseAccountingTools();
+  if(months.length)focusSection(`[data-accounting-month="${months[0]}"] [data-accounting-field]`);
 }
 function refreshMonthTotal(host) {
   try {

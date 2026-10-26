@@ -2,19 +2,33 @@
 const freezeSteps = steps => Object.freeze(steps.map(([id,label]) => Object.freeze({id,label})));
 
 export const WIZARD_STEPS = Object.freeze({
-  new:freezeSteps([['company','Empresa'],['sector','Setor'],['regimes','Regimes e ano'],['review','Conferência']]),
-  fiscal:freezeSteps([['documents','Documentos'],['tax','Opções fiscais'],['review','Conferência']]),
-  accounting:freezeSteps([['months','Competências'],['values','Despesas'],['review','Conferência']]),
-  config:freezeSteps([['choices','Regimes e ano'],['review','Conferência']])
+  new:freezeSteps([['company','Empresa'],['setup','Setor e regimes']]),
+  fiscal:freezeSteps([['documents','Documentos'],['tax','Opções fiscais']]),
+  accounting:freezeSteps([['values','Despesas']]),
+  config:freezeSteps([['choices','Regimes e ano']])
 });
 
-const RESUME_STEPS = Object.freeze(WIZARD_STEPS.new.filter(step => step.id !== 'regimes'));
+const LEGACY_STEPS = Object.freeze({
+  new:Object.freeze({sector:'setup',regimes:'setup',review:'setup'}),
+  fiscal:Object.freeze({review:'tax'}),
+  accounting:Object.freeze({months:'values',review:'values'}),
+  config:Object.freeze({review:'choices'})
+});
 
+/** Resumed analyses use the same steps; the controller preserves their saved choices. */
 export function wizardSteps(kind,{resume=false}={}) {
   if(typeof kind !== 'string' || !Object.hasOwn(WIZARD_STEPS,kind)) {
     throw new Error('Fluxo de etapas desconhecido.');
   }
-  return kind === 'new' && resume === true ? RESUME_STEPS : WIZARD_STEPS[kind];
+  return WIZARD_STEPS[kind];
+}
+
+/** Normalize legacy link IDs at the boundary, without weakening strict navigation. */
+export function normalizeWizardStep(kind,step) {
+  const steps=wizardSteps(kind);
+  if(typeof step !== 'string')return null;
+  if(steps.some(item=>item.id === step))return step;
+  return Object.hasOwn(LEGACY_STEPS[kind],step) ? LEGACY_STEPS[kind][step] : null;
 }
 
 /** IDs are exact; numeric indexes are zero-based and must be within this flow. */
@@ -30,9 +44,9 @@ export function wizardStep(kind,stepOrIndex=0,{resume=false}={}) {
     isFirst:index === 0,isLast:index === steps.length-1,steps};
 }
 
-/** Existing local progress chooses an entry point, never a saved completion status. */
+/** Existing documents choose the Fiscal entry point; accounting always has one screen. */
 export function initialWizardStep(kind,{resume=false,hasDocuments=false,hasMonths=false,preferredStep=null}={}) {
   const initial={new:'company',fiscal:hasDocuments === true ? 'tax' : 'documents',
-    accounting:hasMonths === true ? 'values' : 'months',config:'choices'};
+    accounting:'values',config:'choices'};
   return wizardStep(kind,preferredStep === null ? initial[kind] : preferredStep,{resume});
 }

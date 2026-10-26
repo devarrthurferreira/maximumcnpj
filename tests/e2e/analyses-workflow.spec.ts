@@ -39,8 +39,7 @@ async function signIn(request:APIRequestContext,baseURL:string,{email,password}:
 }
 type WizardKind='new'|'fiscal'|'accounting'|'config';
 const wizardSteps:Record<WizardKind,string[]>={
-  new:['company','sector','regimes','review'],fiscal:['documents','tax','review'],
-  accounting:['months','values','review'],config:['choices','review']
+  new:['company','setup'],fiscal:['documents','tax'],accounting:['values'],config:['choices']
 };
 async function wizardStep(page:Page,kind:WizardKind,step:string){
   const wizard=page.locator('#analysis-wizard'),steps=wizardSteps[kind];
@@ -62,8 +61,14 @@ async function closeWizard(page:Page){
 async function openSector(page:Page,sector:'fiscal'|'accounting',step?:string){
   const wizard=page.locator('#analysis-wizard'),opener=page.locator('[data-analysis-sector="'+sector+'"]').first();
   await expect(opener).toBeAttached();
-  if(!await wizard.isVisible()||await wizard.getAttribute('data-wizard-kind')!==sector){
-    await closeWizard(page);await opener.click();
+  if(await wizard.isVisible()){
+    const current=await wizard.getAttribute('data-wizard-kind');
+    if(current!==sector){
+      if(current==='fiscal'||current==='accounting')await wizard.locator('[data-analysis-sector="'+sector+'"]').click();
+      else{await closeWizard(page);await opener.click();}
+    }
+  }else{
+    await opener.click();
   }
   await expect(wizard).toBeVisible();await expect(wizard).toHaveAttribute('data-wizard-kind',sector);
   if(step)await wizardStep(page,sector,step);
@@ -73,7 +78,7 @@ async function openConfig(page:Page){
   await closeWizard(page);await page.locator('#analysis-open-config').click();await wizardStep(page,'config','choices');
 }
 async function saveConfig(page:Page){
-  await wizardStep(page,'config','review');await page.locator('#analysis-save-config').click();
+  await wizardStep(page,'config','choices');await page.locator('#analysis-save-config').click();
   await expect(page.locator('#analysis-feedback')).toContainText('Escolhas salvas');
   await expect(page.locator('#analysis-wizard')).not.toBeVisible();
 }
@@ -83,7 +88,7 @@ async function company(request:APIRequestContext,baseURL:string){
   return {id:created.items[0].id,code};
 }
 async function saveSector(page:Page,id:string,sector:'fiscal'|'accounting',complete=true){
-  await openSector(page,sector,complete?'review':undefined);
+  await openSector(page,sector,complete?(sector==='fiscal'?'tax':'values'):undefined);
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/${sector}`&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="'+(complete?'complete':'save')+'"]').click();
   const response=await saving;expect(response.ok(),await response.text()).toBe(true);
@@ -125,10 +130,16 @@ async function importInBrowser(page:Page,code:string){
   }
   await openSector(page,'fiscal','tax');
 }
+async function openDetails(page:Page,id:string){
+  const detail=page.locator('#'+id);await expect(detail).toBeAttached();
+  if(await detail.getAttribute('open')===null)await detail.locator(':scope > summary').click();
+  await expect(detail).toHaveJSProperty('open',true);
+}
 async function addMonth(page:Page,month:string,values:(number|null)[]){
-  await openSector(page,'accounting','months');
-  await page.locator('#analysis-new-month').fill(month);await page.locator('#analysis-add-month').click();
-  await wizardStep(page,'accounting','values');
+  await openSector(page,'accounting','values');await openDetails(page,'analysis-accounting-tools');
+  await page.locator('#analysis-new-month').fill(month);await page.locator('#analysis-new-month').press('Enter');
+  await expect(page.locator('[data-accounting-month="'+month+'"]')).toHaveCount(1);
+  await openDetails(page,'analysis-month-'+month);
   const keys=['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents'];
   for(let i=0;i<keys.length;i++)if(values[i]!==null)await page.locator(`[data-accounting-month="${month}"] [data-accounting-field="${keys[i]}"]`).fill(String(values[i]));
 }
@@ -140,15 +151,15 @@ test('Fiscal e Contábil compartilham uma análise, regimes sem Simples dispensa
   await signIn(page.request,baseURL!,accounting);const client=await company(page.request,baseURL!);
   await page.goto('/analyses.html?view=new');await page.locator('#analysis-company-search').fill(client.code);
   await page.locator(`[data-analysis-client="${client.id}"]`).click();
-  await wizardStep(page,'new','sector');await page.locator('input[name="sector"][value="accounting"]').check();
-  await wizardStep(page,'new','regimes');
+  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','setup');
+  await page.locator('input[name="sector"][value="accounting"]').check();
   await page.locator('#analysis-new-regime-pure').uncheck();await page.locator('#analysis-new-regime-hybrid').uncheck();
-  await wizardStep(page,'new','review');await page.locator('#analysis-open-company').click();
-  await openSector(page,'accounting','months');
+  await page.screenshot({path:info.outputPath('analysis-setup-desktop.png'),fullPage:true});
+  await page.locator('#analysis-open-company').click();await openSector(page,'accounting','values');
   const id=new URL(page.url()).searchParams.get('id')!;expect(id).toBeTruthy();
   await expect(page.locator('#analysis-generate')).toBeDisabled();
   await addMonth(page,'2025-01',[100,50,10,20,null]);
-  await wizardStep(page,'accounting','review');await page.locator('#analysis-wizard button[value="complete"]').click();
+  await page.locator('#analysis-wizard button[value="complete"]').click();
   await expect(page.locator('#analysis-error')).toContainText('Use zero somente');
   await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','values');
   await expect(page.locator('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]')).toHaveValue('100');
@@ -157,6 +168,7 @@ test('Fiscal e Contábil compartilham uma análise, regimes sem Simples dispensa
   let analysis=await saveSector(page,id,'accounting');
   expect(analysis.accounting.status).toBe('COMPLETE');expect(analysis.fiscal.status).toBe('DRAFT');expect(analysis.readiness.ready).toBe(false);
   expect(analysis.accounting.data.months.map((row:any)=>row.salariesCents)).toEqual([10000,20000]);
+  await page.screenshot({path:info.outputPath('analysis-overview-desktop.png'),fullPage:true});
   await openSector(page,'accounting','values');
   await page.screenshot({path:info.outputPath('analysis-accounting-desktop.png'),fullPage:true});
 
@@ -170,6 +182,8 @@ test('Fiscal e Contábil compartilham uma análise, regimes sem Simples dispensa
     await expect(fiscalPage.locator('#analysis-rbt12-pdf,#analysis-rbt12')).toHaveCount(0);
     await importInBrowser(fiscalPage,client.code);
     await expect(fiscalPage.locator('#analysis-rbt12-pdf,#analysis-rbt12')).toHaveCount(0);
+    await openSector(fiscalPage,'fiscal','tax');
+    await fiscalPage.screenshot({path:info.outputPath('analysis-fiscal-desktop.png'),fullPage:true});
     analysis=await saveSector(fiscalPage,id,'fiscal');expect(analysis.readiness.ready).toBe(true);
     expect(analysis.accounting.updatedBy.id).toBe(accounting.id);expect(analysis.fiscal.updatedBy.id).toBe(fiscal.id);
     const first=await generate(fiscalPage,id);
@@ -202,6 +216,7 @@ test('Fiscal e Contábil compartilham uma análise, regimes sem Simples dispensa
     await page.goto(`/analyses.html?id=${id}&sector=accounting`);
     await openSector(page,'accounting','values');
     await expect(page.locator('[data-accounting-month="2025-02"] [data-accounting-field="salariesCents"]')).toHaveValue('200.00');
+    await openDetails(page,'analysis-month-2025-01');
     await page.locator('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]').fill('150');
     analysis=await saveSector(page,id,'accounting',false);
     expect(analysis.currentSimulation).toMatchObject({id:first._id,stale:true});await expect(page.locator('#analysis-generate')).toBeDisabled();
@@ -242,7 +257,7 @@ test('Simples exige referência confirmada, trocar regimes retira o extrato e co
   let analysis=(await post(page.request,baseURL!,'/api/v4/analyses',{clientId:client.id,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid']}})).analysis;
   const id=analysis.id;await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await importInBrowser(page,client.code);
   await expect(page.locator('#analysis-rbt12-pdf')).toBeVisible();
-  await wizardStep(page,'fiscal','review');
+  await wizardStep(page,'fiscal','tax');
   const incomplete=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/fiscal`&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="complete"]').click();expect((await incomplete).ok()).toBe(false);
   await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','tax');
@@ -265,10 +280,12 @@ test('Simples exige referência confirmada, trocar regimes retira o extrato e co
     await concurrent.goto(`/analyses.html?id=${id}&sector=accounting`);
     await openSector(concurrent,'accounting','values');
     await expect(concurrent.locator('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]')).toHaveValue('100.00');
+    await openDetails(concurrent,'analysis-month-2025-01');
     await concurrent.locator('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]').fill('222');
     await openSector(page,'accounting','values');
+    await openDetails(page,'analysis-month-2025-01');
     await page.locator('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]').fill('111');await saveSector(page,id,'accounting');
-    await wizardStep(concurrent,'accounting','review');
+    await wizardStep(concurrent,'accounting','values');
     const conflict=concurrent.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/accounting`&&response.request().method()==='PATCH');
     await concurrent.locator('#analysis-wizard button[value="complete"]').click();expect((await conflict).status()).toBe(409);
     await expect(concurrent.locator('#analysis-wizard #analysis-error')).toContainText('Seus campos continuam nesta tela');

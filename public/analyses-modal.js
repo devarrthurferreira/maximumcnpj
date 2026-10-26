@@ -38,6 +38,7 @@ export function createAnalysisModal({dialog,onNext,onBack,onPrevious,onClose,isB
     else if(!event.shiftKey&&active===last){event.preventDefault();first.focus();}
   };
   $('#analysis-wizard-close',dialog).onclick=requestClose;
+  dialog.querySelectorAll('[data-wizard-dismiss]').forEach(button=>button.onclick=requestClose);
   $('#analysis-wizard-next',dialog).onclick=()=>{if(!isBusy())onNext();};
   $('#analysis-wizard-back',dialog).onclick=()=>{if(!isBusy())onBack();};
 
@@ -51,7 +52,7 @@ export function createAnalysisModal({dialog,onNext,onBack,onPrevious,onClose,isB
     if(disposed)return;
     dialog.dataset.wizardStep=state.id;dialog.setAttribute('aria-busy',String(busy));
     dialog.querySelectorAll('[data-wizard-step]').forEach(panel=>panel.hidden=panel.dataset.wizardStep!==state.id);
-    const progress=$('#analysis-wizard-progress',dialog);progress.replaceChildren();
+    const progress=$('#analysis-wizard-progress',dialog);progress.hidden=state.total===1;progress.replaceChildren();
     const count=document.createElement('p');count.className='analysis-wizard-counter';count.setAttribute('role','status');count.setAttribute('aria-live','polite');count.textContent=`Etapa ${state.number} de ${state.total}`;progress.append(count);
     const list=document.createElement('ol');list.className='analysis-wizard-steps';list.setAttribute('aria-label','Etapas do preenchimento');
     state.steps.forEach((step,index)=>{
@@ -64,9 +65,10 @@ export function createAnalysisModal({dialog,onNext,onBack,onPrevious,onClose,isB
     });progress.append(list);
     const back=$('#analysis-wizard-back',dialog),next=$('#analysis-wizard-next',dialog);
     back.hidden=state.isFirst;back.disabled=busy;
-    next.hidden=state.isLast;next.disabled=busy;next.textContent=state.next==='review'?'Conferir dados':'Continuar';
+    next.hidden=state.isLast;next.disabled=busy;next.textContent='Continuar';
     dialog.querySelectorAll('[data-wizard-final-actions]').forEach(host=>host.hidden=!state.isLast);
     $('#analysis-wizard-close',dialog).disabled=busy;
+    dialog.querySelectorAll('[data-wizard-dismiss]').forEach(button=>button.disabled=busy);
     if(focus&&dialog.open)focusStep();
   }
   return {
