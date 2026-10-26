@@ -43,3 +43,5 @@
 .history-reprocess-meter{display:block;width:100%;height:7px;margin:14px 0 6px;border:0;border-radius:20px;overflow:hidden;background:#eee6ea;accent-color:#750207}
 .history-reprocess-meter::-webkit-progress-bar{background:#eee6ea;border-radius:20px}.history-reprocess-meter::-webkit-progress-value{background:#750207;border-radius:20px}.history-reprocess-meter::-moz-progress-bar{background:#750207;border-radius:20px}
 .history-reprocess-completed{font-size:11px;color:#76636d;margin:5px 0 0;line-height:1.6}
+
+.history-analysis-link { display: inline-flex; font-size: 12px; font-weight: 650; color: #750207; margin: 0 0 12px; }

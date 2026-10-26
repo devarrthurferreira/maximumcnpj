@@ -21,7 +21,7 @@
 .dre-diagnostic-note,.dre-diagnostic-assumptions{font-size:11px;color:#705c66}
 .dre-diagnostic-assumptions{padding-left:18px;margin:9px 0 0}
 .dre-diagnostic-assumptions li{margin:5px 0}
-.dre-print-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}
+.dre-print-summary{display:grid;grid-template-columns:repeat(var(--dre-regime-count,4),minmax(0,1fr));gap:12px;margin:16px 0}
 .dre-print-summary article{padding:12px;border:1px solid #e1d6dc;border-radius:8px}
 .dre-print-summary h3{margin:0 0 6px;font-size:13px;color:#481825}
 .dre-print-summary p{font-size:10px;line-height:1.4;min-height:28px}

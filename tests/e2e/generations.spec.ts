@@ -7,7 +7,7 @@ async function session(page:any,mustChangePassword=false){await page.route('**/a
 test('Generation selects multiple companies and preserves a draft with missing purchases',async({page},testInfo)=>{
  await session(page);let created:any;const pageErrors:string[]=[];page.on('pageerror',e=>pageErrors.push(e.message));
  await page.route(/\/api\/v4\/generations(?:[/?]|$)/,r=>{if(r.request().method()==='POST'){created=r.request().postDataJSON();return r.fulfill({json:{...base,_id:created.generationId}});}return r.fulfill({json:{...base,_id:created?.generationId||id,requiredReports:created?.requiredReports||['PURCHASES'],completedCount:0,missingCount:2,companies:base.companies.map(c=>({...c,status:'MISSING',salesJobId:null,sales:null}))}});});
- await page.goto('/generations.html?multiple=1');await expect(page.locator('.nav a')).toHaveText(['Visão geral','Empresas','Nova análise','Histórico','Simulações']);
+ await page.goto('/generations.html?multiple=1');await expect(page.locator('.nav a')).toHaveText(['Visão geral','Empresas','Análises','Relatórios','Versões salvas']);
  await expect(page.getByRole('button',{name:'Continuar com as empresas'})).toBeDisabled();
  await page.getByLabel('Buscar empresas').fill('936');await page.locator('.generation-company-option input').check();
  await page.getByLabel('Buscar empresas').fill('868');await page.locator('.generation-company-option input').check();
@@ -18,7 +18,7 @@ test('Generation selects multiple companies and preserves a draft with missing p
  await expect(page.locator('[data-report-slot="SALES"] a')).toHaveCount(2);await expect(page.locator('[data-report-slot="SALES"] a').first()).toHaveAttribute('href',/type=SALES/);await expect(page.getByRole('button',{name:'Baixar relatório completo PDF'})).toBeDisabled();
  const add=page.locator('[data-report-slot="PURCHASES"]').getByRole('link',{name:'Adicionar relatório',exact:true});await expect(add).toHaveAttribute('href',new RegExp(`generation=${created.generationId}&client=${clients[1]._id}`));
  await page.setViewportSize({width:390,height:844});const mobile=testInfo.outputPath('geracao-mobile.png');await page.screenshot({path:mobile,fullPage:true});await testInfo.attach('Geração mobile',{path:mobile,contentType:'image/png'});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
- await page.getByRole('button',{name:'Alternar navegação'}).click();await expect(page.getByRole('link',{name:'Histórico',exact:true})).toBeVisible();expect(pageErrors).toEqual([]);
+ await page.getByRole('button',{name:'Alternar navegação'}).click();await expect(page.getByRole('link',{name:'Relatórios',exact:true})).toBeVisible();expect(pageErrors).toEqual([]);
 });
 test('History resumes missing reports then downloads only the completed generation',async({page},testInfo)=>{
  await session(page);let complete=false,pdfBody:any;

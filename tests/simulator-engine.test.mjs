@@ -476,7 +476,7 @@ test('antecipação de ICMS deduz 7,32% de compras interestaduais somente nos do
  const input={...example(),difalMonthly:100},baseline=calculateTax(input);
  const anticipation={version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73_200}; // R$10.000 ×7,32%.
  const result=calculateTax({...input,icmsAnticipation:anticipation});
- assert.equal(result.version,'1.9.0-icms-operations');assert.equal(baseline.version,'1.9.0-icms-operations');
+ assert.equal(result.version,'1.10.0-regime-selection');assert.equal(baseline.version,'1.10.0-regime-selection');
  assert.deepEqual(result.credits,baseline.credits);close(result.annualRevenue,baseline.annualRevenue);
  for(const regime of result.regimes){
   const old=baseline.regimes.find(row=>row.id===regime.id),d=regime.dre,charge=['pure','hybrid'].includes(regime.id)?8784:0;

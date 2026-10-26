@@ -30,8 +30,8 @@ test('Maximum: menu claro abre com rótulos e preserva a preferência entre pág
   await expect(sidebar).toHaveCSS('width','252px');
   await expect(sidebar).toHaveCSS('background-color','rgb(255, 255, 255)');
   await expect(page.locator('.navigation-brand-copy')).toContainText('Maximum CNPJ');
-  await expect(page.locator('.sidebar .nav a')).toHaveText(['Visão geral','Empresas','Nova análise','Histórico','Simulações']);
-  await expect(page.locator('.navigation-shortcut a')).toHaveAttribute('href','/generations.html');
+  await expect(page.locator('.sidebar .nav a')).toHaveText(['Visão geral','Empresas','Análises','Relatórios','Versões salvas']);
+  await expect(page.locator('.navigation-shortcut a')).toHaveAttribute('href','/analyses.html?view=new');
   await expect(toggle).toHaveAttribute('aria-expanded','true');
   await page.screenshot({path:'test-results/maximum-brand/navbar-expandida.png',fullPage:true});
   await toggle.click();
@@ -46,9 +46,9 @@ test('Maximum: menu claro abre com rótulos e preserva a preferência entre pág
   const centers=await page.locator('.sidebar .navigation-icon').evaluateAll((items:any[])=>items.map(item=>{const r=item.getBoundingClientRect();return r.left+r.width/2;}));
   for(const center of centers)expect(Math.abs(center-rail!.width/2)).toBeLessThanOrEqual(1);
   const start=page.locator('.navigation-start');
-  await expect(start).toHaveAttribute('href','/generations.html');
+  await expect(start).toHaveAttribute('href','/analyses.html');
   await start.hover();await expect(start.locator('.navigation-label')).toBeVisible();
-  await expect(start.locator('.navigation-label')).toHaveText('Nova análise');
+  await expect(start.locator('.navigation-label')).toHaveText('Análises');
   await expect(sidebar).toHaveCSS('width','76px');
   await expect(page.locator('.navigation-shortcut')).toBeHidden();
   await page.screenshot({path:'test-results/maximum-brand/navbar-compacta.png',fullPage:true});
@@ -59,7 +59,7 @@ test('Maximum: menu claro abre com rótulos e preserva a preferência entre pág
   await expect(toggle).toHaveAttribute('data-navigation-action','Recolher navegação');
   await expect(page.locator('.navigation-brand-copy')).toBeVisible();
   await expect(page.locator('.navigation-user-copy')).toContainText('Demonstração visual');
-  await expect(page.locator('.sidebar .nav a')).toHaveText(['Visão geral','Empresas','Nova análise','Histórico','Simulações']);
+  await expect(page.locator('.sidebar .nav a')).toHaveText(['Visão geral','Empresas','Análises','Relatórios','Versões salvas']);
   await page.locator('.navigation-item[data-navigation=clients]').click();
   await expect(page.locator('[data-navigation=clients]')).toHaveAttribute('aria-current','page');
   await page.screenshot({path:'test-results/maximum-brand/navbar-expandida.png',fullPage:true});
@@ -84,7 +84,7 @@ test('Maximum: gaveta móvel tem rótulos, foco contido e fecha por Esc, botão,
   await expect(page.locator('.main')).toHaveJSProperty('inert',true);
   await expect(sidebar).toHaveCSS('width','280px');
   await expect(sidebar).toHaveCSS('transform','matrix(1, 0, 0, 1, 0, 0)');
-  await expect(page.getByRole('link',{name:'Histórico',exact:true})).toBeVisible();
+  await expect(page.getByRole('link',{name:'Relatórios',exact:true})).toBeVisible();
   await expect(page.locator('.navigation-profile')).toContainText('Demonstração visual');
   await page.locator('#logout').focus();await page.keyboard.press('Tab');
   await expect(page.locator('.navigation-rail-cap')).toBeFocused();
@@ -134,8 +134,8 @@ test('Maximum: preferência antiga recolhida e acesso de visualização continua
   await expect(page.locator('#toggle-nav')).toHaveAttribute('aria-expanded','false');
   await expect(page.locator('[data-navigation=start]')).toHaveCount(0);
   await page.locator('#toggle-nav').click();
-  await expect(page.locator('.navigation-shortcut')).toContainText('Seus relatórios,');
-  await expect(page.locator('.navigation-shortcut a')).toHaveAttribute('href','/generations.html?view=history');
+  await expect(page.locator('.navigation-shortcut')).toContainText('Suas análises,');
+  await expect(page.locator('.navigation-shortcut a')).toHaveAttribute('href','/analyses.html');
   await expect(page.locator('.navigation-user-copy')).toContainText('Visualização');
 });
 

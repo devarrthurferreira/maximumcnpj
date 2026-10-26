@@ -9,6 +9,7 @@ export type DrePresentation = {
   version:'DRE_PRESENTATION_V1';method?:string|null;regimes:Array<{id:string;name:string;available:boolean;status?:string;monthlyAvailability?:boolean[];monthlyStatuses?:string[];difalApplication?:import('./simulator-engine.js').SimulationRegime['difalApplication']}>;
   report?:{modelVersion:string|null;sourceMonths:string[];warnings:Array<{code:string;severity:string;title:string;detail:string}>;memory:Array<{id:string;section:string;label:string;formula:string;value:number|string;unit:string}>;sources:Array<{label:string;url:string}>;reportPeriod:any};
   difalPolicy?:import('./simulator-engine.js').DifalPolicy;
+  regimeSelection?:import('./regime-selection.js').RegimeSelection;
   simplesDiagnostic?:any;
   sections:Array<{key:string;label:string;rows:DrePresentationRow[]}>;
   details:Array<{key:string;label:string;parentKey:string;rows:DrePresentationRow[]}>;indicators:DrePresentationRow[];

@@ -70,3 +70,16 @@ test('RBT12 manual é explícita, confirmada e independente do OCR, inclusive ze
  assert.equal(rbt12InputSource(undefined,undefined,'extraction-id',100),'SIMPLES_SECTION_22');
  assert.equal(rbt12InputSource('SIMPLES_SECTION_22',undefined,'extraction-id',100),'SIMPLES_SECTION_22');
 });
+test('Extrato é dispensado somente sem Simples, sem fabricar referência ou aceitar opções incompatíveis',()=>{
+ const selection={version:'REGIME_SELECTION_V1',selected:['presumed','actual']};
+ assert.equal(rbt12InputSource('NOT_REQUIRED',undefined,null,undefined,selection),'NOT_REQUIRED');
+ assert.equal(rbt12InputSource(undefined,undefined,null,null,selection),'NOT_REQUIRED');
+ for(const [source,confirmation,extraction,value] of [
+  ['MANUAL',true,null,0],['SIMPLES_SECTION_22',undefined,'extraction',100],['NOT_REQUIRED',undefined,null,0],
+  ['NOT_REQUIRED',false,null,undefined],['NOT_REQUIRED',undefined,'extraction',undefined]
+ ] as const)assert.throws(()=>rbt12InputSource(source,confirmation,extraction,value,selection),(error:any)=>error.code==='RBT12_SOURCE');
+ for(const selected of [['pure'],['hybrid'],['pure','actual']]){
+  assert.throws(()=>rbt12InputSource('NOT_REQUIRED',undefined,null,undefined,{version:'REGIME_SELECTION_V1',selected}),(error:any)=>error.code==='RBT12_SOURCE');
+ }
+ assert.throws(()=>rbt12InputSource('NOT_REQUIRED',undefined,null,undefined),(error:any)=>error.code==='RBT12_SOURCE','A seleção omitida continua significando os quatro regimes legados.');
+});

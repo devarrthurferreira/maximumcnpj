@@ -8,10 +8,10 @@ async function session(page:any,user:any={_id:'operator',role:'operator',name:'T
 test('Simulation history searches, filters, paginates and exposes direct detail links on desktop/mobile',async({page},info)=>{
  await session(page);const queries:URLSearchParams[]=[];const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/api/v4/simulations?*',r=>{const params=new URL(r.request().url()).searchParams;queries.push(params);const filtered=!!params.get('search');return r.fulfill({json:{items:[{...item,year:Number(params.get('year')||2027)}],total:filtered?1:21,page:Number(params.get('page')),pageSize:20}});});
- await page.goto('/simulations.html');await expect(page.getByRole('heading',{name:'21 simulações salvas'})).toBeVisible();await expect(page.locator('[data-navigation="simulations"]')).toHaveAttribute('aria-current','page');
+ await page.goto('/simulations.html');await expect(page.getByRole('heading',{name:'21 versões salvas'})).toBeVisible();await expect(page.locator('[data-navigation="simulations"]')).toHaveAttribute('aria-current','page');
  await expect(page.getByRole('link',{name:'Rever simulação'})).toHaveAttribute('href','/simulator.html?simulation='+item._id);await expect(page.locator('.history-item')).toContainText('VALORES AJUSTADOS');
  await page.getByRole('button',{name:'Próxima',exact:true}).click();await expect(page.locator('.history-pager')).toContainText('Página 2 de 2');expect(queries.at(-1)?.get('page')).toBe('2');
- await page.getByLabel('Buscar simulações').fill('936');await page.getByRole('button',{name:'Buscar',exact:true}).click();await expect(page.getByRole('heading',{name:'1 simulação salva'})).toBeVisible();expect(queries.at(-1)?.get('search')).toBe('936');expect(queries.at(-1)?.get('page')).toBe('1');
+ await page.getByLabel('Buscar simulações').fill('936');await page.getByRole('button',{name:'Buscar',exact:true}).click();await expect(page.getByRole('heading',{name:'1 versão salva'})).toBeVisible();expect(queries.at(-1)?.get('search')).toBe('936');expect(queries.at(-1)?.get('page')).toBe('1');
  await page.getByLabel('Ano do cenário').selectOption('2028');await expect(page.locator('.history-tags')).toContainText('2028');expect(queries.at(-1)?.get('year')).toBe('2028');
  const desktop=info.outputPath('historico-simulacoes-desktop.png');await page.screenshot({path:desktop,fullPage:true});await info.attach('Histórico de simulações',{path:desktop,contentType:'image/png'});
  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);const mobile=info.outputPath('historico-simulacoes-mobile.png');await page.screenshot({path:mobile,fullPage:true});await info.attach('Histórico mobile',{path:mobile,contentType:'image/png'});expect(errors).toEqual([]);
@@ -86,7 +86,7 @@ test('Excluir último item da página volta à página válida e conserva empres
  await expect(page.locator('.history-pager')).toContainText('Página 2 de 2');
  await page.locator(`[data-delete-simulation="${item._id}"]`).click();await page.locator('#delete-simulation-confirm').click();
  await expect(page.locator('.history-pager')).toContainText('Página 1 de 1');await expect(page.locator('.history-item')).toHaveCount(20);
- await expect(page.getByRole('heading',{name:'20 simulações salvas'})).toBeFocused();
+ await expect(page.getByRole('heading',{name:'20 versões salvas'})).toBeFocused();
  await expect(page.getByLabel('Buscar simulações')).toHaveValue('936');await expect(page.getByLabel('Ano do cenário')).toHaveValue('2028');
  const params=new URL(page.url()).searchParams;expect(Object.fromEntries(params)).toEqual({page:'1',clientId,search:'936',year:'2028'});
  expect(queries.at(-1)?.get('page')).toBe('1');

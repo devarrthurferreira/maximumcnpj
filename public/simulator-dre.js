@@ -1,5 +1,6 @@
 import {dreRows, MONTH_NAMES} from './simulator-calendar.js';
 import {buildRevenueReconciliation} from './revenue-reconciliation.js';
+import {resolveRegimeSelection,requiresSimplesReference,regimeMemoryApplies,regimeWarningApplies} from './regime-selection.js';
 
 /** Read-only presentation: no tax engine, source hydration or snapshot mutation. */
 export const DRE_PRESENTATION_VERSION = 'DRE_PRESENTATION_V1';
@@ -16,6 +17,7 @@ const capturedDifalVersion = value => ['DIFAL_SCENARIOS_V1','DIFAL_SCENARIOS_V2'
 
 /** Explain captured decisions only; older snapshots never acquire today's policy. */
 export function dreDifalNotes(presentation,{sourceMonth=null}={}) {
+  if(presentation?.regimeSelection!==undefined&&!requiresSimplesReference(presentation.regimeSelection))return [];
   return (presentation?.regimes||[]).flatMap(regime=>{
     const application=regime.difalApplication;
     if(!capturedDifalVersion(application)||typeof application.enabled!=='boolean')return [];
@@ -67,7 +69,7 @@ export function dreRegimeStatuses(presentation,{sourceMonth=null}={}) {
 export function dreReportMemory(presentation,{includeDre=false}={}) {
   const simplesPending=(presentation?.regimes||[]).some(regime=>['pure','hybrid'].includes(regime.id)&&regime.available!==true);
   const unavailable=new Map((presentation?.regimes||[]).filter(regime=>regime.available!==true).map(regime=>[regime.id,regime]));
-  return (presentation?.report?.memory||[]).filter(item=>includeDre||!/^dre\.|^summary\./.test(item.id)).map(item=>{
+  return (presentation?.report?.memory||[]).filter(item=>(presentation.regimeSelection===undefined||regimeMemoryApplies(item.id,presentation.regimeSelection))&&(includeDre||!/^dre\.|^summary\./.test(item.id))).map(item=>{
     const key=/^dre\.[^.]+\.(revenue|netRevenue)$/.exec(item.id)?.[1];
     const label=key==='revenue'?'Receita total utilizada':key==='netRevenue'?'Receita após deduções tributárias':item.label;
     const pending=unavailable.get(/^(?:dre|summary)\.([^.]+)\./.exec(item.id)?.[1]);
@@ -102,7 +104,9 @@ export function unifiedDreRows(presentation) {
 }
 
 export function buildDrePresentation({result,monthlyGroups,projection,source,reportMonths,engineInput,reprocessing,calendar,taxSources}={}) {
-  const originals = Array.isArray(result?.regimes) ? result.regimes : [];
+  const capturedSelection=result?.regimeSelection!==undefined?result.regimeSelection:engineInput?.regimeSelection!==undefined?engineInput.regimeSelection:calendar?.regimeSelection;
+  const regimeSelection=capturedSelection===undefined?undefined:resolveRegimeSelection(capturedSelection),hasSimples=requiresSimplesReference(regimeSelection);
+  const originals = (Array.isArray(result?.regimes) ? result.regimes : []).filter(regime=>!regimeSelection||regimeSelection.selected.includes(regime.id));
   const hasCalendar = calendar != null;
   const validCalendar = ['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3'].includes(calendar?.version) && Array.isArray(calendar.months) && calendar.months.length===12;
   const calendarYear = calendar?.year ?? engineInput?.year ?? null;
@@ -158,7 +162,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     return {key,label,kind,unit,values,monthlyValues,calendarAnnualValues,percentValues,monthlyPercentValues,calendarAnnualPercentValues,
       reasonByRegime,calendarReasonByRegime,monthlyReasonByRegime,notes:[...notes],informative,...(parentKey?{parentKey}:{}),sourceRefs:[...sourceRefs]};
   }
-  const baseRows=dreRows(result),labels=new Map(baseRows);
+  const baseRows=dreRows({regimes:originals}),labels=new Map(baseRows);
   const base=key=>row(key,labels.get(key),SUBTOTALS.has(key)?'subtotal':'line',f=>currency(f.get(key)),{sourceRefs:[`result.regimes[].dre.${key}`]});
   const reconciledSum=(keys,parent,less=null)=>f=>{
     const value=sum(keys.map(key=>f.get(key))),expected=less?sum([f.get(parent),finite(f.get(less))?-f.get(less):null]):f.get(parent);
@@ -316,15 +320,16 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
       row('revenueUsed','= Receita utilizada na simulação','subtotal',f=>currency(f.get('revenue')),{informative:true,notes:['Valor preservado na DRE. A base dos tributos, margens e percentuais permanece a mesma.'],sourceRefs:['result.regimes[].dre.revenue']})
     ]};
   return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,revenueReconciliation,icmsReconciliation,months,calendarYear,
-    ...(result?.simplesDiagnostic?.version==='SIMPLES_DIAGNOSTIC_V1'?{simplesDiagnostic:structuredClone(result.simplesDiagnostic)}:{}),
+    ...(regimeSelection?{regimeSelection}:{}),
+    ...(hasSimples&&result?.simplesDiagnostic?.version==='SIMPLES_DIAGNOSTIC_V1'?{simplesDiagnostic:structuredClone(result.simplesDiagnostic)}:{}),
     report:{modelVersion:typeof result?.version==='string'?result.version:null,
       sourceMonths:actual?(result.monthlyResults||[]).map(row=>row.sourceMonth):[],
-      warnings:structuredClone(Array.isArray(result?.warnings)?result.warnings:[]),
-      memory:structuredClone(Array.isArray(result?.memory)?result.memory:[]),
+      warnings:structuredClone((Array.isArray(result?.warnings)?result.warnings:[]).filter(item=>!regimeSelection||regimeWarningApplies(item.code,regimeSelection))),
+      memory:structuredClone((Array.isArray(result?.memory)?result.memory:[]).filter(item=>!regimeSelection||regimeMemoryApplies(item.id,regimeSelection))),
       sources:structuredClone(Array.isArray(taxSources)?taxSources:[]),
       reportPeriod:structuredClone(calendar?.reportPeriod??source?.period??null)},
     ...(capturedDifalVersion(result?.difalPolicy)?{difalPolicy:structuredClone(result.difalPolicy)}:{}),
-    ...(calendar?.rbt12Schedule?{rbt12Schedule:structuredClone(calendar.rbt12Schedule)}:{}),
-    calendarReference:calendar?.rbt12Reference??null,calendarRounding:calendar?.rounding??'Valores completos preservados; exibição com duas casas decimais.',
+    ...(hasSimples&&calendar?.rbt12Schedule?{rbt12Schedule:structuredClone(calendar.rbt12Schedule)}:{}),
+    calendarReference:hasSimples?calendar?.rbt12Reference??null:null,calendarRounding:calendar?.rounding??'Valores completos preservados; exibição com duas casas decimais.',
     percentBasis:'Receita utilizada na simulação, no mesmo período e regime'};
 }

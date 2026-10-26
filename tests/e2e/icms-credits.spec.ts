@@ -153,7 +153,7 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
 
   // Independent arithmetic: 1,000×18% + 2,000×12% = 420; eligible purchases
   // 300×18% + 500×12% = 114; returns 100×18% + 200×12% = 42; due = 264.
-  expect(saved.modelVersion).toBe('1.9.0-icms-operations');
+  expect(saved.modelVersion).toBe('1.10.0-regime-selection');
   expect(saved.result.method).toBe('REPORT_MONTHS_V1');expect(saved.result.annualRevenue).toBe(2700);
   expect(saved.source.monthlyReports).toHaveLength(1);expect(saved.result.monthlyResults).toHaveLength(1);
   expect(saved.source.fields).toMatchObject({salesCpfCents:270_000,salesOptantCents:0,salesNonOptantCents:0,purchasesOptantCents:0,purchasesNonOptantCents:140_000,serviceRevenueCents:0});

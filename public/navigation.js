@@ -34,11 +34,12 @@ function brandMark() {
 function navigationShortcut(canCreate) {
   return `<section class="navigation-shortcut" aria-label="${canCreate ? 'Começar uma análise' : 'Consultar relatórios'}">
     <div class="navigation-preview" aria-hidden="true"><div class="navigation-preview-sheet"><span>${icon('report')}<b>Maximum</b></span><i></i><i></i><i></i></div></div>
-    <div class="navigation-shortcut-copy"><strong>${canCreate ? 'Sua próxima análise<br>começa aqui.' : 'Seus relatórios,<br>sempre à mão.'}</strong><p>${canCreate ? 'Compras, vendas e simulações em um só fluxo.' : 'Acesse as análises salvas da sua equipe.'}</p><a href="${canCreate ? '/generations.html' : '/generations.html?view=history'}">${canCreate ? 'Começar análise' : 'Consultar histórico'}<span aria-hidden="true">→</span></a></div>
+    <div class="navigation-shortcut-copy"><strong>${canCreate ? 'Sua próxima análise<br>começa aqui.' : 'Suas análises,<br>sempre à mão.'}</strong><p>${canCreate ? 'Fiscal e Contábil, com o trabalho de cada empresa organizado.' : 'Acompanhe o trabalho e os resultados salvos da sua equipe.'}</p><a href="${canCreate ? '/analyses.html?view=new' : '/analyses.html'}">${canCreate ? 'Começar análise' : 'Consultar análises'}<span aria-hidden="true">→</span></a></div>
   </section>`;
 }
 
 export function navigationMarkup(user, active = 'overview', internal = false) {
+  if(active==='start')active='analyses';
   const entry = (key, label, image, href, primary = false) => `<a href="${href}" class="navigation-item${primary ? ' navigation-start' : ''}" aria-label="${escape(label)}" ${internal && ['overview','clients','settings'].includes(key) ? `data-nav="${key}"` : ''} data-navigation="${key}" ${active===key?'aria-current="page"':''}><span class="navigation-icon">${icon(image)}</span>${navigationLabel(label)}</a>`;
   const name = user?.name || user?.email || 'Equipe Maximum';
   const role = {admin:'Administrador',operator:'Operador',viewer:'Visualização'}[user?.role] || 'Equipe Maximum';
@@ -46,12 +47,13 @@ export function navigationMarkup(user, active = 'overview', internal = false) {
   return `<div class="navigation-heading">${brandMark()}<button class="navigation-close" type="button" aria-label="Fechar navegação"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m6 6 12 12M6 18 18 6"/></svg></button></div>
     <div class="navigation-dock"><nav class="nav" aria-label="Navegação principal">
       <div class="navigation-group" role="group" aria-label="Principal"><span class="navigation-section" aria-hidden="true">Principal</span>${entry('overview','Visão geral','home','/#overview')}${entry('clients','Empresas','companies','/#clients')}</div>
-      <div class="navigation-group" role="group" aria-label="Análises"><span class="navigation-section" aria-hidden="true">Análises</span>${canCreate ? entry('start','Nova análise','start','/generations.html',true) : ''}${entry('history','Histórico','history','/generations.html?view=history')}${entry('simulations','Simulações','simulations','/simulations.html')}</div>
+      <div class="navigation-group" role="group" aria-label="Análises"><span class="navigation-section" aria-hidden="true">Análises</span>${entry('analyses','Análises','start','/analyses.html',canCreate)}${entry('history','Relatórios','history','/generations.html?view=history')}${entry('simulations','Versões salvas','simulations','/simulations.html')}</div>
     </nav></div>
     <div class="navigation-bottom">${navigationShortcut(canCreate)}<div class="side-bottom navigation-utility-dock">${entry('settings','Configurações','settings','/#settings')}<button id="logout" class="navigation-item navigation-logout" type="button" aria-label="Sair da conta"><span class="navigation-icon">${icon('logout')}</span>${navigationLabel('Sair')}</button><div class="navigation-profile" title="${escape(name)}"><span class="navigation-avatar" aria-hidden="true">${escape(Array.from(name)[0]?.toUpperCase() || 'M')}</span><span class="navigation-user-copy"><strong>${escape(name)}</strong><small>${escape(role)}</small></span><span class="sr-only">Usuário conectado: ${escape(name)}</span></div></div></div>`;
 }
 
 export function markNavigation(active) {
+  if(active==='start')active='analyses';
   document.querySelectorAll('[data-navigation]').forEach(link => {
     if (link.dataset.navigation === active) link.setAttribute('aria-current','page');
     else link.removeAttribute('aria-current');

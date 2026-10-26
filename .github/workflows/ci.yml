@@ -62,6 +62,8 @@ jobs:
         run: npm run test:generations-integration
       - name: Simulações salvas, reprodução e isolamento
         run: npm run test:simulations-integration
+      - name: Análises por setor, unicidade e histórico de versões
+        run: npm run test:analyses-integration
       - name: Projeção anual e competências com MongoDB descartável
         run: npm run test:projection && npm run test:competences
       - name: Conta efêmera para teste
