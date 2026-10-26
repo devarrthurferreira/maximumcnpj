@@ -11,7 +11,8 @@ import {wizardStep,initialWizardStep,normalizeWizardStep} from './analyses-wizar
 import {createAnalysisModal,restoreAnalysisNotices} from './analyses-modal.js';
 import {ACCOUNTING_FIELDS,ADJUSTMENT_FIELDS,esc,money,monthLabel,sectorName,analysisUrl,companyResults,
   renderNewAnalysis,renderNewCompanyContext,renderAnalysisList,renderAnalysisDetail,renderAnalysisVersions,
-  renderAnalysisGuidance,renderAccountingSummary,renderAnalysisGeneration,renderWizardReview} from './analyses-view.js';
+  renderAnalysisGuidance,renderAccountingSummary,renderAnalysisGeneration,renderWizardReview,
+  renderDifalChoice,difalChoiceSummary} from './analyses-view.js';
 
 const $=(selector,root=document)=>root.querySelector(selector);
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
@@ -21,6 +22,8 @@ const S={user:null,clients:null,analysis:null,sector:null,source:null,generation
   configDirty:false,fiscalDirty:false,accountingDirty:false,versionsOpen:false,versionsData:null,versionsLoading:false,
   generateRequest:null,newClient:'',newSearch:'',newSector:'',newYear:2027,newSelection:defaultRegimeSelection(),
   newChoiceIds:defaultRegimeSelection().selected,newExisting:null,newCheckingCompany:false,newCompanyError:'',companyCheckSequence:0,
+  newDifalPolicy:defaultDifalPolicy(),newDifalChoice:null,difalEnabledMemory:{new:null,analysis:null},
+  deleting:false,deleteTarget:null,deleteTrigger:null,
   paste:{text:'',preview:null,error:'',replaceConfirmed:false,open:false,pending:false},detailOpen:{},
   modalKind:null,modalOpen:false,modalSteps:{},modalReturn:null};
 let modal=null;
@@ -111,7 +114,8 @@ function syncWizardUrl() {
 function newOptions() {
   return {kind:'new',modalKind:'new',clients:S.clients,clientId:S.newClient,search:S.newSearch,selection:S.newSelection,
     sector:S.newSector,year:S.newYear,canWrite:writable(),existingAnalysis:S.newExisting,
-    checkingCompany:S.newCheckingCompany,companyCheckError:S.newCompanyError};
+    checkingCompany:S.newCheckingCompany,companyCheckError:S.newCompanyError,
+    difalPolicy:S.newDifalPolicy,difalChoice:S.newDifalChoice};
 }
 function refreshWizardReview() {
   const host=$('#analysis-wizard-review');
@@ -220,12 +224,152 @@ async function openList() {
   $('#analyses-app').innerHTML=renderAnalysisList({items:response.items.map(assertAnalysis),pagination:pagination(response),search,canWrite:writable()});
   $('#analysis-search-form').onsubmit=event=>{event.preventDefault();location.href='/analyses.html?'+new URLSearchParams({search:$('#analysis-search').value.trim()});};
   document.querySelectorAll('[data-analysis-page]').forEach(button=>button.onclick=()=>{location.href='/analyses.html?'+new URLSearchParams({page:button.dataset.analysisPage,...(search?{search}:{})});});
+  if(query.get('deleted')==='1')feedback('Simulação excluída. O cadastro da empresa e os documentos fiscais continuam disponíveis.');
+}
+
+function setDeleteBusy(value) {
+  S.deleting=value;
+  const dialog=$('#analysis-delete-dialog');if(!dialog)return;
+  dialog.setAttribute('aria-busy',String(value));
+  $('#analyses-app').setAttribute('aria-busy',String(value));
+  dialog.querySelectorAll('button').forEach(button=>button.disabled=value);
+  $('#analysis-delete-confirm').textContent=value?'Excluindo…':'Excluir simulação';
+}
+function bindDeleteAnalysis() {
+  const trigger=$('#analysis-delete'),dialog=$('#analysis-delete-dialog');
+  if(!trigger||!dialog||!writable())return;
+  trigger.onclick=()=>{
+    if(S.busy||S.pdfBusy||S.deleting||!S.analysis)return;
+    S.deleteTarget={id:S.analysis.id,clientId:S.analysis.clientId,revision:S.analysis.revision};S.deleteTrigger=trigger;
+    $('#analysis-delete-error').replaceChildren();$('#analysis-delete-status').textContent='';
+    dialog.showModal();$('#analysis-delete-cancel').focus();
+  };
+  $('#analysis-delete-cancel').onclick=()=>{if(!S.deleting)dialog.close();};
+  $('#analysis-delete-confirm').onclick=()=>void confirmDeleteAnalysis();
+  dialog.addEventListener('cancel',event=>{if(S.deleting)event.preventDefault();});
+  dialog.addEventListener('close',()=>{
+    if(dialog.open)return;
+    S.deleteTarget=null;
+    if(S.deleteTrigger?.isConnected)S.deleteTrigger.focus({preventScroll:true});
+    S.deleteTrigger=null;
+  });
+  dialog.addEventListener('keydown',event=>{
+    if(event.key!=='Tab')return;
+    const controls=[...dialog.querySelectorAll('button:not(:disabled)')].filter(button=>button.getClientRects().length);
+    if(!controls.length){event.preventDefault();return;}
+    const first=controls[0],last=controls.at(-1);
+    if(event.shiftKey&&(document.activeElement===first||!dialog.contains(document.activeElement))){event.preventDefault();last.focus();}
+    else if(!event.shiftKey&&(document.activeElement===last||!dialog.contains(document.activeElement))){event.preventDefault();first.focus();}
+  });
+}
+async function confirmDeleteAnalysis() {
+  const target=S.deleteTarget,dialog=$('#analysis-delete-dialog');
+  if(!target||!dialog?.open||S.deleting||S.busy||S.pdfBusy||!writable()||S.analysis?.id!==target.id)return;
+  setDeleteBusy(true);$('#analysis-delete-error').replaceChildren();$('#analysis-delete-status').textContent='Excluindo os dados e as versões desta análise…';
+  try {
+    const response=await analysisRequest(apiPath('/'+target.id),{method:'DELETE',body:{expectedRevision:target.revision,confirmed:true}});
+    if(response.deleted!==true||response.id!==target.id||response.clientId!==target.clientId)throw new Error('O servidor não confirmou a exclusão desta análise. Tente novamente para conferir o mesmo registro.');
+    S.sequence++;S.analysis=null;S.configDraft=S.fiscalDraft=S.accountingDraft=null;
+    S.configDirty=S.fiscalDirty=S.accountingDirty=false;S.paste.pending=false;S.generateRequest=null;
+    S.modalOpen=false;S.modalKind=null;releaseWizard();setDeleteBusy(false);dialog.close();
+    location.href='/analyses.html?deleted=1';
+  } catch(error){
+    const host=$('#analysis-delete-error');host.textContent=error?.message||'Não foi possível confirmar a exclusão. Tente novamente.';
+    if(error?.status===409&&error?.code==='ANALYSIS_CONFLICT'){
+      host.textContent='A análise foi atualizada por outra pessoa ou aba. Confira os dados salvos antes de confirmar uma nova exclusão.';
+      const reload=document.createElement('button');reload.type='button';reload.id='analysis-delete-reload';reload.textContent='Conferir trabalho atualizado';
+      reload.onclick=async()=>{
+        if(S.deleting)return;
+        if(hasLocalWork()&&!confirm('Recarregar o trabalho salvo? Os campos e a colagem ainda não salvos nesta página serão descartados.'))return;
+        dialog.close();S.configDirty=S.fiscalDirty=S.accountingDirty=false;S.paste.pending=false;
+        await openAnalysis(target.id).catch(showError);
+      };
+      host.append(document.createElement('br'),reload);
+    }
+    $('#analysis-delete-status').textContent='';
+    setDeleteBusy(false);$('#analysis-delete-cancel').focus();
+  }
 }
 
 function selectionFrom(form) {
   const selected=[...form.querySelectorAll('input[name=regime]:checked')].map(input=>input.value);
   if(!selected.length){const field=form.querySelector('input[name=regime]');revealWizardField(field);field?.focus();throw new Error('Selecione pelo menos um regime tributário para esta análise.');}
   return parseRegimeSelection({version:REGIME_SELECTION_VERSION,selected});
+}
+function difalSelection(prefix) {
+  return prefix==='new'?{version:REGIME_SELECTION_VERSION,selected:S.newChoiceIds}:S.analysis.config.regimeSelection;
+}
+function selectedDifalRegimes(selection) {return selection.selected.filter(id=>id==='pure'||id==='hybrid');}
+function difalChoice(policy,selection) {return selectedDifalRegimes(selection).some(id=>policy.enabled[id])?'yes':'no';}
+function captureDifalPolicy(prefix,base) {
+  const panel=$('#'+prefix+'-difal-panel'),policy=clone(base||defaultDifalPolicy());
+  if(!panel)return parseDifalPolicy(policy);
+  panel.querySelectorAll('[data-analysis-difal-enabled]').forEach(input=>policy.enabled[input.dataset.analysisDifalEnabled]=input.checked);
+  panel.querySelectorAll('[data-analysis-difal-operation]').forEach(input=>policy.operations[input.dataset.analysisDifalRegime][input.dataset.analysisDifalOperation]=input.checked);
+  return parseDifalPolicy(policy);
+}
+function refreshDifalControls(prefix,policy,selection,choice=difalChoice(policy,selection)) {
+  const panel=$('#'+prefix+'-difal-panel');if(!panel)return;
+  panel.querySelectorAll('[data-difal-choice]').forEach(input=>input.checked=input.value===choice);
+  panel.querySelectorAll('[data-analysis-difal-enabled]').forEach(input=>{
+    input.checked=policy.enabled[input.dataset.analysisDifalEnabled];input.disabled=choice!=='yes';
+  });
+  panel.querySelectorAll('[data-analysis-difal-operation]').forEach(input=>{
+    const id=input.dataset.analysisDifalRegime;
+    input.checked=policy.operations[id][input.dataset.analysisDifalOperation];input.disabled=choice!=='yes'||!policy.enabled[id];
+  });
+  const details=$('#'+prefix+'-difal-details');if(details)details.hidden=choice!=='yes';
+  const summary=$('#'+prefix+'-difal-summary');if(summary)summary.textContent=difalChoiceSummary(selection,policy,choice);
+}
+function changeDifal(prefix,input) {
+  const selection=difalSelection(prefix),selected=selectedDifalRegimes(selection);
+  const before=clone(prefix==='new'?S.newDifalPolicy:S.fiscalDraft.difalPolicy),policy=captureDifalPolicy(prefix,before);
+  let choice;
+  if(input.matches('[data-difal-choice]')){
+    choice=input.value;
+    if(choice==='no'){
+      if(selected.some(id=>before.enabled[id]))S.difalEnabledMemory[prefix]=clone(before.enabled);
+      policy.enabled.pure=policy.enabled.hybrid=false;
+    }else if(!selected.some(id=>policy.enabled[id])){
+      const memory=S.difalEnabledMemory[prefix],restore=memory&&selected.some(id=>memory[id]);
+      selected.forEach(id=>policy.enabled[id]=restore?memory[id]===true:true);
+    }
+  }else{
+    choice=difalChoice(policy,selection);
+    if(choice==='no'){
+      if(selected.some(id=>before.enabled[id]))S.difalEnabledMemory[prefix]=clone(before.enabled);
+    }
+  }
+  if(prefix==='new'){S.newDifalPolicy=policy;S.newDifalChoice=choice;}
+  else S.fiscalDraft.difalPolicy=policy;
+  refreshDifalControls(prefix,policy,selection,choice);
+  if(input.matches('[data-difal-choice]')&&choice==='yes'){
+    const details=$('#'+prefix+'-difal-details');if(details)details.open=true;
+  }
+}
+function refreshNewDifal() {
+  const host=$('#analysis-new-difal');if(!host)return;
+  const selection=difalSelection('new'),key=JSON.stringify([selection.selected,!!S.newExisting]);
+  if(host.dataset.selection===key)return;
+  const open=$('#new-difal-details')?.open;
+  if(S.newDifalChoice!==null&&selectedDifalRegimes(selection).length)S.newDifalChoice=difalChoice(S.newDifalPolicy,selection);
+  host.hidden=!!S.newExisting||!selectedDifalRegimes(selection).length;
+  host.innerHTML=host.hidden?'':renderDifalChoice(selection,S.newDifalPolicy,{prefix:'new',choice:S.newDifalChoice});
+  host.dataset.selection=key;
+  refreshDifalControls('new',S.newDifalPolicy,selection,S.newDifalChoice);
+  if(open&&$('#new-difal-details'))$('#new-difal-details').open=true;
+}
+function validateDifalChoice(prefix,selection,policy,{required=false}={}) {
+  if(!selectedDifalRegimes(selection).length)return;
+  if(required&&!['yes','no'].includes(S.newDifalChoice)){
+    const field=$('#new-difal-yes');revealWizardField(field);field?.focus();
+    throw new Error('Informe se esta análise terá DIFAL: escolha Sim ou Não.');
+  }
+  if(difalChoice(policy,selection)==='yes'&&!selectedDifalRegimes(selection).some(id=>policy.enabled[id]&&(policy.operations[id].entry||policy.operations[id].exit))){
+    const details=$('#'+prefix+'-difal-details');if(details){details.hidden=false;details.open=true;}
+    const field=$('#'+prefix+'-difal-panel [data-analysis-difal-operation]:not(:disabled)');revealWizardField(field);field?.focus();
+    throw new Error('Escolha entrada ou saída para incluir DIFAL, ou marque Não para gerar sem DIFAL.');
+  }
 }
 function bindCompanyResults() {
   document.querySelectorAll('[data-analysis-client]').forEach(button=>button.onclick=()=>{
@@ -241,6 +385,10 @@ function captureNewChoices() {
   if(!S.newExisting){
     S.newChoiceIds=[...form.querySelectorAll('input[name=regime]:checked')].map(input=>input.value);
     S.newYear=Number($('#analysis-new-year').value);
+    if($('#new-difal-panel')){
+      S.newDifalPolicy=captureDifalPolicy('new',S.newDifalPolicy);
+      S.newDifalChoice=$('#new-difal-panel [data-difal-choice]:checked')?.value||null;
+    }
   }
 }
 function refreshNewCompanyState() {
@@ -251,6 +399,7 @@ function refreshNewCompanyState() {
   const chosen=S.newExisting?.config.regimeSelection.selected||S.newChoiceIds;
   document.querySelectorAll('#analysis-new-form input[name=regime]').forEach(input=>input.checked=chosen.includes(input.value));
   $('#analysis-new-year').value=String(S.newExisting?.config.year||S.newYear);
+  refreshNewDifal();
   const button=$('#analysis-open-company');button.disabled=S.busy||!writable()||!uuid(S.newClient)||S.newCheckingCompany||!!S.newCompanyError;
   $('#analysis-company-search').disabled=S.busy;
   button.textContent=S.newCheckingCompany?'Conferindo empresa…':['fiscal','accounting'].includes(S.newSector)?`${S.newExisting?'Continuar':'Começar'} no ${sectorName(S.newSector)}`:S.newExisting?'Continuar análise':'Começar análise';
@@ -295,7 +444,10 @@ async function openNew(clientId='') {
     captureNewChoices();S.newSearch=event.target.value;S.newClient='';S.newExisting=null;S.newCompanyError='';
     S.newCheckingCompany=false;S.companyCheckSequence++;$('#analysis-new-client').value='';refreshCompanies();refreshNewCompanyState();
   };
-  $('#analysis-new-form').onchange=()=>{captureNewChoices();refreshNewCompanyState();};bindCompanyResults();refreshNewCompanyState();
+  $('#analysis-new-form').onchange=event=>{
+    if(event.target.matches('[data-difal-choice],[data-analysis-difal-enabled],[data-analysis-difal-operation]'))changeDifal('new',event.target);
+    captureNewChoices();refreshNewCompanyState();
+  };bindCompanyResults();refreshNewCompanyState();
   $('#analysis-new-form').onsubmit=async event=>{
     event.preventDefault();if(S.busy||!writable())return;
     if(!currentWizardState().isLast){advanceWizard();return;}
@@ -311,9 +463,12 @@ async function openNew(clientId='') {
         throw new Error('Escolha o setor Fiscal ou Contábil para começar.');
       }
       if(![2027,2028].includes(year))throw new Error('Escolha um ano válido para o cenário.');
+      if(!S.newExisting)validateDifalChoice('new',selection,S.newDifalPolicy,{required:true});
       const clientId=S.newClient,sector=S.newSector;
+      const difalPolicy=clone(S.newDifalPolicy);
+      if(!requiresSimplesReference(selection))difalPolicy.enabled.pure=difalPolicy.enabled.hybrid=false;
       setBusy(true,'Abrindo a análise desta empresa…');
-      const response=await analysisRequest(apiPath(),{method:'POST',body:{clientId,year,regimeSelection:selection}});
+      const response=await analysisRequest(apiPath(),{method:'POST',body:{clientId,year,regimeSelection:selection,...(!S.newExisting?{difalPolicy:parseDifalPolicy(difalPolicy)}:{})}});
       const record=assertAnalysis(response.analysis);
       if(record.clientId!==clientId)throw new Error('A análise retornada não corresponde à empresa selecionada.');
       setBusy(false);location.href=analysisUrl(record.id,sector)+(response.created?'':'&resumed=1');
@@ -370,6 +525,7 @@ async function openAnalysis(id) {
   const response=await analysisRequest(apiPath('/'+encodeURIComponent(id)));
   if(sequence!==S.sequence)return;
   S.analysis=null;adoptAnalysis(response.analysis);S.generateRequest=null;
+  S.difalEnabledMemory.analysis=null;
   S.paste={text:'',preview:null,error:'',replaceConfirmed:false,open:false,pending:false};S.detailOpen={};
   S.modalSteps={};S.modalReturn=null;
   const query=new URLSearchParams(location.search),sector=query.get('sector');
@@ -478,6 +634,7 @@ function renderDetail() {
   if(S.versionsData)showVersions();
   if($('#analysis-generate'))$('#analysis-generate').onclick=()=>void generate();
   bindAnalysisActions();
+  bindDeleteAnalysis();
   if($('#analysis-fiscal-form'))bindFiscal();
   if($('#analysis-accounting-form'))bindAccounting();
   bindWizard();
@@ -504,10 +661,7 @@ function captureFiscal() {
   result.salesAnnex=Number($('#analysis-sales-annex')?.value||result.salesAnnex);
   result.serviceAnnex=Number($('#analysis-service-annex')?.value||result.serviceAnnex);
   if($('#analysis-icms-outside'))result.icmsOutside=$('#analysis-icms-outside').value==='outside';
-  const policy=clone(result.difalPolicy||defaultDifalPolicy());
-  document.querySelectorAll('[data-analysis-difal-enabled]').forEach(input=>policy.enabled[input.dataset.analysisDifalEnabled]=input.checked);
-  document.querySelectorAll('[data-analysis-difal-operation]').forEach(input=>policy.operations[input.dataset.analysisDifalRegime][input.dataset.analysisDifalOperation]=input.checked);
-  result.difalPolicy=parseDifalPolicy(policy);
+  result.difalPolicy=captureDifalPolicy('analysis',result.difalPolicy);
   if(!requiresSimplesReference(S.analysis.config.regimeSelection)){
     result.rbt12Source='NOT_REQUIRED';result.rbt12=null;result.rbt12ExtractionId=null;result.rbt12DocumentId=null;result.rbt12ManualConfirmed=false;
   }else if(result.rbt12Source==='MANUAL'){
@@ -567,6 +721,7 @@ async function saveSector(sector,complete) {
     }
     captureConfig();const data=sector==='fiscal'?captureFiscal():captureAccounting();
     if(complete&&S.configDirty)throw new Error('Salve primeiro os regimes e o ano da análise, depois conclua o setor.');
+    if(complete&&sector==='fiscal')validateDifalChoice('analysis',S.analysis.config.regimeSelection,data.difalPolicy);
     if(complete&&sector==='accounting'){
       if(!data.months.length){focusSection('#analysis-new-month');throw new Error('Adicione pelo menos uma competência com os dados contábeis.');}
       for(const row of data.months){const missing=ACCOUNTING_FIELDS.find(([key])=>row[key]===null);if(missing){
@@ -593,9 +748,9 @@ async function saveSector(sector,complete) {
 
 function bindFiscal() {
   $('#analysis-fiscal-form').oninput=event=>{
+    if(event.target.matches('[data-difal-choice],[data-analysis-difal-enabled],[data-analysis-difal-operation]'))changeDifal('analysis',event.target);
     markDirty('fiscal');
     if(event.target.id==='analysis-rbt12'&&$('#analysis-rbt12-confirm'))$('#analysis-rbt12-confirm').checked=false;
-    if(event.target.dataset.analysisDifalEnabled){const id=event.target.dataset.analysisDifalEnabled;document.querySelectorAll(`[data-analysis-difal-regime="${id}"]`).forEach(input=>input.disabled=!event.target.checked);}
   };
   $('#analysis-fiscal-form').onsubmit=event=>{event.preventDefault();void saveSector('fiscal',event.submitter?.value==='complete');};
   if($('#analysis-start-import'))$('#analysis-start-import').onclick=()=>void prepareImport();
@@ -623,6 +778,7 @@ async function prepareImport() {
   if(S.busy||!writable())return;
   try {
     clearError();captureAll();
+    validateDifalChoice('analysis',S.analysis.config.regimeSelection,S.fiscalDraft.difalPolicy);
     if(S.paste.pending)throw new Error('Há uma colagem do Contábil ainda não aplicada. Confira e aplique os dados ou use Limpar colagem antes de abrir a importação fiscal.');
     if(S.accountingDirty)throw new Error('Salve o trabalho Contábil antes de abrir a importação fiscal. As despesas ainda não salvas continuam nesta tela.');
     if(S.configDirty)throw new Error('Salve as escolhas da análise antes de preparar os documentos fiscais.');
@@ -878,7 +1034,12 @@ async function boot() {
     else if(query.get('view')==='new')await openNew(clientId||'');
     else if(clientId)await openCompany(clientId);
     else await openList();
-  } catch(error){showError(error);if($('#analyses-app .initial'))$('#analyses-app').innerHTML='<section class="analysis-empty"><h2>Não foi possível abrir as análises</h2><p>Confira sua sessão e tente novamente. O trabalho já salvo permanece disponível.</p><a class="analysis-button" href="/analyses.html">Tentar novamente</a><a href="/">Acessar painel</a></section>';}
+  } catch(error){
+    showError(error);
+    if($('#analyses-app .initial'))$('#analyses-app').innerHTML=error?.status===404?
+      '<section class="analysis-empty"><h2>Análise não encontrada</h2><p>Este trabalho pode ter sido excluído. Abra a carteira para consultar as análises disponíveis ou iniciar uma nova.</p><a class="analysis-button primary" href="/analyses.html">Ver análises</a></section>':
+      '<section class="analysis-empty"><h2>Não foi possível abrir as análises</h2><p>Confira sua sessão e tente novamente.</p><a class="analysis-button" href="/analyses.html">Tentar novamente</a><a href="/">Acessar painel</a></section>';
+  }
 }
-window.addEventListener('beforeunload',event=>{if(hasLocalWork()||S.busy||S.pdfBusy){event.preventDefault();event.returnValue='';}});
+window.addEventListener('beforeunload',event=>{if(hasLocalWork()||S.busy||S.pdfBusy||S.deleting){event.preventDefault();event.returnValue='';}});
 boot();

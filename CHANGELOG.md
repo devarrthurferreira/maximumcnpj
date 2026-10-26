@@ -1,5 +1,15 @@
 # Histórico de alterações
 
+## [0.39.0] — 2026-10-26
+
+- Acrescenta a pergunta explícita Terá DIFAL? Sim/Não na criação com Simples e nos dois passos do Fiscal, fora das opções avançadas. A criação exige escolha sem adicionar etapa; retomadas conservam a política salva.
+- Mantém escolhas independentes de Puro/Híbrido e entrada/saída, com resumo da seleção e preservação das direções ao alternar Sim/Não. A escolha Não exclui o DIFAL dos dois cenários na próxima geração, sem alterar documentos ou resultados históricos.
+- Permite excluir o trabalho pela visão geral, com identificação da empresa, confirmação e permissões de administrador/operador. Remove dados dos setores e versões vinculadas; preserva cadastro, fontes fiscais, outros trabalhos e versões avulsas independentes.
+- Protege a exclusão com revisão, lease, recibo idempotente e controles contra gravações tardias. Uma nova análise da empresa começa vazia e não recupera automaticamente históricos antigos; repetição da exclusão anterior não atinge a nova análise.
+- Trata conflito, erro, cancelamento, foco e navegação durante exclusão. Acrescenta verificações reais de interface/API/Mongo, DIFAL aplicado na DRE/CSV, sessão nova, permissões e preservação das fontes. Motor fiscal mantido em `1.10.0-regime-selection`.
+
+- Validação: tipos, build e versão/documentação; 342 testes de regras, 132 verificações de integração/projeção/competências, 172 Python/PDF/OCR e 15 cenários únicos de navegador aprovados. A última conferência do DIFAL respeita os rótulos e a proteção de texto do CSV; valores e exportação não exigiram alteração. Escolha inicial, Fiscal e confirmação de exclusão conferidos visualmente em desktop e celular.
+
 ## [0.38.0] — 2026-10-26
 
 - Reduz a abertura a Empresa → Setor e regimes e o Fiscal a Documentos → Dados fiscais; Contábil e configuração passam a ter uma tela cada, com gravação direta e sem conferência repetida.

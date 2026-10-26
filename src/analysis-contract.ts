@@ -38,6 +38,10 @@ export function analysisYear(value:unknown):2027|2028 {
 export function analysisSelection(value:unknown):RegimeSelection {
   try{return parseRegimeSelection(value);}catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Seleção de regimes inválida.');}
 }
+export function analysisDifalPolicy(value:unknown):DifalPolicy {
+  try{return upgradeDifalPolicy(parseDifalPolicy(value));}
+  catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Opções de DIFAL inválidas.');}
+}
 function month(value:unknown):string {
   need(typeof value==='string' && /^20\d{2}-(0[1-9]|1[0-2])$/.test(value),'Informe a competência no formato AAAA-MM.');return value;
 }
@@ -81,8 +85,7 @@ export function parseFiscalData(value:unknown,selection:RegimeSelection):FiscalD
   analysisObject(value,['generationId','salesAnnex','serviceAnnex','icmsOutside','difalPolicy','rbt12Source','rbt12ExtractionId','rbt12DocumentId','rbt12','rbt12ManualConfirmed','monthlyOverrides']);
   need([1,2].includes(value.salesAnnex) && [3,4,5].includes(value.serviceAnnex),'Selecione anexos válidos.');
   need(typeof value.icmsOutside==='boolean' && typeof value.rbt12ManualConfirmed==='boolean','Confirme as opções fiscais.');
-  let difalPolicy:DifalPolicy;
-  try{difalPolicy=upgradeDifalPolicy(parseDifalPolicy(value.difalPolicy));}catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Opções de DIFAL inválidas.');}
+  const difalPolicy=analysisDifalPolicy(value.difalPolicy);
   const needsReference=requiresSimplesReference(selection);
   need(needsReference ? ['SIMPLES_SECTION_22','MANUAL'].includes(value.rbt12Source) : value.rbt12Source==='NOT_REQUIRED',
     needsReference?'Selecione o extrato ou a informação manual de RBT12.':'Sem Simples selecionado, a referência de RBT12 deve estar dispensada.',400,'RBT12_SOURCE');

@@ -1,4 +1,18 @@
-# Maximum CNPJ · v0.38.0
+# Maximum CNPJ · v0.39.0
+
+## Escolha de DIFAL e exclusão da simulação — 26/10/2026
+
+**Terá DIFAL? Sim ou Não** passa a fazer parte da abertura de uma nova análise, depois dos regimes e sem acrescentar uma etapa. Quando houver Simples Puro ou Híbrido, a escolha precisa ser informada. Sem esses regimes, a pergunta fica dispensada. Retomar uma empresa conserva as opções já salvas.
+
+No Fiscal, a pergunta fica visível tanto nos documentos quanto na tributação. **Sim** permite conferir os regimes e escolher entrada, saída ou ambas, de forma independente. A seleção mista é respeitada. **Não** desabilita o DIFAL para Puro e Híbrido, conservando as direções para uma eventual nova escolha; a geração usa a política atual salva no Fiscal. Estimativas dos documentos e versões anteriores continuam sendo evidências próprias, sem recálculo ou alteração silenciosa. O resumo mostra o que está selecionado, e os detalhes ficam recolhidos quando não são necessários.
+
+**Excluir simulação** aparece na visão geral da empresa para administradores e operadores. A confirmação identifica empresa, CNPJ e cenário e explica o alcance: dados Fiscal/Contábil e resultados vinculados à análise são excluídos definitivamente. Cadastro, documentos fiscais, relatórios de origem e análises de outras empresas permanecem. Versões avulsas que não pertencem à análise continuam no histórico geral.
+
+A confirmação usa a revisão que estava aberta. Uma atualização concorrente exige conferir novamente antes de excluir; geração ou importação em andamento bloqueia a operação. Um recibo mínimo registra identificação, revisão, autor e data e permite conferir uma repetição da mesma exclusão sem atingir um novo trabalho. Se uma exclusão confirmada for interrompida, abrir novamente a empresa retoma sua finalização antes de criar outro trabalho. Após a exclusão, abrir a empresa cria uma análise vazia com outro identificador, sem recuperar os resultados apagados ou adotar automaticamente históricos restantes.
+
+A API aceita `difalPolicy` opcional em `POST /api/v4/analyses` somente para uma criação nova e conserva o contrato anterior quando o campo é omitido. `DELETE /api/v4/analyses/:id` exige `{expectedRevision, confirmed: true}`, sessão e permissão de escrita. A confirmação só fecha após o servidor validar a exclusão; Cancelar e Esc não enviam DELETE. O motor de cálculo continua em `1.10.0-regime-selection`.
+
+Validação local com Node 22 e MongoDB descartável: tipos, build e versão/documentação aprovados; **342 testes de regras**, **132 verificações de integração/projeção/competências**, **172 testes Python/PDF/OCR** e **15 cenários únicos de navegador** aprovados. A conferência final do DIFAL foi repetida após alinhar no teste os rótulos do CSV e seu prefixo de proteção para Excel. Os valores, a política mista, a ausência de gravação implícita, a persistência em nova sessão, a exclusão com revisão concorrente e a preservação das fontes foram verificados. A escolha inicial, Fiscal e confirmação de exclusão foram inspecionados em desktop e celular.
 
 ## Preenchimento direto, com menos etapas — 26/10/2026
 

@@ -22,7 +22,13 @@ export async function database(): Promise<Db> {
       db.collection('rows').createIndex({ workspaceId: 1, batchId: 1, valid: 1, cnpj: 1 }),
       db.collection('results').createIndex({ workspaceId: 1, batchId: 1, cnpj: 1 }, { unique: true }),
       db.collection('results').createIndex({ workspaceId: 1, cnpj: 1, observedAt: -1 }),
-      db.collection('audit').createIndex({ workspaceId: 1, createdAt: -1 })
+      db.collection('audit').createIndex({ workspaceId: 1, createdAt: -1 }),
+      db.collection('audit').createIndex({ workspaceId: 1, clientId: 1 }, {
+        name:'analysis_deletions_by_company',partialFilterExpression:{action:'analysis.delete'}
+      }),
+      db.collection('audit').createIndex({ workspaceId: 1, analysisId: 1 }, {
+        name:'analysis_deleted_simulations',partialFilterExpression:{action:'simulation.delete',analysisId:{$type:'string'}}
+      })
     ]);
     return db;
   })().catch(async e => { connection = undefined; await client?.close().catch(() => {}); throw e; });

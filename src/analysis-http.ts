@@ -1,7 +1,7 @@
 import {need,integer} from './security.ts';
 import {rateLimit,workspace} from './store.ts';
 import type {LookupActor} from './lookup-db.ts';
-import {analysisHistory,openAnalysis,getAnalysis,updateAnalysisConfig,updateAnalysisSector,importAnalysisGeneration,generateAnalysis,analysisVersions} from './analysis-store.ts';
+import {analysisHistory,openAnalysis,getAnalysis,updateAnalysisConfig,updateAnalysisSector,importAnalysisGeneration,generateAnalysis,analysisVersions,deleteAnalysis} from './analysis-store.ts';
 
 export async function routeAnalyses(actor:LookupActor,method:string,url:URL,input:unknown){
   const path=url.pathname.replace('/api/v4/analyses','');
@@ -12,6 +12,7 @@ export async function routeAnalyses(actor:LookupActor,method:string,url:URL,inpu
   const match=path.match(/^\/([a-f0-9-]{36})(?:\/(config|fiscal|accounting|fiscal\/import|generate|versions))?$/);
   if(match){const id=match[1],action=match[2];
     if(!action && method==='GET')return getAnalysis(id);
+    if(!action && method==='DELETE')return deleteAnalysis(actor,id,input);
     if(action==='config' && method==='PATCH')return updateAnalysisConfig(actor,id,input);
     if((action==='fiscal'||action==='accounting') && method==='PATCH')return updateAnalysisSector(actor,id,action,input);
     if(action==='fiscal/import' && method==='POST')return importAnalysisGeneration(actor,id,input);

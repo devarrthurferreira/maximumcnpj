@@ -478,3 +478,43 @@ body.analysis-modal-open{overflow:hidden}
 #analysis-new-config .analysis-regime-options small{margin-top:2px}
 .analysis-new-year-note{margin:0;font-size:10px;line-height:1.6;color:var(--analysis-muted)}
 @media(max-width:600px){#analysis-new-form .analysis-setup-company{grid-template-columns:1fr;gap:2px}.analysis-new-config-heading{gap:9px}.analysis-new-config-heading>label{gap:6px;font-size:10px}.analysis-new-config-heading select{width:90px}#analysis-new-form .analysis-new-sector>label{min-height:52px}}
+
+/* The DIFAL decision stays visible while its per-regime choices remain available. */
+.analysis-difal-panel{min-width:0;border:1px solid #d7bac4;border-radius:11px;padding:13px 15px;margin:0 0 18px;background:#fcf7f9;scroll-margin-top:18px}
+.analysis-difal-question{border:0;padding:0;margin:0;min-width:0}
+.analysis-difal-question::after{content:'';display:block;clear:both}
+.analysis-difal-question>legend{float:left;padding:0;margin:0 17px 0 0;font-size:14px;font-weight:700;line-height:44px;color:#562a39}
+.analysis-difal-choice-options{display:inline-flex;gap:8px;max-width:100%;vertical-align:middle}
+.analysis-difal-choice-options>label{display:flex;align-items:center;justify-content:center;gap:8px;min-width:89px;min-height:44px;padding:9px 14px;margin:0;border:1px solid #d6bdc6;border-radius:9px;background:#fff;cursor:pointer;color:#5d3947;font-size:13px;line-height:1.6;font-weight:650}
+.analysis-difal-choice-options>label:has(input:checked){border-color:#9d5c70;background:#f4e4ea;color:#750207;box-shadow:inset 0 0 0 1px #9d5c70}
+.analysis-difal-choice-options input{width:16px;height:16px;margin:0;padding:0;flex:none;accent-color:#750207}
+.analysis-difal-summary{margin:8px 0 0;font-size:11px;line-height:1.7;color:#72515e;overflow-wrap:anywhere}
+.analysis-difal-details{margin-top:10px;border-top:1px solid #e5d4db;padding-top:10px;min-width:0}
+.analysis-difal-details>summary{cursor:pointer;color:#65404f;font-size:11px;font-weight:650;line-height:1.8;min-height:30px}
+.analysis-difal-details .analysis-difal-options{margin-top:10px}
+.analysis-difal-details .analysis-difal-options fieldset{background:#fff;gap:6px}
+.analysis-difal-details .analysis-check{min-height:44px;align-items:center!important;padding:7px 0;margin:0}
+.analysis-difal-details .analysis-check input{margin:0}
+.analysis-difal-details .analysis-note{font-size:10px;margin-top:10px}
+#analysis-new-difal .analysis-difal-panel{margin:2px 0 0;padding:11px 14px}
+.analysis-button.analysis-danger{color:#8a2432;background:#fff;border-color:#dfbfc6}
+.analysis-button.analysis-danger:hover{background:#fff1f3;border-color:#c58b97}
+body:has(#analysis-delete-dialog[open]){overflow:hidden}
+.analysis-delete-dialog{position:fixed;inset:0;margin:auto;padding:0;width:min(520px,calc(100vw - 32px));max-width:none;max-height:90vh;max-height:90dvh;border:1px solid #d7bdc6;border-radius:16px;background:#fff;color:#51323e;overflow:auto;box-shadow:0 24px 90px #230f2340}
+.analysis-delete-dialog:not([open]){display:none}
+.analysis-delete-dialog::backdrop{background:rgba(28,13,22,.55)}
+.analysis-delete-content{padding:25px;min-width:0}
+.analysis-delete-content h2{font-size:22px;line-height:1.4;color:#6e1525;margin:0 0 12px}
+.analysis-delete-content>p{font-size:12px;line-height:1.8;overflow-wrap:anywhere;margin:0}
+.analysis-delete-target{display:grid;gap:4px;min-width:0;border:1px solid var(--analysis-line);border-radius:10px;background:#fbf7f9;padding:14px 15px;margin:17px 0;overflow-wrap:anywhere}
+.analysis-delete-target>strong{font-size:14px;line-height:1.6;color:#54313e}
+.analysis-delete-target>span,.analysis-delete-target>small{font-size:11px;line-height:1.7;color:var(--analysis-muted)}
+.analysis-delete-content>.analysis-delete-effect{padding:12px 14px;border:1px solid #ead5bb;border-radius:9px;background:#fff8ee;color:#73552e}
+.analysis-delete-content>.analysis-delete-error:not(:empty){padding:11px 13px;margin-top:13px;border:1px solid #e8bcc4;border-radius:9px;background:#fff1f3;color:#8b2635}
+.analysis-delete-content>.analysis-delete-status:not(:empty){margin-top:12px;color:#73515e}
+.analysis-delete-error:empty,.analysis-delete-status:empty{display:none}
+.analysis-delete-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
+.analysis-delete-actions>button{min-height:44px;white-space:normal;font-size:12px;line-height:1.6}
+.analysis-danger-solid{color:#fff;background:#8b2332;border-color:#8b2332}
+.analysis-danger-solid:hover:not(:disabled){background:#721a27;border-color:#721a27}
+@media(max-width:600px){.analysis-difal-panel{padding:12px 13px}.analysis-difal-question>legend{float:none;line-height:1.7;margin:0 0 8px;font-size:13px}.analysis-difal-choice-options{display:flex;width:100%}.analysis-difal-choice-options>label{min-width:0;flex:1}.analysis-difal-details .analysis-difal-options{grid-template-columns:1fr}.analysis-difal-summary{font-size:10px}#analysis-new-difal .analysis-difal-panel{padding:11px 12px}.analysis-delete-dialog{width:calc(100vw - 24px);border-radius:13px}.analysis-delete-content{padding:19px}.analysis-delete-content h2{font-size:20px}.analysis-delete-target{padding:12px 13px}.analysis-delete-actions{display:grid;grid-template-columns:1fr}.analysis-delete-actions>button{width:100%}.analysis-delete-content>.analysis-delete-effect{padding:11px 12px}}
