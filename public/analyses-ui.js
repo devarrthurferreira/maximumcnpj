@@ -167,7 +167,7 @@ function closeWizard() {
 }
 function bindWizard() {
   const dialog=$('#analysis-wizard');if(!dialog||!S.modalKind)return;
-  modal=createAnalysisModal({dialog,isBusy:()=>S.busy||S.pdfBusy,returnFocus:wizardReturnTarget,
+  modal=createAnalysisModal({dialog,isBusy:()=>S.busy||S.pdfBusy||S.deleting,returnFocus:wizardReturnTarget,
     onNext:advanceWizard,onBack:()=>{const previous=currentWizardState().previous;if(previous)setWizardStep(previous);},
     onPrevious:step=>setWizardStep(step),onClose:closeWizard});
   modal.sync(currentWizardState());
@@ -234,10 +234,12 @@ async function openList() {
   const query=new URLSearchParams(location.search),search=(query.get('search')||'').trim(),page=Math.max(1,Math.min(100000,Number(query.get('page'))||1));
   const response=await analysisRequest(apiPath('?'+new URLSearchParams({page:String(page),summary:'1',...(search?{search}:{})})));
   if(!Array.isArray(response.items))throw new Error('Não foi possível carregar as análises.');
-  $('#analyses-app').innerHTML=renderAnalysisList({items:response.items.map(assertAnalysis),pagination:pagination(response),search,canWrite:writable()});
+  const items=response.items.map(assertAnalysis);
+  $('#analyses-app').innerHTML=renderAnalysisList({items,pagination:pagination(response),search,canWrite:writable()});
   $('#analysis-search-form').onsubmit=event=>{event.preventDefault();location.href='/analyses.html?'+new URLSearchParams({search:$('#analysis-search').value.trim()});};
   document.querySelectorAll('[data-analysis-page]').forEach(button=>button.onclick=()=>{location.href='/analyses.html?'+new URLSearchParams({page:button.dataset.analysisPage,...(search?{search}:{})});});
-  if(query.get('deleted')==='1')feedback('Simulação excluída. O cadastro da empresa e os documentos fiscais continuam disponíveis.');
+  bindDeleteAnalysis(items);
+  if(query.get('deleted')==='1')feedback('Análise excluída. Você já pode iniciar uma nova análise para esta empresa. O cadastro e os documentos fiscais existentes foram preservados.');
 }
 
 function setDeleteBusy(value) {
@@ -246,17 +248,23 @@ function setDeleteBusy(value) {
   dialog.setAttribute('aria-busy',String(value));
   $('#analyses-app').setAttribute('aria-busy',String(value));
   dialog.querySelectorAll('button').forEach(button=>button.disabled=value);
-  $('#analysis-delete-confirm').textContent=value?'Excluindo…':'Excluir simulação';
+  $('#analysis-delete-confirm').textContent=value?'Excluindo…':'Excluir análise';
 }
-function bindDeleteAnalysis() {
-  const trigger=$('#analysis-delete'),dialog=$('#analysis-delete-dialog');
-  if(!trigger||!dialog||!writable())return;
-  trigger.onclick=()=>{
-    if(S.busy||S.pdfBusy||S.deleting||!S.analysis)return;
-    S.deleteTarget={id:S.analysis.id,clientId:S.analysis.clientId,revision:S.analysis.revision};S.deleteTrigger=trigger;
+function bindDeleteAnalysis(items=[]) {
+  const dialog=$('#analysis-delete-dialog');
+  if(!dialog||!writable())return;
+  const records=new Map(items.map(record=>[record.id,record]));
+  document.querySelectorAll('[data-delete-analysis]').forEach(trigger=>trigger.onclick=()=>{
+    if(S.busy||S.pdfBusy||S.deleting||dialog.open)return;
+    const id=trigger.dataset.deleteAnalysis,record=S.analysis?.id===id?S.analysis:records.get(id);
+    if(!record||S.analysis&&S.analysis.id!==record.id)return;
+    S.deleteTarget={id:record.id,clientId:record.clientId,revision:record.revision,fromList:!S.analysis};S.deleteTrigger=trigger;
+    $('#analysis-delete-company').textContent=record.company?.name||'Empresa';
+    $('#analysis-delete-cnpj').textContent=record.company?.cnpj||'CNPJ não informado';
+    $('#analysis-delete-context').textContent=(record.company?.code?'Código '+record.company.code+' · ':'')+'Cenário '+record.config.year;
     $('#analysis-delete-error').replaceChildren();$('#analysis-delete-status').textContent='';
     dialog.showModal();$('#analysis-delete-cancel').focus();
-  };
+  });
   $('#analysis-delete-cancel').onclick=()=>{if(!S.deleting)dialog.close();};
   $('#analysis-delete-confirm').onclick=()=>void confirmDeleteAnalysis();
   dialog.addEventListener('cancel',event=>{if(S.deleting)event.preventDefault();});
@@ -277,12 +285,12 @@ function bindDeleteAnalysis() {
 }
 async function confirmDeleteAnalysis() {
   const target=S.deleteTarget,dialog=$('#analysis-delete-dialog');
-  if(!target||!dialog?.open||S.deleting||S.busy||S.pdfBusy||!writable()||S.analysis?.id!==target.id)return;
+  if(!target||!dialog?.open||S.deleting||S.busy||S.pdfBusy||!writable()||(!target.fromList&&S.analysis?.id!==target.id)||(target.fromList&&S.analysis))return;
   setDeleteBusy(true);$('#analysis-delete-error').replaceChildren();$('#analysis-delete-status').textContent='Excluindo os dados e as versões desta análise…';
   try {
     const response=await analysisRequest(apiPath('/'+target.id),{method:'DELETE',body:{expectedRevision:target.revision,confirmed:true}});
     if(response.deleted!==true||response.id!==target.id||response.clientId!==target.clientId)throw new Error('O servidor não confirmou a exclusão desta análise. Tente novamente para conferir o mesmo registro.');
-    S.sequence++;S.analysis=null;S.configDraft=S.fiscalDraft=S.accountingDraft=null;
+    S.sequence++;cancelEvidence();cancelMetadata();S.analysis=null;S.configDraft=S.fiscalDraft=S.accountingDraft=null;
     S.configDirty=S.fiscalDirty=S.accountingDirty=false;S.paste.pending=false;S.generateRequest=null;
     S.modalOpen=false;S.modalKind=null;releaseWizard();setDeleteBusy(false);dialog.close();
     location.href='/analyses.html?deleted=1';
@@ -295,7 +303,18 @@ async function confirmDeleteAnalysis() {
         if(S.deleting)return;
         if(hasLocalWork()&&!confirm('Recarregar o trabalho salvo? Os campos e a colagem ainda não salvos nesta página serão descartados.'))return;
         dialog.close();S.configDirty=S.fiscalDirty=S.accountingDirty=false;S.paste.pending=false;
-        await openAnalysis(target.id).catch(showError);
+        try{
+          if(target.fromList){
+            const controls=[...document.querySelectorAll('#analyses-app button')].map(button=>[button,button.disabled]);
+            setBusy(true,'Atualizando a lista de análises…');
+            try{
+              await openList();feedback('Lista atualizada. Confirme a análise que deseja excluir.','info');
+              document.querySelector(`[data-delete-analysis="${target.id}"]`)?.focus({preventScroll:true});
+            }finally{
+              setBusy(false);for(const [button,disabled] of controls)if(button.isConnected)button.disabled=disabled;
+            }
+          }else await openAnalysis(target.id);
+        }catch(reloadError){showError(reloadError);}
       };
       host.append(document.createElement('br'),reload);
     }
