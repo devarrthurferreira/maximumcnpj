@@ -30,6 +30,10 @@ type Analysis=Doc & {clientId:string;company:{name:string;code:string|null;cnpj?
   leaseOwner?:string;leaseUntil?:Date;lastGeneration?:{requestId:string;revision:number;simulationId:string};
   deletionStartedAt?:Date;deletionActor?:string;deletionRevision?:number};
 type Source=Awaited<ReturnType<typeof generationSimulator>>;
+export type AnalysisReadOptions={summary?:boolean;includeSource?:boolean};
+type SourceError={code:string;message:string};
+type Readiness={ready:boolean;issues:AnalysisIssue[];months:string[];checked:Awaited<ReturnType<typeof fiscalSource>>|null;
+  source:Source|null;sourceError:SourceError|null;verification?:'SAVED'};
 const PAGE_SIZE=20;
 const author=(actor:LookupActor):Author=>({id:actor._id,name:actor.name});
 const conflict=()=>new AppError(409,'ANALYSIS_CONFLICT','A análise mudou ou está sendo gerada. Reabra os dados antes de salvar para preservar o trabalho de todos.');
@@ -37,10 +41,7 @@ const leaseFree=()=>({$or:[{leaseUntil:{$exists:false}},{leaseUntil:{$lt:new Dat
 const active=()=>({deletionStartedAt:{$exists:false}});
 
 async function analyses(){
-  const c=await collection('analyses');
-  await c.createIndex({workspaceId:1,clientId:1},{unique:true});
-  await c.createIndex({workspaceId:1,updatedAt:-1,_id:-1});
-  return c;
+  return collection('analyses');
 }
 async function record(id:string):Promise<Analysis>{
   const value=await(await analyses()).findOne(scope({_id:analysisId(id),...active()}));
@@ -58,9 +59,11 @@ function fingerprint(source:Source,reference:unknown,config:AnalysisConfig,data:
     reference,year:config.year,regimeSelection:config.regimeSelection,salesAnnex:data.salesAnnex,serviceAnnex:data.serviceAnnex,
     difalPolicy:data.difalPolicy,icmsOutside:data.icmsOutside,monthlyOverrides:data.monthlyOverrides})));
 }
-async function fiscalSource(item:Analysis,data=item.fiscal.data){
+async function fiscalSource(item:Analysis,data=item.fiscal.data,onSource?:(source:Source)=>void){
   need(data.generationId,'Importe as entradas e saídas da empresa.',422,'ANALYSIS_FISCAL_INCOMPLETE');
   const source=await generationSimulator(data.generationId,item.clientId);
+  // The Fiscal form still needs the reconciled months while its RBT12 is pending.
+  onSource?.(source);
   const months=source.monthlyReports?.map(row=>row.sourceMonth)||[];
   need(months.length>=1 && months.length<=12,'Os relatórios precisam conservar de 1 a 12 competências da coluna H.',422,'ANALYSIS_MONTHS');
   let reference:unknown=null;
@@ -85,11 +88,12 @@ async function fiscalSource(item:Analysis,data=item.fiscal.data){
     'Os ajustes fiscais devem corresponder exatamente às competências dos relatórios. Revise os ajustes antes de concluir.',422,'ANALYSIS_MONTHS');
   return {source,months,reference,fingerprint:fingerprint(source,reference,item.config,data)};
 }
-async function readiness(item:Analysis){
-  const issues:AnalysisIssue[]=[];let checked:Awaited<ReturnType<typeof fiscalSource>>|null=null;
+async function readiness(item:Analysis):Promise<Readiness>{
+  const issues:AnalysisIssue[]=[];let checked:Awaited<ReturnType<typeof fiscalSource>>|null=null,source:Source|null=null,sourceError:SourceError|null=null;
   if(item.fiscal.status!=='COMPLETE')issues.push({code:'FISCAL_NOT_CONFIRMED',sector:'fiscal',message:'Salve e conclua o setor Fiscal.'});
-  try{checked=await fiscalSource(item);}
-  catch(error){if(!(error instanceof AppError))throw error;issues.push({code:error.code,sector:'fiscal',message:error.message});}
+  try{checked=await fiscalSource(item,item.fiscal.data,value=>{source=value;});}
+  catch(error){if(!(error instanceof AppError))throw error;issues.push({code:error.code,sector:'fiscal',message:error.message});
+    if(!source)sourceError={code:error.code,message:error.message};}
   if(checked && item.fiscal.status==='COMPLETE' && (item.fiscal.confirmation?.fingerprint!==checked.fingerprint || item.fiscal.confirmation.configRevision!==item.config.revision)){
     issues.push({code:'FISCAL_SOURCE_CHANGED',sector:'fiscal',message:'Os arquivos ou as opções fiscais mudaram após a confirmação. Confira e conclua o Fiscal novamente.'});
   }
@@ -100,14 +104,39 @@ async function readiness(item:Analysis){
   if(checked && !isDeepStrictEqual(item.accounting.data.months.map(row=>row.sourceMonth),checked.months)){
     issues.push({code:'ACCOUNTING_MONTHS_MISMATCH',sector:'accounting',message:`As despesas devem cobrir exatamente as competências dos relatórios: ${checked.months.join(', ')}.`});
   }
-  return {ready:issues.length===0,issues,months:checked?.months||[],checked};
+  return {ready:issues.length===0,issues,months:checked?.months||[],checked,source,sourceError};
 }
-async function visible(item:Analysis){
-  const {checked,...ready}=await readiness(item);
+
+/** Navigation describes saved work only. It never authorizes publication or validates source files. */
+function savedReadiness(item:Analysis):Readiness{
+  const issues:AnalysisIssue[]=[],confirmation=item.fiscal.confirmation;
+  const months=confirmation?.months||item.fiscal.data.monthlyOverrides?.map(row=>row.sourceMonth)||[];
+  if(item.fiscal.status!=='COMPLETE')issues.push({code:'FISCAL_NOT_CONFIRMED',sector:'fiscal',message:'Salve e conclua o setor Fiscal.'});
+  if(!item.fiscal.data.generationId)issues.push({code:'ANALYSIS_FISCAL_INCOMPLETE',sector:'fiscal',message:'Importe as entradas e saídas da empresa.'});
+  if(item.fiscal.status==='COMPLETE'&&(!confirmation||confirmation.configRevision!==item.config.revision||
+    confirmation.generationId!==item.fiscal.data.generationId||!confirmation.fingerprint||!months.length)){
+    issues.push({code:'FISCAL_SOURCE_CHANGED',sector:'fiscal',message:'Confira e conclua o Fiscal para estas escolhas da análise.'});
+  }
+  if(item.accounting.status!=='COMPLETE')issues.push({code:'ACCOUNTING_NOT_CONFIRMED',sector:'accounting',message:'Salve e conclua as despesas do setor Contábil.'});
+  if(!item.accounting.data.months.length||item.accounting.data.months.some(row=>ACCOUNTING_FIELDS.some(key=>row[key]===null))){
+    issues.push({code:'ACCOUNTING_VALUES_MISSING',sector:'accounting',message:'Preencha cada despesa ou confirme zero em todas as competências.'});
+  }
+  if(months.length&&!isDeepStrictEqual(item.accounting.data.months.map(row=>row.sourceMonth),months)){
+    issues.push({code:'ACCOUNTING_MONTHS_MISMATCH',sector:'accounting',message:`As despesas devem cobrir exatamente as competências salvas do Fiscal: ${months.join(', ')}.`});
+  }
+  return {ready:issues.length===0,issues,months,checked:null,source:null,sourceError:null,verification:'SAVED'};
+}
+
+async function presentation(item:Analysis,options:AnalysisReadOptions={},prepared?:Readiness){
+  const {checked,source,sourceError,...ready}=options.summary?savedReadiness(item):prepared||await readiness(item);
   const {workspaceId:_workspace,_id:id,leaseOwner:_owner,leaseUntil:_until,activated:_activated,lastGeneration:_last,...rest}=item;
   const current=item.currentSimulation;
-  return {...rest,id,readiness:ready,currentSimulation:current?{...current,stale:current.legacy || current.analysisRevision!==item.revision ||
-    !checked || checked.fingerprint!==item.fiscal.confirmation?.fingerprint}:null};
+  const analysis={...rest,id,readiness:ready,currentSimulation:current?{...current,stale:current.legacy || current.analysisRevision!==item.revision ||
+    (!options.summary&&(!checked || checked.fingerprint!==item.fiscal.confirmation?.fingerprint))}:null};
+  return {analysis,...(options.includeSource?{source,sourceError}:{})};
+}
+async function visible(item:Analysis,options:AnalysisReadOptions={},prepared?:Readiness){
+  return (await presentation(item,options,prepared)).analysis;
 }
 function sector<T>(data:T,actor:LookupActor,now:Date):Sector<T>{return {revision:0,status:'DRAFT',data,completedAt:null,updatedAt:now,updatedBy:author(actor),confirmation:null};}
 function currentOf(snapshot:any,revision:number|null,legacy:boolean):Current{
@@ -159,7 +188,7 @@ async function ensureAnalysis(actor:LookupActor,clientId:string,year:2027|2028,s
       // A concurrent sector/config write owns its data; opening must never replace it with old history.
       if(current.revision!==0 || current.config.revision!==0 || current.fiscal.revision!==0 || current.accounting.revision!==0 ||
         current.currentSimulation || await companyHasAnalysisDeletion(clientId))return;
-      const latest=await(await collection('simulations')).find(scope({clientId,deletedAt:{$exists:false},analysisPublication:{$ne:'PENDING'}})).sort({createdAt:-1,_id:-1}).limit(1).next();
+      const latest=await(await collection('simulations')).find(scope({clientId,deletedAt:{$exists:false},analysisPublication:{$ne:'PENDING'}})).project({_id:1}).sort({createdAt:-1,_id:-1}).limit(1).next();
       if(!latest)return;
       let snapshot;
       try{snapshot=await getSimulation(latest._id);}
@@ -191,7 +220,7 @@ async function withAnalysis<T>(id:string,action:(item:Analysis,owner:string)=>Pr
 }
 async function revisionAudit(item:Analysis,actor:LookupActor,kind:'config'|'fiscal'|'accounting'|'import'){
   await assertAnalysisNotDeleted(item._id);
-  const c=await collection('analysisRevisions');await c.createIndex({workspaceId:1,analysisId:1,revision:1},{unique:true});
+  const c=await collection('analysisRevisions');
   const data=kind==='config'?item.config:kind==='accounting'?item.accounting:item.fiscal;
   await c.updateOne(scope({_id:digest(`${item._id}:${item.revision}`)}),{$setOnInsert:{...scope(),analysisId:item._id,clientId:item.clientId,revision:item.revision,
     kind,data,createdAt:item.updatedAt,createdBy:author(actor)}},{upsert:true});
@@ -209,7 +238,7 @@ async function saveGenerationRequest(id:string,key:string,data:Record<string,unk
     await c.deleteOne(scope({_id:key,analysisId:id}));await assertAnalysisNotDeleted(id);
   }
 }
-export async function openAnalysis(actor:LookupActor,input:unknown){
+export async function openAnalysis(actor:LookupActor,input:unknown,options:AnalysisReadOptions={}){
   write(actor);analysisObject(input,['clientId','year','regimeSelection'],['difalPolicy']);
   const difalPolicy=Object.hasOwn(input,'difalPolicy')?analysisDifalPolicy(input.difalPolicy):undefined;
   const {item,created}=await ensureAnalysis(actor,analysisId(input.clientId),analysisYear(input.year),analysisSelection(input.regimeSelection),true,difalPolicy);
@@ -223,17 +252,17 @@ export async function openAnalysis(actor:LookupActor,input:unknown){
         ...(current.legacyReference?{legacyReference:current.legacyReference}:{}),updatedAt:new Date()},...(reseeded?{$inc:{revision:1}}:{})});
     });
   }
-  return {analysis:await visible(await record(item._id)),created};
+  return {analysis:await visible(await record(item._id),options),created};
 }
-export async function getAnalysis(id:string){return {analysis:await visible(await record(id))};}
-export async function analysisHistory(page:number,filters:{clientId?:string;search?:string}={}){
+export async function getAnalysis(id:string,options:AnalysisReadOptions={}){return presentation(await record(id),options);}
+export async function analysisHistory(page:number,filters:{clientId?:string;search?:string}={},options:AnalysisReadOptions={}){
   page=integer(page,1,100000);const q:any=scope(active());if(filters.clientId)q.clientId=analysisId(filters.clientId);
   if(filters.search?.trim()){const term=escapeRegex(text(filters.search,100));q.$or=['company.name','company.code','company.cnpj'].map(key=>({[key]:{$regex:term,$options:'i'}}));}
   const c=await analyses();const [rows,total]=await Promise.all([c.find(q).sort({updatedAt:-1,_id:-1}).skip((page-1)*PAGE_SIZE).limit(PAGE_SIZE).toArray(),c.countDocuments(q)]);
-  const items=[];for(const row of rows)items.push(await visible(row as Analysis));
+  const items=[];for(const row of rows)items.push(await visible(row as Analysis,options));
   return {items,pagination:{page,pageSize:PAGE_SIZE,total,totalPages:Math.ceil(total/PAGE_SIZE)}};
 }
-export async function updateAnalysisConfig(actor:LookupActor,id:string,input:unknown){
+export async function updateAnalysisConfig(actor:LookupActor,id:string,input:unknown,options:AnalysisReadOptions={}){
   write(actor);analysisObject(input,['expectedConfigRevision','year','regimeSelection']);
   const expected=analysisRevision(input.expectedConfigRevision),year=analysisYear(input.year),selection=analysisSelection(input.regimeSelection),prior=await record(id);
   const data=structuredClone(prior.fiscal.data),needs=requiresSimplesReference(selection);
@@ -243,9 +272,9 @@ export async function updateAnalysisConfig(actor:LookupActor,id:string,input:unk
   const updated=await(await analyses()).findOneAndUpdate(scope({_id:id,...active(),'config.revision':expected,'fiscal.revision':prior.fiscal.revision,...leaseFree()}),
     {$set:{activated:true,config:{revision:expected+1,year,regimeSelection:selection},'fiscal.data':data,'fiscal.status':'DRAFT','fiscal.completedAt':null,
       'fiscal.confirmation':null,'fiscal.updatedAt':now,'fiscal.updatedBy':author(actor),updatedAt:now},$inc:{revision:1,'fiscal.revision':1}},{returnDocument:'after'});
-  if(!updated)throw conflict();await revisionAudit(updated as Analysis,actor,'config');return {analysis:await visible(updated as Analysis)};
+  if(!updated)throw conflict();await revisionAudit(updated as Analysis,actor,'config');return {analysis:await visible(updated as Analysis,options)};
 }
-export async function updateAnalysisSector(actor:LookupActor,id:string,kind:'fiscal'|'accounting',input:unknown){
+export async function updateAnalysisSector(actor:LookupActor,id:string,kind:'fiscal'|'accounting',input:unknown,options:AnalysisReadOptions={}){
   write(actor);analysisObject(input,['expectedSectorRevision','expectedConfigRevision','complete','data']);
   const expected=analysisRevision(input.expectedSectorRevision),configRevision=analysisRevision(input.expectedConfigRevision);
   need(typeof input.complete==='boolean','Informe se deseja concluir o setor.');
@@ -262,9 +291,9 @@ export async function updateAnalysisSector(actor:LookupActor,id:string,kind:'fis
   const now=new Date();const value={revision:expected+1,status:input.complete?'COMPLETE':'DRAFT',data,completedAt:input.complete?now:null,updatedAt:now,updatedBy:author(actor),confirmation};
   const updated=await(await analyses()).findOneAndUpdate(scope({_id:id,...active(),'config.revision':configRevision,[`${kind}.revision`]:expected,...leaseFree()}),
     {$set:{activated:true,[kind]:value,updatedAt:now},$inc:{revision:1}},{returnDocument:'after'});
-  if(!updated)throw conflict();await revisionAudit(updated as Analysis,actor,kind);return {analysis:await visible(updated as Analysis)};
+  if(!updated)throw conflict();await revisionAudit(updated as Analysis,actor,kind);return {analysis:await visible(updated as Analysis,options)};
 }
-export async function importAnalysisGeneration(actor:LookupActor,id:string,input:unknown){
+export async function importAnalysisGeneration(actor:LookupActor,id:string,input:unknown,options:AnalysisReadOptions={}){
   write(actor);analysisObject(input,['expectedSectorRevision','expectedConfigRevision']);
   const expected=analysisRevision(input.expectedSectorRevision),configRevision=analysisRevision(input.expectedConfigRevision);
   return withAnalysis(id,async(item,owner)=>{
@@ -275,7 +304,7 @@ export async function importAnalysisGeneration(actor:LookupActor,id:string,input
     const now=new Date(),data={...item.fiscal.data,generationId,monthlyOverrides:null};
     const updated=await(await analyses()).findOneAndUpdate(scope({_id:id,...active(),leaseOwner:owner,leaseUntil:{$gt:new Date()},'fiscal.revision':expected,'config.revision':configRevision}),
       {$set:{activated:true,fiscal:{...item.fiscal,revision:expected+1,status:'DRAFT',data,confirmation:null,completedAt:null,updatedAt:now,updatedBy:author(actor)},updatedAt:now},$inc:{revision:1}},{returnDocument:'after'});
-    if(!updated)throw conflict();await revisionAudit(updated as Analysis,actor,'import');return {analysis:await visible(updated as Analysis),generationId};
+    if(!updated)throw conflict();await revisionAudit(updated as Analysis,actor,'import');return {analysis:await visible(updated as Analysis,options),generationId};
   });
 }
 function deterministicId(key:string){const hex=digest(`${scope().workspaceId}:${key}`);return `${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;}
@@ -296,17 +325,22 @@ function calculationInput(item:Analysis,source:Source,simulationId:string){
     monthlyGroups:first.groups,draft,parentSimulationId:item.currentSimulation?.id||null,
     ...(f.rbt12Source==='MANUAL'?{rbt12Source:'MANUAL',rbt12ManualConfirmed:true}:f.rbt12Source==='NOT_REQUIRED'?{rbt12Source:'NOT_REQUIRED'}:{rbt12ExtractionId:f.rbt12ExtractionId})};
 }
-export async function generateAnalysis(actor:LookupActor,id:string,input:unknown){
+async function generatedSimulation(id:string,options:AnalysisReadOptions){
+  // Keep ownership/deletion/publication checks even when navigation only needs the saved ID.
+  const snapshot=await getSimulation(id);
+  return options.summary?{_id:snapshot._id,analysisId:snapshot.analysisId,createdAt:snapshot.createdAt,modelVersion:snapshot.modelVersion}:snapshot;
+}
+export async function generateAnalysis(actor:LookupActor,id:string,input:unknown,options:AnalysisReadOptions={}){
   write(actor);analysisObject(input,['requestId','expectedRevision']);const requestId=analysisId(input.requestId),expected=analysisRevision(input.expectedRevision);
   const initial=await record(id);
   const requests=await collection('analysisGenerationRequests'),requestKey=digest(`${scope().workspaceId}:${id}:${requestId}`);
   const priorRequest=await requests.findOne(scope({_id:requestKey,analysisId:id}));
   if(priorRequest){need(priorRequest.revision===expected,'Este identificador pertence a outra revisão.',409,'ANALYSIS_CONFLICT');
-    return {analysis:await visible(initial),simulation:await getSimulation(priorRequest.simulationId),reused:true};}
+    return {analysis:await visible(initial,options),simulation:await generatedSimulation(priorRequest.simulationId,options),reused:true};}
   if(initial.lastGeneration?.requestId===requestId){
     need(initial.lastGeneration.revision===expected,'Este identificador pertence a outra revisão.',409,'ANALYSIS_CONFLICT');
     await(await collection('simulations')).updateOne(scope({_id:initial.lastGeneration.simulationId,analysisId:id}),{$set:{analysisPublication:'PUBLISHED'}});
-    return {analysis:await visible(initial),simulation:await getSimulation(initial.lastGeneration.simulationId),reused:true};
+    return {analysis:await visible(initial,options),simulation:await generatedSimulation(initial.lastGeneration.simulationId,options),reused:true};
   }
   return withAnalysis(id,async(item,owner)=>{
     const prepared=await readiness(item);need(prepared.ready,prepared.issues.map(issue=>issue.message).join(' '),422,'ANALYSIS_NOT_READY');
@@ -314,10 +348,11 @@ export async function generateAnalysis(actor:LookupActor,id:string,input:unknown
     const simulationId=deterministicId(`generate:${item._id}:${item.revision}:${MONTHLY_MODEL_VERSION}`);
     if(item.currentSimulation?.id===simulationId){
       await saveGenerationRequest(id,requestKey,{requestId,revision:expected,simulationId,createdAt:new Date(),createdBy:author(actor)});
-      return {analysis:await visible(item),simulation:await getSimulation(simulationId),reused:true};
+      return {analysis:await visible(item,options,prepared),simulation:await generatedSimulation(simulationId,options),reused:true};
     }
     const sources=[source.purchases.jobId,source.sales.jobId].sort();
     return withGeneration(source.generationId,async(_generation,generationOwner)=>withJob(sources[0],async(first)=>withJob(sources[1],async(second)=>{
+      let lastChecked=prepared.checked!;
       const unchanged=async()=>{
         const current=await(await analyses()).findOne(scope({_id:id,...active(),revision:expected,leaseOwner:owner,leaseUntil:{$gt:new Date()}}));if(!current)throw conflict();
         const locked=await(await collection('lookupJobs')).countDocuments(scope({$or:[{_id:first._id,leaseOwner:first.leaseOwner},{_id:second._id,leaseOwner:second.leaseOwner}],leaseUntil:{$gt:new Date()}}));
@@ -326,6 +361,7 @@ export async function generateAnalysis(actor:LookupActor,id:string,input:unknown
           'A importação está sendo atualizada. Confira os dados e gere novamente.',409,'ANALYSIS_SOURCE_CHANGED');
         const checked=await fiscalSource(current as Analysis);
         need(checked.fingerprint===sourceFingerprint,'Os arquivos mudaram durante o cálculo. Confirme o Fiscal novamente antes de gerar.',409,'ANALYSIS_SOURCE_CHANGED');
+        lastChecked=checked;
       };
       await unchanged();
       const simulation=await createAnalysisSimulation(actor,calculationInput(item,source,simulationId),{analysisId:id,analysisRevision:expected,source,beforeInsert:unchanged,
@@ -339,7 +375,10 @@ export async function generateAnalysis(actor:LookupActor,id:string,input:unknown
       await(await collection('simulations')).updateOne(scope({_id:simulationId,analysisId:id,analysisRevision:expected}),{$set:{analysisPublication:'PUBLISHED'}});
       await saveGenerationRequest(id,requestKey,{requestId,revision:expected,simulationId,createdAt:new Date(),createdBy:author(actor)});
       await audit(actor._id,'analysis.generate',id);
-      return {analysis:await visible(updated as Analysis),simulation:await getSimulation(simulationId),reused:item.currentSimulation?.id===simulationId};
+      // The final source check above still owns all three leases and the CAS.
+      // Reuse its verified result for presentation instead of reconciling every line again.
+      return {analysis:await visible(updated as Analysis,options,{...prepared,checked:lastChecked,source:lastChecked.source}),
+        simulation:await generatedSimulation(simulationId,options),reused:item.currentSimulation?.id===simulationId};
     })));
   },expected);
 }

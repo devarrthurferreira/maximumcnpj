@@ -284,6 +284,13 @@
 
 /* One active form in the native top layer; overview remains a compact workspace. */
 body.analysis-modal-open{overflow:hidden}
+.analysis-evidence-loading,.analysis-evidence-error{padding:12px 14px;border:1px solid var(--analysis-line);border-radius:9px;margin-bottom:16px;background:#fcf8fa;font-size:12px;line-height:1.65;overflow-wrap:anywhere}
+.analysis-evidence-loading strong,.analysis-evidence-loading span{display:block}
+.analysis-evidence-loading span{color:var(--analysis-muted);font-size:11px;margin-top:3px}
+.analysis-evidence-error{background:#fff8ed;border-color:#e6d6ba;color:#75552b}
+.analysis-evidence-error p{margin:5px 0 10px}
+.analysis-evidence-error .analysis-actions{margin:0;gap:8px}
+#analysis-fiscal-evidence:empty{display:none}
 .analysis-detail-overview{display:grid;gap:18px;min-width:0}
 .analysis-detail-overview>.analysis-guidance{display:block;margin:0;border-radius:12px}
 .analysis-guidance-strip{display:flex;align-items:center;gap:14px;flex-wrap:wrap;min-width:0;padding:13px 18px;background:#fffcfd}

@@ -91,9 +91,7 @@ function uuid(value: unknown) {
 }
 
 async function generations() {
-  const c = await collection('generations');
-  await c.createIndex({workspaceId: 1, createdAt: -1, _id: -1});
-  return c;
+  return collection('generations');
 }
 
 async function record(id: string) {

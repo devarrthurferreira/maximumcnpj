@@ -22,6 +22,18 @@ export async function database(): Promise<Db> {
       db.collection('rows').createIndex({ workspaceId: 1, batchId: 1, valid: 1, cnpj: 1 }),
       db.collection('results').createIndex({ workspaceId: 1, batchId: 1, cnpj: 1 }, { unique: true }),
       db.collection('results').createIndex({ workspaceId: 1, cnpj: 1, observedAt: -1 }),
+      // Navigation must not resend index commands for every analysis/source read.
+      // This initialization belongs to the connection, so reconnecting also retries it.
+      db.collection('analyses').createIndex({ workspaceId: 1, clientId: 1 }, { unique: true }),
+      db.collection('analyses').createIndex({ workspaceId: 1, updatedAt: -1, _id: -1 }),
+      db.collection('analyses').createIndex({ workspaceId: 1, 'currentSimulation.id': 1 }),
+      db.collection('analysisRevisions').createIndex({ workspaceId: 1, analysisId: 1, revision: 1 }, { unique: true }),
+      db.collection('generations').createIndex({ workspaceId: 1, createdAt: -1, _id: -1 }),
+      db.collection('simulations').createIndex({ workspaceId: 1, createdAt: -1, _id: -1 }),
+      db.collection('simulations').createIndex({ workspaceId: 1, clientId: 1, createdAt: -1, _id: -1 }),
+      db.collection('simulations').createIndex({ workspaceId: 1, year: 1, createdAt: -1, _id: -1 }),
+      db.collection('simulations').createIndex({ workspaceId: 1, analysisId: 1, createdAt: -1, _id: -1 }),
+      db.collection('simulations').createIndex({ workspaceId: 1, parentSimulationId: 1, createdAt: -1, _id: -1 }),
       db.collection('audit').createIndex({ workspaceId: 1, createdAt: -1 }),
       db.collection('audit').createIndex({ workspaceId: 1, clientId: 1 }, {
         name:'analysis_deletions_by_company',partialFilterExpression:{action:'analysis.delete'}

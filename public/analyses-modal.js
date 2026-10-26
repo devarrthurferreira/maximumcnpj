@@ -8,7 +8,7 @@ export function restoreAnalysisNotices() {
 
 /** DOM-only shell. Navigation, validation and persistence remain in the analysis controller. */
 export function createAnalysisModal({dialog,onNext,onBack,onPrevious,onClose,isBusy,returnFocus}) {
-  let disposed=false,pendingProgrammaticCloses=0;
+  let disposed=false,pendingProgrammaticCloses=0,progressKey='';
   const notices=()=>{
     const host=$('#analysis-wizard-notices',dialog);if(!host)return;
     for(const id of ['analysis-error','analysis-feedback']){const node=document.getElementById(id);if(node)host.append(node);}
@@ -52,17 +52,21 @@ export function createAnalysisModal({dialog,onNext,onBack,onPrevious,onClose,isB
     if(disposed)return;
     dialog.dataset.wizardStep=state.id;dialog.setAttribute('aria-busy',String(busy));
     dialog.querySelectorAll('[data-wizard-step]').forEach(panel=>panel.hidden=panel.dataset.wizardStep!==state.id);
-    const progress=$('#analysis-wizard-progress',dialog);progress.hidden=state.total===1;progress.replaceChildren();
-    const count=document.createElement('p');count.className='analysis-wizard-counter';count.setAttribute('role','status');count.setAttribute('aria-live','polite');count.textContent=`Etapa ${state.number} de ${state.total}`;progress.append(count);
-    const list=document.createElement('ol');list.className='analysis-wizard-steps';list.setAttribute('aria-label','Etapas do preenchimento');
-    state.steps.forEach((step,index)=>{
-      const item=document.createElement('li');item.className=index===state.index?'is-current':index<state.index?'is-past':'';
-      const button=document.createElement('button');button.type='button';button.dataset.wizardGo=step.id;button.disabled=busy||index>state.index;
-      if(index===state.index)button.setAttribute('aria-current','step');
-      const number=document.createElement('span');number.className='analysis-wizard-number';number.setAttribute('aria-hidden','true');number.textContent=String(index+1);
-      const label=document.createElement('strong');label.textContent=step.label;button.append(number,label);item.append(button);list.append(item);
-      button.onclick=()=>{if(!isBusy()&&index<state.index)onPrevious(step.id);};
-    });progress.append(list);
+    const progress=$('#analysis-wizard-progress',dialog);progress.hidden=state.total===1;
+    const key=JSON.stringify([state.id,state.steps]);
+    if(key!==progressKey){
+      progressKey=key;progress.replaceChildren();
+      const count=document.createElement('p');count.className='analysis-wizard-counter';count.setAttribute('role','status');count.setAttribute('aria-live','polite');count.textContent=`Etapa ${state.number} de ${state.total}`;progress.append(count);
+      const list=document.createElement('ol');list.className='analysis-wizard-steps';list.setAttribute('aria-label','Etapas do preenchimento');
+      state.steps.forEach((step,index)=>{
+        const item=document.createElement('li');item.className=index===state.index?'is-current':index<state.index?'is-past':'';
+        const button=document.createElement('button');button.type='button';button.dataset.wizardGo=step.id;button.disabled=busy||index>state.index;
+        if(index===state.index)button.setAttribute('aria-current','step');
+        const number=document.createElement('span');number.className='analysis-wizard-number';number.setAttribute('aria-hidden','true');number.textContent=String(index+1);
+        const label=document.createElement('strong');label.textContent=step.label;button.append(number,label);item.append(button);list.append(item);
+        button.onclick=()=>{if(!isBusy()&&index<state.index)onPrevious(step.id);};
+      });progress.append(list);
+    }else progress.querySelectorAll('[data-wizard-go]').forEach(button=>button.disabled=busy||state.steps.findIndex(step=>step.id===button.dataset.wizardGo)>state.index);
     const back=$('#analysis-wizard-back',dialog),next=$('#analysis-wizard-next',dialog);
     back.hidden=state.isFirst;back.disabled=busy;
     next.hidden=state.isLast;next.disabled=busy;next.textContent='Continuar';

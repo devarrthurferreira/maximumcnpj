@@ -6,19 +6,21 @@ import {buildRbt12Schedule} from './simulator-rbt12.js';
 import {analysisDocumentStatus,loadAnalysisExtraction,retryAnalysisExtraction,uploadAnalysisExtraction} from './analyses-extrato.js';
 import {parseAccountingPaste,planAccountingPaste,ACCOUNTING_IMPORT_CSV_TEMPLATE} from './analysis-accounting-import.js';
 import {renderAccountingPaste} from './analyses-accounting-paste.js';
-import {analysisGuidance} from './analyses-guidance.js';
+import {analysisGuidance,accountingSourceMonths} from './analyses-guidance.js';
 import {wizardStep,initialWizardStep,normalizeWizardStep} from './analyses-wizard.js';
 import {createAnalysisModal,restoreAnalysisNotices} from './analyses-modal.js';
 import {ACCOUNTING_FIELDS,ADJUSTMENT_FIELDS,esc,money,monthLabel,sectorName,analysisUrl,companyResults,
   renderNewAnalysis,renderNewCompanyContext,renderAnalysisList,renderAnalysisDetail,renderAnalysisVersions,
   renderAnalysisGuidance,renderAccountingSummary,renderAnalysisGeneration,renderWizardReview,
-  renderDifalChoice,difalChoiceSummary} from './analyses-view.js';
+  renderDifalChoice,difalChoiceSummary,renderFiscalReports,renderFiscalReference,renderFiscalEvidence,renderAccountingSourceMonths} from './analyses-view.js';
 
 const $=(selector,root=document)=>root.querySelector(selector);
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
 const clone=value=>structuredClone(value);
 const S={user:null,clients:null,analysis:null,sector:null,source:null,generation:null,generationError:'',reference:null,
   documentStatus:null,pdfStatus:'',pdfBusy:false,busy:false,sequence:0,configDraft:null,fiscalDraft:null,accountingDraft:null,
+  evidenceState:'idle',evidenceError:'',evidenceKey:null,
+  metadataState:'idle',metadataKey:null,generationUnavailable:false,
   configDirty:false,fiscalDirty:false,accountingDirty:false,versionsOpen:false,versionsData:null,versionsLoading:false,
   generateRequest:null,newClient:'',newSearch:'',newSector:'',newYear:2027,newSelection:defaultRegimeSelection(),
   newChoiceIds:defaultRegimeSelection().selected,newExisting:null,newCheckingCompany:false,newCompanyError:'',companyCheckSequence:0,
@@ -27,6 +29,8 @@ const S={user:null,clients:null,analysis:null,sector:null,source:null,generation
   paste:{text:'',preview:null,error:'',replaceConfirmed:false,open:false,pending:false},detailOpen:{},
   modalKind:null,modalOpen:false,modalSteps:{},modalReturn:null};
 let modal=null;
+let companyCheckController=null,evidenceTask=null,metadataTask=null,accountingSummaryFrame=0;
+let scheduleCache={reference:null,months:null,value:null};
 const writable=()=>['admin','operator'].includes(S.user?.role);
 const dirty=()=>S.configDirty||S.fiscalDirty||S.accountingDirty;
 const hasLocalWork=()=>dirty()||S.paste.pending;
@@ -56,11 +60,13 @@ function showError(error) {
   host.scrollIntoView({block:'nearest',behavior:'instant'});
 }
 function markDirty(sector) {
+  const changed=!S[sector+'Dirty'];
   S[sector+'Dirty']=true;S.generateRequest=null;
   if(sector==='accounting')invalidatePastePreview('Os valores do formulário mudaram. Confira novamente a colagem antes de aplicá-la.');
   const generate=$('#analysis-generate');if(generate)generate.disabled=true;
   feedback('');
-  refreshGuidance();
+  if(changed)refreshGuidance();
+  else refreshDraftStatus();
 }
 function refreshDraftStatus() {
   const host=$('#analysis-draft-status');if(!host)return;
@@ -88,7 +94,7 @@ function currentWizardState() {
   const kind=S.modalKind,resume=kind==='new'&&!!S.newExisting;
   let step=normalizeWizardStep(kind,S.modalSteps[kind]);
   if(!step){
-    step=initialWizardStep(kind,{resume,hasDocuments:!!S.source?.monthlyReports?.length,hasMonths:!!S.accountingDraft?.months?.length}).id;
+    step=initialWizardStep(kind,{resume,hasDocuments:!!(S.source?.monthlyReports?.length||S.analysis?.fiscal?.data?.generationId&&S.analysis?.readiness?.months?.length),hasMonths:!!S.accountingDraft?.months?.length}).id;
   }
   S.modalSteps[kind]=step;return wizardStep(kind,step,{resume});
 }
@@ -187,6 +193,7 @@ function openWizard(kind,{step=null}={}) {
     if(step)S.modalSteps[kind]=wizardStep(kind,step).id;
     if(same){if(step)setWizardStep(step,{focus:false});modal.open(currentWizardState());}
     else renderDetail();
+    if(kind==='fiscal')void ensureEvidence();
     syncWizardUrl();return true;
   }catch(error){showError(error);return false;}
 }
@@ -200,6 +207,12 @@ function assertAnalysis(value) {
 function adoptAnalysis(value,{preserveDrafts=false}={}) {
   const record=assertAnalysis(value);
   if(S.analysis&&S.analysis.id!==record.id)throw new Error('A resposta não corresponde à empresa aberta. Atualize a análise.');
+  if(evidenceTask&&S.analysis?.revision!==record.revision)cancelEvidence();
+  if(S.analysis&&evidenceKey(S.analysis)!==evidenceKey(record)){
+    cancelEvidence();S.evidenceState='idle';S.evidenceKey=null;S.evidenceError='';
+    cancelMetadata();S.metadataState='idle';S.metadataKey=null;S.generationUnavailable=false;
+    if(S.analysis.fiscal.data.generationId!==record.fiscal.data.generationId){S.generation=null;S.source=null;S.generationError='';}
+  }
   S.analysis=record;
   if(!preserveDrafts||!S.configDirty){S.configDraft=clone(record.config);S.configDirty=false;}
   if(!preserveDrafts||!S.fiscalDirty){S.fiscalDraft=clone(record.fiscal.data);S.fiscalDirty=false;}
@@ -219,7 +232,7 @@ async function clients(){
 
 async function openList() {
   const query=new URLSearchParams(location.search),search=(query.get('search')||'').trim(),page=Math.max(1,Math.min(100000,Number(query.get('page'))||1));
-  const response=await analysisRequest(apiPath('?'+new URLSearchParams({page:String(page),...(search?{search}:{})})));
+  const response=await analysisRequest(apiPath('?'+new URLSearchParams({page:String(page),summary:'1',...(search?{search}:{})})));
   if(!Array.isArray(response.items))throw new Error('Não foi possível carregar as análises.');
   $('#analyses-app').innerHTML=renderAnalysisList({items:response.items.map(assertAnalysis),pagination:pagination(response),search,canWrite:writable()});
   $('#analysis-search-form').onsubmit=event=>{event.preventDefault();location.href='/analyses.html?'+new URLSearchParams({search:$('#analysis-search').value.trim()});};
@@ -374,6 +387,7 @@ function validateDifalChoice(prefix,selection,policy,{required=false}={}) {
 function bindCompanyResults() {
   document.querySelectorAll('[data-analysis-client]').forEach(button=>button.onclick=()=>{
     if(S.busy)return;
+    if(S.newClient===button.dataset.analysisClient&&S.newCheckingCompany)return;
     captureNewChoices();
     S.newClient=button.dataset.analysisClient;$('#analysis-new-client').value=S.newClient;
     S.newExisting=null;S.newCompanyError='';refreshCompanies();void checkNewCompany({advance:true});
@@ -407,18 +421,20 @@ function refreshNewCompanyState() {
   if(modal&&S.modalKind==='new'){modal.sync(currentWizardState());if(currentWizardState().isLast)refreshWizardReview();}
 }
 async function checkNewCompany({advance=false}={}) {
+  companyCheckController?.abort();
+  const controller=new AbortController();companyCheckController=controller;
   const clientId=S.newClient,ticket=++S.companyCheckSequence;
   if(!uuid(clientId))return;
   clearError();
   S.newExisting=null;S.newCheckingCompany=true;S.newCompanyError='';refreshNewCompanyState();
   try {
-    const response=await analysisRequest(apiPath('?'+new URLSearchParams({clientId,page:'1'})));
+    const response=await analysisRequest(apiPath('?'+new URLSearchParams({clientId,page:'1',summary:'1'})),{signal:controller.signal});
     if(ticket!==S.companyCheckSequence||S.newClient!==clientId)return;
     if(!Array.isArray(response.items))throw new Error('Não foi possível conferir a análise desta empresa. Tente novamente.');
     if(response.items.some(item=>item.clientId!==clientId))throw new Error('A resposta não corresponde à empresa escolhida. Selecione a empresa novamente.');
     const found=response.items[0];S.newExisting=found?assertAnalysis(found):null;
   } catch(error){if(ticket===S.companyCheckSequence&&S.newClient===clientId)S.newCompanyError=error.message;}
-  finally{if(ticket===S.companyCheckSequence&&S.newClient===clientId){
+  finally{if(companyCheckController===controller)companyCheckController=null;if(ticket===S.companyCheckSequence&&S.newClient===clientId){
     S.newCheckingCompany=false;clearError();refreshNewCompanyState();
     if(advance&&!S.newCompanyError&&S.modalOpen&&S.modalKind==='new'&&currentWizardState().id==='company')setWizardStep('setup');
   }}
@@ -441,6 +457,7 @@ async function openNew(clientId='') {
   if(!writable())feedback('Seu acesso permite consultar análises existentes. Um operador pode iniciar o trabalho desta empresa.','info');
   $('#analysis-company-search').oninput=event=>{
     if(S.busy)return;
+    companyCheckController?.abort();companyCheckController=null;
     captureNewChoices();S.newSearch=event.target.value;S.newClient='';S.newExisting=null;S.newCompanyError='';
     S.newCheckingCompany=false;S.companyCheckSequence++;$('#analysis-new-client').value='';refreshCompanies();refreshNewCompanyState();
   };
@@ -468,7 +485,7 @@ async function openNew(clientId='') {
       const difalPolicy=clone(S.newDifalPolicy);
       if(!requiresSimplesReference(selection))difalPolicy.enabled.pure=difalPolicy.enabled.hybrid=false;
       setBusy(true,'Abrindo a análise desta empresa…');
-      const response=await analysisRequest(apiPath(),{method:'POST',body:{clientId,year,regimeSelection:selection,...(!S.newExisting?{difalPolicy:parseDifalPolicy(difalPolicy)}:{})}});
+      const response=await analysisRequest(apiPath('?summary=1'),{method:'POST',body:{clientId,year,regimeSelection:selection,...(!S.newExisting?{difalPolicy:parseDifalPolicy(difalPolicy)}:{})}});
       const record=assertAnalysis(response.analysis);
       if(record.clientId!==clientId)throw new Error('A análise retornada não corresponde à empresa selecionada.');
       setBusy(false);location.href=analysisUrl(record.id,sector)+(response.created?'':'&resumed=1');
@@ -481,7 +498,7 @@ async function openNew(clientId='') {
 
 async function openCompany(clientId) {
   if(!uuid(clientId))throw new Error('Selecione uma empresa válida para abrir a análise.');
-  const response=await analysisRequest(apiPath('?'+new URLSearchParams({clientId,page:'1'})));
+  const response=await analysisRequest(apiPath('?'+new URLSearchParams({clientId,page:'1',summary:'1'})));
   const found=response.items?.find(item=>item.clientId===clientId);
   if(found){
     const query=new URLSearchParams(location.search),sector=query.get('sector');
@@ -491,46 +508,137 @@ async function openCompany(clientId) {
 }
 
 function currentContext(id,sequence){return S.analysis?.id===id&&S.sequence===sequence;}
-async function loadEvidence(id,sequence) {
-  const record=S.analysis,fiscal=record.fiscal.data;
-  S.generation=null;S.source=null;S.generationError='';S.reference=null;S.documentStatus=null;S.pdfStatus='';
-  const reads=await Promise.allSettled([
-    fiscal.generationId?analysisRequest('/api/v4/generations/'+encodeURIComponent(fiscal.generationId)):Promise.resolve(null),
-    requiresSimplesReference(record.config.regimeSelection)&&fiscal.rbt12Source==='SIMPLES_SECTION_22'&&fiscal.rbt12ExtractionId?
-      loadAnalysisExtraction({clientId:record.clientId,documentId:fiscal.rbt12DocumentId,extractionId:fiscal.rbt12ExtractionId,cnpj:record.company.cnpj}):Promise.resolve(null)
-  ]);
-  if(!currentContext(id,sequence))return;
-  if(reads[0].status==='fulfilled'){
-    const generation=reads[0].value;
-    if(generation&&(generation._id!==fiscal.generationId||!generation.companies?.some(company=>company.clientId===record.clientId)))S.generationError='Os relatórios não correspondem à empresa desta análise. Confira o vínculo antes de continuar.';
-    else S.generation=generation;
-  }else S.generationError=reads[0].reason?.message||'Não foi possível conferir os relatórios vinculados.';
-  if(reads[1].status==='fulfilled')S.reference=reads[1].value;
-  else S.pdfStatus=reads[1].reason?.message||'Não foi possível confirmar a leitura do extrato. Verifique o PDF vinculado.';
-  const company=S.generation?.companies?.find(item=>item.clientId===record.clientId);
-  if(company?.purchase?.status==='COMPLETED'&&company?.sales?.status==='COMPLETED'){
-    try {
-      const source=await analysisRequest(`/api/v4/generations/${encodeURIComponent(fiscal.generationId)}/simulator?`+new URLSearchParams({clientId:record.clientId}));
-      if(!currentContext(id,sequence))return;
-      if(source.generationId!==fiscal.generationId||source.clientId!==record.clientId)throw new Error('A fonte recebida não corresponde à empresa e aos documentos desta análise.');
-      S.source=source;
-    } catch(error){if(currentContext(id,sequence))S.generationError=error.message;}
+function evidenceKey(record) {
+  return JSON.stringify([record.id,record.revision,record.config.revision,record.fiscal.revision]);
+}
+function cancelEvidence() {
+  if(!evidenceTask)return;
+  evidenceTask.controller.abort();evidenceTask=null;
+  if(S.evidenceState==='loading')S.evidenceState='idle';
+}
+function cancelMetadata() {
+  metadataTask?.controller.abort();metadataTask=null;
+}
+function generationMetadata(record,{force=false}={}) {
+  const key=evidenceKey(record),id=record.id,generationId=record.fiscal.data.generationId,sequence=S.sequence;
+  if(!generationId)return Promise.resolve(null);
+  if(metadataTask?.key===key)return metadataTask.promise;
+  if(!force&&S.metadataKey===key&&S.metadataState==='ready')return Promise.resolve(S.generation);
+  if(!force&&S.metadataKey===key&&S.metadataState==='error')return Promise.reject(Object.assign(new Error(S.generationError),{status:S.generationUnavailable?404:0}));
+  cancelMetadata();const controller=new AbortController(),task={key,controller,promise:null};metadataTask=task;
+  S.metadataState='loading';S.metadataKey=key;S.generationError='';S.generationUnavailable=false;refreshAccountingSources();
+  task.promise=analysisRequest('/api/v4/generations/'+encodeURIComponent(generationId),{signal:controller.signal}).then(generation=>{
+    if(generation._id!==generationId||!generation.companies?.some(company=>company.clientId===record.clientId))throw new Error('Os relatórios não correspondem à empresa desta análise. Confira o vínculo antes de continuar.');
+    if(currentContext(id,sequence)&&evidenceKey(S.analysis)===key){S.generation=generation;S.metadataState='ready';}
+    return generation;
+  }).catch(error=>{
+    if(!controller.signal.aborted&&currentContext(id,sequence)&&evidenceKey(S.analysis)===key){
+      S.metadataState='error';S.generation=null;S.generationUnavailable=error.status===404;
+      S.generationError=S.generationUnavailable?'Os documentos fiscais vinculados não estão disponíveis. Prepare uma nova importação para continuar.':error.message||'Não foi possível conferir os relatórios vinculados.';
+    }
+    throw error;
+  }).finally(()=>{
+    if(metadataTask===task)metadataTask=null;
+    if(currentContext(id,sequence)&&evidenceKey(S.analysis)===key)refreshAccountingSources();
+  });return task.promise;
+}
+function bindAccountingSourceActions() {
+  const add=$('#analysis-add-fiscal-months');if(add)add.onclick=()=>{try{clearError();addMonths(expectedAccountingMonths());}catch(error){showError(error);}};
+  const retry=$('#analysis-retry-accounting-months');if(retry)retry.onclick=()=>void generationMetadata(S.analysis,{force:true}).catch(()=>{});
+}
+function refreshAccountingSources() {
+  const host=$('#analysis-accounting-source-months');if(!host||!S.analysis)return;
+  host.innerHTML=renderAccountingSourceMonths(detailOptions());bindAccountingSourceActions();scheduleAccountingSummary();
+}
+function ensureAccountingMetadata() {
+  if(S.analysis?.fiscal.data.generationId&&!expectedAccountingMonths().length)void generationMetadata(S.analysis).catch(()=>{});
+}
+function refreshEvidence() {
+  const status=$('#analysis-fiscal-evidence');if(status)status.innerHTML=renderFiscalEvidence(detailOptions());
+  const retry=$('#analysis-retry-evidence');if(retry)retry.onclick=()=>void ensureEvidence({force:true});
+  const replace=$('#analysis-replace-missing-documents');if(replace)replace.onclick=()=>void prepareImport();
+  const reports=$('#analysis-fiscal-documents-view');if(reports)reports.innerHTML=renderFiscalReports(detailOptions());
+  if($('#analysis-start-import'))$('#analysis-start-import').onclick=()=>void prepareImport();
+  const reference=$('#analysis-fiscal-reference');
+  if(reference)reference.innerHTML=renderFiscalReference({...detailOptions(),draft:S.fiscalDraft});
+  const searchable=$('#analysis-searchable-pdf');if(searchable)searchable.hidden=!(S.reference&&S.reference.searchableStored!==false);
+  const pdfStatus=$('#analysis-pdf-status');if(pdfStatus&&!S.pdfBusy)pdfStatus.textContent=S.pdfStatus||
+    (S.reference?'Leitura confirmada. Confira a seção 2.2 abaixo.':S.fiscalDraft.rbt12DocumentId?'Há um PDF vinculado. Confira a leitura ou tente novamente.':'Nenhum extrato confirmado nesta análise.');
+  bindAnalysisActions(status||document);
+  const adjustment=$('#analysis-adjustment-source-action');
+  if(adjustment){
+    adjustment.hidden=!S.source?.monthlyReports?.length;
+    if($('#analysis-edit-adjustments'))$('#analysis-edit-adjustments').onclick=editFiscalAdjustments;
   }
+  refreshAccountingSources();
+}
+async function ensureEvidence({force=false}={}) {
+  if(!S.analysis||S.modalKind!=='fiscal'||!S.modalOpen)return;
+  const record=S.analysis,id=record.id,sequence=S.sequence,key=evidenceKey(record),fiscal=record.fiscal.data;
+  // Closing or switching a modal does not start another server reconciliation.
+  if(evidenceTask?.key===key)return evidenceTask.promise;
+  if(!force&&S.evidenceKey===key&&['ready','error'].includes(S.evidenceState))return;
+  cancelEvidence();
+  const controller=new AbortController(),task={key,controller,promise:null};evidenceTask=task;
+  S.evidenceKey=key;S.evidenceState='loading';S.evidenceError='';refreshEvidence();
+  task.promise=(async()=>{
+    const reads=await Promise.allSettled([
+      analysisRequest(apiPath('/'+id+'?includeSource=1'),{signal:controller.signal}),
+      generationMetadata(record,{force}),
+      requiresSimplesReference(record.config.regimeSelection)&&fiscal.rbt12Source==='SIMPLES_SECTION_22'&&fiscal.rbt12ExtractionId?
+        S.reference?.extractionId===fiscal.rbt12ExtractionId&&S.reference?.documentId===fiscal.rbt12DocumentId?Promise.resolve(S.reference):
+          loadAnalysisExtraction({clientId:record.clientId,documentId:fiscal.rbt12DocumentId,extractionId:fiscal.rbt12ExtractionId,cnpj:record.company.cnpj,signal:controller.signal}):Promise.resolve(null)
+    ]);
+    if(controller.signal.aborted||evidenceTask!==task||!currentContext(id,sequence)||evidenceKey(S.analysis)!==key)return;
+    let error='';
+    S.generationError='';
+    if(reads[0].status==='fulfilled'){
+      try{
+        const data=reads[0].value,checked=assertAnalysis(data.analysis);
+        if(checked.id!==id||checked.clientId!==record.clientId||evidenceKey(checked)!==key)throw new Error('Os dados salvos foram atualizados durante a conferência. Reabra a análise para consultar a versão atual; os campos desta tela continuam preservados.');
+        if(data.source&&(data.source.generationId!==fiscal.generationId||data.source.clientId!==record.clientId))throw new Error('A fonte recebida não corresponde à empresa e aos documentos desta análise.');
+        S.source=data.source||null;
+        // A late check never advances a saved revision underneath an edited form.
+        if(S.analysis.revision===record.revision&&checked.revision===record.revision)adoptAnalysis(checked,{preserveDrafts:true});
+        if(data.sourceError&&fiscal.generationId)error=data.sourceError.message||'Não foi possível conferir os documentos fiscais vinculados.';
+      }catch(failure){error=failure.message;}
+    }else error=reads[0].reason?.message||'Não foi possível conferir os documentos fiscais.';
+    if(reads[1].status==='fulfilled'){
+      const generation=reads[1].value;
+      if(generation&&(generation._id!==fiscal.generationId||!generation.companies?.some(company=>company.clientId===record.clientId)))S.generationError='Os relatórios não correspondem à empresa desta análise. Confira o vínculo antes de continuar.';
+      else S.generation=generation;
+    }else S.generationError=reads[1].reason?.status===404?'Os documentos fiscais vinculados não estão disponíveis. Confira os relatórios ou prepare uma nova importação.':reads[1].reason?.message||'Não foi possível conferir os relatórios vinculados.';
+    const usesReference=S.fiscalDraft.rbt12Source==='SIMPLES_SECTION_22'&&S.fiscalDraft.rbt12ExtractionId===fiscal.rbt12ExtractionId&&S.fiscalDraft.rbt12DocumentId===fiscal.rbt12DocumentId;
+    if(reads[2].status==='fulfilled'){
+      const reference=reads[2].value;
+      if(reference&&usesReference){if(S.reference!==reference)S.pdfStatus='';S.reference=reference;}
+    }else if(usesReference)S.pdfStatus=reads[2].reason?.message||'Não foi possível confirmar a leitura do extrato. Verifique o PDF vinculado.';
+    S.evidenceError=S.generationError||error||(reads[2].status==='rejected'&&usesReference?S.pdfStatus:'');
+    S.evidenceState=S.evidenceError?'error':'ready';
+    evidenceTask=null;refreshEvidence();refreshGuidance();
+  })().catch(error=>{
+    if(controller.signal.aborted||evidenceTask!==task||!currentContext(id,sequence))return;
+    evidenceTask=null;S.evidenceState='error';S.evidenceError=error.message||'Não foi possível conferir os documentos fiscais.';refreshEvidence();
+  });
+  return task.promise;
 }
 async function openAnalysis(id) {
   if(!uuid(id))throw new Error('A identificação da análise é inválida. Abra a empresa pela carteira.');
   const sequence=++S.sequence;
+  cancelEvidence();cancelMetadata();
   releaseWizard();
-  $('#analyses-app').innerHTML='<div class="initial">Conferindo os setores e os documentos desta empresa…</div>';
-  const response=await analysisRequest(apiPath('/'+encodeURIComponent(id)));
+  $('#analyses-app').innerHTML='<div class="initial">Abrindo o trabalho salvo desta empresa…</div>';
+  const response=await analysisRequest(apiPath('/'+encodeURIComponent(id)+'?summary=1'));
   if(sequence!==S.sequence)return;
   S.analysis=null;adoptAnalysis(response.analysis);S.generateRequest=null;
   S.difalEnabledMemory.analysis=null;
   S.paste={text:'',preview:null,error:'',replaceConfirmed:false,open:false,pending:false};S.detailOpen={};
   S.modalSteps={};S.modalReturn=null;
+  S.generation=null;S.source=null;S.generationError='';S.reference=null;S.documentStatus=null;S.pdfStatus='';
+  S.evidenceState='idle';S.evidenceError='';S.evidenceKey=null;
+  S.metadataState='idle';S.metadataKey=null;S.generationUnavailable=false;
   const query=new URLSearchParams(location.search),sector=query.get('sector');
   S.sector=['fiscal','accounting'].includes(sector)?sector:null;S.versionsOpen=query.get('view')==='versions';S.versionsData=null;
-  await loadEvidence(id,sequence);if(!currentContext(id,sequence))return;
   S.modalKind=query.get('view')==='settings'?'config':S.sector;
   S.modalOpen=!!S.modalKind;
   if(S.modalKind){const step=normalizeWizardStep(S.modalKind,query.get('step'));if(step)S.modalSteps[S.modalKind]=step;}
@@ -542,12 +650,16 @@ async function openAnalysis(id) {
 
 function schedule() {
   if(!S.reference||!S.source?.monthlyReports?.length)return null;
-  try{return buildRbt12Schedule(S.reference,S.source.monthlyReports.map(row=>row.sourceMonth));}
-  catch{return null;}
+  const months=S.source.monthlyReports;
+  if(scheduleCache.reference===S.reference&&scheduleCache.months===months)return scheduleCache.value;
+  let value=null;try{value=buildRbt12Schedule(S.reference,months.map(row=>row.sourceMonth));}catch{}
+  scheduleCache={reference:S.reference,months,value};return value;
 }
 function detailOptions() {
   return {analysis:S.analysis,sector:S.sector,modalKind:S.modalKind,configDraft:S.configDraft,
     fiscalDraft:S.fiscalDraft,accountingDraft:S.accountingDraft,source:S.source,generation:S.generation,
+    evidenceState:S.evidenceState,evidenceError:S.evidenceError,
+    metadataState:S.metadataState,generationUnavailable:S.generationUnavailable,
     generationError:S.generationError,reference:S.reference,schedule:schedule(),documentStatus:S.documentStatus,
     pdfStatus:S.pdfStatus,pdfBusy:S.pdfBusy,canWrite:writable(),configDirty:S.configDirty,
     fiscalDirty:S.fiscalDirty,accountingDirty:S.accountingDirty,pastePending:S.paste.pending,dirty:dirty(),versionsOpen:S.versionsOpen};
@@ -620,6 +732,7 @@ async function handleAnalysisAction(action) {
 }
 function renderDetail() {
   if(!S.analysis)return;
+  if(accountingSummaryFrame){cancelAnimationFrame(accountingSummaryFrame);accountingSummaryFrame=0;}
   S.versionsOpen=$('#analysis-versions')?.open??S.versionsOpen;
   document.querySelectorAll('#analyses-app details[id]').forEach(detail=>S.detailOpen[detail.id]=detail.open);
   S.paste.open=$('#analysis-accounting-paste-panel')?.open??S.paste.open;
@@ -640,6 +753,8 @@ function renderDetail() {
   bindWizard();
   if($('#analysis-accounting-tools')&&(S.paste.pending||!S.accountingDraft.months.length))$('#analysis-accounting-tools').open=true;
   if(S.busy)setBusy(true);
+  if(S.modalOpen&&S.modalKind==='fiscal')void ensureEvidence();
+  if(S.modalOpen&&S.modalKind==='accounting')ensureAccountingMetadata();
 }
 
 function readNumber(input,{cents=false,signed=false,label='o valor'}={}) {
@@ -697,7 +812,7 @@ async function saveConfig() {
       S.configDirty=false;S.modalOpen=false;renderDetail();feedback('As escolhas da análise já estão salvas.');wizardReturnTarget()?.focus();return;
     }
     setBusy(true,'Salvando os regimes e o ano desta análise…');
-    const response=await analysisRequest(apiPath('/'+S.analysis.id+'/config'),{method:'PATCH',body:{expectedConfigRevision:S.analysis.config.revision,year:config.year,regimeSelection:config.regimeSelection}});
+    const response=await analysisRequest(apiPath('/'+S.analysis.id+'/config?summary=1'),{method:'PATCH',body:{expectedConfigRevision:S.analysis.config.revision,year:config.year,regimeSelection:config.regimeSelection}});
     S.configDirty=false;adoptAnalysis(response.analysis,{preserveDrafts:true});S.generateRequest=null;
     S.modalOpen=false;
     feedback('Escolhas salvas. Confira os setores antes de gerar a próxima versão.');
@@ -706,7 +821,7 @@ async function saveConfig() {
 }
 
 async function patchSector(sector,data,complete) {
-  const response=await analysisRequest(apiPath('/'+S.analysis.id+'/'+sector),{method:'PATCH',body:{
+  const response=await analysisRequest(apiPath('/'+S.analysis.id+'/'+sector+'?summary=1'),{method:'PATCH',body:{
     expectedSectorRevision:S.analysis[sector].revision,expectedConfigRevision:S.analysis.config.revision,complete,data}});
   S[sector+'Dirty']=false;adoptAnalysis(response.analysis,{preserveDrafts:true});S.generateRequest=null;
   return S.analysis;
@@ -746,6 +861,14 @@ async function saveSector(sector,complete) {
   finally{if(S.busy){setBusy(false);renderDetail();if(!S.modalOpen)wizardReturnTarget()?.focus();}}
 }
 
+function editFiscalAdjustments() {
+  try{
+    if(!S.source?.monthlyReports?.length)throw new Error('Confira os documentos fiscais antes de editar os valores por competência.');
+    captureAll();S.fiscalDraft.monthlyOverrides=S.source.monthlyReports.map(row=>({sourceMonth:row.sourceMonth,
+      groups:Object.fromEntries(ADJUSTMENT_FIELDS.map(([key])=>[key,row.fields[key]/100])),serviceRevenue:row.fields.serviceRevenueCents/100}));
+    markDirty('fiscal');renderDetail();$('#analysis-fiscal-adjustments').open=true;
+  }catch(error){showError(error);}
+}
 function bindFiscal() {
   $('#analysis-fiscal-form').oninput=event=>{
     if(event.target.matches('[data-difal-choice],[data-analysis-difal-enabled],[data-analysis-difal-operation]'))changeDifal('analysis',event.target);
@@ -761,13 +884,9 @@ function bindFiscal() {
   if($('#analysis-read-selected-pdf'))$('#analysis-read-selected-pdf').onclick=()=>{const file=$('#analysis-rbt12-pdf').files?.[0];if(file)void readPdf(file);else showError(new Error('Selecione o extrato em PDF antes de iniciar a leitura.'));};
   if($('#analysis-extrato-status'))$('#analysis-extrato-status').onclick=()=>void checkPdf();
   if($('#analysis-extrato-retry'))$('#analysis-extrato-retry').onclick=()=>void retryPdf();
-  if($('#analysis-edit-adjustments'))$('#analysis-edit-adjustments').onclick=()=>{
-    try{
-      captureAll();S.fiscalDraft.monthlyOverrides=S.source.monthlyReports.map(row=>({sourceMonth:row.sourceMonth,
-        groups:Object.fromEntries(ADJUSTMENT_FIELDS.map(([key])=>[key,row.fields[key]/100])),serviceRevenue:row.fields.serviceRevenueCents/100}));
-      markDirty('fiscal');renderDetail();$('#analysis-fiscal-adjustments').open=true;
-    }catch(error){showError(error);}
-  };
+  if($('#analysis-edit-adjustments'))$('#analysis-edit-adjustments').onclick=editFiscalAdjustments;
+  if($('#analysis-retry-evidence'))$('#analysis-retry-evidence').onclick=()=>void ensureEvidence({force:true});
+  if($('#analysis-replace-missing-documents'))$('#analysis-replace-missing-documents').onclick=()=>void prepareImport();
   if($('#analysis-clear-adjustments'))$('#analysis-clear-adjustments').onclick=()=>{
     if(!confirm('Usar os valores dos relatórios em todas as competências? Os ajustes ainda não salvos nesta análise serão retirados. As versões anteriores permanecerão no histórico.'))return;
     try{captureAll();S.fiscalDraft.monthlyOverrides=null;markDirty('fiscal');renderDetail();$('#analysis-fiscal-adjustments').open=true;}catch(error){showError(error);}
@@ -785,7 +904,7 @@ async function prepareImport() {
     if(S.analysis.fiscal.data.generationId&&!confirm('Preparar novos relatórios de entradas e saídas? A análise passará a aguardar os novos arquivos; as versões e os relatórios anteriores continuarão preservados.'))return;
     setBusy(true,'Preparando os documentos fiscais desta empresa…');
     if(S.fiscalDirty)await patchSector('fiscal',S.fiscalDraft,false);
-    const response=await analysisRequest(apiPath('/'+S.analysis.id+'/fiscal/import'),{method:'POST',body:{expectedSectorRevision:S.analysis.fiscal.revision,expectedConfigRevision:S.analysis.config.revision}});
+    const response=await analysisRequest(apiPath('/'+S.analysis.id+'/fiscal/import?summary=1'),{method:'POST',body:{expectedSectorRevision:S.analysis.fiscal.revision,expectedConfigRevision:S.analysis.config.revision}});
     adoptAnalysis(response.analysis);
     if(!uuid(response.generationId)||S.analysis.fiscal.data.generationId!==response.generationId)throw new Error('Não foi possível confirmar os relatórios preparados. Atualize a análise antes de continuar.');
     setBusy(false);location.href='/purchases.html?'+new URLSearchParams({generation:response.generationId,client:S.analysis.clientId,guided:'1',analysis:S.analysis.id});
@@ -850,8 +969,7 @@ async function retryPdf() {
 
 function blankMonth(sourceMonth){return {sourceMonth,...Object.fromEntries(ACCOUNTING_FIELDS.map(([key])=>[key,null]))};}
 function expectedAccountingMonths() {
-  const source=S.source?.monthlyReports?.map(row=>row.sourceMonth);
-  return source?.length?source:S.analysis.readiness.months||[];
+  return accountingSourceMonths(S.analysis,S.source,S.generation);
 }
 function displayedAccountingMonths() {
   return S.accountingDraft.months.map(row=>{
@@ -866,9 +984,14 @@ function displayedAccountingMonths() {
 }
 function refreshAccountingSummary() {
   const host=$('#analysis-accounting-summary');if(!host)return;
+  if(!$('#analysis-accounting-summary-panel')?.open)return;
   const open=$('#analysis-accounting-breakdown')?.open??S.detailOpen['analysis-accounting-breakdown'];
   host.innerHTML=renderAccountingSummary({months:displayedAccountingMonths(),expectedMonths:expectedAccountingMonths()});
   if($('#analysis-accounting-breakdown'))$('#analysis-accounting-breakdown').open=!!open;
+}
+function scheduleAccountingSummary() {
+  if(accountingSummaryFrame||!$('#analysis-accounting-summary-panel')?.open)return;
+  accountingSummaryFrame=requestAnimationFrame(()=>{accountingSummaryFrame=0;refreshAccountingSummary();});
 }
 function invalidatePastePreview(message='') {
   if(!S.paste.preview)return;
@@ -881,12 +1004,14 @@ function renderPaste() {
   host.innerHTML=renderAccountingPaste({...S.paste,sourceMonths:expectedAccountingMonths(),canWrite:writable()&&!S.busy});
   $('#analysis-accounting-paste-panel').ontoggle=()=>{S.paste.open=$('#analysis-accounting-paste-panel').open;};
   $('#analysis-accounting-paste').oninput=event=>{
+    const wasPending=S.paste.pending;
     S.paste.text=event.target.value;S.paste.preview=null;S.paste.error='';S.paste.replaceConfirmed=false;
     S.paste.pending=S.paste.text.trim()!=='';
     // Keep the textarea and selection in place while discarding the obsolete preview.
     $('#analysis-accounting-paste-preview').replaceChildren();$('#analysis-accounting-paste-preview').hidden=true;
     $('#analysis-accounting-paste-error').textContent='';$('#analysis-accounting-paste-error').hidden=true;
-    $('#analysis-clear-accounting-paste').disabled=!S.paste.text;refreshGuidance();
+    $('#analysis-clear-accounting-paste').disabled=!S.paste.text;
+    if(wasPending!==S.paste.pending)refreshGuidance();else refreshDraftStatus();
   };
   $('#analysis-preview-accounting-paste').onclick=()=>{
     if(S.busy||!writable())return;
@@ -966,15 +1091,16 @@ function refreshMonthTotal(host) {
 }
 function bindAccounting() {
   renderPaste();
+  bindAccountingSourceActions();
+  $('#analysis-accounting-summary-panel').ontoggle=()=>scheduleAccountingSummary();
   $('#analysis-accounting-form').oninput=event=>{
     if(!event.target.matches('[data-accounting-field]'))return;
-    markDirty('accounting');const host=event.target.closest('[data-accounting-month]');if(host)refreshMonthTotal(host);refreshAccountingSummary();
+    markDirty('accounting');const host=event.target.closest('[data-accounting-month]');if(host)refreshMonthTotal(host);scheduleAccountingSummary();
   };
   $('#analysis-accounting-form').onsubmit=event=>{event.preventDefault();void saveSector('accounting',event.submitter?.value==='complete');};
   if($('#analysis-add-month'))$('#analysis-add-month').onclick=()=>{
     try{clearError();const month=$('#analysis-new-month').value;if(S.accountingDraft.months.some(row=>row.sourceMonth===month))throw new Error('Esta competência já está no formulário. Preencha os valores no mês correspondente.');addMonths([month]);}catch(error){showError(error);}
   };
-  if($('#analysis-add-fiscal-months'))$('#analysis-add-fiscal-months').onclick=()=>{try{clearError();addMonths(expectedAccountingMonths());}catch(error){showError(error);}};
   document.querySelectorAll('[data-zero-month]').forEach(button=>button.onclick=()=>{
     try{captureAll();const row=S.accountingDraft.months.find(item=>item.sourceMonth===button.dataset.zeroMonth);for(const [key] of ACCOUNTING_FIELDS)if(row[key]===null)row[key]=0;markDirty('accounting');renderDetail();}catch(error){showError(error);}
   });
@@ -993,7 +1119,7 @@ async function generate() {
     if(!S.analysis.readiness.ready)throw new Error('Conclua os dois setores e confira as pendências indicadas antes de gerar.');
     S.generateRequest??={requestId:crypto.randomUUID(),expectedRevision:S.analysis.revision};
     setBusy(true,'Gerando a análise com os dados conferidos dos dois setores…');
-    const response=await analysisRequest(apiPath('/'+S.analysis.id+'/generate'),{method:'POST',body:S.generateRequest});
+    const response=await analysisRequest(apiPath('/'+S.analysis.id+'/generate?summary=1'),{method:'POST',body:S.generateRequest});
     adoptAnalysis(response.analysis);
     if(!uuid(response.simulation?._id)||S.analysis.currentSimulation?.id!==response.simulation._id)throw new Error('O resultado ainda não foi confirmado nesta tela. Atualize a análise para conferir a versão salva.');
     S.generateRequest=null;S.versionsData=null;
