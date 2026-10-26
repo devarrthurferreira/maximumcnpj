@@ -1,4 +1,30 @@
-# Maximum CNPJ · v0.35.0
+# Maximum CNPJ · v0.36.0
+
+## Preenchimento orientado e despesas por planilha — 26/10/2026
+
+A carteira separa **Em andamento**, **Pronta para gerar/atualizar** e **Resultado atual**, com a próxima ação de cada empresa. Dentro da análise, o progresso dos dois setores e os atalhos das pendências orientam o preenchimento. Uma análise com resultado já correspondente aos dados conferidos oferece **Ver DRE atual**; alterações ainda não salvas bloqueiam a geração e aparecem como trabalho local.
+
+Na abertura, selecionar a empresa confere se já existe uma análise. Quando existe, a tela apresenta o ano e os regimes salvos e oferece **Continuar análise existente**, preservando os valores e a revisão. Alterar o texto da busca limpa a empresa selecionada, e uma resposta atrasada não pode trocar a seleção mais recente.
+
+Alternar entre **Fiscal** e **Contábil** mantém os dois rascunhos nesta tela, sem recarregar a página nem salvar automaticamente. **Salvar trabalho** persiste somente o setor escolhido; **Concluir** registra sua conferência. Dados ainda locais precisam ser salvos antes de sair ou abrir uma nova importação fiscal. Os controles de revisão do servidor continuam protegendo o trabalho de outras abas e pessoas.
+
+### Colar despesas de uma planilha
+
+No Contábil, **Colar despesas de uma planilha** aceita seis colunas nesta ordem:
+
+| Competência | Salários e pró-labore | Aluguéis | Taxas de cartão | Benefícios | Outras despesas |
+| --- | --- | --- | --- | --- | --- |
+| `01/2026` | `1.234,56` | `800,00` | `120,00` | `300,00` | `0,00` |
+
+Copie as células do Excel com TAB ou use ponto e vírgula. O cabeçalho é opcional; a competência aceita `MM/AAAA` ou `AAAA-MM`. Os valores são convertidos para centavos exatos. `1.234` é milhar; `1234.56` é decimal. Fórmulas, negativos, formatos ambíguos e competências duplicadas são rejeitados com indicação do campo. A análise aceita até 12 competências, incluindo as que já estavam preenchidas. O botão **Baixar modelo CSV** oferece um modelo com os campos financeiros vazios.
+
+**Conferir colagem** mostra meses, valores, pendências e o total dos campos informados. **Aplicar ao formulário** exige confirmação para substituir meses existentes, inclusive seus campos vazios; as demais competências permanecem. Alterar o texto ou os valores do formulário invalida a prévia anterior. Aplicar modifica somente o rascunho local: salvar ou concluir continua sendo uma ação explícita.
+
+O resumo do Contábil acompanha a digitação, com totais por categoria e competência, cobertura dos meses fiscais e contagem de campos pendentes. Um campo vazio continua sem informação, distinto de zero. Subtotais disponíveis não são apresentados como total anual confirmado; despesas nunca são distribuídas por média ou copiadas automaticamente.
+
+Esta versão melhora a navegação e o preenchimento. O contrato de geração, os documentos originais, as versões imutáveis e o motor `1.10.0-regime-selection` permanecem. Os testes de colagem e orientação complementam dois fluxos reais de navegador com autenticação, ingestão fiscal, MongoDB, retomada, edição dos setores e geração dos valores mensais.
+
+Validação local com Node 22 e MongoDB descartável: tipos, build e versão/documentação conferidos; **332 testes de regras**, **124 verificações de integração/projeção/competências**, **172 testes Python/PDF/OCR** e **11 cenários direcionados de navegador** aprovados. Os dois fluxos novos também conferem prévia e formulário em 320/390 px. Colagem ainda não aplicada bloqueia importação e geração e participa do aviso de saída; **Limpar colagem** permite descartá-la explicitamente.
 
 ## Análises compartilhadas entre Fiscal e Contábil — 26/10/2026
 

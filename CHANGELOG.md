@@ -1,5 +1,16 @@
 # Histórico de alterações
 
+## [0.36.0] — 2026-10-26
+
+- Simplifica a carteira e o detalhe da análise com próxima ação, progresso Fiscal/Contábil, pendências com atalhos e distinção entre resultado atual e trabalho pronto para gerar. Alterações locais ficam identificadas e bloqueiam geração até serem salvas e conferidas.
+- A abertura confere a empresa e apresenta ano/regimes já salvos antes de continuar uma análise existente. Editar a busca limpa a seleção anterior; respostas atrasadas não substituem a escolha mais recente.
+- Troca de setor mantém os dois rascunhos na mesma página, sem PATCH automático. Salvar um setor preserva o outro; importação fiscal aguarda o salvamento de despesas locais para evitar descarte do preenchimento.
+- Colagem de despesas com seis colunas, TAB ou ponto e vírgula, prévia antes de aplicar e confirmação para substituir integralmente meses existentes. Conversão exata em centavos, validação de cabeçalho/competência/valor e união máxima de 12 meses; campos vazios continuam nulos e meses fora da colagem são preservados.
+- Modelo CSV e resumo contábil durante o preenchimento, com totais por categoria e mês, campos pendentes e cobertura fiscal. A prévia expira quando os dados mudam; aplicar não salva no servidor, e nenhum valor mensal é inferido por média.
+- Melhora a organização em telas pequenas e preserva painéis de conferência abertos durante edições. Mantém documentos, revisões concorrentes, histórico imutável e o motor fiscal `1.10.0-regime-selection`.
+- Acrescenta testes de parser/orientação e dois fluxos de navegador com Node e Mongo reais para retomada, colagem, preservação de rascunhos, bloqueios e valores do resultado gerado.
+- Validação local: tipos, build, versão/documentação, 332 testes de regras, 124 verificações de integração/projeção/competências, 172 Python/PDF/OCR e 11 cenários de navegador aprovados. Prévia e formulário conferidos em 320/390 px; colagem ainda não aplicada recebe proteção própria antes de importar, gerar ou sair.
+
 ## [0.35.0] — 2026-10-26
 
 - Nova área Análises com empresa, setor Fiscal/Contábil, ano e seleção de um a quatro regimes. Carteira única por empresa e navegação Visão geral, Empresas, Análises, Relatórios e Versões salvas.
