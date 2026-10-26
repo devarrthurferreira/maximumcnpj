@@ -1,4 +1,14 @@
-# Maximum CNPJ · v0.40.0
+# Maximum CNPJ · v0.40.1
+
+## Excluir análises pela carteira e pelos modais — 26/10/2026
+
+**Excluir análise** aparece em cada cartão da carteira, na visão geral da empresa e no rodapé dos modais Fiscal, Contábil e Regimes e ano. O acesso permanece disponível em qualquer etapa, inclusive nos rascunhos sem simulação gerada e quando os documentos fiscais vinculados estão indisponíveis.
+
+A confirmação identifica empresa, CNPJ, código e ano, e informa que serão excluídos os dados dos setores e as versões de simulação vinculadas. O cadastro e os documentos existentes permanecem, e a empresa pode iniciar uma nova análise vazia. Cancelar ou pressionar Esc conserva o modal, a etapa e os campos ainda não salvos; abrir a confirmação não exige validar ou salvar esse rascunho.
+
+A carteira usa a revisão já carregada no resumo, sem consultar a fonte fiscal. Atualizações concorrentes exigem conferir o trabalho atualizado e confirmar novamente. A exclusão continua restrita a administradores e operadores, com revisão, recibo idempotente e resposta validada pelo servidor. Ao confirmar a exclusão, leituras pendentes são canceladas antes de voltar à carteira. O motor fiscal permanece em `1.10.0-regime-selection`.
+
+Validação local com Node 22 e MongoDB descartável: tipos, build, versão/documentação, **342 testes de regras**, **28 testes de integração de análises**, **172 testes Python/PDF/OCR** e **15 cenários de navegador** aprovados. Os dois casos novos de Fiscal/carteira foram repetidos após corrigir somente o cadastro sintético para usar administrador; a exclusão continuou sendo exercitada por operador. A recuperação de documentos, os cartões e os controles de exclusão foram inspecionados em desktop e 390 px.
 
 ## Abertura leve das análises e DRE sob demanda — 26/10/2026
 

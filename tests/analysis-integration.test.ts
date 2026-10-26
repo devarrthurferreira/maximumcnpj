@@ -308,6 +308,46 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       await assert.rejects(deleteAnalysis(actor,id,{...body,expectedRevision:body.expectedRevision+1}),code('ANALYSIS_CONFLICT'));
     });
 
+    await t.test('exclui rascunhos com fonte ausente ou corrompida e permite recomeçar sem afetar outra empresa',async()=>{
+      for(const [index,brokenSource] of ['missing-generation','corrupt-report'].entries()){
+        const imported=await importCatalog(administrator,[{code:String(99005+index),name:`Empresa de recuperação ${index+1}`,uf:'MG'}]);
+        assert.equal(imported.failed,0,JSON.stringify(imported.items));const recoveryClient=imported.items[0].id!;
+        let draft=(await openAnalysis(actor,{clientId:recoveryClient,year:2027,regimeSelection:selection})).analysis;
+        const prepared=await importAnalysisGeneration(actor,draft.id,{expectedSectorRevision:draft.fiscal.revision,
+          expectedConfigRevision:draft.config.revision});draft=prepared.analysis;
+        const jobs=await reports(prepared.generationId,recoveryClient);
+        draft=(await updateAnalysisSector(accountant,draft.id,'accounting',{expectedSectorRevision:draft.accounting.revision,
+          expectedConfigRevision:draft.config.revision,complete:false,data:{months:accountingRows(['2026-01'])}},{summary:true})).analysis;
+        assert.equal(draft.currentSimulation,null);assert.equal(draft.fiscal.status,'DRAFT');assert.equal(draft.accounting.status,'DRAFT');
+        if(brokenSource==='missing-generation'){
+          const removed=await(await collection('generations')).deleteOne(scope({_id:prepared.generationId}));assert.equal(removed.deletedCount,1);
+        }else{
+          const lines=await collection('purchaseLines'),line=await lines.findOne(scope({jobId:jobs[0]._id}));assert.ok(line);
+          await lines.updateOne(scope({_id:line._id}),{$inc:{totalCents:1}});
+        }
+        const checked=await getAnalysis(draft.id,{includeSource:true});
+        assert.equal(checked.source,null);assert.ok(checked.sourceError?.message);assert.equal(checked.analysis.readiness.ready,false);
+        const sourceCollections=['clients','generations','lookupJobs','lookupItems','purchaseLines','simplesDocuments','simplesExtractions'];
+        const sourceBefore=await Promise.all(sourceCollections.map(async name=>(await collection(name)).find(scope()).sort({_id:1}).toArray()));
+        const otherBefore=structuredClone(await getAnalysis(outsideAnalysis.id));
+        const body={expectedRevision:draft.revision,confirmed:true},result={deleted:true,id:draft.id,clientId:recoveryClient};
+        assert.deepEqual(await route('DELETE',`/analyses/${draft.id}`,body),result);
+        await assert.rejects(getAnalysis(draft.id),code('NOT_FOUND'));
+        assert.equal((await analysisHistory(1,{clientId:recoveryClient},{summary:true})).pagination.total,0);
+        assert.equal(await(await collection('analysisRevisions')).countDocuments(scope({analysisId:draft.id})),0);
+        assert.equal(await(await collection('simulations')).countDocuments(scope({analysisId:draft.id})),0);
+        assert.deepEqual(await getAnalysis(outsideAnalysis.id),otherBefore);
+        for(let i=0;i<sourceCollections.length;i++)assert.deepEqual(await(await collection(sourceCollections[i])).find(scope()).sort({_id:1}).toArray(),sourceBefore[i],`${brokenSource}: ${sourceCollections[i]}`);
+        const fresh=await openAnalysis(accountant,{clientId:recoveryClient,year:2028,regimeSelection:selection,difalPolicy:noDifal()},{summary:true});
+        assert.equal(fresh.created,true);assert.notEqual(fresh.analysis.id,draft.id);assert.equal(fresh.analysis.config.year,2028);
+        assert.equal(fresh.analysis.currentSimulation,null);assert.equal(fresh.analysis.fiscal.data.generationId,null);
+        assert.deepEqual(fresh.analysis.accounting.data.months,[]);assert.deepEqual(fresh.analysis.fiscal.data.difalPolicy,noDifal());
+        assert.equal(await(await collection('analyses')).countDocuments(scope({clientId:recoveryClient})),1);
+        assert.deepEqual(await route('DELETE',`/analyses/${draft.id}`,body),result);
+        assert.equal((await getAnalysis(fresh.analysis.id,{summary:true})).analysis.id,fresh.analysis.id);
+      }
+    });
+
     await t.test('adoção legada permanece identificável após nova corrente; só ela e revisões automáticas vinculadas são removidas',async()=>{
       legacyAnalysis=(await updateAnalysisSector(actor,legacyAnalysis.id,'fiscal',{expectedSectorRevision:legacyAnalysis.fiscal.revision,
         expectedConfigRevision:legacyAnalysis.config.revision,complete:true,data:legacyAnalysis.fiscal.data})).analysis;

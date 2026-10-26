@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.40.1] — 2026-10-26
+
+- Expõe **Excluir análise** na carteira e no rodapé de todos os modais de uma análise existente, além da visão geral, com a mesma confirmação da empresa e permissão de escrita.
+- Permite alcançar a exclusão durante o preenchimento e na recuperação de documentos ausentes, inclusive em rascunhos sem DRE. Cancelar ou Esc conserva etapa, foco e campos, sem salvar nem validar o formulário.
+- Usa a revisão do resumo para excluir pela carteira sem novas leituras fiscais. Conflitos exigem atualizar os dados e confirmar novamente; a resposta é validada e leituras pendentes são canceladas ao concluir.
+- Esclarece que a exclusão remove a análise, os dados dos setores e as versões vinculadas; preserva cadastro e documentos existentes e permite começar uma análise vazia. Motor fiscal mantido em `1.10.0-regime-selection`.
+
+- Validação: tipos, build e versão/documentação; 342 testes de regras, 28 testes de integração de análises, 172 Python/PDF/OCR e 15 cenários direcionados de navegador aprovados. Documentos ausentes/corrompidos, rascunho inválido, conflito com recarga lenta, foco, permissões e reabertura vazia cobertos; desktop e celular inspecionados.
+
 ## [0.40.0] — 2026-10-26
 
 - Abre carteira, seleção de empresa, visão geral e Contábil por consultas leves dos dados salvos. O modo opcional `summary=1` identifica a situação salva e conserva validação estrita na conclusão Fiscal e na geração.

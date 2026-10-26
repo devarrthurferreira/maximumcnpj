@@ -1,4 +1,4 @@
-import {test as base,expect,type Page,type APIRequestContext} from '@playwright/test';
+import {test as base,expect,type Page,type APIRequestContext,type Route} from '@playwright/test';
 import {randomUUID} from 'node:crypto';
 import {MongoClient,type Db} from 'mongodb';
 import {hashPassword} from '../../src/security.ts';
@@ -38,8 +38,8 @@ async function signIn(request:APIRequestContext,baseURL:string,account:Account){
   await api(request,baseURL,'POST','/api/auth/login',{email:account.email,password:account.password});
   expect((await api(request,baseURL,'GET','/api/auth/session')).user.role).toBe(account.role);
 }
-async function createCompany(request:APIRequestContext,baseURL:string):Promise<Company>{
-  const code=String(Number.parseInt(randomUUID().replaceAll('-','').slice(0,11),16)),name='Empresa sintética DIFAL '+code;
+async function createCompany(request:APIRequestContext,baseURL:string,prefix='Empresa sintética DIFAL'):Promise<Company>{
+  const code=String(Number.parseInt(randomUUID().replaceAll('-','').slice(0,11),16)),name=prefix+' '+code;
   const imported=await api(request,baseURL,'POST','/api/v4/clients/import',{rows:[{code,name,uf:'MG'}]});
   expect(imported.success).toBe(1);return {id:imported.items[0].id,code,name};
 }
@@ -291,7 +291,7 @@ test('Excluir análise exige confirmação e permissão, preserva documentos e p
   });
   const opener=page.locator('#analysis-delete'),dialog=page.locator('#analysis-delete-dialog');
   for(const cancel of ['button','escape']){
-    await opener.click();await expect(dialog).toBeVisible();await expect(dialog).toHaveAccessibleName('Excluir simulação?');
+    await opener.click();await expect(dialog).toBeVisible();await expect(dialog).toHaveAccessibleName('Excluir análise?');
     await expect(page.locator('#analysis-delete-cancel')).toBeFocused();await expect(dialog).toContainText(company.name);
     await expect(dialog).toContainText('documentos fiscais serão preservados');
     if(cancel==='button')await page.locator('#analysis-delete-cancel').click();else await page.keyboard.press('Escape');
@@ -368,5 +368,185 @@ test('Excluir análise exige confirmação e permissão, preserva documentos e p
   expect(restarted.readiness.ready).toBe(false);
   expect((await api(page.request,baseURL!,'GET','/api/v4/analyses?clientId='+company.id)).items.map((row:any)=>row.id)).toEqual([newId]);
   expect(await freezeSources(analysisWorkspace,analysis,second.simulation)).toEqual(sources);
+  expect(errors).toEqual([]);
+});
+
+test('Excluir pelo Fiscal com documentos ausentes preserva o rascunho ao cancelar e dispensa uma DRE gerada',async({page,baseURL,analysisWorkspace},info)=>{
+  test.setTimeout(90_000);page.setDefaultTimeout(15_000);
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await signIn(page.request,baseURL!,analysisWorkspace.admin);
+  const company=await createCompany(page.request,baseURL!);
+  const created=(await api(page.request,baseURL!,'POST','/api/v4/analyses',{clientId:company.id,year:2027,regimeSelection:selection})).analysis;
+  const prepared=await api(page.request,baseURL!,'POST','/api/v4/analyses/'+created.id+'/fiscal/import',{
+    expectedSectorRevision:created.fiscal.revision,expectedConfigRevision:created.config.revision
+  });
+  const analysis=prepared.analysis,id=analysis.id,{db,workspaceId}=analysisWorkspace;
+  expect(analysis.currentSimulation).toBeNull();
+  expect((await db.collection<any>('generations').deleteOne({_id:prepared.generationId,workspaceId})).deletedCount).toBe(1);
+  const companyBefore=await db.collection<any>('clients').findOne({_id:company.id,workspaceId});
+  await signIn(page.request,baseURL!,analysisWorkspace.operator);
+  const writes:any[]=[];page.on('request',request=>{
+    if(['POST','PATCH','DELETE'].includes(request.method())&&new URL(request.url()).pathname.startsWith('/api/v4/analyses'))
+      writes.push({method:request.method(),path:new URL(request.url()).pathname,body:request.postDataJSON()});
+  });
+  await page.goto('/analyses.html?id='+id+'&sector=fiscal&resumed=1');
+  const wizard=page.locator('#analysis-wizard'),opener=page.locator('#analysis-delete-in-wizard'),dialog=page.locator('#analysis-delete-dialog');
+  await expect(wizard).toHaveAttribute('data-wizard-step','documents');
+  await expect(page.locator('#analysis-fiscal-evidence')).toContainText('não estão disponíveis');
+  await expect(page.locator('[data-analysis-document="PURCHASES"]')).toContainText('Documento indisponível');
+  await expect(page.locator('[data-analysis-document="SALES"]')).toContainText('Documento indisponível');
+  await expect(opener).toHaveText('Excluir análise');await expect(opener).toBeEnabled();
+  await page.screenshot({path:info.outputPath('analysis-delete-unavailable-fiscal-desktop.png'),fullPage:true});
+  await opener.click();await expect(dialog).toHaveAccessibleName('Excluir análise?');
+  await expect(page.locator('#analysis-delete-company')).toHaveText(company.name);
+  await expect(page.locator('#analysis-delete-cancel')).toBeFocused();
+  await page.locator('#analysis-delete-cancel').click();await expect(dialog).not.toBeVisible();
+  await expect(wizard).toBeVisible();await expect(wizard).toHaveAttribute('data-wizard-step','documents');await expect(opener).toBeFocused();
+
+  await fiscalStep(page,'tax');await expect(opener).toBeVisible();
+  await page.locator('#analysis-extrato-manual').click();
+  const rbt12=page.locator('#analysis-rbt12');await rbt12.fill('-1');
+  const originalInput=await rbt12.elementHandle();expect(originalInput).toBeTruthy();
+  await opener.click();await expect(dialog).toBeVisible();await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();await expect(opener).toBeFocused();
+  await expect(wizard).toHaveAttribute('data-wizard-step','tax');await expect(rbt12).toHaveValue('-1');
+  expect(await originalInput!.evaluate(node=>node===document.querySelector('#analysis-rbt12'))).toBe(true);
+  expect(writes).toEqual([]);
+  expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+id+'?summary=1')).analysis.fiscal.data).toEqual(analysis.fiscal.data);
+  await page.setViewportSize({width:390,height:844});await expect(opener).toBeInViewport();
+  await page.screenshot({path:info.outputPath('analysis-delete-unavailable-fiscal-mobile.png'),fullPage:true});
+  await opener.click();await expect(dialog).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  const deleting=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+id&&response.request().method()==='DELETE');
+  await page.locator('#analysis-delete-confirm').click();expect((await deleting).status()).toBe(200);
+  await expect(page).toHaveURL(/\/analyses\.html\?deleted=1$/);await expect(page.locator('#analysis-feedback')).toContainText('Análise excluída');
+  expect(writes).toEqual([{method:'DELETE',path:'/api/v4/analyses/'+id,body:{expectedRevision:analysis.revision,confirmed:true}}]);
+  expect((await page.request.get('/api/v4/analyses/'+id+'?summary=1')).status()).toBe(404);
+  expect(await db.collection<any>('clients').findOne({_id:company.id,workspaceId})).toEqual(companyBefore);
+  const restarted=await api(page.request,baseURL!,'POST','/api/v4/analyses',{clientId:company.id,year:2028,
+    regimeSelection:{version:'REGIME_SELECTION_V1',selected:['actual']}});
+  expect(restarted.created).toBe(true);expect(restarted.analysis.id).not.toBe(id);expect(restarted.analysis.currentSimulation).toBeNull();
+  expect(restarted.analysis.fiscal.data.generationId).toBeNull();expect(restarted.analysis.accounting.data.months).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test('Excluir rascunho pela carteira identifica a empresa, exige revisão atual e não carrega fontes fiscais',async({page,baseURL,analysisWorkspace},info)=>{
+  test.setTimeout(90_000);page.setDefaultTimeout(15_000);
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await signIn(page.request,baseURL!,analysisWorkspace.admin);
+  const marker='Carteira sintética '+randomUUID(),company=await createCompany(page.request,baseURL!,marker),other=await createCompany(page.request,baseURL!,marker);
+  const make=(clientId:string)=>api(page.request,baseURL!,'POST','/api/v4/analyses',{clientId,year:2027,
+    regimeSelection:{version:'REGIME_SELECTION_V1',selected:['actual']}});
+  let analysis=(await make(company.id)).analysis;const preserved=(await make(other.id)).analysis,id=analysis.id;
+  expect(analysis.currentSimulation).toBeNull();expect(analysis.fiscal.data.generationId).toBeNull();
+  await signIn(page.request,baseURL!,analysisWorkspace.operator);
+  const reads:string[]=[],summaries:(string|null)[]=[],removals:any[]=[];
+  page.on('request',request=>{
+    const url=new URL(request.url());
+    if(request.method()==='GET'){
+      if(url.searchParams.has('includeSource')||/^\/api\/v4\/(generations|purchases|sales)\//.test(url.pathname))reads.push(url.pathname+url.search);
+      if(url.pathname==='/api/v4/analyses')summaries.push(url.searchParams.get('summary'));
+    }
+    if(request.method()==='DELETE')removals.push({path:url.pathname,body:request.postDataJSON()});
+  });
+  await page.goto('/analyses.html?'+new URLSearchParams({search:marker}));
+  const trigger=(targetId:string)=>page.locator('[data-analysis-id="'+targetId+'"] [data-delete-analysis="'+targetId+'"]');
+  const dialog=page.locator('#analysis-delete-dialog');
+  await expect(trigger(id)).toHaveText('Excluir análise');await expect(trigger(preserved.id)).toBeVisible();
+  await page.screenshot({path:info.outputPath('analysis-delete-list-desktop.png'),fullPage:true});
+  await trigger(preserved.id).click();await expect(page.locator('#analysis-delete-company')).toHaveText(other.name);
+  await page.keyboard.press('Escape');await expect(dialog).not.toBeVisible();await expect(trigger(preserved.id)).toBeFocused();expect(removals).toEqual([]);
+  await trigger(id).click();await expect(page.locator('#analysis-delete-company')).toHaveText(company.name);
+  const staleRevision=analysis.revision;
+  analysis=(await api(page.request,baseURL!,'PATCH','/api/v4/analyses/'+id+'/accounting',{
+    expectedSectorRevision:analysis.accounting.revision,expectedConfigRevision:analysis.config.revision,complete:false,
+    data:{months:[{sourceMonth:'2025-01',salariesCents:12_345,rentCents:0,cardExpensesCents:0,benefitsCents:0,adminExpensesCents:0}]}
+  })).analysis;
+  const conflicting=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+id&&response.request().method()==='DELETE');
+  await page.locator('#analysis-delete-confirm').click();expect((await conflicting).status()).toBe(409);
+  await expect(dialog).toBeVisible();await expect(page.locator('#analysis-delete-error')).toContainText('atualizada por outra pessoa ou aba');
+  let release!:()=>void,reached!:()=>void;
+  const barrier=new Promise<void>(resolve=>release=resolve),fetched=new Promise<void>(resolve=>reached=resolve);
+  const pattern='**/api/v4/analyses?*';
+  const held=async(route:Route)=>{const response=await route.fetch();reached();await barrier;await route.fulfill({response});};
+  await page.route(pattern,held);
+  try{
+    const refreshing=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses'&&response.request().method()==='GET');
+    await page.locator('#analysis-delete-reload').click();await fetched;
+    await expect(dialog).not.toBeVisible();await expect(page.locator('#analyses-app')).toHaveAttribute('aria-busy','true');
+    await expect(trigger(id)).toBeDisabled();await expect(trigger(preserved.id)).toBeDisabled();
+    await trigger(preserved.id).dispatchEvent('click');await expect(dialog).not.toBeVisible();
+    expect(removals).toEqual([{path:'/api/v4/analyses/'+id,body:{expectedRevision:staleRevision,confirmed:true}}]);
+    release();expect((await refreshing).ok()).toBe(true);
+  }finally{release();await page.unroute(pattern,held);}
+  await expect(dialog).not.toBeVisible();await expect(trigger(id)).toBeEnabled();
+  await expect(trigger(id)).toBeFocused();await expect(page.locator('#analyses-app')).toHaveAttribute('aria-busy','false');
+  expect(new URL(page.url()).searchParams.get('search')).toBe(marker);
+  expect(removals).toEqual([{path:'/api/v4/analyses/'+id,body:{expectedRevision:staleRevision,confirmed:true}}]);
+  expect(reads).toEqual([]);expect(summaries.length).toBeGreaterThanOrEqual(2);expect(summaries.every(value=>value==='1')).toBe(true);
+  await page.setViewportSize({width:390,height:844});await trigger(id).scrollIntoViewIfNeeded();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await page.screenshot({path:info.outputPath('analysis-delete-list-mobile.png'),fullPage:true});
+  await trigger(id).click();await expect(dialog).toHaveAccessibleName('Excluir análise?');
+  const deleting=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+id&&response.request().method()==='DELETE');
+  await page.locator('#analysis-delete-confirm').click();expect((await deleting).status()).toBe(200);
+  await expect(page).toHaveURL(/\/analyses\.html\?deleted=1$/);await expect(page.locator('#analysis-search')).toBeVisible();
+  expect(removals).toEqual([
+    {path:'/api/v4/analyses/'+id,body:{expectedRevision:staleRevision,confirmed:true}},
+    {path:'/api/v4/analyses/'+id,body:{expectedRevision:analysis.revision,confirmed:true}}
+  ]);
+  expect(reads).toEqual([]);expect((await page.request.get('/api/v4/analyses/'+id)).status()).toBe(404);
+  expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+preserved.id)).analysis).toEqual(preserved);
+  expect(errors).toEqual([]);
+});
+
+test('Excluir nos modais Contábil e configuração preserva campos ao cancelar e respeita acesso somente consulta',async({page,browser,baseURL,analysisWorkspace})=>{
+  test.setTimeout(90_000);page.setDefaultTimeout(15_000);
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await signIn(page.request,baseURL!,analysisWorkspace.admin);
+  const company=await createCompany(page.request,baseURL!);
+  let analysis=(await api(page.request,baseURL!,'POST','/api/v4/analyses',{clientId:company.id,year:2027,
+    regimeSelection:{version:'REGIME_SELECTION_V1',selected:['actual']}})).analysis;
+  analysis=(await api(page.request,baseURL!,'PATCH','/api/v4/analyses/'+analysis.id+'/accounting',{
+    expectedSectorRevision:analysis.accounting.revision,expectedConfigRevision:analysis.config.revision,complete:false,
+    data:{months:[{sourceMonth:'2025-01',salariesCents:10_000,rentCents:0,cardExpensesCents:0,benefitsCents:0,adminExpensesCents:0}]}
+  })).analysis;
+  const id=analysis.id,readOnly=await browser.newContext({baseURL});
+  try{
+    await signIn(readOnly.request,baseURL!,analysisWorkspace.viewer);const viewer=await readOnly.newPage();
+    viewer.on('pageerror',error=>errors.push(error.message));
+    await viewer.goto('/analyses.html?search='+company.code);await expect(viewer.locator('[data-analysis-id="'+id+'"]')).toBeVisible();
+    await expect(viewer.locator('[data-delete-analysis]')).toHaveCount(0);
+    for(const query of ['sector=fiscal','sector=accounting','view=settings']){
+      await viewer.goto('/analyses.html?id='+id+'&'+query);await expect(viewer.locator('#analysis-wizard')).toBeVisible();
+      await expect(viewer.locator('[data-delete-analysis]')).toHaveCount(0);await expect(viewer.locator('#analysis-delete-in-wizard')).toHaveCount(0);
+    }
+  }finally{await readOnly.close();}
+  const removals:string[]=[],patches:string[]=[];page.on('request',request=>{
+    if(request.method()==='DELETE')removals.push(new URL(request.url()).pathname);
+    if(request.method()==='PATCH')patches.push(new URL(request.url()).pathname);
+  });
+  await page.goto('/analyses.html?id='+id+'&sector=accounting');
+  const wizard=page.locator('#analysis-wizard'),opener=page.locator('#analysis-delete-in-wizard'),dialog=page.locator('#analysis-delete-dialog');
+  const salary=page.locator('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]');await salary.fill('-5');
+  const originalInput=await salary.elementHandle();
+  for(const cancel of ['button','escape']){
+    await opener.click();await expect(dialog).toBeVisible();await expect(page.locator('#analysis-delete-cancel')).toBeFocused();
+    if(cancel==='button')await page.locator('#analysis-delete-cancel').click();else await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();await expect(opener).toBeFocused();
+    await expect(wizard).toHaveAttribute('data-wizard-kind','accounting');await expect(salary).toHaveValue('-5');
+    expect(await originalInput!.evaluate(node=>node===document.querySelector('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]'))).toBe(true);
+  }
+  expect(removals).toEqual([]);expect(patches).toEqual([]);
+  await salary.fill('123.45');await page.locator('#analysis-wizard-close').click();await page.locator('#analysis-open-config').click();
+  await expect(wizard).toHaveAttribute('data-wizard-kind','config');await page.locator('#analysis-regime-actual').uncheck();
+  await expect(page.locator('#analysis-config-form input[name="regime"]:checked')).toHaveCount(0);
+  await opener.click();await expect(dialog).toHaveAccessibleName('Excluir análise?');await page.locator('#analysis-delete-cancel').click();
+  await expect(wizard).toHaveAttribute('data-wizard-kind','config');await expect(page.locator('#analysis-config-form input[name="regime"]:checked')).toHaveCount(0);
+  expect(removals).toEqual([]);expect(patches).toEqual([]);
+  expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+id)).analysis).toEqual(analysis);
+  await opener.click();const deleting=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+id&&response.request().method()==='DELETE');
+  await page.locator('#analysis-delete-confirm').click();expect((await deleting).status()).toBe(200);
+  await expect(page).toHaveURL(/\/analyses\.html\?deleted=1$/);expect(removals).toEqual(['/api/v4/analyses/'+id]);expect(patches).toEqual([]);
   expect(errors).toEqual([]);
 });
