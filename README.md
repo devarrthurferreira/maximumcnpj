@@ -1,4 +1,26 @@
-# Maximum CNPJ · v0.36.0
+# Maximum CNPJ · v0.37.0
+
+## Análises em modais por etapas — 26/10/2026
+
+O preenchimento passa a acontecer em **um modal por vez**, com título, indicação da etapa atual, **Voltar**, **Continuar** e conferência antes das ações finais. A página da empresa reúne a visão geral, os setores, as pendências, o resultado e as versões salvas. Regimes e ano também são editados em um modal próprio.
+
+| Fluxo | Etapas |
+| --- | --- |
+| Nova análise | Empresa → Setor → Regimes e ano → Conferência |
+| Retomar empresa com análise | Empresa → Setor → Conferência das escolhas já salvas |
+| Fiscal | Documentos → Opções fiscais e referência do Simples quando necessária → Conferência |
+| Contábil | Competências e colagem → Despesas por competência → Conferência |
+| Regimes e ano | Escolhas → Conferência |
+
+Avançar e voltar apenas navegam. **Salvar trabalho** registra o rascunho do setor; **Concluir** envia sua conferência e retorna à visão geral. A geração continua exigindo os dois setores concluídos e as validações do servidor. O modal Fiscal abre nas opções quando os relatórios já estão disponíveis; o Contábil abre nas despesas quando já existem competências. Atalhos de pendências conduzem à etapa correspondente.
+
+Os painéis permanecem montados ao avançar, voltar ou fechar. **Fechar** e **Esc** preservam inclusive o texto ainda não aplicado da planilha e campos temporariamente inválidos nesta página. Antes de sair ou atualizar, salve os dados; o aviso de alterações locais permanece. Alternar para outro formulário captura o rascunho e solicita corrigir um valor inválido, sem gravar automaticamente. A prévia e a substituição explícita da colagem continuam funcionando; aplicar leva à etapa de despesas.
+
+Erros e avisos aparecem dentro do modal ativo. Uma tentativa de concluir com despesa ausente retorna à etapa e ao campo pendentes. Leitura de PDF, abertura e salvamento em andamento bloqueiam o fechamento. O diálogo nativo mantém o foco dentro do preenchimento, restaura o foco ao acionador ao fechar e adapta corpo e ações a telas de 320/390 px. O acesso de consulta permite percorrer os passos e conserva as restrições de escrita.
+
+O cadastro único por empresa, os documentos originais, as revisões dos setores, o histórico imutável e o motor `1.10.0-regime-selection` permanecem. A importação de entradas/saídas conserva seu fluxo de leitura e retorna ao Fiscal da análise. `analyses-wizard.js` contém somente a sequência de passos; a navegação não substitui a prontidão fiscal decidida pelo servidor.
+
+Validação local com Node 22 e MongoDB descartável: tipos, build e versão/documentação conferidos; **340 testes de regras**, **124 verificações de integração/projeção/competências**, **172 testes Python/PDF/OCR** e **11 cenários direcionados de navegador** aprovados. O cenário de teclado foi repetido após corrigir o ciclo de foco nas bordas do modal, incluindo fechamento e reabertura antes do evento nativo de fechamento. As telas de despesas e colagem foram conferidas visualmente em desktop, 320 e 390 px.
 
 ## Preenchimento orientado e despesas por planilha — 26/10/2026
 

@@ -1,5 +1,15 @@
 # Histórico de alterações
 
+## [0.37.0] — 2026-10-26
+
+- Organiza abertura, Fiscal, Contábil e configuração em modais com etapas, progresso, Voltar/Continuar e conferência antes das ações finais. A empresa passa a ter uma visão geral compacta com setores, pendências, resultado e versões.
+- Nova análise percorre empresa, setor, regimes/ano e conferência. A retomada usa as escolhas já salvas e pula a etapa de nova configuração. Campos e validações permanecem vinculados à empresa selecionada.
+- Fiscal separa documentos, opções/referência e conferência; Contábil separa competências/colagem, despesas e conferência. Aplicar a colagem abre as despesas, e dados já existentes orientam o passo inicial.
+- Avançar, voltar e fechar não salvam nem concluem implicitamente. Os campos permanecem montados ao navegar ou fechar; salvar registra apenas o setor escolhido, e concluir retorna à visão geral.
+- Move avisos e erros para o modal ativo, revela a etapa do campo pendente, bloqueia fechamento durante operações e conserva foco, teclado e leitura em telas pequenas. Restrições de consulta e controles concorrentes do servidor permanecem.
+- Adiciona helper de navegação com definições imutáveis e oito testes; adapta os fluxos reais de navegador para conferir passos, preservação de rascunhos, fechamento, leitura de PDF, centavos e resultados salvos.
+- Validação local: tipos, build, versão/documentação, 340 testes de regras, 124 verificações de integração/projeção/competências, 172 Python/PDF/OCR e 11 cenários de navegador aprovados. Corrige o ciclo de foco por teclado e confere a reabertura rápida do mesmo modal, além da apresentação em desktop e 320/390 px.
+
 ## [0.36.0] — 2026-10-26
 
 - Simplifica a carteira e o detalhe da análise com próxima ação, progresso Fiscal/Contábil, pendências com atalhos e distinção entre resultado atual e trabalho pronto para gerar. Alterações locais ficam identificadas e bloqueiam geração até serem salvas e conferidas.
