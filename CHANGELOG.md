@@ -1,5 +1,17 @@
 # Histórico de alterações
 
+## [0.40.0] — 2026-10-26
+
+- Abre carteira, seleção de empresa, visão geral e Contábil por consultas leves dos dados salvos. O modo opcional `summary=1` identifica a situação salva e conserva validação estrita na conclusão Fiscal e na geração.
+- Carrega as evidências do Fiscal em paralelo e sob demanda, reutilizando a fonte da validação em `includeSource=1`. Fechar, reabrir ou trocar de setor conserva o rascunho e não duplica uma leitura em andamento.
+- Trata falha de documento localmente, com nova tentativa explícita e acesso à importação. A resposta tardia atualiza evidências sem reconstruir os campos digitados.
+- Evita reconstruir a visão geral a cada tecla; atualiza o resumo contábil quando aberto, agrupa atualizações por quadro e reutiliza cronograma RBT12 e índice de busca de empresas.
+- Identifica competências contábeis pelos metadados de relatórios concluídos e compatíveis, mesmo antes da conclusão Fiscal, sem reler itens ou preencher despesas. A chegada da fonte atualiza os atalhos sem substituir campos/colagem. Reaproveita o extrato recém-salvo e conserva seu aviso de confirmação.
+- Reutiliza a apresentação da DRE nas trocas de visualização, monta gráficos/memória sob demanda e mantém CSV, JSON e impressão completos. A escolha do conteúdo do relatório não remonta a DRE; novo resultado invalida os dados de apresentação anteriores.
+- Prepara índices uma vez por conexão, projeta apenas vínculos na travessia de versões e reduz o retorno da geração leve à referência do resultado. Reutiliza a conferência final comprovada sob leases/CAS, mantendo as barreiras de publicação e exclusão.
+- Acrescenta testes de performance no MongoDB e no navegador para leituras fiscais ausentes na navegação, fontes inválidas, respostas lentas, rascunhos, doze competências, exportações e impressão. Motor fiscal mantido em `1.10.0-regime-selection`.
+- Validação local: tipos, build, versão/documentação, 342 testes de regras, 140 verificações de integração/projeção/competências, 172 Python/PDF/OCR e 35 cenários únicos de navegador aprovados. A rodada final de análises passou os 12 casos; os 23 casos de DRE/simulador incluem a conferência final de gráficos sob demanda. Desktop e celular inspecionados.
+
 ## [0.39.0] — 2026-10-26
 
 - Acrescenta a pergunta explícita Terá DIFAL? Sim/Não na criação com Simples e nos dois passos do Fiscal, fora das opções avançadas. A criação exige escolha sem adicionar etapa; retomadas conservam a política salva.

@@ -100,15 +100,7 @@ export function validateSimulationRequest(input: unknown) {
 }
 
 async function simulations() {
-  const c = await collection('simulations');
-  await Promise.all([
-    c.createIndex({workspaceId: 1, createdAt: -1, _id: -1}),
-    c.createIndex({workspaceId: 1, clientId: 1, createdAt: -1, _id: -1}),
-    c.createIndex({workspaceId: 1, year: 1, createdAt: -1, _id: -1}),
-    c.createIndex({workspaceId: 1, analysisId: 1, createdAt: -1, _id: -1}),
-    c.createIndex({workspaceId: 1, parentSimulationId: 1, createdAt: -1, _id: -1})
-  ]);
-  return c;
+  return collection('simulations');
 }
 
 function visible(record: Doc) {

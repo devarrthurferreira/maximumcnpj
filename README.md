@@ -1,4 +1,26 @@
-# Maximum CNPJ · v0.39.0
+# Maximum CNPJ · v0.40.0
+
+## Abertura leve das análises e DRE sob demanda — 26/10/2026
+
+A carteira, a busca de empresa, a visão geral, o Contábil e a configuração usam os dados salvos da análise, sem reler todos os itens dos relatórios fiscais para montar a tela. A situação apresentada identifica o trabalho salvo; a conferência dos documentos continua obrigatória no servidor para concluir o Fiscal e gerar um novo resultado.
+
+Ao abrir o Fiscal, a fonte reconciliada, os vínculos dos relatórios e o extrato são carregados em paralelo. A espera fica no próprio setor: é possível fechar o modal ou continuar no Contábil enquanto a leitura termina. Reabrir o Fiscal durante a mesma consulta reutiliza o trabalho em andamento. A resposta atualiza os blocos de evidência, conservando os campos digitados. Uma fonte indisponível oferece nova tentativa e acesso aos documentos, sem repetir consultas automaticamente nem impedir o preenchimento do outro setor.
+
+A digitação mantém os campos e os componentes da visão geral estáveis. O resumo detalhado do Contábil é atualizado quando aberto, com as alterações agrupadas por quadro do navegador. A busca reutiliza um índice dos nomes, códigos e CNPJs, e respostas de seleções anteriores não substituem a empresa atual. O cronograma do extrato é reaproveitado enquanto sua referência e competências permanecem iguais.
+
+Mesmo antes de concluir o Fiscal, o Contábil identifica competências pelos metadados dos relatórios concluídos, desde que empresa, geração, vínculos e períodos de entradas/saídas correspondam. Essa consulta não relê os itens nem informa despesas automaticamente. A chegada dos meses atualiza apenas o aviso e o atalho existente, preservando digitação, seleção de texto e colagem. A fonte fiscal reconciliada prevalece sobre a indicação dos metadados. O extrato recém-lido e salvo é reaproveitado na mesma sessão, mantendo a confirmação visível.
+
+Na DRE, mudar mês, regime ou percentuais reaproveita a apresentação do resultado. Gráficos e memória de cálculo são montados quando seus detalhes são abertos. Escolher o conteúdo de exportação atualiza somente essa escolha. CSV, JSON e impressão continuam usando a versão completa; a impressão materializa os detalhes necessários e restaura a tela depois. Editar valores ou gerar outro resultado invalida a apresentação anterior. O motor fiscal permanece em `1.10.0-regime-selection`.
+
+### Consultas leves e validação das fontes
+
+`summary=1` é opcional nas rotas de análises e retorna `readiness.verification: "SAVED"`. O resumo serve à navegação, sem autorizar geração nem substituir a validação fiscal. Sem esse parâmetro, o contrato completo e estrito permanece. `GET /api/v4/analyses/:id?includeSource=1` devolve `{analysis, source, sourceError}` reutilizando uma única reconciliação. Se somente a referência do Simples estiver pendente, a fonte continua disponível para preencher o formulário e a pendência impede a conclusão.
+
+`POST /api/v4/analyses/:id/generate?summary=1` conserva toda a validação e retorna a referência da simulação (`_id`, `analysisId`, `createdAt`, `modelVersion`), evitando transmitir a mesma DRE completa antes de navegar para ela. Os índices de análises, gerações e simulações são preparados uma vez por conexão. A travessia das versões anteriores consulta apenas seus vínculos, em vez de transferir cada DRE ancestral. Revisões, leases, isolamento, recibos de exclusão e verificações de fonte antes e depois da gravação permanecem ativos.
+
+Os testes de desempenho cobrem a ausência de consultas fiscais na navegação, fonte única no Fiscal, documentos ausentes/corrompidos, concorrência, leitura lenta sem bloquear os campos, preservação de rascunhos, DRE com doze competências, invalidação de cache e exportação/impressão completas.
+
+Validação local com Node 22 e MongoDB descartável: tipos, build, versão/documentação, **342 testes de regras**, **140 verificações de integração/projeção/competências**, **172 testes Python/PDF/OCR** e **35 cenários únicos de navegador** aprovados. A rodada final de análises passou os 12 casos, incluindo respostas retidas, 100 eventos de digitação, metadados incompatíveis, PDF retomado em nova sessão, DIFAL e exclusão. Os 23 casos de DRE/simulador passaram, com o teste de gráficos ajustado para expandir os detalhes antes de consultar seu conteúdo. Recuperação de documentos e preenchimento foram conferidos visualmente em desktop e celular.
 
 ## Escolha de DIFAL e exclusão da simulação — 26/10/2026
 

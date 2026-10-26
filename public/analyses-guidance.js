@@ -6,6 +6,26 @@ export const ACCOUNTING_FIELDS=[
 
 const SECTORS=['fiscal','accounting'];
 const names={fiscal:'Fiscal',accounting:'Contábil'};
+
+/** Metadata guides entry only; it never confirms source values or authorizes generation. */
+export function accountingSourceMonths(analysis,source,generation) {
+  if(source?.monthlyReports?.length)return source.monthlyReports.map(row=>row.sourceMonth);
+  if(analysis?.readiness?.months?.length)return analysis.readiness.months;
+  const generationId=analysis?.fiscal?.data?.generationId;
+  if(!generationId||generation?._id!==generationId)return [];
+  const company=generation.companies?.find(row=>row.clientId===analysis.clientId);
+  if(!company)return [];
+  const purchase=company.purchase,sales=company.sales;
+  if(!purchase||!sales||purchase._id!==company.purchaseJobId||sales._id!==company.salesJobId||
+    purchase.status!=='COMPLETED'||sales.status!=='COMPLETED'||purchase.mode!=='PURCHASES_V1'||sales.mode!=='SALES_V1'||
+    [purchase,sales].some(job=>job.clientId!==analysis.clientId||job.generationId!==generationId))return [];
+  const left=purchase.reportPeriod,right=sales.reportPeriod,valid=value=>typeof value==='string'&&/^20\d{2}-(0[1-9]|1[0-2])$/.test(value);
+  if(!left||!right||!valid(left.startMonth)||!valid(left.endMonth)||left.startMonth!==right.startMonth||left.endMonth!==right.endMonth||left.months!==right.months)return [];
+  const start=Number(left.startMonth.slice(0,4))*12+Number(left.startMonth.slice(5))-1;
+  const end=Number(left.endMonth.slice(0,4))*12+Number(left.endMonth.slice(5))-1,length=end-start+1;
+  if(!Number.isInteger(left.months)||length<1||length>12||left.months!==length)return [];
+  return Array.from({length},(_,offset)=>{const value=start+offset;return `${Math.floor(value/12)}-${String(value%12+1).padStart(2,'0')}`;});
+}
 const validCents=value=>Number.isSafeInteger(value)&&value>=0;
 const sum=values=>{
   if(!values.length)return null;
@@ -57,6 +77,7 @@ function issueAction(issue,analysis) {
 /** Guidance only: readiness remains the server's decision to authorize generation. */
 export function analysisGuidance(analysis,{sector=null,configDirty=false,fiscalDirty=false,accountingDirty=false,pastePending=false,dirty=false}={}) {
   const rawIssues=Array.isArray(analysis.readiness?.issues)?analysis.readiness.issues:[];
+  const savedVerification=analysis.readiness?.verification==='SAVED';
   const sectorDirty={fiscal:fiscalDirty,accounting:accountingDirty},unscopedDirty=dirty&&!configDirty&&!fiscalDirty&&!accountingDirty&&!pastePending;
   const hasUnsavedChanges=!!(dirty||configDirty||fiscalDirty||accountingDirty||pastePending);
   const sectors=Object.fromEntries(SECTORS.map(key=>{
@@ -68,7 +89,7 @@ export function analysisGuidance(analysis,{sector=null,configDirty=false,fiscalD
   const current=analysis.currentSimulation,ready=analysis.readiness?.ready===true&&!hasUnsavedChanges;
   const currentResult=!!(ready&&current?.id&&current.stale===false&&!current.legacy);
   const state=currentResult?'current':ready?'ready':'working';
-  const label=currentResult?'Resultado atual':ready?(current?'Pronta para atualizar':'Pronta para gerar'):hasUnsavedChanges?'Alterações não salvas':'Em andamento';
+  const label=currentResult?(savedVerification?'Resultado salvo':'Resultado atual'):ready?(current?'Pronta para atualizar':'Pronta para gerar'):hasUnsavedChanges?'Alterações não salvas':'Em andamento';
   const issues=[];
   if(configDirty)issues.push({code:'UNSAVED_CONFIG',sector:'config',message:'Salve os regimes e o ano escolhidos antes de concluir os setores.',action:'config',label:'Salvar escolhas da análise'});
   if(pastePending)issues.push({code:'UNSAVED_ACCOUNTING_PASTE',sector:'accounting',message:'Há dados colados no Contábil aguardando conferência. Aplique a prévia ou limpe a colagem antes de gerar.',action:'accounting',label:'Conferir colagem do Contábil'});
@@ -87,7 +108,7 @@ export function analysisGuidance(analysis,{sector=null,configDirty=false,fiscalD
     issues.unshift({code:'UNSAVED_FIELDS',sector:active,message:'Salve as alterações que ainda estão nos campos antes de gerar.',action:'save-'+active,label:'Salvar trabalho '+names[active]});
   }
   let primaryAction;
-  if(currentResult)primaryAction={action:'result',label:'Ver DRE atual',message:'O resultado corresponde aos dados salvos e conferidos.',href:'/simulator.html?'+new URLSearchParams({simulation:current.id})};
+  if(currentResult)primaryAction={action:'result',label:savedVerification?'Ver DRE salva':'Ver DRE atual',message:savedVerification?'Última versão gerada com os dados salvos. Abra o Fiscal para conferir novamente os documentos.':'O resultado corresponde aos dados salvos e conferidos.',href:'/simulator.html?'+new URLSearchParams({simulation:current.id})};
   else if(ready)primaryAction={action:'generate',label:current?'Atualizar resultado':'Gerar análise',message:'Os dois setores estão conferidos. A próxima etapa usa os dados que já foram salvos.'};
   else {
     const next=issues.find(issue=>issue.code==='UNSAVED_CONFIG')||
@@ -97,6 +118,6 @@ export function analysisGuidance(analysis,{sector=null,configDirty=false,fiscalD
     primaryAction=next?{action:next.action,label:next.label,message:next.message,sector:next.sector}:
       {action:target,label:'Continuar no '+names[target],message:'Confira e conclua os dados deste setor para avançar.',sector:target};
   }
-  return {state,label,kind:state==='working'?'pending':'ready',confirmedCount,sectors,primaryAction,issues,
+  return {state,label,kind:state==='working'?'pending':'ready',savedVerification,confirmedCount,sectors,primaryAction,issues,
     hasUnsavedChanges,canGenerate:ready&&!currentResult,currentResult,hasSavedResult:!!current?.id};
 }

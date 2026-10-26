@@ -31,9 +31,11 @@ export async function simulationAnalysisDeletionStarted(snapshot:Doc){
       $or:[{'currentSimulation.id':current._id},{'legacyReference.simulationId':current._id}]}),{projection:{_id:1}}))return true;
     if(!current.reprocessing || current.reprocessing.originalId!==current.parentSimulationId)break;
     const parentId:string=current.parentSimulationId;
-    const removed=await(await collection('audit')).findOne(scope({action:'simulation.delete',target:parentId,analysisId:{$exists:true}}),{projection:{analysisId:1}});
+    const removed=await(await collection('audit')).findOne(scope({_id:'simulation-delete:'+digest(JSON.stringify([scope().workspaceId,parentId])),
+      action:'simulation.delete',target:parentId,analysisId:{$exists:true}}),{projection:{analysisId:1}});
     if(removed){const receipt=await analysisDeletion(removed.analysisId);if(receipt?.clientId===snapshot.clientId)return true;}
-    current=await(await collection('simulations')).findOne(scope({_id:parentId,clientId:snapshot.clientId,generationId:current.generationId}));
+    current=await(await collection('simulations')).findOne(scope({_id:parentId,clientId:snapshot.clientId,generationId:current.generationId}),
+      {projection:{_id:1,clientId:1,generationId:1,analysisId:1,parentSimulationId:1,'reprocessing.originalId':1}});
   }
   return false;
 }

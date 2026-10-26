@@ -2,8 +2,10 @@ import {unifiedDreRows,dreDifalNotes,dreReportCoverage,dreRegimeStatuses,dreRepo
 import {readDreValue,buildDreSummary,buildDreEvolution} from './simulator-dre-summary.js';
 import {requiresSimplesReference} from './regime-selection.js';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const money=value=>value==null||!Number.isFinite(value)?'—':value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}).replace(/\u00a0/g,' ');
-const percent=value=>value==null||!Number.isFinite(value)?'—':(value*100).toLocaleString('pt-BR',{maximumFractionDigits:2})+'%';
+const moneyFormatter=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
+const percentFormatter=new Intl.NumberFormat('pt-BR',{maximumFractionDigits:2});
+const money=value=>value==null||!Number.isFinite(value)?'—':moneyFormatter.format(value).replace(/\u00a0/g,' ');
+const percent=value=>value==null||!Number.isFinite(value)?'—':percentFormatter.format(value*100)+'%';
 const TOTALS=new Set(['revenue','netRevenue','grossProfit','preTax','netProfit','revenueAfterReturns','revenueUsed']);
 const annualColumn=regime=>({id:regime.id,label:regime.name,mode:'annual'});
 const regimeScope=presentation=>presentation.regimes.length===4?'todos os regimes':presentation.regimes.length===1?'regime selecionado':'regimes selecionados';

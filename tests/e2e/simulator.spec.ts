@@ -132,9 +132,12 @@ test('Save is single-flight and failed retries preserve the exact immutable requ
   await page.locator('#serviceRevenue').fill('100');await expect(page.locator('#simulation-result .sim-dre,#results-top')).toHaveCount(0);await expect(page.locator('#simulation-changes-notice')).toBeVisible();await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');expect(requests[2].simulationId).not.toBe(requests[0].simulationId);
 });
 test('Unavailable regimes and zero revenue never become misleading zero-valued comparisons',async({page})=>{
-  await setup(page);await page.goto(url);await complete(page,{serviceRevenue:500000});await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');await expect(page.locator('.sim-chart-profit .sim-chart-unavailable')).toHaveCount(2);await expect(page.locator('.sim-regime').first()).toContainText('Indisponível');
+  const openCharts=async()=>{if(await page.locator('.sim-charts-details').getAttribute('open')===null)await page.locator('.sim-charts-details > summary').click();};
+  await setup(page);await page.goto(url);await complete(page,{serviceRevenue:500000});await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
+  await openCharts();await expect(page.locator('.sim-chart-profit .sim-chart-unavailable')).toHaveCount(2);await expect(page.locator('.sim-regime').first()).toContainText('Indisponível');
   for(const id of ['salesOptantCents','salesNonOptantCents','salesCpfCents','serviceRevenue','purchasesOptantCents','purchasesNonOptantCents'])await page.locator('#'+id).fill('0');
-  await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');await expect(page.locator('.sim-kpis')).toContainText('Sem ranking');await expect(page.locator('.sim-chart-burden')).toContainText('Não aplicável');await expect(page.locator('#simulation-result')).not.toContainText('NaN');
+  await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');await expect(page.locator('.sim-kpis')).toContainText('Sem ranking');
+  await openCharts();await expect(page.locator('.sim-chart-burden')).toContainText('Não aplicável');await expect(page.locator('#simulation-result')).not.toContainText('NaN');
 });
 
 test('RBT12 vem somente da seção 2.2 e falha em PDF novo apaga a leitura anterior',async({page})=>{
