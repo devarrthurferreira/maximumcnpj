@@ -12,15 +12,20 @@ async function post(request:APIRequestContext,baseURL:string,path:string,data:un
 async function get(request:APIRequestContext,path:string){
   const response=await request.get(path);expect(response.ok(),`${path}: ${await response.text()}`).toBe(true);return response.json();
 }
-async function fiscalStep(page:Page,step:'documents'|'tax'|'review'){
+async function fiscalStep(page:Page,step:'documents'|'tax'){
   const wizard=page.locator('#analysis-wizard'),opener=page.locator('[data-analysis-sector="fiscal"]').first();
   await expect(opener).toBeAttached();
-  if(!await wizard.isVisible()||await wizard.getAttribute('data-wizard-kind')!=='fiscal'){
-    if(await wizard.isVisible()){await page.locator('#analysis-wizard-close').click();await expect(wizard).not.toBeVisible();}
+  if(await wizard.isVisible()){
+    const current=await wizard.getAttribute('data-wizard-kind');
+    if(current==='accounting')await wizard.locator('[data-analysis-sector="fiscal"]').click();
+    else if(current!=='fiscal'){
+      await page.locator('#analysis-wizard-close').click();await expect(wizard).not.toBeVisible();await opener.click();
+    }
+  }else{
     await opener.click();
   }
   await expect(wizard).toBeVisible();await expect(wizard).toHaveAttribute('data-wizard-kind','fiscal');
-  const steps=['documents','tax','review'];
+  const steps=['documents','tax'];
   for(let attempt=0;attempt<steps.length;attempt++){
     const current=await wizard.getAttribute('data-wizard-step');expect(steps).toContain(current);
     if(current===step)return;
@@ -30,7 +35,7 @@ async function fiscalStep(page:Page,step:'documents'|'tax'|'review'){
   await expect(wizard).toHaveAttribute('data-wizard-step',step);
 }
 async function completeFiscal(page:Page,id:string){
-  await fiscalStep(page,'review');
+  await fiscalStep(page,'tax');
   const saved=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/fiscal`&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="complete"]').click();
   const response=await saved;expect(response.ok(),await response.text()).toBe(true);

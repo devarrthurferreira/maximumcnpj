@@ -1,4 +1,23 @@
-# Maximum CNPJ · v0.37.0
+# Maximum CNPJ · v0.38.0
+
+## Preenchimento direto, com menos etapas — 26/10/2026
+
+A análise reúne a situação da empresa, os dois setores e o resultado em uma visão única. Fiscal e Contábil têm um acesso cada; o resultado concentra Gerar, Atualizar ou Ver DRE conforme o estado do trabalho. Pendências detalhadas e versões anteriores ficam disponíveis em blocos recolhidos.
+
+| Fluxo | Organização |
+| --- | --- |
+| Abrir ou retomar uma análise | Empresa → Setor e regimes; uma seleção confirmada da empresa avança para as escolhas. A análise existente conserva ano e regimes salvos. |
+| Fiscal | Documentos → Dados fiscais. O extrato aparece somente quando há Simples; demais opções e ajustes ficam reunidos no mesmo modal. |
+| Contábil | Uma tela para competências, colagem opcional, despesas e resumo. Os meses abrem individualmente, com todos os campos preservados. |
+| Regimes e ano | Uma tela com gravação direta das escolhas. |
+
+Não há uma etapa adicional repetindo os campos para conferência. **Salvar rascunho** permite continuar depois; **Salvar e concluir** valida os dados e confirma o setor. As duas ações permanecem distintas. O estado de gravação fica no rodapé, sem repetir um aviso grande a cada digitação. Fiscal e Contábil podem ser alternados dentro do modal, mantendo o rascunho e a colagem.
+
+As validações continuam nas ações de gravação e no servidor. Uma despesa ausente revela seu mês e campo; uma colagem ainda não aplicada bloqueia a conclusão do Contábil. Pressionar Enter em um campo final não salva implicitamente; no campo de competência, Enter adiciona o mês. Fechar e reabrir conserva os valores nesta página; dados precisam ser salvos para retomar em outra sessão.
+
+Links com etapas da versão anterior são traduzidos para o novo fluxo. O cadastro único por empresa, a conferência dos dois setores, o tratamento de campos vazios e zeros, as revisões concorrentes, os documentos e o histórico imutável permanecem. O motor fiscal continua em `1.10.0-regime-selection`.
+
+Validação local com Node 22 e MongoDB descartável: tipos, build, versão/documentação, **342 testes de regras**, **124 verificações de integração/projeção/competências**, **172 testes Python/PDF/OCR** e **11 cenários direcionados de navegador** aprovados. Os cinco fluxos de análise foram repetidos após os ajustes finais de foco e apresentação. Foram conferidos o setup completo em 1280×720, a visão geral, Fiscal e Contábil, além das despesas e colagem em 320/390 px. Enter sem gravação, colagem pendente, troca interna de setor, abertura do campo inválido e valores gerados fazem parte da verificação.
 
 ## Análises em modais por etapas — 26/10/2026
 

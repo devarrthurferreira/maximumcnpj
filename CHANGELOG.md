@@ -1,5 +1,15 @@
 # Histórico de alterações
 
+## [0.38.0] — 2026-10-26
+
+- Reduz a abertura a Empresa → Setor e regimes e o Fiscal a Documentos → Dados fiscais; Contábil e configuração passam a ter uma tela cada, com gravação direta e sem conferência repetida.
+- Consolida a visão geral em situação, dois setores e um único ponto de resultado. Detalhes das pendências e versões ficam recolhidos, sem repetir acessos e instruções.
+- Permite alternar Fiscal/Contábil dentro do mesmo modal, preservando rascunhos. No Contábil, competências, colagem opcional, meses individuais e resumo ficam juntos, com os campos sempre montados.
+- Padroniza ações em Salvar rascunho e Salvar e concluir, mostra o estado de gravação discretamente e reduz o espaço de títulos/progresso. A escolha confirmada da empresa avança automaticamente, com proteção para respostas atrasadas.
+- Impede gravação implícita por Enter nos campos finais, mantém a colagem pendente como bloqueio de conclusão e revela blocos/campos que exigem correção. Links antigos de etapas são normalizados sem alterar o contrato fiscal.
+- Preserva cadastro único, revisões, documentos, versões imutáveis, cálculos e permissões; atualiza os testes do assistente e os fluxos reais de navegador.
+- Validação local: tipos, build, versão/documentação, 342 testes de regras, 124 verificações de integração/projeção/competências, 172 Python/PDF/OCR e 11 cenários direcionados de navegador aprovados; os cinco cenários de análise foram repetidos após os ajustes finais. Setup, visão geral, setores e colagem conferidos visualmente em desktop e 320/390 px.
+
 ## [0.37.0] — 2026-10-26
 
 - Organiza abertura, Fiscal, Contábil e configuração em modais com etapas, progresso, Voltar/Continuar e conferência antes das ações finais. A empresa passa a ter uma visão geral compacta com setores, pendências, resultado e versões.
