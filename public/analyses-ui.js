@@ -7,9 +7,11 @@ import {analysisDocumentStatus,loadAnalysisExtraction,retryAnalysisExtraction,up
 import {parseAccountingPaste,planAccountingPaste,ACCOUNTING_IMPORT_CSV_TEMPLATE} from './analysis-accounting-import.js';
 import {renderAccountingPaste} from './analyses-accounting-paste.js';
 import {analysisGuidance} from './analyses-guidance.js';
+import {wizardSteps,wizardStep,initialWizardStep} from './analyses-wizard.js';
+import {createAnalysisModal,restoreAnalysisNotices} from './analyses-modal.js';
 import {ACCOUNTING_FIELDS,ADJUSTMENT_FIELDS,esc,money,monthLabel,sectorName,analysisUrl,companyResults,
   renderNewAnalysis,renderNewCompanyContext,renderAnalysisList,renderAnalysisDetail,renderAnalysisVersions,
-  renderAnalysisGuidance,renderAccountingSummary,renderAnalysisGeneration} from './analyses-view.js';
+  renderAnalysisGuidance,renderAccountingSummary,renderAnalysisGeneration,renderWizardReview} from './analyses-view.js';
 
 const $=(selector,root=document)=>root.querySelector(selector);
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
@@ -19,7 +21,9 @@ const S={user:null,clients:null,analysis:null,sector:null,source:null,generation
   configDirty:false,fiscalDirty:false,accountingDirty:false,versionsOpen:false,versionsData:null,versionsLoading:false,
   generateRequest:null,newClient:'',newSearch:'',newSector:'',newYear:2027,newSelection:defaultRegimeSelection(),
   newChoiceIds:defaultRegimeSelection().selected,newExisting:null,newCheckingCompany:false,newCompanyError:'',companyCheckSequence:0,
-  paste:{text:'',preview:null,error:'',replaceConfirmed:false,open:false,pending:false},detailOpen:{}};
+  paste:{text:'',preview:null,error:'',replaceConfirmed:false,open:false,pending:false},detailOpen:{},
+  modalKind:null,modalOpen:false,modalSteps:{},modalReturn:null};
+let modal=null;
 const writable=()=>['admin','operator'].includes(S.user?.role);
 const dirty=()=>S.configDirty||S.fiscalDirty||S.accountingDirty;
 const hasLocalWork=()=>dirty()||S.paste.pending;
@@ -64,6 +68,124 @@ function setBusy(value,message='') {
     if($('#analysis-company-search'))$('#analysis-company-search').disabled=true;
     if(message)feedback(message,'info');
   }
+  if(modal&&S.modalKind)modal.sync(currentWizardState(),{busy:value||S.pdfBusy});
+}
+
+function currentWizardState() {
+  const kind=S.modalKind,resume=kind==='new'&&!!S.newExisting;
+  let step=S.modalSteps[kind];
+  const steps=wizardSteps(kind,{resume});
+  if(!steps.some(item=>item.id===step)){
+    step=initialWizardStep(kind,{resume,hasDocuments:!!S.source?.monthlyReports?.length,hasMonths:!!S.accountingDraft?.months?.length}).id;
+  }
+  S.modalSteps[kind]=step;return wizardStep(kind,step,{resume});
+}
+function releaseWizard() {modal?.dispose();modal=null;restoreAnalysisNotices();}
+function wizardReturnTarget() {
+  if(S.modalReturn?.isConnected)return S.modalReturn;
+  if(S.modalKind==='new')return $('#analysis-resume-new');
+  if(S.modalKind==='config')return $('#analysis-open-config');
+  return document.querySelector(`[data-analysis-sector="${S.modalKind}"]`)||$('#analysis-open-config');
+}
+function syncWizardUrl() {
+  if(!S.analysis)return;
+  const url=new URL(location.href);url.searchParams.delete('step');url.searchParams.delete('resumed');
+  if(S.modalOpen){
+    if(['fiscal','accounting'].includes(S.modalKind)){url.searchParams.set('sector',S.modalKind);url.searchParams.delete('view');}
+    else if(S.modalKind==='config'){url.searchParams.set('view','settings');url.searchParams.delete('sector');}
+    url.searchParams.set('step',currentWizardState().id);
+  }else{
+    url.searchParams.delete('sector');if(url.searchParams.get('view')==='settings')url.searchParams.delete('view');
+  }
+  history.replaceState(null,'',url.pathname+url.search);
+}
+function newOptions() {
+  return {kind:'new',modalKind:'new',clients:S.clients,clientId:S.newClient,search:S.newSearch,selection:S.newSelection,
+    sector:S.newSector,year:S.newYear,canWrite:writable(),existingAnalysis:S.newExisting,
+    checkingCompany:S.newCheckingCompany,companyCheckError:S.newCompanyError};
+}
+function refreshWizardReview() {
+  const host=$('#analysis-wizard-review');
+  if(host)host.innerHTML=renderWizardReview(S.modalKind==='new'?newOptions():detailOptions());
+  if(S.modalKind==='accounting')refreshAccountingSummary();
+}
+function setWizardStep(step,{focus=true}={}) {
+  if(!S.modalKind)return;
+  const state=wizardStep(S.modalKind,step,{resume:S.modalKind==='new'&&!!S.newExisting});
+  S.modalSteps[S.modalKind]=state.id;
+  if(state.isLast)refreshWizardReview();
+  modal?.sync(state,{focus});syncWizardUrl();
+}
+function revealWizardField(field) {
+  if(!field)return;
+  const panel=field.closest('[data-wizard-step]');
+  if(panel&&$('#analysis-wizard')){
+    S.modalOpen=true;
+    S.modalSteps[S.modalKind]=panel.dataset.wizardStep;
+    modal?.open(currentWizardState(),{focus:false});syncWizardUrl();
+  }
+  for(let parent=field.closest('details');parent;parent=parent.parentElement?.closest('details'))parent.open=true;
+}
+function validateWizardAdvance(state) {
+  if(S.modalKind==='new'){
+    captureNewChoices();
+    if(state.id==='company'){
+      if(!uuid(S.newClient)){$('#analysis-company-search')?.focus();throw new Error('Selecione a empresa encontrada na busca antes de continuar.');}
+      if(S.newCheckingCompany)throw new Error('Aguarde a conferência da análise desta empresa.');
+      if(S.newCompanyError)throw new Error('Tente novamente a conferência da empresa antes de continuar.');
+    }
+    if(state.id==='sector'&&!['fiscal','accounting'].includes(S.newSector)){
+      $('#analysis-new-form input[name=sector]')?.focus();throw new Error('Escolha o setor Fiscal ou Contábil antes de continuar.');
+    }
+    if(state.id==='regimes'){
+      S.newSelection=selectionFrom($('#analysis-new-form'));
+      if(![2027,2028].includes(S.newYear))throw new Error('Escolha um ano válido para o cenário.');
+    }
+  }else if(S.modalKind==='accounting'){
+    if(state.id==='months'&&writable()){
+      if(S.paste.pending){focusSection('#analysis-accounting-paste-panel');throw new Error('Confira e aplique a colagem ou use Limpar colagem antes de continuar para as despesas.');}
+      if(!S.accountingDraft.months.length){$('#analysis-new-month')?.focus();throw new Error('Adicione pelo menos uma competência ou aplique uma colagem para continuar.');}
+    }
+    if(state.id==='values')captureAccounting();
+  }else if(S.modalKind==='fiscal'&&state.id==='tax')captureFiscal();
+  else if(S.modalKind==='config'&&state.id==='choices')captureConfig();
+}
+function advanceWizard() {
+  if(S.busy||S.pdfBusy||!S.modalKind)return;
+  try{clearError();const state=currentWizardState();if(!state.next)return;validateWizardAdvance(state);setWizardStep(state.next);}
+  catch(error){showError(error);}
+}
+function closeWizard() {
+  if(S.busy||S.pdfBusy||!S.modalOpen)return;
+  // Keep the dialog and its raw inputs mounted. Closing/back never parses or saves a draft.
+  S.modalOpen=false;modal?.close();syncWizardUrl();
+  if(hasLocalWork())feedback('O preenchimento continua nesta página. Reabra o setor e salve o trabalho antes de sair.','info');
+}
+function bindWizard() {
+  const dialog=$('#analysis-wizard');if(!dialog||!S.modalKind)return;
+  modal=createAnalysisModal({dialog,isBusy:()=>S.busy||S.pdfBusy,returnFocus:wizardReturnTarget,
+    onNext:advanceWizard,onBack:()=>{const previous=currentWizardState().previous;if(previous)setWizardStep(previous);},
+    onPrevious:step=>setWizardStep(step),onClose:closeWizard});
+  modal.sync(currentWizardState());
+  if(S.modalOpen)modal.open(currentWizardState());
+  dialog.addEventListener('keydown',event=>{
+    if(event.key==='Enter'&&event.target.matches('input:not([type=file]):not([type=checkbox]):not([type=radio])')&&!currentWizardState().isLast){event.preventDefault();advanceWizard();}
+  });
+}
+function openWizard(kind,{step=null}={}) {
+  if(S.busy||S.pdfBusy)return false;
+  try {
+    clearError();
+    const same=S.modalKind===kind&&$('#analysis-wizard')?.dataset.wizardKind===kind;
+    if(!same)captureAll();
+    if(!document.activeElement?.closest('dialog'))S.modalReturn=document.activeElement;
+    S.modalKind=kind;S.modalOpen=true;
+    if(['fiscal','accounting'].includes(kind))S.sector=kind;
+    if(step)S.modalSteps[kind]=wizardStep(kind,step).id;
+    if(same){if(step)setWizardStep(step,{focus:false});modal.open(currentWizardState());}
+    else renderDetail();
+    syncWizardUrl();return true;
+  }catch(error){showError(error);return false;}
 }
 function assertAnalysis(value) {
   if(!value||!uuid(value.id)||!uuid(value.clientId)||!value.config||!value.fiscal?.data||!value.accounting?.data||!value.readiness){
@@ -103,7 +225,7 @@ async function openList() {
 
 function selectionFrom(form) {
   const selected=[...form.querySelectorAll('input[name=regime]:checked')].map(input=>input.value);
-  if(!selected.length)throw new Error('Selecione pelo menos um regime tributário para esta análise.');
+  if(!selected.length){const field=form.querySelector('input[name=regime]');revealWizardField(field);field?.focus();throw new Error('Selecione pelo menos um regime tributário para esta análise.');}
   return parseRegimeSelection({version:REGIME_SELECTION_VERSION,selected});
 }
 function bindCompanyResults() {
@@ -134,6 +256,7 @@ function refreshNewCompanyState() {
   $('#analysis-company-search').disabled=S.busy;
   button.textContent=S.newCheckingCompany?'Conferindo empresa…':S.newExisting?'Continuar análise existente':'Abrir análise da empresa';
   if($('#analysis-company-retry'))$('#analysis-company-retry').onclick=()=>void checkNewCompany();
+  if(modal&&S.modalKind==='new'){modal.sync(currentWizardState());if(currentWizardState().isLast)refreshWizardReview();}
 }
 async function checkNewCompany() {
   const clientId=S.newClient,ticket=++S.companyCheckSequence;
@@ -161,9 +284,8 @@ async function openNew(clientId='') {
     if(!company)throw new Error('A empresa não foi encontrada no cadastro disponível. Volte à carteira e selecione outra empresa.');
     S.newClient=clientId;S.newSearch=company.code||company.name;
   }
-  $('#analyses-app').innerHTML=renderNewAnalysis({clients:S.clients,clientId:S.newClient,search:S.newSearch,
-    selection:S.newSelection,sector:S.newSector,year:S.newYear,canWrite:writable(),existingAnalysis:S.newExisting,
-    checkingCompany:S.newCheckingCompany,companyCheckError:S.newCompanyError});
+  releaseWizard();S.modalKind='new';S.modalOpen=true;
+  $('#analyses-app').innerHTML=renderNewAnalysis(newOptions());
   if(!writable())feedback('Seu acesso permite consultar análises existentes. Um operador pode iniciar o trabalho desta empresa.','info');
   $('#analysis-company-search').oninput=event=>{
     if(S.busy)return;
@@ -173,6 +295,7 @@ async function openNew(clientId='') {
   $('#analysis-new-form').onchange=()=>captureNewChoices();bindCompanyResults();refreshNewCompanyState();
   $('#analysis-new-form').onsubmit=async event=>{
     event.preventDefault();if(S.busy||!writable())return;
+    if(!currentWizardState().isLast){advanceWizard();return;}
     try {
       clearError();const form=event.currentTarget;
       if(!uuid(S.newClient))throw new Error('Selecione a empresa na busca antes de continuar.');
@@ -189,6 +312,8 @@ async function openNew(clientId='') {
       setBusy(false);location.href=analysisUrl(record.id,sector)+(response.created?'':'&resumed=1');
     } catch(error){if(S.busy){setBusy(false);await openNew().catch(showError);}showError(error);}
   };
+  $('#analysis-resume-new').onclick=()=>{S.modalReturn=$('#analysis-resume-new');S.modalOpen=true;modal.open(currentWizardState());};
+  bindWizard();
   if(clientId&&!S.newExisting&&!S.newCheckingCompany)await checkNewCompany();
 }
 
@@ -233,14 +358,19 @@ async function loadEvidence(id,sequence) {
 async function openAnalysis(id) {
   if(!uuid(id))throw new Error('A identificação da análise é inválida. Abra a empresa pela carteira.');
   const sequence=++S.sequence;
+  releaseWizard();
   $('#analyses-app').innerHTML='<div class="initial">Conferindo os setores e os documentos desta empresa…</div>';
   const response=await analysisRequest(apiPath('/'+encodeURIComponent(id)));
   if(sequence!==S.sequence)return;
   S.analysis=null;adoptAnalysis(response.analysis);S.generateRequest=null;
   S.paste={text:'',preview:null,error:'',replaceConfirmed:false,open:false,pending:false};S.detailOpen={};
+  S.modalSteps={};S.modalReturn=null;
   const query=new URLSearchParams(location.search),sector=query.get('sector');
   S.sector=['fiscal','accounting'].includes(sector)?sector:null;S.versionsOpen=query.get('view')==='versions';S.versionsData=null;
   await loadEvidence(id,sequence);if(!currentContext(id,sequence))return;
+  S.modalKind=query.get('view')==='settings'?'config':S.sector;
+  S.modalOpen=!!S.modalKind;
+  if(S.modalKind&&wizardSteps(S.modalKind).some(item=>item.id===query.get('step')))S.modalSteps[S.modalKind]=query.get('step');
   clearError();renderDetail();
   if(query.get('resumed')==='1')feedback('Esta empresa já tinha uma análise. Retomamos o trabalho e preservamos os regimes e dados já salvos.','info');
   if(S.versionsOpen){await loadVersions(1);$('#analysis-versions')?.scrollIntoView({block:'start',behavior:'instant'});}
@@ -253,7 +383,7 @@ function schedule() {
   catch{return null;}
 }
 function detailOptions() {
-  return {analysis:S.analysis,sector:S.sector,configDraft:S.configDraft,
+  return {analysis:S.analysis,sector:S.sector,modalKind:S.modalKind,configDraft:S.configDraft,
     fiscalDraft:S.fiscalDraft,accountingDraft:S.accountingDraft,source:S.source,generation:S.generation,
     generationError:S.generationError,reference:S.reference,schedule:schedule(),documentStatus:S.documentStatus,
     pdfStatus:S.pdfStatus,pdfBusy:S.pdfBusy,canWrite:writable(),configDirty:S.configDirty,
@@ -281,26 +411,23 @@ function refreshGuidance() {
 }
 function focusSection(selector) {
   const target=$(selector);if(!target)return;
+  revealWizardField(target);
   for(let parent=target.closest('details');parent;parent=parent.parentElement?.closest('details'))parent.open=true;
   target.scrollIntoView({block:'start',behavior:'instant'});
   const field=target.matches('input,select,textarea,button,a')?target:target.querySelector('input:not(:disabled),select:not(:disabled),textarea:not(:disabled),button:not(:disabled)');
   field?.focus({preventScroll:true});
 }
 function switchSector(sector) {
-  if(S.busy||S.pdfBusy||!['fiscal','accounting'].includes(sector))return false;
-  try {
-    clearError();captureAll();S.sector=sector;
-    history.replaceState(null,'',analysisUrl(S.analysis.id,sector));
-    renderDetail();focusSection('#analysis-'+sector+'-form');return true;
-  } catch(error){showError(error);return false;}
+  return ['fiscal','accounting'].includes(sector)&&openWizard(sector);
 }
 async function handleAnalysisAction(action) {
   if(S.busy||S.pdfBusy)return;
   try {
     clearError();
-    if(action==='config'){focusSection('#analysis-settings');return;}
+    if(action==='config'){openWizard('config',{step:'choices'});return;}
     if(['fiscal','accounting'].includes(action)){
       if(switchSector(action)&&action==='accounting'&&S.paste.pending){
+        setWizardStep('months');
         $('#analysis-accounting-paste-panel').open=true;focusSection('#analysis-accounting-paste-panel');
       }
       return;
@@ -309,25 +436,17 @@ async function handleAnalysisAction(action) {
       const sector=action.slice(5);if(switchSector(sector))await saveSector(sector,false);return;
     }
     if(action==='accounting-months'){
-      if(!switchSector('accounting'))return;
+      if(!openWizard('accounting',{step:'months'}))return;
       const missing=expectedAccountingMonths().filter(month=>!S.accountingDraft.months.some(row=>row.sourceMonth===month));
       if(missing.length&&writable())addMonths(missing);
-      const empty=[...document.querySelectorAll('[data-accounting-field]')].find(field=>field.value==='');
-      if(empty){empty.focus();empty.scrollIntoView({block:'center',behavior:'instant'});}else focusSection('#analysis-add-month');
+      focusSection('#analysis-add-month');
       return;
     }
     if(action==='reference'){
-      if(switchSector('fiscal'))focusSection('.analysis-extrato');return;
+      if(openWizard('fiscal',{step:'tax'}))focusSection('.analysis-extrato');return;
     }
     if(action==='import'){
-      if(!switchSector('fiscal'))return;
-      if(!S.analysis.fiscal.data.generationId){await prepareImport();return;}
-      if(S.paste.pending)throw new Error('Há uma colagem do Contábil ainda não aplicada. Confira e aplique os dados ou use Limpar colagem antes de abrir os documentos fiscais.');
-      if(dirty())throw new Error('Salve as alterações dos setores antes de abrir os documentos fiscais. O preenchimento continua nesta tela.');
-      const company=S.generation?.companies?.find(item=>item.clientId===S.analysis.clientId);
-      const type=company?.purchase?.status!=='COMPLETED'?'PURCHASES':'SALES';
-      const link=document.querySelector(`[data-analysis-document="${type}"] a`);
-      if(link)location.href=link.href;else focusSection('.analysis-document-list');return;
+      openWizard('fiscal',{step:'documents'});return;
     }
     if(action==='generate'){await generate();return;}
     if(action==='result'&&uuid(S.analysis.currentSimulation?.id))location.href='/simulator.html?'+new URLSearchParams({simulation:S.analysis.currentSimulation.id});
@@ -338,16 +457,20 @@ function renderDetail() {
   S.versionsOpen=$('#analysis-versions')?.open??S.versionsOpen;
   document.querySelectorAll('#analyses-app details[id]').forEach(detail=>S.detailOpen[detail.id]=detail.open);
   S.paste.open=$('#analysis-accounting-paste-panel')?.open??S.paste.open;
+  releaseWizard();
   $('#analyses-app').innerHTML=renderAnalysisDetail(detailOptions());
   document.querySelectorAll('#analyses-app details[id]').forEach(detail=>{if(Object.hasOwn(S.detailOpen,detail.id))detail.open=S.detailOpen[detail.id];});
-  $('#analysis-config-form').oninput=()=>{markDirty('config');};
-  $('#analysis-config-form').onsubmit=event=>{event.preventDefault();void saveConfig();};
+  if($('#analysis-config-form')){
+    $('#analysis-config-form').oninput=()=>{markDirty('config');};
+    $('#analysis-config-form').onsubmit=event=>{event.preventDefault();if(!currentWizardState().isLast){advanceWizard();return;}void saveConfig();};
+  }
   $('#analysis-versions').ontoggle=()=>{S.versionsOpen=$('#analysis-versions').open;if(S.versionsOpen&&!S.versionsData&&!S.versionsLoading)void loadVersions(1);};
   if(S.versionsData)showVersions();
   if($('#analysis-generate'))$('#analysis-generate').onclick=()=>void generate();
   bindAnalysisActions();
-  if(S.sector==='fiscal')bindFiscal();
-  if(S.sector==='accounting')bindAccounting();
+  if($('#analysis-fiscal-form'))bindFiscal();
+  if($('#analysis-accounting-form'))bindAccounting();
+  bindWizard();
   if(S.busy)setBusy(true);
 }
 
@@ -355,13 +478,13 @@ function readNumber(input,{cents=false,signed=false,label='o valor'}={}) {
   if(!input)return null;
   const raw=input.value.trim();
   if(input.validity.badInput||!input.validity.valid||raw&&!new RegExp(`^${signed?'-?':''}\\d+(?:\\.\\d{1,2})?$`).test(raw)){
-    input.closest('details')?.setAttribute('open','');input.focus();
+    revealWizardField(input);input.focus();
     throw new Error(`Confira ${label}. Informe um valor ${signed?'':'não negativo '}com até duas casas decimais.`);
   }
   if(raw==='')return null;
   const negative=raw.startsWith('-'),[whole,fraction='']=raw.replace(/^-/,'').split('.');
   const amount=(Number(whole)*100+Number(fraction.padEnd(2,'0')))*(negative?-1:1);
-  if(!Number.isSafeInteger(amount)||Math.abs(amount)>100000000000000){input.focus();throw new Error(`Confira ${label}. O valor está fora do limite aceito.`);}
+  if(!Number.isSafeInteger(amount)||Math.abs(amount)>100000000000000){revealWizardField(input);input.focus();throw new Error(`Confira ${label}. O valor está fora do limite aceito.`);}
   return cents?amount:amount/100;
 }
 function captureFiscal() {
@@ -399,21 +522,22 @@ function captureConfig(){
   if($('#analysis-config-form'))S.configDraft={...S.configDraft,year:Number($('#analysis-config-year').value),regimeSelection:selectionFrom($('#analysis-config-form'))};
   return S.configDraft;
 }
-function captureAll(){captureConfig();if(S.sector==='fiscal')captureFiscal();if(S.sector==='accounting')captureAccounting();}
+function captureAll(){captureConfig();if($('#analysis-fiscal-form'))captureFiscal();if($('#analysis-accounting-form'))captureAccounting();}
 
 async function saveConfig() {
   if(S.busy||!writable())return;
   try {
     clearError();captureAll();const config=S.configDraft;
     if(config.year===S.analysis.config.year&&JSON.stringify(config.regimeSelection)===JSON.stringify(S.analysis.config.regimeSelection)){
-      S.configDirty=false;renderDetail();feedback('As escolhas da análise já estão salvas.');return;
+      S.configDirty=false;S.modalOpen=false;renderDetail();feedback('As escolhas da análise já estão salvas.');wizardReturnTarget()?.focus();return;
     }
     setBusy(true,'Salvando os regimes e o ano desta análise…');
     const response=await analysisRequest(apiPath('/'+S.analysis.id+'/config'),{method:'PATCH',body:{expectedConfigRevision:S.analysis.config.revision,year:config.year,regimeSelection:config.regimeSelection}});
     S.configDirty=false;adoptAnalysis(response.analysis,{preserveDrafts:true});S.generateRequest=null;
+    S.modalOpen=false;
     feedback('Escolhas salvas. Confira os setores antes de gerar a próxima versão.');
   } catch(error){showError(error);}
-  finally{if(S.busy){setBusy(false);renderDetail();}}
+  finally{if(S.busy){setBusy(false);renderDetail();if(!S.modalOpen)wizardReturnTarget()?.focus();}}
 }
 
 async function patchSector(sector,data,complete) {
@@ -428,17 +552,24 @@ async function saveSector(sector,complete) {
     clearError();captureConfig();const data=sector==='fiscal'?captureFiscal():captureAccounting();
     if(complete&&S.configDirty)throw new Error('Salve primeiro os regimes e o ano da análise, depois conclua o setor.');
     if(complete&&sector==='accounting'){
-      if(!data.months.length)throw new Error('Adicione pelo menos uma competência com os dados contábeis.');
+      if(!data.months.length){setWizardStep('months');throw new Error('Adicione pelo menos uma competência com os dados contábeis.');}
       for(const row of data.months){const missing=ACCOUNTING_FIELDS.find(([key])=>row[key]===null);if(missing){
-        document.querySelector(`[data-accounting-month="${row.sourceMonth}"] [data-accounting-field="${missing[0]}"]`)?.focus();
+        const field=document.querySelector(`[data-accounting-month="${row.sourceMonth}"] [data-accounting-field="${missing[0]}"]`);
+        revealWizardField(field);field?.focus();
         throw new Error(`Informe ${missing[1]} em ${monthLabel(row.sourceMonth)}. Use zero somente quando não houver essa despesa.`);
       }}
     }
     setBusy(true,`${complete?'Concluindo':'Salvando'} o trabalho ${sectorName(sector)}…`);
     await patchSector(sector,data,complete);
+    if(complete)S.modalOpen=false;
     feedback(complete?`${sectorName(sector)} concluído. ${hasLocalWork()?'Há preenchimentos locais que ainda precisam ser conferidos e salvos.':S.analysis.readiness.ready?'Os dois setores estão prontos para gerar a análise.':'Acompanhe abaixo o que ainda falta para gerar.'}`:`Trabalho ${sectorName(sector)} salvo. Você pode continuar depois nesta mesma análise.`);
-  } catch(error){showError(error);}
-  finally{if(S.busy){setBusy(false);renderDetail();}}
+  } catch(error){
+    if(sector==='fiscal'&&String(error.code||'').startsWith('RBT12_'))S.modalSteps.fiscal='tax';
+    if(sector==='fiscal'&&['ANALYSIS_FISCAL_INCOMPLETE','SIMULATOR_INCOMPLETE'].includes(error.code))S.modalSteps.fiscal='documents';
+    if(sector==='accounting'&&error.code==='ACCOUNTING_MONTHS_MISMATCH')S.modalSteps.accounting='months';
+    showError(error);
+  }
+  finally{if(S.busy){setBusy(false);renderDetail();if(!S.modalOpen)wizardReturnTarget()?.focus();}}
 }
 
 function bindFiscal() {
@@ -611,6 +742,7 @@ function renderPaste() {
       S.accountingDraft={months:clone(preview.plan.months)};
       S.paste.preview=null;S.paste.error='';S.paste.replaceConfirmed=false;S.paste.open=false;S.paste.pending=false;
       const count=preview.parsed.monthCount;
+      S.modalSteps.accounting='values';
       markDirty('accounting');renderDetail();
       feedback(`${count} competência(s) aplicada(s) ao formulário. Confira as despesas e use Salvar trabalho Contábil ou Concluir Contábil.`,'info');
       focusSection('#analysis-expenses');

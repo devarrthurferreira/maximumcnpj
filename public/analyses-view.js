@@ -34,6 +34,67 @@ function actionButton(action,{primary=false,canWrite=true}={}) {
   return `<button type="button" class="${primary?'primary':'analysis-action-link'}" data-analysis-action="${esc(action.action)}">${esc(actionLabel(action,canWrite))}${primary?'<span aria-hidden="true"> →</span>':''}</button>`;
 }
 
+function wizardFrame(kind,title,description,form) {
+  return `<dialog id="analysis-wizard" class="analysis-wizard" data-wizard-kind="${kind}" aria-labelledby="analysis-wizard-title" aria-describedby="analysis-wizard-description">
+    <div class="analysis-wizard-frame"><header class="analysis-wizard-header"><div><span class="analysis-eyebrow">ANÁLISE · PASSO A PASSO</span><h2 id="analysis-wizard-title" tabindex="-1">${esc(title)}</h2><p id="analysis-wizard-description">${esc(description)}</p></div><button type="button" id="analysis-wizard-close" class="analysis-wizard-close" aria-label="Fechar etapas da análise">×</button></header>
+      <div id="analysis-wizard-progress"></div><div id="analysis-wizard-notices"></div>${form}
+    </div></dialog>`;
+}
+
+function wizardStep(id,title,description,content,{first=false}={}) {
+  return `<section class="analysis-wizard-step" data-wizard-step="${id}" ${first?'':'hidden'}><div class="analysis-wizard-step-heading"><h3 tabindex="-1" data-wizard-heading>${esc(title)}</h3>${description?`<p>${esc(description)}</p>`:''}</div>${content}</section>`;
+}
+
+function wizardFooter({canWrite,sector=null,finalAction='',note=''}) {
+  return `<footer class="analysis-wizard-footer"><p>${esc(note||(canWrite?'Avance para conferir. Salvar grava o trabalho do setor.':'Consulta dos dados salvos. Você pode percorrer todas as etapas.'))}</p><div class="analysis-wizard-footer-actions"><button type="button" id="analysis-wizard-back" disabled>Voltar</button><div class="analysis-wizard-footer-end">${sector&&canWrite?`<button type="submit" name="intent" value="save">Salvar trabalho ${sectorName(sector)}</button>`:''}<button type="button" id="analysis-wizard-next" class="primary">Continuar</button><div data-wizard-final-actions hidden>${finalAction}</div></div></div></footer>`;
+}
+
+function reviewFacts(rows) {
+  return `<dl class="analysis-wizard-facts">${rows.map(([label,value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>`;
+}
+
+function reviewRegimes(selection) {
+  try{return resolveRegimeSelection(selection).selected.map(id=>REGIME_LABELS[id]).join(' · ');}catch{return 'Seleção de regimes pendente';}
+}
+
+export function renderWizardReview(options) {
+  const kind=options.modalKind||options.kind||options.wizardKind||'new';
+  if(kind==='new'){
+    const existing=options.existingAnalysis,company=existing?.company||options.clients?.find(item=>(item._id||item.id)===options.clientId);
+    const selection=existing?.config.regimeSelection||options.selection,year=existing?.config.year||options.year;
+    return `${existing?'<p class="analysis-message is-info">Você continuará o trabalho existente com os regimes, o ano e os dados já salvos.</p>':'<p class="analysis-note">Confira as escolhas antes de abrir o trabalho compartilhado.</p>'}${reviewFacts([
+      ['Empresa',company?.name||'Selecione a empresa'],['Código',company?.code||'Não informado'],['CNPJ',company?.cnpj||'Não informado'],
+      ['Setor de entrada',['fiscal','accounting'].includes(options.sector)?sectorName(options.sector):'Selecione o setor'],
+      ['Regimes',reviewRegimes(selection)],['Ano do cenário',year||'Não informado']
+    ])}<p class="analysis-note">Fiscal e Contábil podem salvar separadamente. O resultado usa os dois setores conferidos.</p>`;
+  }
+  const {analysis}=options;
+  if(kind==='config'){
+    const config=options.configDraft||analysis.config;
+    const changed=reviewRegimes(config.regimeSelection)!==reviewRegimes(analysis.config.regimeSelection)||config.year!==analysis.config.year;
+    return `${reviewFacts([['Regimes salvos',reviewRegimes(analysis.config.regimeSelection)],['Regimes escolhidos',reviewRegimes(config.regimeSelection)],['Ano salvo',analysis.config.year],['Ano escolhido',config.year]])}<p class="analysis-message ${changed?'is-warning':'is-info'}">${changed?'Salvar estas escolhas exige conferir os setores antes do próximo cálculo. As versões já geradas conservam os dados da época.':'As escolhas permanecem iguais às que já estão salvas nesta análise.'}</p>`;
+  }
+  if(kind==='fiscal'){
+    const draft=options.fiscalDraft||analysis.fiscal.data,simples=requiresSimplesReference(analysis.config.regimeSelection);
+    const company=options.generation?.companies?.find(item=>item.clientId===analysis.clientId);
+    const months=options.source?.monthlyReports?.map(row=>row.sourceMonth)||analysis.readiness?.months||[];
+    const report=key=>company?.[key]?`${company[key].fileName||'Relatório vinculado'} · ${company[key].status==='COMPLETED'?'leitura concluída':'leitura pendente'}`:'Documento ainda não informado';
+    const rows=[['Entradas',report('purchase')],['Saídas',report('sales')],['Competências',months.length?months.map(monthLabel).join(' · '):'Aguardando os relatórios'],
+      ['Regimes do cenário',reviewRegimes(analysis.config.regimeSelection)],['Ano do cenário',analysis.config.year],['Atividade das vendas',draft.salesAnnex===2?'Indústria · Anexo II':'Comércio · Anexo I']];
+    if(simples){
+      rows.push(['Referência do Simples',draft.rbt12Source==='MANUAL'?`Informação manual · ${draft.rbt12ManualConfirmed?'confirmada':'confirmação pendente'}`:draft.rbt12ExtractionId?options.reference?.fileName||'Extrato vinculado':'Extrato ainda não confirmado'],
+        ['RBT12 informada',money(draft.rbt12)],['Categoria dos serviços',`Anexo ${({3:'III',4:'IV',5:'V'})[draft.serviceAnnex]||'a conferir'}`],['ICMS e ISS no cenário',draft.icmsOutside?'Fora do DAS':'Dentro do DAS']);
+      for(const id of resolveRegimeSelection(analysis.config.regimeSelection).selected.filter(id=>['pure','hybrid'].includes(id))){
+        const enabled=draft.difalPolicy?.enabled?.[id],operations=draft.difalPolicy?.operations?.[id];
+        rows.push([`DIFAL · ${REGIME_LABELS[id]}`,enabled?[operations?.entry?'Entrada':null,operations?.exit?'Saída':null].filter(Boolean).join(' e ')||'Nenhuma operação selecionada':'Não incluído']);
+      }
+    }else rows.push(['Referência do Simples','Não exigida para os regimes selecionados']);
+    rows.push(['Ajustes por competência',draft.monthlyOverrides?.length?`${draft.monthlyOverrides.length} competência(s) com ajustes informados`:'Valores dos relatórios fiscais']);
+    return `${options.configDirty?'<p class="analysis-message is-warning">Salve as escolhas da análise antes de concluir o Fiscal.</p>':''}${reviewFacts(rows)}<p class="analysis-note">Concluir Fiscal confirma estes dados. Os documentos e a referência serão conferidos antes de concluir.</p><p class="analysis-note">${savedBy(analysis.fiscal)}</p>`;
+  }
+  return '';
+}
+
 export function regimeChoices(selection,prefix='analysis-regime',disabled=false) {
   const chosen=resolveRegimeSelection(selection).selected;
   const descriptions={pure:'Tributos do Simples no DAS.',hybrid:'Simples com CBS e IBS no regime regular.',presumed:'Comparação pelo Lucro Presumido.',actual:'Comparação pelo Lucro Real.'};
@@ -55,25 +116,26 @@ export function renderNewCompanyContext({existingAnalysis=null,checkingCompany=f
   return `<div class="analysis-existing-work"><div><span class="analysis-eyebrow">TRABALHO ENCONTRADO</span><h2>Continue a análise desta empresa</h2><p>${esc(guidance.label)} · ${completionText(guidance.confirmedCount)} · Cenário ${esc(existingAnalysis.config.year)}</p></div><div class="analysis-tags">${tags(existingAnalysis.config.regimeSelection)}</div><p>Os regimes, o ano e os dados acima já estão salvos. Escolha o setor para continuar; as configurações podem ser ajustadas dentro da análise.</p></div>`;
 }
 
-export function renderNewAnalysis({clients,clientId,search,selection,sector,year,canWrite,existingAnalysis=null,checkingCompany=false,companyCheckError=''}) {
+export function renderNewAnalysis(options) {
+  const {clients,clientId,search,selection,sector,year,canWrite,existingAnalysis=null,checkingCompany=false,companyCheckError=''}=options;
   const results=companyResults(clients,clientId,search),chosen=existingAnalysis?.config.regimeSelection||selection,chosenYear=existingAnalysis?.config.year||year;
   const blocked=checkingCompany||!!companyCheckError||!clientId||!canWrite&&!existingAnalysis;
-  return `<a class="analysis-back" href="/analyses.html">← Todas as análises</a>
-    <div class="analysis-heading"><div><span class="analysis-eyebrow">ABRIR UM TRABALHO</span><h1>Qual empresa vamos analisar?</h1><p>Encontre a empresa e escolha onde começar. O trabalho já salvo aparece aqui para você retomar.</p></div></div>
-    <section class="analysis-panel"><form id="analysis-new-form" class="analysis-new-form">
-      <div class="analysis-new-step"><span class="analysis-step-number" aria-hidden="true">1</span><div><h2>Selecione a empresa</h2><p>Busque pelo código, nome ou CNPJ.</p></div></div>
-      <label for="analysis-company-search">Código, nome ou CNPJ da empresa<input id="analysis-company-search" type="search" autocomplete="off" value="${esc(search)}" placeholder="Buscar empresa…" aria-controls="analysis-company-results"></label>
+  const companyStep=`<label for="analysis-company-search">Código, nome ou CNPJ da empresa<input id="analysis-company-search" type="search" autocomplete="off" value="${esc(search)}" placeholder="Buscar empresa…" aria-controls="analysis-company-results"></label>
       <p id="analysis-company-count" class="analysis-note" role="status">${results.count?`${results.count} empresa(s) encontrada(s)${results.count>20?' · refine a busca para ver as demais':''}`:'Os resultados aparecem enquanto você digita.'}</p>
       <div id="analysis-company-results" class="analysis-company-results">${results.html}</div><input type="hidden" id="analysis-new-client" value="${esc(clientId)}">
-      <div id="analysis-new-company-context" aria-live="polite">${renderNewCompanyContext({existingAnalysis,checkingCompany,companyCheckError})}</div>
-      <div class="analysis-new-step"><span class="analysis-step-number" aria-hidden="true">2</span><div><h2>Escolha onde vai trabalhar</h2><p>Você pode trocar de setor durante o preenchimento.</p></div></div>
-      <fieldset class="analysis-new-sector"><legend>Em qual setor vai trabalhar agora?</legend><label><input type="radio" name="sector" value="fiscal" ${sector==='fiscal'?'checked':''} required><span><strong>Fiscal</strong><small>Entradas, saídas e referência do Simples quando necessária.</small></span></label><label><input type="radio" name="sector" value="accounting" ${sector==='accounting'?'checked':''} required><span><strong>Contábil</strong><small>Despesas por competência, inclusive antes dos arquivos fiscais.</small></span></label></fieldset>
-      <fieldset id="analysis-new-config" class="analysis-new-config" ${existingAnalysis?'hidden':''} ${!canWrite||checkingCompany||companyCheckError?'disabled':''}>
+      <div id="analysis-new-company-context" aria-live="polite">${renderNewCompanyContext({existingAnalysis,checkingCompany,companyCheckError})}</div>`;
+  const sectorStep=`<fieldset class="analysis-new-sector"><legend>Em qual setor vai trabalhar agora?</legend><label><input type="radio" name="sector" value="fiscal" ${sector==='fiscal'?'checked':''} required><span><strong>Fiscal</strong><small>Entradas, saídas e referência do Simples quando necessária.</small></span></label><label><input type="radio" name="sector" value="accounting" ${sector==='accounting'?'checked':''} required><span><strong>Contábil</strong><small>Despesas por competência, inclusive antes dos arquivos fiscais.</small></span></label></fieldset>`;
+  const regimesStep=`<fieldset id="analysis-new-config" class="analysis-new-config" ${!canWrite||checkingCompany||companyCheckError?'disabled':''}>
         <legend>Escolhas da nova análise</legend>${regimeChoices(chosen,'analysis-new-regime')}
         <div class="analysis-form-grid"><label>Ano do cenário<select id="analysis-new-year"><option value="2027" ${chosenYear===2027?'selected':''}>2027</option><option value="2028" ${chosenYear===2028?'selected':''}>2028</option></select><small>As competências dos documentos serão conferidas separadamente.</small></label></div>
-      </fieldset>
-      <div class="analysis-new-submit"><p>Fiscal e Contábil salvam o trabalho separadamente. O resultado será gerado quando os dois setores estiverem conferidos.</p><button class="primary" id="analysis-open-company" type="submit" ${blocked?'disabled':''}>${checkingCompany?'Conferindo empresa…':existingAnalysis?'Continuar análise':'Abrir análise da empresa'}</button></div>
-    </form></section>`;
+      </fieldset>`;
+  const form=`<form id="analysis-new-form" class="analysis-wizard-form" novalidate><div class="analysis-wizard-body">
+      ${wizardStep('company','Selecione a empresa','O trabalho já salvo será identificado para você retomar.',companyStep,{first:true})}
+      ${wizardStep('sector','Escolha o setor','Você poderá alternar entre Fiscal e Contábil durante a análise.',sectorStep)}
+      ${wizardStep('regimes','Regimes e ano do cenário','Escolha os regimes que deseja comparar nesta análise.',regimesStep)}
+      ${wizardStep('review','Confira antes de continuar','Revise a empresa e as escolhas do trabalho.',`<div id="analysis-wizard-review">${renderWizardReview({...options,modalKind:'new'})}</div>`)}
+    </div>${wizardFooter({canWrite,finalAction:`<button class="primary" id="analysis-open-company" type="submit" ${blocked?'disabled':''}>${checkingCompany?'Conferindo empresa…':existingAnalysis?'Continuar análise':'Abrir análise da empresa'}</button>`,note:'Na última etapa, confira os dados e abra o trabalho da empresa.'})}</form>`;
+  return `<a class="analysis-back" href="/analyses.html">← Todas as análises</a><div class="analysis-heading"><div><span class="analysis-eyebrow">ABRIR UM TRABALHO</span><h1>Uma análise, uma etapa de cada vez.</h1><p>Escolha a empresa, o setor e os regimes. Se já houver um trabalho salvo, você continuará nele.</p></div></div><section class="analysis-panel analysis-new-intro"><div>${icon('start')}<h2>Prepare ou retome a análise da empresa</h2><p>O assistente organiza as escolhas em etapas curtas. Você poderá conferir tudo antes de continuar.</p></div><button type="button" id="analysis-resume-new" class="primary" aria-haspopup="dialog">Abrir passo a passo</button></section>${wizardFrame('new','Abrir análise da empresa','Selecione a empresa e confirme por onde deseja começar.',form)}`;
 }
 
 function companyCard(analysis,canWrite) {
@@ -100,27 +162,29 @@ export function renderAnalysisList({items,pagination,search,canWrite}) {
     <div class="analysis-pagination"><button type="button" data-analysis-page="${pagination.page-1}" ${pagination.page<=1?'disabled':''}>Anterior</button><p>Página ${pagination.page} de ${Math.max(1,pagination.totalPages)}</p><button type="button" data-analysis-page="${pagination.page+1}" ${pagination.page>=pagination.totalPages?'disabled':''}>Próxima</button></div><div class="analysis-footer-links"><span>Seu trabalho anterior continua disponível:</span><a href="/generations.html?view=history">Relatórios importados</a><a href="/simulations.html">Histórico de versões</a>${canWrite?'<a href="/generations.html">Importar relatórios avulsos</a>':''}</div>`;
 }
 
-function configPanel(analysis,config,canWrite,configDirty) {
-  return `<details class="analysis-panel analysis-settings" id="analysis-settings" ${configDirty?'open':''}><summary>Regimes e ano desta análise · ${esc(resolveRegimeSelection(analysis.config.regimeSelection).selected.map(id=>REGIME_LABELS[id]).join(' · '))}</summary><div><form id="analysis-config-form"><fieldset class="analysis-fields" ${canWrite?'':'disabled'}>${regimeChoices(config.regimeSelection)}<div class="analysis-form-grid analysis-config-year"><label>Ano do cenário<select id="analysis-config-year"><option value="2027" ${config.year===2027?'selected':''}>2027</option><option value="2028" ${config.year===2028?'selected':''}>2028</option></select></label></div><p class="analysis-note">Alterar os regimes ou o ano exige conferir os setores antes do próximo cálculo. As versões anteriores mantêm suas escolhas e valores.</p>${canWrite?`<div class="analysis-savebar"><p>${configDirty?'Há escolhas ainda não salvas.':'Regimes compartilhados entre Fiscal e Contábil.'}</p><button type="submit" id="analysis-save-config">Salvar escolhas da análise</button></div>`:''}</fieldset></form></div></details>`;
-}
-
-function sectorNavigation(analysis,sector,options) {
-  return `<aside class="analysis-side"><nav class="analysis-sector-nav" aria-label="Setores da análise">${['fiscal','accounting'].map(key=>`<a class="analysis-sector-tab" href="${analysisUrl(analysis.id,key)}" data-analysis-sector="${key}" ${sector===key?'aria-current="page"':''}><strong>${icon(key==='fiscal'?'report':'companies')}${sectorName(key)}</strong><small>${key==='fiscal'?'Entradas, saídas e referência do Simples quando necessária.':'Despesas informadas em cada competência.'}</small><span data-analysis-sector-status="${key}">${badge(sectorState(analysis,key,options))}</span></a>`).join('')}</nav><div class="analysis-side-note"><strong>Salvar e concluir têm funções diferentes</strong>Salvar guarda o preenchimento para continuar depois. Concluir registra que o setor foi conferido e permite avançar para o resultado.</div></aside>`;
+function configPanel(options) {
+  const {analysis,canWrite}=options,config=options.configDraft||analysis.config;
+  const choices=`<div id="analysis-settings">${regimeChoices(config.regimeSelection)}<div class="analysis-form-grid analysis-config-year"><label>Ano do cenário<select id="analysis-config-year"><option value="2027" ${config.year===2027?'selected':''}>2027</option><option value="2028" ${config.year===2028?'selected':''}>2028</option></select></label></div><p class="analysis-note">Alterar os regimes ou o ano exige conferir os setores antes do próximo cálculo.</p></div>`;
+  const form=`<form id="analysis-config-form" class="analysis-wizard-form" novalidate><div class="analysis-wizard-body"><fieldset class="analysis-fields" ${canWrite?'':'disabled'}>
+      ${wizardStep('choices','Regimes e ano','Estas escolhas serão compartilhadas entre Fiscal e Contábil.',choices,{first:true})}
+      ${wizardStep('review','Confira as alterações','As versões anteriores conservam as escolhas e os valores já registrados.',`<div id="analysis-wizard-review">${renderWizardReview({...options,modalKind:'config'})}</div>`)}
+    </fieldset></div>${wizardFooter({canWrite,finalAction:canWrite?'<button type="submit" id="analysis-save-config" class="primary">Salvar escolhas da análise</button>':'',note:canWrite?'As novas escolhas serão gravadas ao salvar na última etapa.':'Consulta das escolhas salvas desta análise.'})}</form>`;
+  return wizardFrame('config','Regimes e ano da análise',analysis.company?.name||'Confira as escolhas desta empresa.',form);
 }
 
 function sectorChooser(analysis,options) {
-  return `<section><div class="analysis-panel-heading"><div><h2>Em qual setor vai trabalhar?</h2><p>Você pode começar por qualquer um e alternar durante o preenchimento.</p></div></div><div class="analysis-sector-choice">${['fiscal','accounting'].map(sector=>`<a href="${analysisUrl(analysis.id,sector)}" data-analysis-sector="${sector}">${icon(sector==='fiscal'?'report':'companies')}<h2>${sectorName(sector)}</h2><p>${sector==='fiscal'?'Adicione entradas e saídas, confira a receita e informe a referência do Simples quando necessária.':'Preencha ou cole as despesas de cada competência. Você pode começar antes dos documentos fiscais.'}</p><div data-analysis-sector-status="${sector}">${badge(sectorState(analysis,sector,options))}</div><b>Continuar no ${sectorName(sector)} →</b></a>`).join('')}</div></section>`;
+  return `<section class="analysis-sectors-overview" aria-label="Setores da análise"><div class="analysis-sector-choice">${['fiscal','accounting'].map(sector=>`<a class="analysis-sector-tab analysis-sector-card" href="${analysisUrl(analysis.id,sector)}" data-analysis-sector="${sector}" aria-haspopup="dialog"><div class="analysis-sector-card-heading"><strong>${icon(sector==='fiscal'?'report':'companies')}${sectorName(sector)}</strong><span data-analysis-sector-status="${sector}">${badge(sectorState(analysis,sector,options))}</span></div><p>${sector==='fiscal'?'Documentos → Tributação e referência → Revisão':'Competências e colagem → Despesas → Conferência'}</p><small>${savedBy(analysis[sector])}</small><b>${options.canWrite?'Abrir etapas':'Consultar etapas'} do ${sectorName(sector)} <span aria-hidden="true">→</span></b></a>`).join('')}</div></section>`;
 }
 
 function fiscalReports({analysis,generation,generationError,canWrite}) {
   const data=analysis.fiscal.data,company=generation?.companies?.find(item=>item.clientId===analysis.clientId);
   const slots=[['PURCHASES','Entradas','Compras e devoluções de venda.','purchase','purchaseJobId'],['SALES','Saídas','Vendas de mercadorias e serviços.','sales','salesJobId']];
-  return `<section class="analysis-panel"><div class="analysis-panel-heading"><div><h2>Documentos fiscais</h2><p>Importe os dois relatórios da mesma empresa e competência. A leitura preserva a origem dos valores e consulta o enquadramento dos documentos.</p></div></div>${generationError?`<p class="analysis-message is-warning">${esc(generationError)}</p>`:''}<div class="analysis-document-list">${slots.map(([type,label,description,key,idKey])=>{
+  return `<div class="analysis-fiscal-documents">${generationError?`<p class="analysis-message is-warning">${esc(generationError)}</p>`:''}<div class="analysis-document-list">${slots.map(([type,label,description,key,idKey])=>{
     const job=company?.[key],jobId=company?.[idKey]||job?._id,complete=job?.status==='COMPLETED';
     const href=data.generationId?'/purchases.html?'+new URLSearchParams({generation:data.generationId,client:analysis.clientId,type,guided:'1',analysis:analysis.id,...(jobId?{job:jobId}:{})}):null;
     const state={label:complete?'Leitura concluída':job?.status==='PROCESSING'?'Consulta em andamento':job?.status==='UPLOADING'?'Importação incompleta':'Aguardando documento',kind:complete?'ready':'pending'};
     return `<article class="analysis-document" data-analysis-document="${type}"><span class="analysis-document-icon">${icon('report')}</span><div class="analysis-document-copy"><h3>${label}</h3><p>${description}</p>${job?.fileName?`<p>${esc(job.fileName)}</p>`:''}${badge(state)}</div>${href&&(canWrite||job)?`<div class="analysis-document-actions"><a class="analysis-button ${complete?'':'primary'}" href="${href}">${complete?'Conferir relatório':job?'Retomar leitura':'Adicionar documento'} →</a></div>`:''}</article>`;
-  }).join('')}</div>${canWrite?`<div class="analysis-actions analysis-import-actions"><button type="button" id="analysis-start-import" ${generationError?'disabled':''}>${data.generationId?'Substituir os relatórios fiscais':'Preparar importação de entradas e saídas'}</button></div>`:''}${data.generationId?`<p class="analysis-note">As leituras pertencem a esta análise. <a href="/generations.html?${new URLSearchParams({id:data.generationId,analysis:analysis.id,client:analysis.clientId})}">Conferir os relatórios desta empresa</a>.</p><p class="analysis-note">Os relatórios conservam as opções de DIFAL desta importação. A simulação usa as escolhas atuais após concluir o Fiscal.</p>`:''}</section>`;
+  }).join('')}</div>${canWrite?`<div class="analysis-actions analysis-import-actions"><button type="button" id="analysis-start-import" ${generationError?'disabled':''}>${data.generationId?'Substituir os relatórios fiscais':'Preparar importação de entradas e saídas'}</button></div>`:''}${data.generationId?`<p class="analysis-note">As leituras pertencem a esta análise. <a href="/generations.html?${new URLSearchParams({id:data.generationId,analysis:analysis.id,client:analysis.clientId})}">Conferir os relatórios desta empresa</a>.</p><p class="analysis-note">Os relatórios conservam as opções de DIFAL desta importação. A simulação usa as escolhas atuais após concluir o Fiscal.</p>`:''}</div>`;
 }
 
 function extratoPanel({analysis,draft,reference,schedule,documentStatus,pdfStatus,pdfBusy,canWrite}) {
@@ -142,7 +206,13 @@ function fiscalAdjustments(draft,source,canWrite) {
 
 function fiscalPanel(options) {
   const {analysis,fiscalDraft:draft,canWrite,configDirty}=options,simples=requiresSimplesReference(analysis.config.regimeSelection);
-  return `${fiscalReports(options)}<section class="analysis-panel"><div class="analysis-panel-heading"><div><h2>Conferência do Fiscal</h2><p>Salve os dados para continuar depois ou conclua o setor quando os documentos e as escolhas estiverem conferidos.</p></div><span data-analysis-sector-status="fiscal">${badge(sectorState(analysis,'fiscal',options))}</span></div><form id="analysis-fiscal-form"><fieldset class="analysis-fields" ${canWrite?'':'disabled'}>${extratoPanel({...options,draft})}<div class="analysis-form-grid analysis-fiscal-options"><label>Atividade das vendas<select id="analysis-sales-annex"><option value="1" ${draft.salesAnnex===1?'selected':''}>Comércio · Anexo I</option><option value="2" ${draft.salesAnnex===2?'selected':''}>Indústria · Anexo II</option></select></label>${simples?`<label>Categoria dos serviços<select id="analysis-service-annex"><option value="3" ${draft.serviceAnnex===3?'selected':''}>Anexo III</option><option value="4" ${draft.serviceAnnex===4?'selected':''}>Anexo IV</option><option value="5" ${draft.serviceAnnex===5?'selected':''}>Anexo V</option></select></label>`:''}${simples?`<label class="full">ICMS e ISS no cenário do Simples<select id="analysis-icms-outside"><option value="inside" ${!draft.icmsOutside?'selected':''}>Dentro do DAS</option><option value="outside" ${draft.icmsOutside?'selected':''}>Fora do DAS · situação já confirmada</option></select><small>A escolha não é automática pelo limite de receita. Confirme a situação aplicável à empresa.</small></label>`:''}</div>${difalOptions(analysis.config.regimeSelection,draft.difalPolicy)}${fiscalAdjustments(draft,options.source,canWrite)}${canWrite?`<div class="analysis-savebar"><p>${savedBy(analysis.fiscal)}${configDirty?'<br>Salve as escolhas da análise antes de concluir o setor.':''}</p><div class="analysis-actions"><button type="submit" name="intent" value="save">Salvar trabalho Fiscal</button><button type="submit" name="intent" value="complete" class="primary" ${configDirty?'disabled':''}>Concluir Fiscal</button></div></div>`:''}</fieldset></form></section>`;
+  const tax=`${extratoPanel({...options,draft})}<div class="analysis-form-grid analysis-fiscal-options"><label>Atividade das vendas<select id="analysis-sales-annex"><option value="1" ${draft.salesAnnex===1?'selected':''}>Comércio · Anexo I</option><option value="2" ${draft.salesAnnex===2?'selected':''}>Indústria · Anexo II</option></select></label>${simples?`<label>Categoria dos serviços<select id="analysis-service-annex"><option value="3" ${draft.serviceAnnex===3?'selected':''}>Anexo III</option><option value="4" ${draft.serviceAnnex===4?'selected':''}>Anexo IV</option><option value="5" ${draft.serviceAnnex===5?'selected':''}>Anexo V</option></select></label>`:''}${simples?`<label class="full">ICMS e ISS no cenário do Simples<select id="analysis-icms-outside"><option value="inside" ${!draft.icmsOutside?'selected':''}>Dentro do DAS</option><option value="outside" ${draft.icmsOutside?'selected':''}>Fora do DAS · situação já confirmada</option></select><small>A escolha não é automática pelo limite de receita. Confirme a situação aplicável à empresa.</small></label>`:''}</div>${difalOptions(analysis.config.regimeSelection,draft.difalPolicy)}${fiscalAdjustments(draft,options.source,canWrite)}`;
+  const form=`<form id="analysis-fiscal-form" class="analysis-wizard-form" novalidate><div class="analysis-wizard-body"><fieldset class="analysis-fields" ${canWrite?'':'disabled'}>
+      ${wizardStep('documents','Entradas e saídas','Adicione os documentos da empresa ou retome as leituras que já começaram.',fiscalReports(options),{first:true})}
+      ${wizardStep('tax','Tributação e referência','Confira as opções fiscais e a referência exigida pelos regimes escolhidos.',tax)}
+      ${wizardStep('review','Revise o Fiscal','Confira o vínculo dos documentos e as opções antes de concluir o setor.',`<div id="analysis-wizard-review">${renderWizardReview({...options,modalKind:'fiscal'})}</div>`)}
+    </fieldset></div>${wizardFooter({canWrite,sector:'fiscal',finalAction:canWrite?`<button type="submit" name="intent" value="complete" class="primary" ${configDirty?'disabled':''}>Concluir Fiscal</button>`:''})}</form>`;
+  return wizardFrame('fiscal','Setor Fiscal',analysis.company?.name||'Documentos e opções fiscais da empresa.',form);
 }
 
 function accountingMonth(row,canWrite) {
@@ -171,15 +241,17 @@ export function renderAccountingSummary({months=[],expectedMonths=[]}) {
 function accountingPanel(options) {
   const {analysis,accountingDraft,canWrite,configDirty,source}=options;
   const months=accountingDraft.months||[],sourceMonths=source?.monthlyReports?.length?source.monthlyReports.map(row=>row.sourceMonth):analysis.readiness?.months||[],missing=sourceMonths.filter(month=>!months.some(row=>row.sourceMonth===month));
-  return `<section class="analysis-panel"><div class="analysis-panel-heading"><div><h2>Dados do Contábil</h2><p>Informe as cinco categorias de despesa em cada competência. Salários incluem pró-labore; outras despesas reúnem os valores que não aparecem nas demais categorias.</p></div><span data-analysis-sector-status="accounting">${badge(sectorState(analysis,'accounting',options))}</span></div>
-    <div id="analysis-accounting-summary" class="analysis-accounting-summary" aria-label="Resumo das despesas informadas">${renderAccountingSummary({months,expectedMonths:sourceMonths})}</div>
-    ${sourceMonths.length?`<p class="analysis-note"><strong>Competências dos relatórios fiscais:</strong> ${sourceMonths.map(month=>esc(monthLabel(month))).join(' · ')}</p>`:'<p class="analysis-note">Você pode começar antes do Fiscal. Depois da importação, as competências dos dois setores serão conferidas.</p>'}
-    <div id="analysis-accounting-import"></div>
-    <form id="analysis-accounting-form"><fieldset class="analysis-fields" ${canWrite?'':'disabled'}>${canWrite?`<div class="analysis-add-month"><label for="analysis-new-month">Adicionar competência<input type="month" id="analysis-new-month" min="2000-01" max="2099-12"></label><button type="button" id="analysis-add-month">Adicionar mês</button>${missing.length?`<button type="button" id="analysis-add-fiscal-months">Adicionar ${missing.length} competência(s) do Fiscal</button>`:''}</div>`:''}
-      <div class="analysis-expenses" id="analysis-expenses">${months.length?months.map(row=>accountingMonth(row,canWrite)).join(''):'<div class="analysis-empty"><h3>Nenhuma competência informada</h3><p>Adicione um mês ou cole os dados de uma planilha. Cada competência conserva seus próprios valores.</p></div>'}</div>
-      <p class="analysis-note">Uma despesa deve aparecer uma única vez. “Preencher vazios com zero” registra sua confirmação de que não houve despesa nas categorias pendentes daquele mês.</p>
-      ${canWrite?`<div class="analysis-savebar"><p>${savedBy(analysis.accounting)}${configDirty?'<br>Salve as escolhas da análise antes de concluir o setor.':''}</p><div class="analysis-actions"><button type="submit" name="intent" value="save">Salvar trabalho Contábil</button><button type="submit" name="intent" value="complete" class="primary" ${configDirty?'disabled':''}>Concluir Contábil</button></div></div>`:''}
-    </fieldset></form></section>`;
+  const monthsContent=`${sourceMonths.length?`<p class="analysis-note"><strong>Competências dos relatórios fiscais:</strong> ${sourceMonths.map(month=>esc(monthLabel(month))).join(' · ')}</p>`:'<p class="analysis-note">Você pode começar antes do Fiscal. Depois da importação, as competências dos dois setores serão conferidas.</p>'}
+    ${canWrite?`<div class="analysis-add-month"><label for="analysis-new-month">Adicionar competência<input type="month" id="analysis-new-month" min="2000-01" max="2099-12"></label><button type="button" id="analysis-add-month">Adicionar mês</button>${missing.length?`<button type="button" id="analysis-add-fiscal-months">Adicionar ${missing.length} competência(s) do Fiscal</button>`:''}</div>`:''}
+    <div id="analysis-accounting-import"></div><div class="analysis-month-selection"><h4>Competências adicionadas · ${months.length}</h4>${months.length?`<ul class="analysis-month-chips">${months.map(row=>`<li>${esc(monthLabel(row.sourceMonth))}</li>`).join('')}</ul>`:'<p class="analysis-note">Adicione os meses ou aplique a colagem para continuar para as despesas.</p>'}</div>`;
+  const valuesContent=`<div class="analysis-expenses" id="analysis-expenses">${months.length?months.map(row=>accountingMonth(row,canWrite)).join(''):'<div class="analysis-empty"><h3>Nenhuma competência informada</h3><p>Volte à etapa de competências para adicionar os meses ou aplicar a colagem.</p></div>'}</div><p class="analysis-note">Uma despesa deve aparecer uma única vez. “Preencher vazios com zero” registra sua confirmação de que não houve despesa nas categorias pendentes daquele mês.</p>`;
+  const reviewContent=`${configDirty?'<p class="analysis-message is-warning">Salve as escolhas da análise antes de concluir o Contábil.</p>':''}<div id="analysis-accounting-summary" class="analysis-accounting-summary" aria-label="Resumo das despesas informadas">${renderAccountingSummary({months,expectedMonths:sourceMonths})}</div><p class="analysis-note">${savedBy(analysis.accounting)}</p>`;
+  const form=`<form id="analysis-accounting-form" class="analysis-wizard-form" novalidate><div class="analysis-wizard-body"><fieldset class="analysis-fields" ${canWrite?'':'disabled'}>
+      ${wizardStep('months','Competências e colagem','Adicione os meses do período ou cole os dados de uma planilha.',monthsContent,{first:true})}
+      ${wizardStep('values','Despesas de cada competência','Informe as cinco categorias. Salários incluem pró-labore; os campos em branco permanecem pendentes.',valuesContent)}
+      ${wizardStep('review','Confira o Contábil','Revise os totais e a cobertura dos meses antes de concluir o setor.',reviewContent)}
+    </fieldset></div>${wizardFooter({canWrite,sector:'accounting',finalAction:canWrite?`<button type="submit" name="intent" value="complete" class="primary" ${configDirty?'disabled':''}>Concluir Contábil</button>`:''})}</form>`;
+  return wizardFrame('accounting','Setor Contábil',analysis.company?.name||'Despesas por competência da empresa.',form);
 }
 
 export function renderAnalysisGuidance(options) {
@@ -201,20 +273,21 @@ export function renderAnalysisGuidance(options) {
 export function renderAnalysisGeneration(options) {
   const {analysis,canWrite}=options,guidance=analysisGuidance(analysis,options),current=analysis.currentSimulation;
   return `<section class="analysis-panel analysis-generate" id="analysis-generation"><div class="analysis-panel-heading"><div><h2>${guidance.state==='current'?'Resultado atual':!canWrite?'Situação do resultado':current?'Atualizar o resultado':'Gerar a análise da empresa'}</h2><p>${guidance.state==='current'?'A DRE disponível corresponde ao trabalho salvo e conferido.':guidance.state==='ready'?'Os dados dos dois setores estão prontos para gerar o resultado com os regimes escolhidos.':canWrite?'Resolva as pendências abaixo. Os atalhos levam diretamente ao ponto que precisa de atenção.':'Acompanhe as pendências registradas. Os atalhos permitem consultar os dados de cada setor.'}</p></div>${badge(guidance)}</div>
-    <div class="analysis-review-sectors">${['fiscal','accounting'].map(sector=>`<button type="button" data-analysis-action="${sector}" class="${guidance.sectors[sector].complete?'is-complete':''}"><span aria-hidden="true">${guidance.sectors[sector].complete?'✓':'○'}</span><span><strong>${sectorName(sector)}</strong><small data-analysis-sector-status="${sector}">${esc(guidance.sectors[sector].label)}</small></span></button>`).join('')}</div>
     ${guidance.issues.length?`<ul class="analysis-checklist analysis-action-checklist">${guidance.issues.map(issue=>`<li data-analysis-issue="${esc(issue.code)}"><span class="analysis-issue-marker" aria-hidden="true">→</span><div><p>${esc(issue.message)}</p>${actionButton(issue,{canWrite})}</div></li>`).join('')}</ul>`:''}
     <div class="analysis-actions">${canWrite?`<button type="button" class="primary" id="analysis-generate" ${guidance.canGenerate?'':'disabled'}>${guidance.state==='current'?'Resultado atualizado':current?'Atualizar cálculo da análise':'Gerar análise'}</button>`:''}${current?`<a class="analysis-button ${guidance.state==='current'?'primary':''}" href="${resultUrl(analysis)}">${guidance.state==='current'?'Ver DRE atual':'Ver última versão salva'} →</a>`:''}</div>
     <a class="analysis-history-link" href="${analysisUrl(analysis.id,null,'versions')}">Conferir as versões desta empresa →</a></section>`;
 }
 
 export function renderAnalysisDetail(options) {
-  const {analysis,sector,configDraft,canWrite,configDirty,versionsOpen}=options;
+  const {analysis,canWrite,versionsOpen,modalKind}=options;
+  const modal=modalKind==='fiscal'?fiscalPanel(options):modalKind==='accounting'?accountingPanel(options):modalKind==='config'?configPanel(options):'';
   return `<a class="analysis-back" href="/analyses.html">← Todas as análises</a>
-    <div class="analysis-heading"><div><span class="analysis-eyebrow">ANÁLISE DA EMPRESA · ${esc(analysis.company?.code||'SEM CÓDIGO')}</span><h1>${esc(analysis.company?.name||'Empresa')}</h1><p>${analysis.company?.cnpj?esc(analysis.company.cnpj)+' · ':''}Cenário ${esc(analysis.config.year)} · Fiscal e Contábil na mesma análise.</p><div class="analysis-tags analysis-heading-tags">${tags(analysis.config.regimeSelection)}</div></div><div class="analysis-heading-actions"><a class="analysis-button" href="${analysisUrl(analysis.id,null,'versions')}">${icon('history')}Versões salvas</a></div></div>
-    <section class="analysis-guidance" id="analysis-guidance" aria-label="Próxima ação da análise">${renderAnalysisGuidance(options)}</section>
-    ${analysis.legacy?'<p class="analysis-note analysis-legacy-note">O trabalho anterior foi preservado. Confira os setores para gerar a próxima versão.</p>':''}
-    ${configPanel(analysis,configDraft,canWrite,configDirty)}
-    <div class="analysis-workspace">${sectorNavigation(analysis,sector,options)}<div class="analysis-main">${sector==='fiscal'?fiscalPanel(options):sector==='accounting'?accountingPanel(options):sectorChooser(analysis,options)}${renderAnalysisGeneration(options)}<details class="analysis-panel analysis-versions" id="analysis-versions" ${versionsOpen?'open':''}><summary>Versões salvas desta análise</summary><div id="analysis-version-list"><p class="analysis-note">Abra para consultar as versões anteriores. Os dados e resultados de cada versão permanecem preservados.</p></div></details></div></div>`;
+    <div class="analysis-heading"><div><span class="analysis-eyebrow">ANÁLISE DA EMPRESA · ${esc(analysis.company?.code||'SEM CÓDIGO')}</span><h1>${esc(analysis.company?.name||'Empresa')}</h1><p>${analysis.company?.cnpj?esc(analysis.company.cnpj)+' · ':''}Cenário ${esc(analysis.config.year)} · Fiscal e Contábil na mesma análise.</p><div class="analysis-tags analysis-heading-tags">${tags(analysis.config.regimeSelection)}</div></div><div class="analysis-heading-actions"><button type="button" id="analysis-open-config" class="analysis-button" data-analysis-action="config" aria-haspopup="dialog">${icon('settings')}${canWrite?'Regimes e ano':'Consultar escolhas'}</button><a class="analysis-button" href="${analysisUrl(analysis.id,null,'versions')}">${icon('history')}Versões salvas</a></div></div>
+    <div class="analysis-detail-overview"><section class="analysis-guidance" id="analysis-guidance" aria-label="Próxima ação da análise">${renderAnalysisGuidance(options)}</section>
+      ${analysis.legacy?'<p class="analysis-note analysis-legacy-note">O trabalho anterior foi preservado. Confira os setores para gerar a próxima versão.</p>':''}
+      ${sectorChooser(analysis,options)}${renderAnalysisGeneration(options)}
+      <details class="analysis-panel analysis-versions" id="analysis-versions" ${versionsOpen?'open':''}><summary>Versões salvas desta análise</summary><div id="analysis-version-list"><p class="analysis-note">Abra para consultar as versões anteriores. Os dados e resultados de cada versão permanecem preservados.</p></div></details>
+    </div>${modal}`;
 }
 
 export function renderAnalysisVersions({items,pagination,currentId}) {
