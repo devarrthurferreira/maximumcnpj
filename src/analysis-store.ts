@@ -9,7 +9,7 @@ import {createGeneration,getGeneration,withGeneration} from './generation-store.
 import {generationSimulator} from './simulator-store.ts';
 import {createAnalysisSimulation,createSimulation,getSimulation,validateSimulationRequest,assertSimulationNotDeleted,removeAnalysisSimulationSnapshot} from './simulation-history.ts';
 import {readRbt12Reference,rbt12InputSource} from './simulation-extrato.ts';
-import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
+import {buildJanSepRbt12Schedule} from '../public/simulator-rbt12.js';
 import {baselineMonth} from '../public/simulator-monthly.js';
 import {JAN_SEP_POLICY,JAN_SEP_MODEL_VERSION,buildAnalysisPeriod,isAnalysisMonth} from '../public/analysis-period.js';
 import type {AnalysisPeriod} from '../public/analysis-period.js';
@@ -75,8 +75,12 @@ async function fiscalSource(item:Analysis,data=item.fiscal.data,onSource?:(sourc
     if(kind==='MANUAL') reference={source:'MANUAL',rbt12Cents:Math.round(data.rbt12!*100)};
     else{
       reference=await readRbt12Reference(data.rbt12ExtractionId,item.clientId,data.rbt12??undefined);
-      const schedule=buildRbt12Schedule(reference as any,months);
-      need(schedule.complete,`O extrato não cobre todas as competências: ${schedule.rows.filter(row=>row.status!=='CONFIRMED').map(row=>row.sourceMonth).join(', ')}.`,422,'RBT12_MONTHS_MISSING');
+      // Only Jan–Sep enters the comparison. Each of those nine tax periods
+      // requires its own previous-twelve-month revenue history from section 2.2.
+      const schedule=buildJanSepRbt12Schedule(reference as any,source.analysisPeriod!.sourceYear);
+      const pending=schedule.rows.filter(row=>row.status!=='CONFIRMED');
+      const missingHistory=[...new Set(pending.flatMap(row=>row.missingMonths))].sort();
+      need(schedule.complete,`RBT12 de janeiro a setembro de ${source.analysisPeriod!.sourceYear} incompleta. Faltam receitas históricas da seção 2.2: ${missingHistory.join(', ')}. As entradas e saídas podem estar concluídas; confira um extrato com o histórico necessário.`,422,'RBT12_MONTHS_MISSING');
     }
   } else rbt12InputSource(data.rbt12Source,undefined,data.rbt12ExtractionId,data.rbt12??undefined,item.config.regimeSelection);
   if(data.rbt12DocumentId){
