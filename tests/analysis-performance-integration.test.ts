@@ -10,6 +10,7 @@ import {uploadLookup,finalizeLookup,processLookup} from '../src/lookup-jobs.ts';
 import {generationSimulator} from '../src/simulator-store.ts';
 import {routeV4} from '../src/lookup-http.ts';
 import {simulationAnalysisDeletionStarted,reserveAnalysisDeletion} from '../src/analysis-deletion.ts';
+import {analysisMonthsForYear,JAN_SEP_POLICY} from '../public/analysis-period.js';
 
 test('MongoDB desempenho das análises: navegação sem reconciliar arquivos e geração sempre estrita',
   {skip:!process.env.MONGODB_URI,timeout:120000},async t=>{
@@ -22,7 +23,7 @@ test('MongoDB desempenho das análises: navegação sem reconciliar arquivos e g
   const route=async(method:string,path:string,input:any={},user=actor):Promise<any>=>
     routeV4(user,method,new URL('https://example.test/api/v4'+path),input);
   const code=(expected:string)=>(error:any)=>error.code===expected;
-  const expenses=[{sourceMonth:'2026-01',salariesCents:10000,rentCents:0,cardExpensesCents:0,benefitsCents:0,adminExpensesCents:0}];
+  const expenses=analysisMonthsForYear(2026).map((sourceMonth,index)=>({sourceMonth,salariesCents:index===0?10000:0,rentCents:0,cardExpensesCents:0,benefitsCents:0,adminExpensesCents:0}));
   let analysis:any,clientId:string,generationId:string,purchaseJobId:string;
 
   async function observe<T>(action:()=>Promise<T>){
@@ -53,10 +54,10 @@ test('MongoDB desempenho das análises: navegação sem reconciliar arquivos e g
       expectedSectorRevision:analysis.fiscal.revision,expectedConfigRevision:analysis.config.revision});
     analysis=prepared.analysis;generationId=prepared.generationId;
     for(const [attach,nature,totalCents] of [[attachGenerationPurchase,'1102',20000],[attachGenerationSale,'5102',100000]] as const){
-      const {job}=await attach(actor,generationId,{clientId,importId:randomUUID(),fileName:`synthetic-${nature}.csv`,expectedRows:1});
+      const {job}=await attach(actor,generationId,{clientId,importId:randomUUID(),fileName:`synthetic-${nature}.csv`,expectedRows:2});
       if(nature==='1102')purchaseJobId=job._id;
-      await uploadLookup(actor,job._id,{offset:0,rows:[{document:'12345678900',name:'Pessoa sintética',recipientUf:'MG',
-        serviceDate:'2026-01-15',natureCode:nature,quantity:'1',totalCents,grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0}]});
+      await uploadLookup(actor,job._id,{offset:0,rows:[totalCents,0].map((value,index)=>({document:'12345678900',name:'Pessoa sintética',recipientUf:'MG',
+        serviceDate:index===0?'2026-01-15':'2026-09-15',natureCode:nature,quantity:'1',totalCents:value,grossCents:value,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0}))});
       await finalizeLookup(actor,job._id);await processLookup(actor,job._id,(async()=>{throw new Error('CPF não consulta serviços externos.');}) as typeof fetch);
     }
     await saveFiscal();await saveAccounting();
@@ -67,7 +68,7 @@ test('MongoDB desempenho das análises: navegação sem reconciliar arquivos e g
         assert.equal(all.items[0].readiness.verification,'SAVED');assert.equal(all.items[0].readiness.ready,true);
         const found=await route('GET',`/analyses?summary=1&clientId=${clientId}`);assert.equal(found.items[0].id,analysis.id);
         const detail=await route('GET',`/analyses/${analysis.id}?summary=1`);
-        assert.deepEqual(detail.analysis.readiness.months,['2026-01']);assert.equal(detail.analysis.readiness.verification,'SAVED');
+        assert.deepEqual(detail.analysis.readiness.months,analysisMonthsForYear(2026));assert.equal(detail.analysis.readiness.verification,'SAVED');
         const reopened=await route('POST','/analyses?summary=1',{clientId,year:2028,regimeSelection:selection});
         assert.equal(reopened.created,false);assert.equal(reopened.analysis.config.year,2027);
         await saveAccounting();
@@ -79,7 +80,7 @@ test('MongoDB desempenho das análises: navegação sem reconciliar arquivos e g
     });
 
     await t.test('includeSource devolve a reconciliação da própria análise uma única vez',async()=>{
-      const baseline=await observe(()=>generationSimulator(generationId,clientId));
+      const baseline=await observe(()=>generationSimulator(generationId,clientId,{periodPolicy:JAN_SEP_POLICY}));
       const combined=await observe(()=>route('GET',`/analyses/${analysis.id}?includeSource=1`));
       assert.deepEqual(combined.value.source,baseline.value);assert.equal(combined.value.sourceError,null);
       assert.equal(combined.value.analysis.readiness.ready,true);
@@ -94,7 +95,7 @@ test('MongoDB desempenho das análises: navegação sem reconciliar arquivos e g
       analysis=(await route('PATCH',`/analyses/${analysis.id}/config?summary=1`,{expectedConfigRevision:analysis.config.revision,
         year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure']}})).analysis;
       const pending=await route('GET',`/analyses/${analysis.id}?includeSource=1`);
-      assert.equal(pending.source.generationId,generationId);assert.equal(pending.source.monthlyReports.length,1);
+      assert.equal(pending.source.generationId,generationId);assert.equal(pending.source.monthlyReports.length,9);
       assert.equal(pending.sourceError,null);assert.equal(pending.analysis.readiness.ready,false);
       assert.ok(pending.analysis.readiness.issues.some((issue:any)=>issue.code==='RBT12_REQUIRED'));
       analysis=(await route('PATCH',`/analyses/${analysis.id}/config?summary=1`,{expectedConfigRevision:analysis.config.revision,

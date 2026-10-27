@@ -42,6 +42,15 @@ export function dreReportCoverage(presentation) {
     label:'Projeção anual salva',detail:'Os valores mensais representam a projeção capturada nesta versão; não são movimentos históricos de cada mês.'};
   const candidates=presentation.report?.sourceMonths||presentation.months?.map(month=>month.sourceMonth)||[];
   const sourceMonths=[...new Set(candidates.filter(value=>typeof value==='string'&&/^\d{4}-(0[1-9]|1[0-2])$/.test(value)))].sort();
+  const period=presentation.analysisPeriod;
+  if(period?.version==='JAN_SEP_V1'){
+    const expected=Array.isArray(period.expectedMonths)?period.expectedMonths:[];
+    const included=sourceMonths.filter(month=>expected.includes(month)),count=included.length;
+    const complete=count===9&&expected.length===9&&period.complete===true;
+    return {actual:true,sourceMonths:included,count,completeYear:false,completePeriod:complete,
+      label:complete?'Janeiro a setembro · 9 de 9 competências':`Janeiro a setembro · ${count} de 9 competências`,
+      detail:`Período fixo: ${period.startMonth} a ${period.endMonth}. ${complete?'O consolidado soma os nove meses confirmados.':'Cobertura pendente: não há um consolidado completo de janeiro a setembro.'} Outubro a dezembro ficam fora da análise. A RBT12 do Simples mantém sua referência própria de 12 meses.`};
+  }
   const count=sourceMonths.length,years=new Set(sourceMonths.map(value=>value.slice(0,4))),completeYear=count===12&&years.size===1;
   const label=completeYear?'Ano de origem completo · 12 de 12 competências':count===12?'12 competências em mais de um ano de origem':`Período parcial · ${count} de 12 competências`;
   return {actual:true,sourceMonths,count,completeYear,label,
@@ -107,11 +116,14 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   const capturedSelection=result?.regimeSelection!==undefined?result.regimeSelection:engineInput?.regimeSelection!==undefined?engineInput.regimeSelection:calendar?.regimeSelection;
   const regimeSelection=capturedSelection===undefined?undefined:resolveRegimeSelection(capturedSelection),hasSimples=requiresSimplesReference(regimeSelection);
   const originals = (Array.isArray(result?.regimes) ? result.regimes : []).filter(regime=>!regimeSelection||regimeSelection.selected.includes(regime.id));
-  const hasCalendar = calendar != null;
-  const validCalendar = ['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3'].includes(calendar?.version) && Array.isArray(calendar.months) && calendar.months.length===12;
-  const calendarYear = calendar?.year ?? engineInput?.year ?? null;
-  const months = validCalendar ? calendar.months.map(month=>({...month})) : MONTH_NAMES.map((label,index)=>({number:index+1,label,period:calendarYear?`${calendarYear}-${String(index+1).padStart(2,'0')}`:null}));
   const actual=result?.method==='REPORT_MONTHS_V1';
+  const analysisPeriod=actual&&result.analysisPeriod?.version==='JAN_SEP_V1'?structuredClone(result.analysisPeriod):null;
+  const hasCalendar = calendar != null;
+  const validCalendar = Array.isArray(calendar?.months) && (analysisPeriod?
+    calendar.version==='DRE_CALENDAR_V4'&&calendar.analysisPeriod?.version==='JAN_SEP_V1'&&calendar.months.length===9:
+    ['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3'].includes(calendar?.version)&&calendar.months.length===12);
+  const calendarYear = calendar?.year ?? engineInput?.year ?? null;
+  const months = validCalendar ? calendar.months.map(month=>({...month})) : MONTH_NAMES.slice(0,analysisPeriod?9:12).map((label,index)=>({number:index+1,label,period:calendarYear?`${calendarYear}-${String(index+1).padStart(2,'0')}`:null}));
   const memory = (id,frame=null) => {
     const entry=unique(frame?.monthResult?.memory||result?.memory,'id',id);
     return entry?.unit==='currency' && finite(entry.value) && entry.value>=0 ? entry.value : null;
@@ -122,7 +134,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     const monthlyRegime=monthlyEntry?.result?.regimes?.find(row=>row.id===regime.id);
     const effective=monthlyRegime||regime;
     const available=actual&&kind==='month'?
-      !!monthlyRegime&&monthlyRegime.available===true&&(!hasCalendar||(validCalendar&&calendar.version==='DRE_CALENDAR_V3'&&!!saved&&calendar.months[index]?.sourceMonth===monthlyEntry.sourceMonth)):
+      !!monthlyRegime&&monthlyRegime.available===true&&(!hasCalendar||(validCalendar&&['DRE_CALENDAR_V3','DRE_CALENDAR_V4'].includes(calendar.version)&&!!saved&&calendar.months[index]?.sourceMonth===monthlyEntry.sourceMonth)):
       regime.available===true&&(kind==='annual'||!hasCalendar||saved?.available===true);
     return {regime:effective,kind,index,available,monthlyEntry,monthResult:monthlyEntry?.result,scale:kind==='month'&&!actual?1/12:1,
       get(key) {
@@ -319,7 +331,17 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
       row('revenueManualAdjustment','Ajustes manuais do cenário (+/−)','line',revenueCell('manualAdjustmentCents'),{informative:true,notes:['Diferença entre a receita utilizada no cenário e a receita da fonte após devoluções. Não modifica os relatórios de origem.'],sourceRefs:['source.monthlyReports[].fields','result.regimes[].dre.revenue']}),
       row('revenueUsed','= Receita utilizada na simulação','subtotal',f=>currency(f.get('revenue')),{informative:true,notes:['Valor preservado na DRE. A base dos tributos, margens e percentuais permanece a mesma.'],sourceRefs:['result.regimes[].dre.revenue']})
     ]};
+  const appliedCredits=analysisPeriod?row('appliedCredits','Créditos tributários efetivamente utilizados','indicator',f=>{
+    const icms=f.regime.dre?.icmsUsed;
+    if(!finite(icms)||icms<0)return missing('O crédito de ICMS utilizado não está capturado nesta versão.');
+    if(!close(f.get('icmsNet'),f.regime.dre?.icmsNet*f.scale))return missing('O ICMS líquido do calendário não concilia com o resultado capturado.');
+    const amounts=[f.get('cbsUsed'),f.get('ibsUsed'),icms*f.scale];
+    return amounts.every(value=>finite(value)&&value>=0)?good(sum(amounts)):missing('Os créditos utilizados não estão completos neste período e regime.');
+  },{informative:true,notes:['Créditos de CBS, IBS e ICMS já considerados nos impostos ou nas compras. Não acrescentar novamente ao resultado; não representam restituição em dinheiro.'],sourceRefs:['result.regimes[].dre.cbsUsed','result.regimes[].dre.ibsUsed','result.regimes[].dre.icmsUsed']}):null;
+  const commercialComposition=analysisPeriod&&source?.commercialComposition?.version==='COMMERCIAL_COMPOSITION_V1'?structuredClone(source.commercialComposition):null;
+  const monthlyCommercialComposition=analysisPeriod?Object.fromEntries((source?.monthlyReports||[]).filter(entry=>entry.commercialComposition?.version==='COMMERCIAL_COMPOSITION_V1'&&analysisPeriod.includedMonths.includes(entry.sourceMonth)).map(entry=>[entry.sourceMonth,structuredClone(entry.commercialComposition)])):null;
   return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,revenueReconciliation,icmsReconciliation,months,calendarYear,
+    ...(analysisPeriod?{analysisPeriod,appliedCredits,commercialComposition,monthlyCommercialComposition}:{}),
     ...(regimeSelection?{regimeSelection}:{}),
     ...(hasSimples&&result?.simplesDiagnostic?.version==='SIMPLES_DIAGNOSTIC_V1'?{simplesDiagnostic:structuredClone(result.simplesDiagnostic)}:{}),
     report:{modelVersion:typeof result?.version==='string'?result.version:null,

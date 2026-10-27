@@ -112,10 +112,11 @@ async function generate(page:Page,id:string){
 function report(name:string,kind:'purchases'|'sales'){
   const header=Array(28).fill('');
   for(const [column,label] of [[0,'CNPJ / CPF / CNO'],[7,'Data Escrituração/Serviço'],[8,'Razão Social'],[9,'Estado'],[11,'Natureza'],[14,'Descrição'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']] as const)header[column]=label;
-  const rows=[1,2].map(month=>{
-    const row=Array(28).fill('');row[0]='123.456.789-00';row[7]=`15/0${month}/2025`;row[8]='Pessoa sintética';row[9]='MG';
+  const rows=Array.from({length:12},(_,index)=>index+1).map(month=>{
+    const row=Array(28).fill('');row[0]='123.456.789-00';row[7]=`15/${String(month).padStart(2,'0')}/2025`;row[8]='Pessoa sintética';row[9]='MG';
     row[11]=kind==='sales'?'5102001':'1102001';row[14]='Operação sintética por competência';row[15]='1';
-    row[16]=((kind==='sales'?1000:200)*month).toFixed(2).replace('.',',');
+    // October–December deliberately carry large amounts; the new analysis must exclude them.
+    row[16]=((kind==='sales'?1000:200)*(month<=2?month:month>=10?100:0)).toFixed(2).replace('.',',');
     for(const column of [24,25,26,27])row[column]='0,00';return row;
   });
   return {name,mimeType:'text/csv',buffer:Buffer.from([header,...rows].map(row=>row.join(';')).join('\r\n'),'latin1')};
@@ -136,15 +137,23 @@ async function openDetails(page:Page,id:string){
   await expect(detail).toHaveJSProperty('open',true);
 }
 async function addMonth(page:Page,month:string,values:(number|null)[]){
-  await openSector(page,'accounting','values');await openDetails(page,'analysis-accounting-tools');
-  await page.locator('#analysis-new-month').fill(month);await page.locator('#analysis-new-month').press('Enter');
+  await openSector(page,'accounting','values');
+  if(await page.locator('[data-accounting-month="'+month+'"]').count()===0){
+    await openDetails(page,'analysis-accounting-tools');
+    const sourceYear=page.locator('#analysis-new-source-year');
+    if(await sourceYear.getAttribute('readonly')===null)await sourceYear.fill(month.slice(0,4));
+    else await expect(sourceYear).toHaveValue(month.slice(0,4));
+    await expect(page.locator('#analysis-add-month')).toHaveText('Preparar janeiro a setembro');
+    await page.locator('#analysis-add-month').click();
+    await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
+  }
   await expect(page.locator('[data-accounting-month="'+month+'"]')).toHaveCount(1);
   await openDetails(page,'analysis-month-'+month);
   const keys=['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents'];
   for(let i=0;i<keys.length;i++)if(values[i]!==null)await page.locator(`[data-accounting-month="${month}"] [data-accounting-field="${keys[i]}"]`).fill(String(values[i]));
 }
 
-test('Fiscal e Contábil compartilham uma análise, regimes sem Simples dispensam extrato e versões preservam valores reais',async({page,browser,baseURL,analysisAccounts},info)=>{
+test('Relatórios de doze meses geram Jan–Set, nove despesas e composição comercial com histórico compartilhado',async({page,browser,baseURL,analysisAccounts},info)=>{
   test.setTimeout(180_000);page.setDefaultTimeout(15_000);
   const {db,workspaceId,accounting,fiscal}=analysisAccounts,errors:string[]=[];
   page.on('pageerror',error=>errors.push(error.message));
@@ -165,9 +174,11 @@ test('Fiscal e Contábil compartilham uma análise, regimes sem Simples dispensa
   await expect(page.locator('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]')).toHaveValue('100');
   await page.locator('[data-accounting-month="2025-01"] [data-accounting-field="adminExpensesCents"]').fill('0');
   await addMonth(page,'2025-02',[200,60,15,30,5]);
+  for(let month=3;month<=9;month++)await addMonth(page,'2025-0'+month,[0,0,0,0,0]);
   let analysis=await saveSector(page,id,'accounting');
   expect(analysis.accounting.status).toBe('COMPLETE');expect(analysis.fiscal.status).toBe('DRAFT');expect(analysis.readiness.ready).toBe(false);
-  expect(analysis.accounting.data.months.map((row:any)=>row.salariesCents)).toEqual([10000,20000]);
+  expect(analysis.periodPolicy).toBe('JAN_SEP_V1');
+  expect(analysis.accounting.data.months.map((row:any)=>row.salariesCents)).toEqual([10000,20000,...Array(7).fill(0)]);
   await page.screenshot({path:info.outputPath('analysis-overview-desktop.png'),fullPage:true});
   await openSector(page,'accounting','values');
   await page.screenshot({path:info.outputPath('analysis-accounting-desktop.png'),fullPage:true});
@@ -190,24 +201,41 @@ test('Fiscal e Contábil compartilham uma análise, regimes sem Simples dispensa
     expect(first.analysisId).toBe(id);expect(first.rbt12Source).toBe('NOT_REQUIRED');expect(first.rbt12Extraction).toBeNull();
     expect(first.draft.rbt12).toBeUndefined();expect(first.engineInput.rbt12).toBeNull();expect(first.rbt12Schedule).toBeUndefined();
     expect(first.result.regimes.map((row:any)=>row.id)).toEqual(['presumed','actual']);expect(first.result.annualRevenue).toBe(3000);
+    expect(first.reportMonths).toBe(9);
+    expect(first.source.analysisPeriod).toMatchObject({version:'JAN_SEP_V1',sourceYear:2025,months:9,complete:true,
+      excludedMonths:['2025-10','2025-11','2025-12'],missingMonths:[]});
+    expect(first.source.monthlyReports.map((row:any)=>row.sourceMonth)).toEqual(Array.from({length:9},(_,index)=>'2025-0'+(index+1)));
+    expect(first.source.commercialComposition.revenue).toMatchObject({grossCents:300000,returnsCents:0,totalCents:300000,percentDenominatorCents:300000});
+    expect(first.source.commercialComposition.revenue.byCustomerType.find((row:any)=>row.key==='B2C')).toMatchObject({totalCents:300000,percent:100});
+    expect(first.source.commercialComposition.purchases.totalCents).toBe(60000);
+    expect(first.source.commercialComposition.purchases.byTaxStatus.find((row:any)=>row.key==='CPF')).toMatchObject({totalCents:60000,percent:100});
     expect(first.monthlyInputs.map((row:any)=>row.values)).toEqual([
       {serviceRevenue:0,salaries:100,rent:50,cardExpenses:10,benefits:20,adminExpenses:0},
-      {serviceRevenue:0,salaries:200,rent:60,cardExpenses:15,benefits:30,adminExpenses:5}
+      {serviceRevenue:0,salaries:200,rent:60,cardExpenses:15,benefits:30,adminExpenses:5},
+      ...Array.from({length:7},()=>({serviceRevenue:0,salaries:0,rent:0,cardExpenses:0,benefits:0,adminExpenses:0}))
     ]);
-    await expect(fiscalPage.locator('.sim-regime')).toHaveCount(2);
-    await expect(fiscalPage.locator('#dre-demonstrativo > .dre-table-wrap [data-dre-row="revenue"] td')).toHaveCount(2);
-    await expect(fiscalPage.locator('#dre-demonstrativo > .dre-table-wrap [data-dre-row="revenue"] td').first()).toHaveText('R$ 3.000,00');
+    await expect(fiscalPage.locator('[data-dre-regime-result]')).toHaveCount(2);
+    await expect(fiscalPage.locator('#dre-demonstrativo [data-dre-summary-row="revenue"] td')).toHaveCount(2);
+    await expect(fiscalPage.locator('#dre-demonstrativo [data-dre-summary-row="revenue"] td').first()).toHaveText('R$ 3.000,00');
+    await expect(fiscalPage.locator('#dre-demonstrativo [data-commercial-side="revenue"] [data-commercial-total]')).toHaveText('R$ 3.000,00');
+    await expect(fiscalPage.locator('#dre-demonstrativo [data-commercial-side="purchases"] [data-commercial-total]')).toHaveText('R$ 600,00');
+    await expect(fiscalPage.locator('#dre-demonstrativo [data-commercial-side="purchases"] [data-commercial-group="CPF"] [data-commercial-percent]')).toHaveText('100,00%');
     expect(requests).toEqual([]);
     expect(await db.collection('analyses').countDocuments({workspaceId,clientId:client.id})).toBe(1);
     const jobIds=[first.source.purchases.jobId,first.source.sales.jobId];
     const frozenRows=await db.collection('purchaseLines').find({workspaceId,jobId:{$in:jobIds}}).sort({jobId:1,index:1}).toArray();
-    expect(frozenRows).toHaveLength(4);
+    expect(frozenRows).toHaveLength(24);
 
     await fiscalPage.locator('#dre-report-period').selectOption('complete');
     const downloading=fiscalPage.waitForEvent('download');await fiscalPage.locator('#export-dre-csv').click();
     const download=await downloading,stream=await download.createReadStream();let csv='';for await(const chunk of stream!)csv+=chunk;
     const rows=csvParse(csv,';');expect(rows.some(row=>row[0]==='Lucro Presumido')).toBe(true);expect(rows.some(row=>row[0]==='Lucro Real')).toBe(true);
     expect(rows.some(row=>['Simples Puro','Simples Híbrido'].includes(row[0]))).toBe(false);
+    expect(csv).toContain('Consolidado Jan–Set');
+    const monthlyHeader=rows.find(row=>row[0]==='Regime'&&row[3]==='Indicador');
+    expect(monthlyHeader).toBeTruthy();
+    expect(monthlyHeader!.slice(6,15)).toEqual(['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro']);
+    expect(monthlyHeader!.slice(15)).toEqual(['Consolidado Jan–Set / indicador do período','Observações','Referências']);
     await fiscalPage.evaluate(()=>{window.print=()=>{};});await fiscalPage.locator('#print-dre').click();
     await expect(fiscalPage.locator('#dre-print-document [data-report-part="monthly"]')).toHaveCount(2);
     await fiscalPage.pdf({path:info.outputPath('analysis-two-regimes-complete.pdf'),format:'A4',landscape:true,printBackground:true,preferCSSPageSize:true});
@@ -231,8 +259,8 @@ test('Fiscal e Contábil compartilham uma análise, regimes sem Simples dispensa
     await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await saveSector(page,id,'fiscal');
     await page.goto(`/analyses.html?id=${id}&sector=accounting`);await saveSector(page,id,'accounting');
     const single=await generate(page,id);expect(single.result.regimes.map((row:any)=>row.id)).toEqual(['actual']);
-    await expect(page.locator('.sim-regime')).toHaveCount(1);await expect(page.locator('#simulation-result')).toContainText('Resultado do regime selecionado');
-    await expect(page.locator('#dre-demonstrativo > .dre-table-wrap [data-dre-row="revenue"] td')).toHaveCount(1);
+    await expect(page.locator('[data-dre-regime-result]')).toHaveCount(1);await expect(page.locator('#simulation-result')).toContainText('1 regime selecionado');
+    await expect(page.locator('#dre-demonstrativo [data-dre-summary-row="revenue"] td')).toHaveCount(1);
     await page.evaluate(()=>{window.print=()=>{};});await page.locator('#print-dre').click();
     await expect(page.locator('#dre-print-document [data-report-part="monthly"]')).toHaveCount(1);
     await page.pdf({path:info.outputPath('analysis-single-regime-complete.pdf'),format:'A4',landscape:true,printBackground:true,preferCSSPageSize:true});
@@ -273,7 +301,9 @@ test('Simples exige referência confirmada, trocar regimes retira o extrato e co
   analysis=await saveSector(page,id,'fiscal');expect(analysis.fiscal.data).toMatchObject({rbt12Source:'NOT_REQUIRED',rbt12:null,rbt12DocumentId:null,rbt12ExtractionId:null,rbt12ManualConfirmed:false});
 
   await page.goto(`/analyses.html?id=${id}&sector=accounting`);
-  await addMonth(page,'2025-01',[100,0,0,0,0]);await addMonth(page,'2025-02',[200,0,0,0,0]);await saveSector(page,id,'accounting');
+  await addMonth(page,'2025-01',[100,0,0,0,0]);await addMonth(page,'2025-02',[200,0,0,0,0]);
+  for(let month=3;month<=9;month++)await addMonth(page,'2025-0'+month,[0,0,0,0,0]);
+  await saveSector(page,id,'accounting');
   const context=await browser.newContext({baseURL});
   try{
     await signIn(context.request,baseURL!,analysisAccounts.fiscal);const concurrent=await context.newPage();

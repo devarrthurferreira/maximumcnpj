@@ -75,17 +75,17 @@ test('Extrato da análise é salvo, retomado em nova sessão e desvinculado ao c
     const prepared=await post(page.request,baseURL!,`/api/v4/analyses/${id}/fiscal/import`,{
       expectedSectorRevision:opened.analysis.fiscal.revision,expectedConfigRevision:opened.analysis.config.revision
     });
-    // Real Node ingestion derives the source values. August 2026 has a complete
-    // preceding twelve-month window in statementHistory, matching the PDF's PA.
+    // Real Node ingestion derives January–September 2025. statementHistory contains
+    // each preceding twelve-month RBT12 window; the PDF keeps its own August 2026 PA.
     for(const [kind,totalCents] of [['purchases',450_000],['sales',1_200_000]] as const){
       const attached=await post(page.request,baseURL!,`/api/v4/generations/${prepared.generationId}/${kind}`,{
-        clientId,importId:randomUUID(),fileName:`${code}-${kind}.csv`,expectedRows:1,issuerUf:'MG'
+        clientId,importId:randomUUID(),fileName:`${code}-${kind}.csv`,expectedRows:9,issuerUf:'MG'
       });
-      await post(page.request,baseURL!,`/api/v4/${kind}/${attached.job._id}/rows`,{offset:0,rows:[{
-        document:'12345678900',name:'Pessoa sintética',serviceDate:'2026-08-15',quantity:'1',
+      await post(page.request,baseURL!,`/api/v4/${kind}/${attached.job._id}/rows`,{offset:0,rows:Array.from({length:9},(_,index)=>({
+        document:'12345678900',name:'Pessoa sintética',serviceDate:'2025-0'+(index+1)+'-15',quantity:'1',
         natureCode:kind==='sales'?'5102001':'1102001',description:'Operação sintética',recipientUf:'MG',
-        grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents
-      }]});
+        grossCents:index===7?totalCents:0,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:index===7?totalCents:0
+      }))});
       const completed=await post(page.request,baseURL!,`/api/v4/${kind}/${attached.job._id}/finalize`,{});
       expect(completed.status).toBe('COMPLETED');expect(completed.summary.unique).toBe(0);
     }
@@ -166,7 +166,7 @@ test('Extrato da análise é salvo, retomado em nova sessão e desvinculado ao c
     const linked=(await get(page.request,`/api/v4/analyses/${id}`)).analysis;
     expect(linked.fiscal).toMatchObject({status:'DRAFT',data:{rbt12Source:'SIMPLES_SECTION_22',rbt12:150000.01,
       rbt12DocumentId:documentId,rbt12ExtractionId:extractionId,rbt12ManualConfirmed:false}});
-    expect(linked.readiness.months).toEqual(['2026-08']);
+    expect(linked.readiness.months).toEqual(Array.from({length:9},(_,index)=>'2025-0'+(index+1)));
     const confirmed=await completeFiscal(page,id);
     const storedDocument=await db.collection<any>('simplesDocuments').findOne(documentFilter);
     const storedExtraction=await db.collection<any>('simplesExtractions').findOne(extractionFilter);

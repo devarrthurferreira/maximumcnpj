@@ -7,11 +7,12 @@ import {annualizeReports, projectScenario, projectDifal} from './simulator-proje
 import {renderProjectionCard} from './simulator-projection-view.js';
 import {renderRevenueReconciliationEditor} from './simulator-revenue-view.js';
 import {buildDrePresentation,dreReportMemory} from './simulator-dre.js';
-import {renderAnnualDre,renderDrePrintCalendar,renderDrePrintDocument} from './simulator-dre-view.js';
+import {renderAnnualDre,renderDreCompleteDetails,renderDrePrintCalendar,renderDrePrintDocument} from './simulator-dre-view.js';
 import {buildDreCsv,buildDreExportPayload} from './simulator-dre-export.js';
 import {mountNavigation} from './navigation.js';
 import {renderSimulationCharts} from './simulation-charts.js';
 import {createEmptyDraft, calculateSimulation, defaultDifalPolicy, parseDifalPolicy, upgradeDifalPolicy, resolveDifalApplication, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES} from './simulator-engine.js';
+import {JAN_SEP_POLICY,assertCompleteAnalysisPeriod} from './analysis-period.js';
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const moneyFormatter = new Intl.NumberFormat('pt-BR', {style:'currency',currency:'BRL'});
@@ -33,7 +34,8 @@ const localTaxesOutside = () => S.readonly ? S.snapshot?.draft?.icmsOutside===tr
 const hasImportedServices = () => S.source?.revenueSplit?.version === 'SALES_SERVICES_V1' && Number.isSafeInteger(S.source.fields?.serviceRevenueCents);
 const isImportedField = key => IMPORTED.includes(key) || (key === 'serviceRevenue' && hasImportedServices());
 const actualMonths=()=>Array.isArray(S.source?.monthlyReports)&&(!S.readonly||S.snapshot?.result?.method==='REPORT_MONTHS_V1');
-const sourceProjection=()=>actualMonths()?monthlyProjection(S.source.monthlyReports):annualizeReports(S.source.fields,S.months);
+const fixedAnalysisPeriod=()=>S.source?.analysisPeriod?.version===JAN_SEP_POLICY;
+const sourceProjection=()=>actualMonths()?{...monthlyProjection(S.source.monthlyReports),...(fixedAnalysisPeriod()?{analysisPeriod:S.source.analysisPeriod}:{})}:annualizeReports(S.source.fields,S.months);
 const difalProjection = () => S.readonly ? S.snapshot?.difalProjection || null : actualMonths()?monthlyDifal(S.source.monthlyReports,S.source.sales.jobId):projectDifal(S.source.sales.difal, S.months, S.source.sales.jobId);
 const rbt12Schedule=()=>S.readonly?S.snapshot?.rbt12Schedule||S.snapshot?.result?.rbt12Schedule||null:actualMonths()&&S.rbt12Mode==='PDF'&&S.rbt12Data?buildRbt12Schedule(S.rbt12Data,S.source.monthlyReports.map(row=>row.sourceMonth)):null;
 function difalSourceApplication(direction){
@@ -85,7 +87,7 @@ function difalOptions(snapshot=null){
   if(readonly&&chosen&&!regimes.length)return '';
   const intro=readonly?'Escolhas registradas nesta versão. Os valores e os estados de aplicação permanecem como foram salvos.':initial?'As opções escolhidas no início acompanham esta simulação. Revise o cenário e as operações abaixo.':'Escolha se deseja DIFAL no Simples puro, híbrido ou ambos. Entrada e saída são opções independentes em cada cenário.';
   const controls=policy?`${legacy?'<p class="sim-help" data-difal-legacy-policy>Opções históricas: esta versão usava a regra anterior de DIFAL. Ao criar uma nova versão, o DIFAL será permitido somente no Simples puro e híbrido, com entrada e saída separadas.</p>':''}<div class="sim-difal-options-grid">${regimes.map(([id,name])=>`<article class="sim-difal-option" data-difal-option="${id}">${readonly?`<h4>${name}</h4><strong class="sim-difal-choice">${policy.enabled[id]?'Incluído por escolha':'Não incluído por escolha'}</strong><p class="sim-difal-scope">${esc(difalOperationSummary(policy,id))}</p>`:`<label for="difal-enabled-${id}"><input id="difal-enabled-${id}" data-difal-regime="${id}" type="checkbox" aria-label="Incluir DIFAL no ${name}" ${policy.enabled[id]?'checked':''}><span>${name}</span></label><fieldset class="sim-difal-operations"><legend>Onde incluir no ${name}?</legend>${DIFAL_OPERATIONS.map(([operation,label,description])=>`<label for="difal-${operation}-${id}"><input id="difal-${operation}-${id}" data-difal-operation="${operation}" data-difal-operation-regime="${id}" type="checkbox" aria-label="${label} no ${name}" ${policy.operations[id][operation]?'checked':''} ${policy.enabled[id]?'':'disabled'}><span>${label}<small>${description}</small></span></label>`).join('')}</fieldset>`}<p class="sim-difal-option-state" data-difal-state="${id}" role="status"></p></article>`).join('')}</div><p class="sim-help" id="difal-options-context"></p>${readonly?'':'<p class="sim-help">Nesta simulação, o DIFAL é aplicado somente ao Simples puro e híbrido. Marque entrada, saída ou ambas; desmarque o cenário para não incluir. O valor fica zerado quando a RBT12 da competência alcança R$ 3,6 milhões ou o ICMS está fora do DAS. Sua escolha permanece salva para os demais meses.</p>'}`:'<p class="sim-help" data-difal-legacy>Esta versão não registrava opções de DIFAL por regime. Consulte os valores preservados na DRE; o histórico não foi recalculado.</p>';
-  return `<section id="sim-difal-options" class="sim-difal-options${readonly?' card is-readonly':''}" aria-labelledby="sim-difal-options-title"><h3 id="sim-difal-options-title">DIFAL nos cenários</h3><p class="sim-help">${intro}</p>${initial?`<p class="sim-difal-selection-summary" data-difal-selection-summary>${esc(difalSelectionSummary(policy))}</p><details class="sim-difal-review"><summary>Revisar DIFAL nos cenários</summary>${controls}</details>`:controls}</section>`;
+  return `<section id="sim-difal-options" class="sim-difal-options${readonly?' card is-readonly':''}${fixedAnalysisPeriod()?' is-fixed-period':''}" aria-labelledby="sim-difal-options-title"><h3 id="sim-difal-options-title">${fixedAnalysisPeriod()?'DIFAL · entrada e saída':'DIFAL nos cenários'}</h3><p class="sim-help">${intro}</p>${initial&&!fixedAnalysisPeriod()?`<p class="sim-difal-selection-summary" data-difal-selection-summary>${esc(difalSelectionSummary(policy))}</p><details class="sim-difal-review"><summary>Revisar DIFAL nos cenários</summary>${controls}</details>`:controls}</section>`;
 }
 function updateDifalOptions(){
   const host=$('#sim-difal-options');if(!host||host.querySelector('[data-difal-legacy]'))return;
@@ -123,7 +125,7 @@ function selectReportMonth(index){
   if(S.result){S.dreMonth=S.source.monthlyReports[index].month-1;renderResult();}
 }
 function monthWorkspace(){
-  return `<div class="sim-month-workspace"><div class="sim-month-nav" role="group" aria-label="Navegação entre competências"><div class="sim-month-heading"><span class="eyebrow">CONFERÊNCIA MENSAL</span><label for="report-competence">Competência dos relatórios</label></div><div class="sim-month-switch"><button type="button" id="report-prev" aria-label="Competência anterior">←</button><select id="report-competence" aria-describedby="month-context">${S.source.monthlyReports.map((row,index)=>`<option value="${index}">${esc(competenceLabel(row.sourceMonth))}</option>`).join('')}</select><button type="button" id="report-next" aria-label="Próxima competência">→</button></div><span id="month-position" class="sim-month-position"></span></div><section class="sim-month-overview" aria-label="Resumo da competência"><div class="sim-month-context"><p id="month-context" role="status"></p><span id="month-adjustment-state" class="sim-state-badge"></span></div><div class="sim-month-metrics">${[['revenue','Receita utilizada'],['purchases','Compras'],['expenses','Despesas informadas'],['difal','DIFAL de saída selecionado']].map(([key,label])=>`<article><span>${label}</span><strong id="month-summary-${key}">—</strong></article>`).join('')}</div><div class="sim-month-footer"><p>Despesas são preenchidas em cada mês. O total anual soma as competências.</p><button type="button" id="restore-month">Restaurar receitas e compras deste mês</button></div></section>`;
+  return `<div class="sim-month-workspace"><div class="sim-month-nav" role="group" aria-label="Navegação entre competências"><div class="sim-month-heading"><span class="eyebrow">CONFERÊNCIA MENSAL</span><label for="report-competence">Competência dos relatórios</label></div><div class="sim-month-switch"><button type="button" id="report-prev" aria-label="Competência anterior">←</button><select id="report-competence" aria-describedby="month-context">${S.source.monthlyReports.map((row,index)=>`<option value="${index}">${esc(competenceLabel(row.sourceMonth))}</option>`).join('')}</select><button type="button" id="report-next" aria-label="Próxima competência">→</button></div><span id="month-position" class="sim-month-position"></span></div><section class="sim-month-overview" aria-label="Resumo da competência"><div class="sim-month-context"><p id="month-context" role="status"></p><span id="month-adjustment-state" class="sim-state-badge"></span></div><div class="sim-month-metrics">${[['revenue','Receita utilizada'],['purchases','Compras'],['expenses','Despesas informadas'],['difal','DIFAL de saída selecionado']].map(([key,label])=>`<article><span>${label}</span><strong id="month-summary-${key}">—</strong></article>`).join('')}</div><div class="sim-month-footer"><p>Despesas são preenchidas em cada mês. ${fixedAnalysisPeriod()?'O consolidado soma janeiro a setembro.':'O total anual soma as competências.'}</p><button type="button" id="restore-month">Restaurar receitas e compras deste mês</button></div></section>`;
 }
 function monthHasAdjustments(index){
   const entry=S.monthlyInputs[index],base=S.source.monthlyReports[index].fields;
@@ -181,6 +183,10 @@ function moneyField(id, label, help, imported=false, readonly=false, signed=fals
 function section(number,title,subtitle,content,id) {
   return `<section class="card sim-section" id="${id}"><div class="sim-section-header"><span class="sim-number">${number}</span><div><h2>${title}</h2><p>${subtitle}</p></div></div>${content}</section>`;
 }
+function fixedPeriodNotice(){
+  const period=S.source.analysisPeriod,count=period.includedMonths.length;
+  return `<section class="card sim-fixed-period${period.complete?'':' is-pending'}" aria-label="Período fixo da análise"><div><span class="eyebrow">PERÍODO FIXO · 9 MESES</span><h2>Janeiro a setembro de ${esc(period.sourceYear)}</h2><p>${count} de 9 competências confirmadas em entradas e saídas. Outubro a dezembro ficam fora desta análise.</p></div><strong>${period.complete?'Cobertura completa':'Documentos pendentes'}</strong><select id="period-months" hidden disabled aria-label="Meses do período fixo"><option value="9">9 meses</option></select><input id="period-confirm" type="checkbox" hidden disabled ${period.complete?'checked':''}><p id="period-explanation" class="sim-help">${period.complete?'O resultado será a soma dos nove meses, sem projeção para doze.':`Complete a cobertura para gerar: ${period.missingMonths.map(competenceLabel).map(esc).join(', ')}.`}</p></section>`;
+}
 function display(prefill=null) {
   S.readonly=false; S.result=null; S.snapshot=null; S.pending=null; S.rbt12Mode='PDF'; S.serviceMigration=servicesMigration(prefill)?{previousServices:Number(prefill.draft.values.serviceRevenue)||0}:null;S.draftMigrationNotice=null;clearRbt12();
   S.dreContext=null;dreContextCache=null;
@@ -188,7 +194,12 @@ function display(prefill=null) {
   S.difalPolicy=upgradeDifalPolicy(S.source.difalPolicy);
   const automaticPeriod=S.source.periodBasis==='COLUMN_H'&&Number.isInteger(S.source.reportMonths);
   if(automaticPeriod)S.months=S.source.reportMonths;
-  const periodText=automaticPeriod ? `<details class="card sim-source sim-period-details"><summary>Período confirmado · ${S.months} ${S.months===1?'mês':'meses'}<span>${esc(S.source.period.startMonth)} a ${esc(S.source.period.endMonth)}</span></summary><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months" disabled><option value="${S.months}">${S.months} ${S.months===1?'mês':'meses'}</option></select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" checked disabled>Confirmado pela coluna H. Compras e vendas podem ter dias diferentes na mesma competência.</label></div><p id="period-explanation" class="sim-help"></p></details>` :
+  if(fixedAnalysisPeriod())S.months=9;
+  if(fixedAnalysisPeriod()&&!S.source.monthlyReports?.length){
+    $('#simulator-app').innerHTML=`<section class="card sim-empty"><h1>${esc(S.source.company.name)}</h1><h2>Complete os documentos de janeiro a setembro</h2><p>Os relatórios atuais não confirmam competências em comum dentro do período fixo. Importe entradas e saídas para continuar.</p><a class="sim-back" href="/generations.html?id=${encodeURIComponent(S.source.generationId)}">Conferir relatórios →</a></section>${fixedPeriodNotice()}${sourceCard()}`;
+    return;
+  }
+  const periodText=fixedAnalysisPeriod()?fixedPeriodNotice():automaticPeriod ? `<details class="card sim-source sim-period-details"><summary>Período confirmado · ${S.months} ${S.months===1?'mês':'meses'}<span>${esc(S.source.period.startMonth)} a ${esc(S.source.period.endMonth)}</span></summary><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months" disabled><option value="${S.months}">${S.months} ${S.months===1?'mês':'meses'}</option></select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" checked disabled>Confirmado pela coluna H. Compras e vendas podem ter dias diferentes na mesma competência.</label></div><p id="period-explanation" class="sim-help"></p></details>` :
     `<section class="card sim-source sim-period-manual"><h2>Confirme o período dos relatórios</h2><p class="sim-help">Informe quantos meses estão incluídos nos dois arquivos.</p><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1} ${i?'meses':'mês'}</option>`).join('')}</select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" required>Compras e vendas correspondem ao mesmo período.</label></div><p id="period-explanation" class="sim-help"></p></section>`;
   $('#simulator-app').innerHTML = `<div id="simulator-intro">${hero(false)}</div><div class="sim-context">${sourceCard()}<div id="simulation-notices"></div></div>
     <form id="simulator-form"><fieldset id="simulation-fields"><p class="sim-form-guidance">Valores em reais (R$). Campos com * são obrigatórios; informe 0 quando não houver valor.</p><div id="simulator-projection"></div>${periodText}
@@ -232,6 +243,7 @@ function display(prefill=null) {
   if(prefill) fillSnapshot(prefill);
   restoreDraft();
   updateRevenue(); renderNotices();
+  if(fixedAnalysisPeriod()&&!S.source.analysisPeriod.complete){$('#generate-simulation').disabled=true;$('#draft-status').textContent='Preenchimento salvo nesta aba. Complete a cobertura de janeiro a setembro para gerar.';}
   if(S.rbt12DocumentId&&!S.rbt12Data)void restoreStoredRbt12();
   else if(S.rbt12ExtractionId&&!S.rbt12Data)void restoreRbt12();
   else if(!S.rbt12Data&&S.rbt12Mode!=='MANUAL')clearRbt12();
@@ -243,7 +255,7 @@ function display(prefill=null) {
 function applyReports() {
   if(actualMonths()){
     const previous=S.monthlyInputs;S.monthlyInputs=S.source.monthlyReports.map((row,index)=>baselineMonth(row,previous[index]?.values));showMonth();S.edited=false;
-    $('#period-explanation').textContent='Valores de cada competência pela coluna H. Total anual = soma dos meses importados. Meses fora do período ficam sem dados.';updateRevenue();return;
+    $('#period-explanation').textContent=fixedAnalysisPeriod()?(S.source.analysisPeriod.complete?'Valores de cada competência pela coluna H. Consolidado Jan–Set = soma dos nove meses. A RBT12 continua usando sua própria janela de 12 meses.':`Geração pendente: complete ${S.source.analysisPeriod.missingMonths.map(competenceLabel).join(', ')} em entradas e saídas.`):'Valores de cada competência pela coluna H. Total anual = soma dos meses importados. Meses fora do período ficam sem dados.';updateRevenue();return;
   }
   const projection=sourceProjection();
   for(const key of IMPORTED) $('#'+key).value=(projection.monthlyGroupsCents[key]/100).toFixed(2);
@@ -407,7 +419,7 @@ function hero(readonly) {
 }
 function sourceCard() {
   const d=S.source;
-  return `<details class="card sim-source sim-report-details"><summary><span>Relatórios de origem</span><span class="sim-source-caption">Compras e vendas <span aria-hidden="true">⌄</span></span></summary><div class="sim-source-grid">${[['purchases','Compras'],['sales','Vendas']].map(([key,label])=>`<article><div class="eyebrow">${label.toUpperCase()} · TOTAL DO ARQUIVO</div><strong>${money(d[key].totalCents/100)}</strong><p>${esc(d[key].fileName)}</p><small>Concluído em ${date(d[key].completedAt)}<br>Fórmula: ${esc(d[key].formula)} · versão ${esc(d[key].calculationVersion)}</small><a href="/purchases.html?${new URLSearchParams({job:d[key].jobId,...(key==='sales'?{type:'SALES'}:{}),generation:d.generationId,client:d.clientId})}">Conferir linhas de ${label.toLowerCase()} →</a></article>`).join('')}</div>${renderOperationAudit(d.operationAudit)}${classificationDetails()}</details>`;
+  return `<details class="card sim-source sim-report-details"><summary><span>Relatórios de origem</span><span class="sim-source-caption">Compras e vendas <span aria-hidden="true">⌄</span></span></summary><div class="sim-source-grid">${[['purchases','Compras'],['sales','Vendas']].map(([key,label])=>`<article><div class="eyebrow">${label.toUpperCase()} · TOTAL DO ARQUIVO</div><strong>${money(d[key].totalCents/100)}</strong><p>${esc(d[key].fileName)}</p><small>Concluído em ${date(d[key].completedAt)}<br>Fórmula: ${esc(d[key].formula)} · versão ${esc(d[key].calculationVersion)}</small><a href="/purchases.html?${new URLSearchParams({job:d[key].jobId,...(key==='sales'?{type:'SALES'}:{}),generation:d.generationId,client:d.clientId})}">Conferir linhas de ${label.toLowerCase()} →</a></article>`).join('')}</div>${renderOperationAudit(d.importedOperationAudit||d.operationAudit)}${classificationDetails()}</details>`;
 }
 function setRbt12Mode(mode,{preserveValue=false}={}) {
   const previous=preserveValue?$('#rbt12').value:'';
@@ -673,6 +685,7 @@ function printDre(){
   if(!S.result||!S.dreContext)return;
   clearDrePrint();drePrintFocus=document.activeElement;
   document.body.insertAdjacentHTML('beforeend',renderDrePrintDocument({...S.dreContext,company:S.source.company,regimeId:S.calendarRegime,showPercent:S.dreShowPercent,period:S.dreReportPeriod}));
+  document.querySelectorAll('#dre-print-document details').forEach(detail=>{detail.open=true;});
   document.body.classList.add('dre-print-only');setDrePrintPage(S.dreReportPeriod);
   try{window.print();}catch(error){clearDrePrint();fail(error);}
 }
@@ -680,7 +693,7 @@ function printDre(){
 function classificationDetails() {
   if(!S.source.classification)return '';
   const c=S.source.classification;
-  return `<h3>Subtotais preservados na classificação</h3><div class="sim-detail-grid">${[
+  return `<h3>${fixedAnalysisPeriod()?'Classificação dos arquivos completos':'Subtotais preservados na classificação'}</h3><div class="sim-detail-grid">${[
     ['Compras · CNPJs não confirmados',c.purchases?.unconfirmedCount,c.purchases?.unconfirmedCents],
     ['Compras · CPF e outros documentos',c.purchases?.nonCnpjCount,c.purchases?.nonCnpjCents],
     ['Vendas · CNPJs não confirmados',c.sales?.unconfirmedCount,c.sales?.unconfirmedCents],
@@ -700,20 +713,24 @@ function fillSnapshot(snapshot) {
   S.months=S.source.periodBasis==='COLUMN_H'?S.source.reportMonths:snapshot.reportMonths; $('#period-months').value=String(S.months); applyReports();
   if(actualMonths()){
     const split=snapshot.source?.revenueSplit?.version==='SALES_SERVICES_V1';
+    const monthlyHistory=fixedAnalysisPeriod()&&snapshot.result?.method==='REPORT_MONTHS_V1';
+    const oldRows=monthlyHistory?new Map((snapshot.source.monthlyReports||[]).map(row=>[row.sourceMonth,row])):null;
+    const oldInputs=monthlyHistory?new Map((snapshot.monthlyInputs||[]).map(row=>[row.sourceMonth,row])):null;
     const oldBase=snapshot.baselineMonthlyGroups||Object.fromEntries(IMPORTED.map(key=>[key,(snapshot.projection?.monthlyGroupsCents?.[key]??NaN)/100]));
     S.monthlyInputs=S.source.monthlyReports.map((report,index)=>{
-      const entry=baselineMonth(report,snapshot.draft.values),oldRow=snapshot.source.monthlyReports?.[index],oldInput=snapshot.monthlyInputs?.[index];
+      const oldRow=monthlyHistory?oldRows.get(report.sourceMonth):snapshot.source.monthlyReports?.[index],oldInput=monthlyHistory?oldInputs.get(report.sourceMonth):snapshot.monthlyInputs?.[index];
+      const entry=baselineMonth(report,monthlyHistory?{}:snapshot.draft.values);
       if(oldRow?.sourceMonth===report.sourceMonth&&oldInput?.sourceMonth===report.sourceMonth){
         for(const key of IMPORTED)entry.groups[key]=(report.fields[key]+Math.round(oldInput.groups[key]*100)-oldRow.fields[key])/100;
         entry.values={...oldInput.values,serviceRevenue:(report.fields.serviceRevenueCents+Math.round(oldInput.values.serviceRevenue*100)-oldRow.fields.serviceRevenueCents)/100};
-      }else{
+      }else if(!monthlyHistory){
         for(const key of IMPORTED)if(Number.isFinite(oldBase[key]))entry.groups[key]=(report.fields[key]+Math.round(snapshot.monthlyGroups[key]*100)-Math.round(oldBase[key]*100))/100;
         const base=split?snapshot.baselineServiceRevenue??snapshot.projection?.monthlyGroupsCents?.serviceRevenueCents/100:0;
         if(Number.isFinite(base))entry.values.serviceRevenue=(report.fields.serviceRevenueCents+Math.round(snapshot.draft.values.serviceRevenue*100)-Math.round(base*100))/100;
       }
       return entry;
     });
-    S.draftMigrationNotice='Valores por competência dos relatórios. Ajustes e despesas anteriores foram preservados; confira cada mês antes de salvar.';showMonth();
+    S.draftMigrationNotice=monthlyHistory?'Janeiro a setembro: ajustes e despesas foram preservados nas competências de origem correspondentes. Confira as despesas de meses que não existiam na versão anterior.':'Valores por competência dos relatórios. Ajustes e despesas anteriores foram preservados; confira cada mês antes de salvar.';showMonth();
   }
   if(!actualMonths()&&!S.serviceMigration)for(const key of IMPORTED) $('#'+key).value=Number(snapshot.monthlyGroups[key]).toFixed(2);
   for(const key of MANUAL)if(!actualMonths()&&(key!=='serviceRevenue'||!S.serviceMigration))$('#'+key).value=Number(snapshot.draft.values[key]).toFixed(2);
@@ -732,6 +749,10 @@ function setSaving(value) {
 }
 async function simulate() {
   if(S.saving||S.readingPdf)return;
+  if(fixedAnalysisPeriod()){
+    try{assertCompleteAnalysisPeriod(S.source.analysisPeriod,S.source.monthlyReports);}
+    catch(error){fail(error);return;}
+  }
   const manual=S.rbt12Mode==='MANUAL';
   if(manual&&(value('rbt12')===null||!$('#rbt12-manual-confirm').checked)){fail(new Error('Informe a RBT12 efetiva e confirme a origem manual para gerar a simulação.'));(value('rbt12')===null?$('#rbt12'):$('#rbt12-manual-confirm')).focus();return;}
   if(!manual&&(!isSection22(S.rbt12Data)||!S.rbt12ExtractionId||S.rbt12ExtractionId!==(S.rbt12Data.extractionId||S.rbt12Data.id)||Math.round(value('rbt12')*100)!==S.rbt12Data.rbt12Cents)){fail(new Error('Leia a seção 2.2 do PDF ou escolha informar a RBT12 sem o extrato.'));$('#rbt12-pdf').focus();return;}
@@ -745,10 +766,10 @@ async function simulate() {
       const missing=schedule.rows.filter(row=>row.status!=='CONFIRMED');
       throw new Error(`A seção 2.2 não cobre todas as janelas de RBT12. Confira ${missing.map(row=>`${competenceLabel(row.sourceMonth)} (faltam ${row.missingMonths.join(', ')})`).join('; ')}. Importe um extrato que contenha essas receitas.`);
     }
-    const input=draft(),groups=Object.fromEntries(IMPORTED.map(key=>[key,value(key)])),computed=actualMonths()?calculateMonthlySimulation(input,S.source.monthlyReports,S.monthlyInputs,S.source.sales.jobId,schedule):null;
+    const input=draft(),groups=Object.fromEntries(IMPORTED.map(key=>[key,value(key)])),computed=actualMonths()?calculateMonthlySimulation(input,S.source.monthlyReports,S.monthlyInputs,S.source.sales.jobId,schedule,S.source.analysisPeriod):null;
     const difal=computed?.difalProjection||difalProjection(),result=computed?.result||calculateSimulation(input,difal);
     S.result={input,result,difalProjection:difal,rbt12Schedule:computed?.rbt12Schedule||result.rbt12Schedule||null,anticipationProjection:computed?.anticipationProjection||null,monthlyGroups:groups,projection:computed?.projection||{...annualizeReports(S.source.fields,S.months),scenario:projectScenario(groups,input.values)}};S.snapshot=null;S.saveError=null;S.viewPeriod='annual';if(actualMonths())S.dreMonth=S.source.monthlyReports[S.entry].month-1;saveDraft();
-    S.pending=canSave()?{simulationId:crypto.randomUUID(),generationId:S.source.generationId,clientId:S.source.clientId,reportMonths:S.months,periodConfirmed:true,monthlyGroups:groups,draft:input,...(actualMonths()?{monthlyInputs:S.monthlyInputs}:{}),...(manual?{rbt12Source:'MANUAL',rbt12ManualConfirmed:true}:{rbt12ExtractionId:S.rbt12ExtractionId}),...(S.parentId?{parentSimulationId:S.parentId}:{})}:null;
+    S.pending=canSave()?{simulationId:crypto.randomUUID(),generationId:S.source.generationId,clientId:S.source.clientId,reportMonths:S.months,periodConfirmed:true,...(fixedAnalysisPeriod()?{periodPolicy:JAN_SEP_POLICY}:{}),monthlyGroups:groups,draft:input,...(actualMonths()?{monthlyInputs:S.monthlyInputs}:{}),...(manual?{rbt12Source:'MANUAL',rbt12ManualConfirmed:true}:{rbt12ExtractionId:S.rbt12ExtractionId}),...(S.parentId?{parentSimulationId:S.parentId}:{})}:null;
     renderResult();renderNotices();
     $('#results-top').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'});
     if(canSave())await persist();
@@ -780,7 +801,7 @@ function dreContext() {
   // until generation, persistence or an edit replaces the authoritative inputs.
   if(dreContextCache?.result===S.result&&dreContextCache.snapshot===S.snapshot&&dreContextCache.source===S.source&&dreContextCache.months===S.months)return dreContextCache.value;
   const result=S.result.result,year=S.result.input.year;
-  const calendar=['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3'].includes(S.snapshot?.monthlyDre?.version)?S.snapshot.monthlyDre:buildMonthlyDre(result,year,rbt12Reference(),S.source.period);
+  const calendar=['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3','DRE_CALENDAR_V4'].includes(S.snapshot?.monthlyDre?.version)?S.snapshot.monthlyDre:buildMonthlyDre(result,year,rbt12Reference(),S.source.period);
   const presentation=buildDrePresentation({result,calendar,monthlyGroups:S.result.monthlyGroups,projection:S.result.projection,source:S.source,reportMonths:S.months,engineInput:S.snapshot?.engineInput,reprocessing:S.snapshot?.reprocessing,taxSources:S.snapshot?S.snapshot.taxSources:TAX_SOURCES});
   const value={presentation,calendar,year};
   dreContextCache={result:S.result,snapshot:S.snapshot,source:S.source,months:S.months,value};
@@ -790,17 +811,17 @@ function renderResult() {
   if(!S.result)return;
   document.querySelectorAll('#simulation-result details').forEach(el=>S.detailStates.set(el.dataset.stateKey||el.className,el.open));
   S.dreContext=dreContext();
-  const {input}=S.result,actual=S.result.result.method==='REPORT_MONTHS_V1',monthly=S.viewPeriod==='monthly',divisor=monthly&&!actual?12:1;
+  const {input}=S.result,actual=S.result.result.method==='REPORT_MONTHS_V1',fixed=S.result.result.analysisPeriod?.version===JAN_SEP_POLICY,monthly=S.viewPeriod==='monthly',divisor=monthly&&!actual?12:1;
   const entry=actual&&monthly?S.result.result.monthlyResults.find(row=>row.month===S.dreMonth+1):null;
   const result=actual&&monthly?(entry?.result||{annualRevenue:null,regimes:[],bestRegimeId:null,difference:0}):S.result.result;
   const best=result.regimes.find(r=>r.id===result.bestRegimeId);
   const single=S.result.result.regimes.length===1;
-  const periodDescription=actual&&monthly?`${MONTH_NAMES[S.dreMonth]} / ${input.year}`:monthly?`Por mês · ${input.year}`:`Total anual · ${input.year}`;
-  $('#simulation-result').innerHTML=`<section class="sim-result" id="results-top"><div class="sim-result-head"><div><div class="eyebrow">PAINEL DA SIMULAÇÃO · ${input.year}</div><h2>Entenda o resultado da empresa</h2><p class="sim-help">Valores ${monthly?'mensais':'anuais'} de ${input.year} · ${S.edited?'cenário com ajustes manuais':actual?'valores por competência':'média dos relatórios'}.</p></div><div class="sim-result-actions"><button id="export-simulation" type="button">Exportar simulação</button></div></div>
+  const periodDescription=actual&&monthly?`${MONTH_NAMES[S.dreMonth]} / ${input.year}`:monthly?`Por mês · ${input.year}`:`${fixed?'Consolidado Jan–Set':'Total anual'} · ${input.year}`;
+  $('#simulation-result').innerHTML=`<section class="sim-result" id="results-top"><div class="sim-result-head"><div><div class="eyebrow">PAINEL DA SIMULAÇÃO · ${input.year}</div><h2>Entenda o resultado da empresa</h2><p class="sim-help">${fixed?esc(periodDescription):`Valores ${monthly?'mensais':'anuais'} de ${input.year}`} · ${S.edited?'cenário com ajustes manuais':actual?'valores por competência':'média dos relatórios'}.</p></div><div class="sim-result-actions"><button id="export-simulation" type="button">Exportar simulação</button></div></div>
     <div id="simulation-save-status" class="sim-save-status" role="status" aria-live="polite"></div>
-    ${monthly?renderMonthlyDre({...S.dreContext,result,reference:rbt12Reference(),period:S.source.period,regimeId:S.calendarRegime,showPercent:S.dreShowPercent,monthView:S.dreMonthView,month:S.dreMonth,reportPeriod:S.dreReportPeriod}):renderAnnualDre({...S.dreContext,regimeId:S.calendarRegime,showPercent:S.dreShowPercent,reportPeriod:S.dreReportPeriod})}<details class="card sim-comparison-details"><summary>${single?'Resultado do regime selecionado':'Comparar resultados entre regimes'}<span>Margens, tributos e estimativas</span></summary><div class="sim-kpis"><article><span>Receita utilizada ${monthly?'no mês':'no ano'}</span><strong>${money(result.annualRevenue===null?null:result.annualRevenue/divisor)}</strong><small>${actual?(monthly?periodDescription:'Soma das competências importadas'):monthly?'Média mensal usada na projeção':'Receita mensal × 12'}</small></article><article><span>${single?'Resultado estimado':'Maior resultado estimado'}</span><strong class="${best?.annualProfit<0?'sim-negative':''}">${best?money(best.annualProfit/divisor):'Sem ranking'}</strong><small>${best?esc(best.name):result.annualRevenue===null?'Sem dados nesta competência':result.annualRevenue===0?'Sem receita neste cenário':'Há pendências de cálculo neste período'}</small></article><article><span>${single?'Regimes da análise':'Diferença entre os cenários'}</span><strong>${single?'1':best?money(result.difference/divisor):'—'}</strong><small>${single?esc(S.result.result.regimes[0].name):'Maior menos menor resultado disponível'}</small></article></div>
+    ${monthly?renderMonthlyDre({...S.dreContext,result,reference:rbt12Reference(),period:S.source.period,regimeId:S.calendarRegime,showPercent:S.dreShowPercent,monthView:S.dreMonthView,month:S.dreMonth,reportPeriod:S.dreReportPeriod}):renderAnnualDre({...S.dreContext,regimeId:S.calendarRegime,showPercent:S.dreShowPercent,reportPeriod:S.dreReportPeriod})}${fixed?'':`<details class="card sim-comparison-details"><summary>${single?'Resultado do regime selecionado':'Comparar resultados entre regimes'}<span>Margens, tributos e estimativas</span></summary><div class="sim-kpis"><article><span>Receita utilizada ${monthly?'no mês':'no ano'}</span><strong>${money(result.annualRevenue===null?null:result.annualRevenue/divisor)}</strong><small>${actual?(monthly?periodDescription:'Soma das competências importadas'):monthly?'Média mensal usada na projeção':'Receita mensal × 12'}</small></article><article><span>${single?'Resultado estimado':'Maior resultado estimado'}</span><strong class="${best?.annualProfit<0?'sim-negative':''}">${best?money(best.annualProfit/divisor):'Sem ranking'}</strong><small>${best?esc(best.name):result.annualRevenue===null?'Sem dados nesta competência':result.annualRevenue===0?'Sem receita neste cenário':'Há pendências de cálculo neste período'}</small></article><article><span>${single?'Regimes da análise':'Diferença entre os cenários'}</span><strong>${single?'1':best?money(result.difference/divisor):'—'}</strong><small>${single?esc(S.result.result.regimes[0].name):'Maior menos menor resultado disponível'}</small></article></div>
     <div class="sim-subheading"><h3>${single?'Regime selecionado':'Comparação por regime'}</h3><span>${esc(periodDescription)}</span></div><div class="sim-regimes">${result.regimes.map(r=>`<article class="sim-regime ${r.id===result.bestRegimeId?'best':''}"><span class="sim-badge">${!r.available?'REVISÃO NECESSÁRIA':single?'REGIME SELECIONADO':r.id===result.bestRegimeId?'MAIOR RESULTADO ESTIMADO':'CENÁRIO COMPARATIVO'}</span><h3>${esc(r.name)}</h3><strong class="${r.annualProfit<0&&r.available?'sim-negative':''}">${r.available?money(r.annualProfit/divisor):'Indisponível'}</strong><p>Resultado líquido ${monthly?'por mês':'por ano'}</p>${r.available?`<dl class="sim-regime-metrics"><div><dt>Tributos e encargos</dt><dd>${money(r.totalTaxes/divisor)}</dd></div><div><dt>Margem líquida</dt><dd>${pct(r.margin)}</dd></div><div><dt>Carga sobre receita utilizada</dt><dd>${pct(r.taxBurden)}</dd></div></dl>`:`<p>${esc(r.status)}</p>`}</article>`).join('')}</div>
-    </details><details class="card sim-charts-details" data-simulation-detail="charts"><summary>Gráficos<span>Resultados, tributos, receitas e despesas</span></summary><div data-simulation-lazy="charts"></div></details>
+    </details>`}<details class="card sim-charts-details" data-simulation-detail="charts"><summary>Gráficos<span>Resultados, tributos, receitas e despesas</span></summary><div data-simulation-lazy="charts"></div></details>
     ${memoryDetails()}
     </section>`;
   document.querySelectorAll('#simulation-result details').forEach(el=>{const key=el.dataset.stateKey||el.className;if(S.detailStates.has(key))el.open=S.detailStates.get(key);});
@@ -810,14 +831,10 @@ function renderResult() {
   $('#print-dre').onclick=printDre;
   const reportPeriod=$('#dre-report-period');if(reportPeriod)reportPeriod.onchange=()=>{S.dreReportPeriod=reportPeriod.value;};
   $('#dre-show-percent').onchange=event=>{S.dreShowPercent=event.target.checked;renderResult();$('#dre-show-percent').focus({preventScroll:true});};
-  document.querySelectorAll('[data-dre-month-view]').forEach(button=>button.onclick=()=>{S.dreMonthView=button.dataset.dreMonthView==='single';renderResult();document.querySelector(`[data-dre-month-view="${S.dreMonthView?'single':'all'}"]`).focus({preventScroll:true});});
+  bindDreDetailControls();
   const monthSelect=$('#dre-month');if(monthSelect)monthSelect.onchange=()=>{S.dreMonth=Number(monthSelect.value);renderResult();if(S.readonly){updateDifalSource();updateAnticipationSource();updateDifalOptions();}$('#dre-month').focus({preventScroll:true});};
   document.querySelectorAll('[data-period]').forEach(button=>button.onclick=()=>{S.viewPeriod=button.dataset.period;renderResult();document.querySelector(`[data-period="${S.viewPeriod}"]`)?.focus({preventScroll:true});});
   const regimeSelect=$('#dre-regime');if(regimeSelect)regimeSelect.onchange=()=>{S.calendarRegime=regimeSelect.value;renderResult();$('#dre-regime').focus({preventScroll:true});};
-  document.querySelectorAll('[data-dre-jump]').forEach(button=>button.onclick=()=>{
-    const row=$('#dre-demonstrativo').querySelector(`[data-dre-row="${button.dataset.dreJump}"]`);
-    if(row){row.tabIndex=-1;row.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});row.focus({preventScroll:true});}
-  });
   renderSaveStatus();
 }
 function formatMemory(row) {
@@ -838,9 +855,13 @@ function materializeResultDetail(detail) {
     const {input,monthlyGroups}=S.result,actual=S.result.result.method==='REPORT_MONTHS_V1',monthly=S.viewPeriod==='monthly';
     const entry=actual&&monthly?S.result.result.monthlyResults.find(row=>row.month===S.dreMonth+1):null;
     const result=actual&&monthly?(entry?.result||{annualRevenue:null,regimes:[],bestRegimeId:null,difference:0}):S.result.result;
-    host.innerHTML=renderSimulationCharts({input,result,monthlyGroups,period:S.viewPeriod,actualMonths:actual,monthlyEntries:actual?(monthly?(entry?[entry]:[]):S.result.result.monthlyResults):null});
+    host.innerHTML=renderSimulationCharts({input,result,monthlyGroups,period:S.viewPeriod,actualMonths:actual,analysisPeriod:S.result.result.analysisPeriod,monthlyEntries:actual?(monthly?(entry?[entry]:[]):S.result.result.monthlyResults):null});
   }else if(host.dataset.simulationLazy==='memory'){
     host.innerHTML=memoryContent();
+  }else if(host.dataset.simulationLazy==='dre'){
+    host.innerHTML=renderDreCompleteDetails({...S.dreContext,regimeId:S.calendarRegime,showPercent:S.dreShowPercent,monthly:S.viewPeriod==='monthly',monthView:S.dreMonthView,month:S.dreMonth});
+    host.querySelectorAll('details').forEach(el=>{const key=el.dataset.stateKey||el.className;if(S.detailStates.has(key))el.open=S.detailStates.get(key);});
+    bindDreDetailControls(host);
   }
   host.dataset.loaded='true';
 }
@@ -853,6 +874,13 @@ function bindResultDetails() {
     if(detail.open)materializeResultDetail(detail);
   }
 }
+function bindDreDetailControls(root=document){
+  root.querySelectorAll('[data-dre-month-view]').forEach(button=>button.onclick=()=>{S.dreMonthView=button.dataset.dreMonthView==='single';renderResult();document.querySelector(`[data-dre-month-view="${S.dreMonthView?'single':'all'}"]`)?.focus({preventScroll:true});});
+  root.querySelectorAll('[data-dre-jump]').forEach(button=>button.onclick=()=>{
+    const row=$('#dre-demonstrativo')?.querySelector(`[data-dre-row="${button.dataset.dreJump}"]`);
+    if(row){row.tabIndex=-1;row.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});row.focus({preventScroll:true});}
+  });
+}
 function memoryContent() {
   if(dreContextCache?.memoryHtml!==undefined)return dreContextCache.memoryHtml;
   const result=S.result.result,snapshot=S.snapshot;
@@ -862,7 +890,7 @@ function memoryContent() {
   const sources=snapshot?(snapshot.taxSources||[]):TAX_SOURCES;
   const engine=snapshot?.engineInput?.version==='REPORT_MONTHS_V1'?snapshot.engineInput.months[0]?.input:snapshot?.engineInput;
   const referenceCaption=snapshot?.rbt12Source==='NOT_REQUIRED'?'Regimes selecionados sem exigência de extrato ou RBT12 do Simples.':engine?`Anexo de vendas ${esc(engine.salesAnnex)} · serviços ${esc(engine.serviceAnnex)} · ${snapshot?.engineInput?.version==='REPORT_MONTHS_V1'?'RBT12 da primeira competência':'referência de receita 12 meses'} ${money(engine.rbt12)}`:'';
-  const html=`<p class="sim-help">Modelo ${esc(snapshot?.modelVersion||result.version)} · ${result.method==='REPORT_MONTHS_V1'?'soma dos cálculos por competência':'memória original anual'}. A troca entre Mensal e Anual altera a apresentação do painel e da DRE; as fórmulas abaixo conservam suas unidades originais.</p><div class="sim-links">${sources.map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.label)}</a>`).join('')}</div>${engine?`<div class="sim-engine-premises"><h3>Parâmetros capturados nesta versão</h3><p class="sim-help">${referenceCaption}</p><div class="sim-detail-grid">${Object.entries(engine.rates||{}).map(([key,val])=>`<article><span>${esc({cbs:'CBS',ibs:'IBS',icms:'ICMS',iss:'ISS',payroll:'Encargos sobre folha',irSales:'Presunção de IRPJ · vendas',csSales:'Presunção de CSLL · vendas',irServices:'Presunção de IRPJ · serviços',csServices:'Presunção de CSLL · serviços'}[key]||key)}</span><strong>${pct(val)}</strong></article>`).join('')}</div></div>`:''}
+  const html=`<p class="sim-help">Modelo ${esc(snapshot?.modelVersion||result.version)} · ${result.method==='REPORT_MONTHS_V1'?'soma dos cálculos por competência':'memória original anual'}. A troca entre Mensal e ${fixedAnalysisPeriod()?'Jan–Set':'Anual'} altera a apresentação do painel e da DRE; as fórmulas abaixo conservam suas unidades originais.</p><div class="sim-links">${sources.map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.label)}</a>`).join('')}</div>${engine?`<div class="sim-engine-premises"><h3>Parâmetros capturados nesta versão</h3><p class="sim-help">${referenceCaption}</p><div class="sim-detail-grid">${Object.entries(engine.rates||{}).map(([key,val])=>`<article><span>${esc({cbs:'CBS',ibs:'IBS',icms:'ICMS',iss:'ISS',payroll:'Encargos sobre folha',irSales:'Presunção de IRPJ · vendas',csSales:'Presunção de CSLL · vendas',irServices:'Presunção de IRPJ · serviços',csServices:'Presunção de CSLL · serviços'}[key]||key)}</span><strong>${pct(val)}</strong></article>`).join('')}</div></div>`:''}
     ${[...sections].map(([section,rows])=>`<section class="sim-memory-section"><h3>${esc(section)}</h3><div class="sim-memory-items">${rows.map(row=>`<article data-memory-id="${esc(row.id)}"><div><strong>${esc(row.label)}</strong><p>${esc(row.formula)}</p></div><span>${formatMemory(row)}</span></article>`).join('')}</div></section>`).join('')}`;
   if(dreContextCache)dreContextCache.memoryHtml=html;
   return html;
@@ -895,9 +923,9 @@ function showSnapshot(snapshot) {
 async function openSnapshotVersion(snapshot) {
   const button=$('#create-version');if(button)button.disabled=true;
   try {
-    const current=await api(`/api/v4/generations/${snapshot.generationId}/simulator?${new URLSearchParams({clientId:snapshot.clientId})}`);
+    const current=await api(`/api/v4/generations/${snapshot.generationId}/simulator?${new URLSearchParams({clientId:snapshot.clientId,periodPolicy:JAN_SEP_POLICY})}`);
     if(current.generationId!==snapshot.generationId||current.clientId!==snapshot.clientId)throw new Error('A origem atual não corresponde à empresa desta simulação.');
-    S.source=current;S.parentId=snapshot._id;S.key=`maximum-simulator:copy:${S.user._id}:${snapshot._id}`;
+    S.source=current;S.parentId=snapshot._id;S.key=`maximum-simulator:copy:${S.user._id}:${snapshot._id}${fixedAnalysisPeriod()?':'+JAN_SEP_POLICY:''}`;
     history.replaceState(null,'',sourceUrl());display(snapshot);
     $('#simulator-app').scrollIntoView({block:'start',behavior:'instant'});
   } catch(error) {
@@ -936,8 +964,8 @@ async function boot() {
       showSnapshot(snapshot);await openSnapshotVersion(snapshot);return;
     }
     S.guided=params.get('guided')==='1';S.guidedResume=params.get('step')==='dados';
-    S.source=await api(`/api/v4/generations/${generation}/simulator?${new URLSearchParams({clientId:client})}`);
-    S.key=`maximum-simulator:v1:${S.user._id}:${generation}:${client}:${S.source.purchases.jobId}:${S.source.sales.jobId}`;
+    S.source=await api(`/api/v4/generations/${generation}/simulator?${new URLSearchParams({clientId:client,periodPolicy:JAN_SEP_POLICY})}`);
+    S.key=`maximum-simulator:v1:${S.user._id}:${generation}:${client}:${S.source.purchases.jobId}:${S.source.sales.jobId}${fixedAnalysisPeriod()?':'+JAN_SEP_POLICY:''}`;
     display();
   } catch(error) {fail(error);$('#simulator-app').innerHTML='<section class="card sim-empty"><h2>Não foi possível abrir o simulador.</h2><p>Confira o acesso e os relatórios da empresa ou tente abrir a versão salva novamente.</p><div class="sim-links"><a class="sim-back" href="/simulations.html">Simulações salvas →</a><a class="sim-back" href="/generations.html?view=history">Conferir relatórios →</a></div></section>';}
 }

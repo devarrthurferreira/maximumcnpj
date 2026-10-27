@@ -97,9 +97,9 @@ async function prepareSources(request:APIRequestContext,baseURL:string,analysis:
   // Real authenticated Node ingestion derives both estimates; CPF rows never call a CNPJ provider.
   for(const kind of ['purchases','sales'] as const){
     const attached=await api(request,baseURL,'POST','/api/v4/generations/'+prepared.generationId+'/'+kind,{
-      clientId:company.id,importId:randomUUID(),fileName:company.code+'-'+kind+'.csv',expectedRows:2,issuerUf:'MG'
+      clientId:company.id,importId:randomUUID(),fileName:company.code+'-'+kind+'.csv',expectedRows:9,issuerUf:'MG'
     });
-    const totals=kind==='sales'?[100_000,200_000]:[50_000,70_000];
+    const totals=[...(kind==='sales'?[100_000,200_000]:[50_000,70_000]),...Array(7).fill(0)];
     await api(request,baseURL,'POST','/api/v4/'+kind+'/'+attached.job._id+'/rows',{offset:0,rows:totals.map((totalCents,index)=>({
       document:'12345678900',name:'Pessoa sintética',recipientUf:'SP',serviceDate:'2025-0'+(index+1)+'-15',
       natureCode:kind==='sales'?'5102001':'1102001',description:'Operação sintética interestadual',quantity:'1',
@@ -110,7 +110,7 @@ async function prepareSources(request:APIRequestContext,baseURL:string,analysis:
   }
   analysis=await patchSector(request,baseURL,prepared.analysis,'fiscal',{...prepared.analysis.fiscal.data,
     rbt12Source:'MANUAL',rbt12:100_000,rbt12ManualConfirmed:true,rbt12ExtractionId:null,rbt12DocumentId:null});
-  analysis=await patchSector(request,baseURL,analysis,'accounting',{months:['2025-01','2025-02'].map(sourceMonth=>({
+  analysis=await patchSector(request,baseURL,analysis,'accounting',{months:Array.from({length:9},(_,index)=>'2025-0'+(index+1)).map(sourceMonth=>({
     sourceMonth,salariesCents:0,rentCents:0,cardExpensesCents:0,benefitsCents:0,adminExpensesCents:0
   }))});
   expect(analysis.readiness.ready).toBe(true);return analysis;
@@ -147,20 +147,33 @@ function expectDifal(snapshot:any,enabled:boolean){
   }
   expect(snapshot.result.monthlyResults.map((month:any)=>month.result.regimes.map((row:any)=>[
     Math.round(row.dre.difal*100),Math.round(row.dre.icmsAnticipation*100)
-  ]))).toEqual(enabled?[[[-10_000,-3_660],[-10_000,-3_660]],[[-20_000,-5_124],[-20_000,-5_124]]]:[[[0,0],[0,0]],[[0,0],[0,0]]]);
+  ]))).toEqual([
+    ...(enabled?[[[-10_000,-3_660],[-10_000,-3_660]],[[-20_000,-5_124],[-20_000,-5_124]]]:[[[0,0],[0,0]],[[0,0],[0,0]]]),
+    ...Array.from({length:7},()=>[[0,0],[0,0]])
+  ]);
+}
+async function fullDre(page:Page){
+  const details=page.locator('#dre-demonstrativo [data-simulation-detail="dre"]');
+  if(await details.getAttribute('open')===null)await details.locator(':scope > summary').click();
+  const host=details.locator('[data-simulation-lazy="dre"]');await expect(host).toHaveAttribute('data-loaded','true');return host;
 }
 async function expectZeroDre(page:Page){
   await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');
+  let complete=await fullDre(page);
   for(const key of ['difal','icmsAnticipation']){
-    const cells=page.locator('#dre-demonstrativo > .dre-table-wrap [data-dre-row="'+key+'"] td');
+    const cells=complete.locator('[data-dre-row="'+key+'"] td');
     await expect(cells).toHaveCount(2);for(const cell of await cells.all())await expect(cell).toHaveText('R$ 0,00');
   }
-  await page.getByRole('button',{name:'Mensal',exact:true}).click();
+  await page.locator('#dre-demonstrativo [data-period="monthly"]').click();
   for(const regime of ['pure','hybrid']){
+    complete=await fullDre(page);
     await page.locator('#dre-regime').selectOption(regime);
+    complete=await fullDre(page);
+    await complete.locator('[data-dre-month-view="all"]').click();
+    complete=await fullDre(page);
     for(const key of ['difal','icmsAnticipation']){
-      const cells=page.locator('#dre-demonstrativo > .dre-table-wrap [data-dre-row="'+key+'"] td');
-      await expect(cells.nth(0)).toHaveText('R$ 0,00');await expect(cells.nth(1)).toHaveText('R$ 0,00');
+      const cells=complete.locator('[data-dre-row="'+key+'"] td');
+      await expect(cells).toHaveCount(10);for(const cell of await cells.all())await expect(cell).toHaveText('R$ 0,00');
     }
   }
 }
@@ -179,9 +192,9 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   analysis=await prepareSources(page.request,baseURL!,analysis,company);
   await page.goto('/analyses.html?id='+id);
   const included=await generateInBrowser(page,baseURL!,id);expectDifal(included,true);
-  const sources=await freezeSources(analysisWorkspace,analysis,included);expect(sources.lines).toHaveLength(4);
-  expect(included.source.monthlyReports.map((row:any)=>row.difal.amountCents)).toEqual([10_000,20_000]);
-  expect(included.source.monthlyReports.map((row:any)=>row.anticipation.amountCents)).toEqual([3_660,5_124]);
+  const sources=await freezeSources(analysisWorkspace,analysis,included);expect(sources.lines).toHaveLength(18);
+  expect(included.source.monthlyReports.map((row:any)=>row.difal.amountCents)).toEqual([10_000,20_000,...Array(7).fill(0)]);
+  expect(included.source.monthlyReports.map((row:any)=>row.anticipation.amountCents)).toEqual([3_660,5_124,...Array(7).fill(0)]);
 
   await page.goto('/analyses.html?id='+id+'&sector=fiscal');await fiscalStep(page,'documents');
   const savedFiscal=(await api(page.request,baseURL!,'GET','/api/v4/analyses/'+id)).analysis.fiscal;
@@ -234,7 +247,7 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
     const escapedLabel="'"+label;
     const annual=rows.filter(row=>row[2]===escapedLabel);expect(annual).toHaveLength(1);expect(annual[0].slice(5,7)).toEqual(['0,00','0,00']);
     const monthly=rows.filter(row=>row[3]===escapedLabel);expect(monthly).toHaveLength(2);
-    for(const row of monthly){expect(row.slice(6,8)).toEqual(['0,00','0,00']);expect(row[18]).toBe('0,00');}
+    for(const row of monthly){expect(row.slice(6,15)).toEqual(Array(9).fill('0,00'));expect(row[15]).toBe('0,00');}
   }
   expect(await api(page.request,baseURL!,'GET','/api/v4/simulations/'+included._id)).toEqual(included);
   expect(await freezeSources(analysisWorkspace,analysis,included)).toEqual(sources);
@@ -272,7 +285,7 @@ test('Excluir análise exige confirmação e permissão, preserva documentos e p
   const id=analysis.id,simulationIds=[first.simulation._id,second.simulation._id];
   expect(simulationIds[0]).not.toBe(simulationIds[1]);expect(second.simulation.parentSimulationId).toBe(simulationIds[0]);
   const sources=await freezeSources(analysisWorkspace,analysis,second.simulation);
-  expect(sources.jobs).toHaveLength(2);expect(sources.lines).toHaveLength(4);
+  expect(sources.jobs).toHaveLength(2);expect(sources.lines).toHaveLength(18);
   expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+id+'/versions')).items.map((row:any)=>row._id).sort()).toEqual([...simulationIds].sort());
 
   const readOnly=await browser.newContext({baseURL});
@@ -347,7 +360,7 @@ test('Excluir análise exige confirmação e permissão, preserva documentos e p
   expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+preserved.id)).analysis).toEqual(preserved);
   for(const kind of ['purchases','sales'] as const){
     const summary=await api(page.request,baseURL!,'GET','/api/v4/'+kind+'/'+second.simulation.source[kind].jobId+'/summary');
-    expect(summary.job.status).toBe('COMPLETED');expect(summary.totals.lines).toBe(2);
+    expect(summary.job.status).toBe('COMPLETED');expect(summary.totals.lines).toBe(9);
   }
 
   // The existing company is still selectable; its deleted result must not be adopted again.

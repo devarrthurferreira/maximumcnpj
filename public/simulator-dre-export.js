@@ -1,5 +1,6 @@
 /** Exports the presentation already prepared for the screen; never runs the calculator. */
 import {unifiedDreRows,dreDifalNotes,dreReportCoverage,dreRegimeStatuses,dreReportMemory} from './simulator-dre.js';
+import {buildDreExecutiveSummary,readDreValue} from './simulator-dre-summary.js';
 
 const BOM = '\uFEFF';
 const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -65,7 +66,7 @@ export function buildDreExportPayload(payload, presentation) {
  * Semicolon-separated CSV with a UTF-8 BOM for Brazilian Excel.
  * One continuous table follows the same base/detail/indicator order as the screen.
  * Annual view compares regimes in columns. Monthly view identifies each regime in
- * a column and retains all twelve captured months plus the captured annual total.
+ * a column and retains the captured months plus the captured period total.
  */
 export function buildDreCsv({presentation, period = 'annual', company = {}, year, showPercent = false}) {
   if (!presentation || !Array.isArray(presentation.regimes) || !Array.isArray(presentation.sections)) {
@@ -75,19 +76,21 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   const lines = [];
   const textLine = cells => lines.push(cells.map(textCell).join(';'));
   const monthly = period === 'monthly',complete=period==='complete';
+  const fixed=presentation.analysisPeriod?.version==='JAN_SEP_V1',monthCount=fixed?9:12;
   const regimes = presentation.regimes;
   const regimeScope=regimes.length===4?'todos os regimes':regimes.length===1?'regime selecionado':'regimes selecionados';
   const rows = unifiedDreRows(presentation);
   const contexts = rowContexts(presentation);
-  textLine(['DRE completa', complete?`Relatório completo · DRE anual e mensal · ${regimeScope}`:monthly ? `Mensal · janeiro a dezembro · ${regimeScope}` : `Anual · ${regimeScope}`]);
+  textLine(['DRE completa', complete?`Relatório completo · ${fixed?'DRE Jan–Set e mensal':'DRE anual e mensal'} · ${regimeScope}`:monthly ? `Mensal · janeiro a ${fixed?'setembro':'dezembro'} · ${regimeScope}` : `${fixed?'Consolidado Jan–Set':'Anual'} · ${regimeScope}`]);
   textLine(['Empresa', company.name || '', 'Código', company.code || '', 'CNPJ', company.cnpj || '']);
   textLine(['Ano do cenário', year ?? presentation.year ?? presentation.calendarYear ?? '', 'Versão da apresentação', presentation.version || '']);
   textLine(['Unidades', 'Valores monetários em BRL (R$); percentuais em %.']);
-  textLine(['Critério', presentation.method==='REPORT_MONTHS_V1'?'Valores por competência dos relatórios. Total anual é a soma dos meses importados; meses fora do período sem dados.':'Valores da simulação preservados. Projeção mensal, não lançamentos históricos.']);
-  textLine(['Arredondamento', 'Exibição com duas casas decimais; a soma dos meses exibidos pode diferir por centavos do total anual preservado.']);
+  textLine(['Critério',fixed?'Período fixo de janeiro a setembro: consolidado de nove competências confirmadas, sem projeção para doze meses. A RBT12 do Simples mantém sua referência própria de 12 meses.':presentation.method==='REPORT_MONTHS_V1'?'Valores por competência dos relatórios. Total anual é a soma dos meses importados; meses fora do período sem dados.':'Valores da simulação preservados. Projeção mensal, não lançamentos históricos.']);
+  textLine(['Arredondamento', `Exibição com duas casas decimais; a soma dos meses exibidos pode diferir por centavos do ${fixed?'consolidado Jan–Set':'total anual'} preservado.`]);
   const coverage=dreReportCoverage(presentation);
   textLine(['Cobertura dos relatórios',coverage.label,coverage.detail]);
   if(coverage.actual)textLine(['Competências de origem',coverage.sourceMonths.join(', ')]);
+  if(fixed)textLine(['Competências excluídas do período fixo',(presentation.analysisPeriod.excludedMonths||[]).join(', ')||'Nenhuma']);
   for(const status of dreRegimeStatuses(presentation)){
     textLine(['Situação do regime',status.name,status.available?'Cálculo disponível':'Conferência necessária',status.status]);
     for(const group of status.months)textLine(['Situação por competência',status.name,group.months.join(', '),group.status]);
@@ -107,9 +110,34 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   if (presentation.icmsReconciliation?.note) textLine(['Critério do crédito de ICMS',presentation.icmsReconciliation.note]);
   lines.push('');
 
+  if(fixed&&!monthly){
+    textLine(['DRE resumida · consolidado de janeiro a setembro']);
+    textLine(['Indicador',...regimes.map(regime=>regime.name)]);
+    const summaries=regimes.map(regime=>buildDreExecutiveSummary(presentation,{id:regime.id,mode:'annual'}));
+    for(const item of summaries[0]?.rows||[]){
+      if(item.key==='revenueManualAdjustment'&&summaries.every(summary=>summary.rows.find(row=>row.key===item.key)?.value===0))continue;
+      lines.push([textCell(item.label),...summaries.map(summary=>numberCell(summary.rows.find(row=>row.key===item.key)?.value))].join(';'));
+    }
+    lines.push([textCell('Impostos e encargos totais · indicador'),...summaries.map(summary=>numberCell(summary.taxes))].join(';'));
+    lines.push([textCell('Margem líquida · %'),...summaries.map(summary=>numberCell(summary.margin,true))].join(';'));
+    lines.push([textCell('Créditos tributários utilizados · informativo'),...regimes.map(regime=>numberCell(readDreValue(presentation.appliedCredits,{id:regime.id,mode:'annual'})))].join(';'));
+    textLine(['Créditos tributários','Já considerados nos impostos/compras; não somar novamente. Não representam restituição em dinheiro.']);
+    lines.push('');
+  }
+  const composition=fixed?presentation.commercialComposition:null;
+  if(composition?.version==='COMMERCIAL_COMPOSITION_V1'){
+    const labels={B2B:'B2B · empresas',B2C:'B2C · CPF',UNIDENTIFIED:'Tipo de cliente não identificado',OPTANTE:'Optantes do Simples',NAO_OPTANTE:'Fora do Simples',CPF:'CPF',NAO_CONFIRMADO:'Situação não confirmada',OUTROS:'Outros documentos'};
+    textLine(['Composição dos documentos · janeiro a setembro','Valores das fontes após devoluções; percentuais sobre a receita ou as compras do período. Ajustes manuais estão na DRE e não redistribuem clientes ou fornecedores.']);
+    for(const [scope,entries,denominator] of [['Receita por cliente',composition.revenue.byCustomerType,composition.revenue.percentDenominatorCents],['Receita por situação tributária',composition.revenue.byTaxStatus,composition.revenue.percentDenominatorCents],['Compras por fornecedor',composition.purchases.byTaxStatus,composition.purchases.percentDenominatorCents]]){
+      textLine([scope,'Composição','Valor (BRL)','Percentual (%)','Base do percentual (BRL)']);
+      for(const item of entries)lines.push([textCell(scope),textCell(labels[item.key]||item.key),numberCell(item.totalCents/100),numberCell(item.percent===null?null:item.percent/100,true),numberCell(denominator/100)].join(';'));
+    }
+    lines.push('');
+  }
+
   const prefix = row => [...(contexts.get(row) || ['DRE','']), row.label, row.kind || 'line', row.unit === 'percent' ? '%' : 'BRL'];
   const annualTable=()=>{
-    if(complete)textLine(['Demonstrativo anual consolidado']);
+    if(complete)textLine([fixed?'Demonstrativo consolidado · janeiro a setembro':'Demonstrativo anual consolidado']);
     textLine(['Escopo','Seção','Indicador','Tipo','Unidade', ...regimes.flatMap(regime => showPercent ? [regime.name, `${regime.name} · % da receita`] : [regime.name]), 'Observações','Referências']);
     for (const row of rows) {
       const cells = prefix(row).map(textCell);
@@ -123,14 +151,14 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   };
   const monthlyTable=()=>{
     if(complete){lines.push('');textLine([`Demonstrativos mensais · ${regimeScope}`]);}
-    const months = Array.from({length:12}, (_, index) => presentation.months?.[index]?.label || MONTHS[index]);
-    const columns = [...months, 'Total anual / indicador anual'];
+    const months = Array.from({length:monthCount}, (_, index) => presentation.months?.[index]?.label || MONTHS[index]);
+    const columns = [...months, fixed?'Consolidado Jan–Set / indicador do período':'Total anual / indicador anual'];
     textLine(['Regime','Escopo','Seção','Indicador','Tipo','Unidade', ...columns.flatMap(label => showPercent ? [label, `${label} · % da receita`] : [label]), 'Observações','Referências']);
     for (const regime of regimes) {
       for (const row of rows) {
         const cells = [regime.name,...prefix(row)].map(textCell);
-        for (let index = 0; index < 13; index++) {
-          const frame = index === 12 ? 'calendarAnnual' : 'monthly';
+        for (let index = 0; index <= monthCount; index++) {
+          const frame = index === monthCount ? 'calendarAnnual' : 'monthly';
           cells.push(numberCell(valueFor(row, regime, frame, index), row.unit === 'percent'));
           if (showPercent) cells.push(row.unit === 'currency' ? numberCell(percentFor(row, regime, frame, index), true) : textCell(''));
         }

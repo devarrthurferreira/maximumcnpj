@@ -5,6 +5,7 @@ import { write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { VERSION } from './domain.ts';
 import {baselineMonth, calculateMonthlySimulation} from '../public/simulator-monthly.js';
+import {JAN_SEP_POLICY,assertCompleteAnalysisPeriod} from '../public/analysis-period.js';
 import {readRbt12Reference, rbt12InputSource} from './simulation-extrato.ts';
 import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
@@ -52,13 +53,15 @@ function signedSalesMoney(value: unknown) {
 }
 
 export function validateSimulationRequest(input: unknown) {
-  object(input, ['simulationId', 'generationId', 'clientId', 'reportMonths', 'periodConfirmed', 'monthlyGroups', 'draft'], ['title', 'parentSimulationId', 'rbt12ExtractionId', 'rbt12Source', 'rbt12ManualConfirmed', 'monthlyInputs']);
+  object(input, ['simulationId', 'generationId', 'clientId', 'reportMonths', 'periodConfirmed', 'monthlyGroups', 'draft'], ['title', 'parentSimulationId', 'rbt12ExtractionId', 'rbt12Source', 'rbt12ManualConfirmed', 'monthlyInputs','periodPolicy']);
   const simulationId = uuid(input.simulationId), generationId = uuid(input.generationId), clientId = uuid(input.clientId);
   const parentSimulationId = input.parentSimulationId == null ? null : uuid(input.parentSimulationId);
   const rbt12ExtractionId = input.rbt12ExtractionId == null ? null : uuid(input.rbt12ExtractionId);
   need(parentSimulationId !== simulationId, 'A nova simulação precisa de um identificador próprio.');
   need(typeof input.reportMonths === 'number' && Number.isInteger(input.reportMonths) && input.reportMonths >= 1 && input.reportMonths <= 12,
     'Informe de 1 a 12 meses nos relatórios.');
+  need(input.periodPolicy===undefined||input.periodPolicy===JAN_SEP_POLICY,'Política de período desconhecida.');
+  need(input.periodPolicy!==JAN_SEP_POLICY||input.reportMonths===9,'A análise fixa deve conter janeiro a setembro, totalizando nove meses.');
   need(input.periodConfirmed === true, 'Confirme que os relatórios correspondem ao mesmo período.');
   const title = input.title === undefined ? null : text(input.title, 160);
   object(input.monthlyGroups, GROUPS);
@@ -94,6 +97,7 @@ export function validateSimulationRequest(input: unknown) {
     'Os totais de vendas e compras devem corresponder aos cinco grupos preenchidos.', 400, 'SIMULATION_TOTAL');
   return {simulationId, generationId, clientId, title, reportMonths: input.reportMonths as number, periodConfirmed: true as const,
     monthlyGroups, draft, parentSimulationId, rbt12ExtractionId,
+    ...(input.periodPolicy===JAN_SEP_POLICY?{periodPolicy:JAN_SEP_POLICY}:{}),
     ...(input.monthlyInputs === undefined ? {} : {monthlyInputs: input.monthlyInputs}),
     // Preserve the previous normalized OCR request and hash for retries after an upgrade.
     ...(rbt12Source === 'MANUAL' ? {rbt12Source, rbt12ManualConfirmed: true as const} : rbt12Source==='NOT_REQUIRED'?{rbt12Source}:{})};
@@ -222,7 +226,12 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
     need(parent.clientId === clientId && (analysis || parent.generationId === generationId),
       'A simulação original precisa pertencer à mesma empresa e geração.', 409, 'SIMULATION_PARENT');
   }
-  const source = analysis?.source || reprocessing?.source || await generationSimulator(generationId, clientId);
+  const source = analysis?.source || reprocessing?.source || await generationSimulator(generationId, clientId,
+    validated.periodPolicy?{periodPolicy:validated.periodPolicy}:{});
+  if(validated.periodPolicy===JAN_SEP_POLICY||source.analysisPeriod){
+    try{assertCompleteAnalysisPeriod(source.analysisPeriod,source.monthlyReports);}
+    catch(error){throw new AppError(422,'ANALYSIS_PERIOD_INCOMPLETE',error instanceof Error?error.message:'Complete janeiro a setembro nos dois relatórios.');}
+  }
   if(analysis)need(source.generationId===generationId && source.clientId===clientId,'A origem da análise não corresponde à empresa.',409,'ANALYSIS_SOURCE_CHANGED');
   if (reprocessing) need(parentSimulationId === reprocessing.originalId && source.generationId === generationId && source.clientId === clientId,
     'A origem do recálculo não corresponde ao histórico.', 409, 'REPROCESS_SOURCE');
@@ -246,7 +255,7 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   need(Array.isArray(validated.monthlyInputs), 'Atualize a página para enviar os valores de cada competência.',409,'SIMULATION_MONTHS');
   const rbt12Schedule=rbt12Extraction?buildRbt12Schedule(rbt12Extraction,source.monthlyReports.map(row=>row.sourceMonth)):null;
   need(!rbt12Schedule||rbt12Schedule.complete,`O quadro 2.2 não cobre todas as competências. ${rbt12Schedule?.rows.filter(row=>row.status!=='CONFIRMED').map(row=>`${row.sourceMonth}: faltam ${row.missingMonths.join(', ')}`).join('; ')||''}. Importe um extrato com o histórico necessário.`,409,'RBT12_MONTHS_MISSING');
-  const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports!,validated.monthlyInputs,source.sales.jobId,rbt12Schedule);}catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
+  const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports!,validated.monthlyInputs,source.sales.jobId,rbt12Schedule,source.analysisPeriod);}catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
   const {difalProjection,anticipationProjection,engineInput,result,projection,monthlyInputs}=computed;
   const first=baselineMonth(source.monthlyReports[0]);
   const baselineMonthlyGroups=first.groups,baselineServiceRevenue=first.values.serviceRevenue;
@@ -260,6 +269,7 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
     ...(reprocessing ? {reprocessing: {version: reprocessing.version, originalId: reprocessing.originalId, completedAt: createdAt,
       ...(reprocessing.serviceRevenueMigration ? {serviceRevenueMigration:reprocessing.serviceRevenueMigration} : {})}} : {}),
     modelVersion: result.version, calculatorSourceCommit: CALCULATOR_SOURCE_COMMIT, taxSources: TAX_SOURCES,
+    ...(source.analysisPeriod?{analysisPeriod:source.analysisPeriod}:{}),
     source, projection, difalProjection, anticipationProjection, monthlyInputs, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
     monthlyGroups, monthlyGroupsUnit: 'BRL', baselineMonthlyGroups,
     ...(baselineServiceRevenue === null ? {} : {baselineServiceRevenue}),
@@ -313,7 +323,7 @@ export async function simulationHistory(page: number, filters: {clientId?: strin
   const c = await simulations();
   const projection = {_id: 1, generationId: 1, clientId: 1, title: 1, company: 1, year: 1, createdAt: 1, createdBy: 1,
     annualRevenue: 1, bestRegimeId: 1, bestRegimeName: 1, bestAnnualProfit: 1, manuallyAdjusted: 1, reportMonths: 1, parentSimulationId: 1,
-    reportPeriod: 1, periodBasis: 1, modelVersion: 1, analysisId:1,analysisRevision:1,'result.method': 1, 'projection.version': 1,
+    reportPeriod: 1, periodBasis: 1, modelVersion: 1, analysisPeriod:1, analysisId:1,analysisRevision:1,'result.method': 1, 'projection.version': 1,
     'reprocessing.version': 1, 'reprocessing.originalId': 1, 'reprocessing.completedAt': 1};
   const [items, total] = await Promise.all([
     c.find(query).project(projection).sort({createdAt: -1, _id: -1}).skip((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).maxTimeMS(20000).toArray(),

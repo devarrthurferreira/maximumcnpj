@@ -7,6 +7,8 @@ import {OPERATION_CATALOG_VERSION, classifyOperationNature, normalizeOperationNa
 import {sameReportCompetences} from './report-competence.ts';
 import {MONTHLY_FIELDS, type MonthlyReport} from '../public/simulator-monthly.js';
 import {summarizeIcmsOperations, type IcmsOperations} from '../public/simulator-icms.js';
+import {JAN_SEP_POLICY,reportMonthsInPeriod} from '../public/analysis-period.js';
+import {summarizeCommercialMonth} from './simulation-commercial-composition.ts';
 
 export type NatureAudit = {
   side: 'SALES' | 'PURCHASES'; natureCode: string; operation: CatalogOperation; lines: number;
@@ -42,14 +44,17 @@ export function aggregateOperationAudit(reports: readonly OperationMonthlyReport
 }
 
 type ReconciledRows = {rows: any[]; statuses: Map<string,unknown>};
+export type MonthlySourceOptions={periodPolicy?:typeof JAN_SEP_POLICY};
 /** Pure selection over frozen row values: descriptions and the old operation flag never override column D. */
-export function selectOperationMonths(purchases: ReconciledRows, sales: ReconciledRows, issuerUf?: string, purchaseIssuerUf=issuerUf): OperationMonthlyReport[] | null {
+export function selectOperationMonths(purchases: ReconciledRows, sales: ReconciledRows, issuerUf?: string, purchaseIssuerUf=issuerUf, options:MonthlySourceOptions={}): OperationMonthlyReport[] | null {
   if([...purchases.rows,...sales.rows].some(row=>!row.serviceDate))return null;
   const pp=reportPeriod(purchases.rows.map(row=>row.serviceDate)),sp=reportPeriod(sales.rows.map(row=>row.serviceDate));
-  need(sameReportCompetences(pp,sp),`Compras e vendas cobrem competências diferentes pela coluna H (${pp.startMonth} a ${pp.endMonth} vs. ${sp.startMonth} a ${sp.endMonth}). Use arquivos com o mesmo mês/ano inicial e final.`,409,'SIMULATOR_PERIOD');
+  need(options.periodPolicy===JAN_SEP_POLICY||sameReportCompetences(pp,sp),`Compras e vendas cobrem competências diferentes pela coluna H (${pp.startMonth} a ${pp.endMonth} vs. ${sp.startMonth} a ${sp.endMonth}). Use arquivos com o mesmo mês/ano inicial e final.`,409,'SIMULATOR_PERIOD');
   const [year,month]=pp.startMonth.split('-').map(Number);
-  const months: OperationMonthlyReport[]=Array.from({length:pp.months},(_,index)=>{
-    const date=new Date(Date.UTC(year,month-1+index,1));
+  const sourceMonths=options.periodPolicy===JAN_SEP_POLICY?[...new Set([...reportMonthsInPeriod(pp),...reportMonthsInPeriod(sp)])].sort():
+    Array.from({length:pp.months},(_,index)=>new Date(Date.UTC(year,month-1+index,1)).toISOString().slice(0,7));
+  const months: OperationMonthlyReport[]=sourceMonths.map(sourceMonth=>{
+    const date=new Date(`${sourceMonth}-01T00:00:00.000Z`);
     return {sourceMonth:date.toISOString().slice(0,7),month:date.getUTCMonth()+1,
       fields:Object.fromEntries(MONTHLY_FIELDS.map(key=>[key,0])) as MonthlyReport['fields'],
       salesLines:0,purchaseLines:0,difal:null,operationVersion:OPERATION_CATALOG_VERSION,
@@ -88,7 +93,7 @@ export function selectOperationMonths(purchases: ReconciledRows, sales: Reconcil
           audit.excludedSalesCents=exactCents(audit.excludedSalesCents+total);entry.excludedCents=exactCents(entry.excludedCents+total);
           if(operation==='NAO_CLASSIFICADA')audit.unknownSalesLines++;
         }
-        const list=salesByMonth.get(target.sourceMonth)||[];list.push(row);salesByMonth.set(target.sourceMonth,list);
+        const list=salesByMonth.get(target.sourceMonth)||[];list.push({...row,status});salesByMonth.set(target.sourceMonth,list);
       }else{
         target.purchaseLines++;
         audit.reportPurchasesCents=exactCents(audit.reportPurchasesCents+total);
@@ -104,11 +109,13 @@ export function selectOperationMonths(purchases: ReconciledRows, sales: Reconcil
           audit.excludedPurchaseCents=exactCents(audit.excludedPurchaseCents+total);entry.excludedCents=exactCents(entry.excludedCents+total);
           if(operation==='NAO_CLASSIFICADA')audit.unknownPurchaseLines++;
         }
-        const list=purchasesByMonth.get(target.sourceMonth)||[];list.push({...row,creditGroup:group});purchasesByMonth.set(target.sourceMonth,list);
+        const list=purchasesByMonth.get(target.sourceMonth)||[];list.push({...row,status,creditGroup:group});purchasesByMonth.set(target.sourceMonth,list);
       }
     }
   }
   for(const month of months){
+    if(options.periodPolicy===JAN_SEP_POLICY)month.commercialComposition=summarizeCommercialMonth(month.sourceMonth,
+      purchasesByMonth.get(month.sourceMonth)||[],salesByMonth.get(month.sourceMonth)||[]);
     month.operationAudit.natures=[...auditNatures.get(month.sourceMonth)!.values()].sort((a,b)=>natureKey(a).localeCompare(natureKey(b)));
     month.difal=summarizeDifal((salesByMonth.get(month.sourceMonth)||[]).map(row=>({...row,operation:salesOperation(row.natureCode,'')})),issuerUf);
     month.anticipation=summarizeAnticipation(purchasesByMonth.get(month.sourceMonth)||[],purchaseIssuerUf);
@@ -123,7 +130,7 @@ export function selectOperationMonths(purchases: ReconciledRows, sales: Reconcil
 }
 
 /** Read only reconciled server snapshots; classification remains the lookup captured in each job. */
-export async function monthlyReportSource(purchases: any, sales: any, _currentSalesRows?: any[], issuerUf?: string): Promise<OperationMonthlyReport[] | null> {
+export async function monthlyReportSource(purchases: any, sales: any, _currentSalesRows?: any[], issuerUf?: string, options:MonthlySourceOptions={}): Promise<OperationMonthlyReport[] | null> {
   const read = async (summary: any): Promise<ReconciledRows> => {
     const [rows, items] = await Promise.all([
       (await collection('purchaseLines')).find(scope({jobId:summary.job._id})).sort({index:1}).maxTimeMS(20000).toArray(),
@@ -140,5 +147,5 @@ export async function monthlyReportSource(purchases: any, sales: any, _currentSa
   // A versioned purchase estimate must retain its own confirmed UF, including
   // an explicitly missing UF. Sales cannot silently resolve its pending rows.
   const anticipationUf=isAnticipationVersion(purchases.anticipation?.version)||isAnticipationVersion(purchases.job.anticipationVersion)?purchaseUf:purchaseUf||normalizeUf(issuerUf)||salesUf;
-  return selectOperationMonths(p,s,normalizeUf(issuerUf)||salesUf,anticipationUf);
+  return selectOperationMonths(p,s,normalizeUf(issuerUf)||salesUf,anticipationUf,options);
 }

@@ -25,6 +25,25 @@ export function buildDreSummary(presentation,column) {
     movements,reconciled,complete};
 }
 
+/** A short comparison, using only reconciled cells of the complete DRE. */
+export function buildDreExecutiveSummary(presentation,column) {
+  const rows=unifiedDreRows(presentation),get=key=>readDreValue(rows.find(row=>row.key===key),column);
+  const summary=buildDreSummary(presentation,column);
+  return {...summary,taxes:get('totalTaxes'),creditsApplied:readDreValue(presentation.appliedCredits,column),
+    rows:[
+      ['revenueSourceGross','Receita bruta','composition'],
+      ['revenueSalesReturns','− Devoluções de vendas','composition'],
+      ['revenueManualAdjustment','Ajustes da receita (+/−)','composition'],
+      ['revenue','Receita considerada','subtotal'],
+      ['revenueDeductions','− Impostos sobre a receita','line'],
+      ['netRevenue','Receita líquida','subtotal'],
+      ['cmvNetCredits','− Compras líquidas de créditos','line'],
+      ['operatingExpenses','− Despesas operacionais','line'],
+      ['incomeTaxes','− IRPJ e CSLL','line'],
+      ['netProfit','Resultado · lucro ou prejuízo','result']
+    ].map(([key,label,kind])=>({key,label,kind,value:get(key),row:rows.find(row=>row.key===key)}))};
+}
+
 const evolutionMetrics = [
   ['revenue','Receita utilizada','currency'],
   ['netProfit','Resultado líquido','currency'],
@@ -36,7 +55,7 @@ const monthOrdinal = value => /^\d{4}-(0[1-9]|1[0-2])$/.test(value || '')
 
 /** Compare saved cells only. Missing months and legacy averages never become a trend. */
 export function buildDreEvolution(presentation,calendar,regimeId,selectedMonth=0) {
-  const actual=presentation?.method==='REPORT_MONTHS_V1'&&calendar?.version==='DRE_CALENDAR_V3'&&calendar?.months?.length===12;
+  const actual=presentation?.method==='REPORT_MONTHS_V1'&&((calendar?.version==='DRE_CALENDAR_V3'&&calendar?.months?.length===12)||(calendar?.version==='DRE_CALENDAR_V4'&&presentation.analysisPeriod?.version==='JAN_SEP_V1'&&calendar?.months?.length===9));
   if(!actual)return {available:false,reason:'Esta simulação usa a projeção mensal salva. A evolução exige valores individuais por competência.',months:[],metrics:[]};
   const rows=unifiedDreRows(presentation),regime=presentation.regimes.find(item=>item.id===regimeId);
   const months=calendar.months.map((month,index)=>{
@@ -45,7 +64,7 @@ export function buildDreEvolution(presentation,calendar,regimeId,selectedMonth=0
     const values=Object.fromEntries(evolutionMetrics.map(([key])=>[key,sourceMonth&&available?readDreValue(rows.find(row=>row.key===key),{id:regimeId,mode:'month',month:index}):null]));
     return {label:month.label,sourceMonth,available,...values};
   });
-  const index=Number.isInteger(selectedMonth)&&selectedMonth>=0&&selectedMonth<12?selectedMonth:0;
+  const index=Number.isInteger(selectedMonth)&&selectedMonth>=0&&selectedMonth<months.length?selectedMonth:0;
   const current=months[index],previous=index>0?months[index-1]:null;
   const reason=!current.sourceMonth?'Sem dados importados para o mês selecionado.':
     !current.available?'Este regime está indisponível na competência selecionada.':

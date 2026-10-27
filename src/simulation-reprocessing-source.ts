@@ -9,6 +9,8 @@ import {monthlyProjection, monthlyDifal, MONTHLY_FIELDS} from '../public/simulat
 import {monthlyReportSource, aggregateOperationAudit, type OperationMonthlyReport} from './simulation-monthly-source.ts';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.ts';
 import type {generationSimulator} from './simulator-store.ts';
+import {JAN_SEP_POLICY,buildAnalysisPeriod,assertCompleteAnalysisPeriod} from '../public/analysis-period.js';
+import {aggregateCommercialComposition} from './simulation-commercial-composition.ts';
 
 type Source = Awaited<ReturnType<typeof generationSimulator>>;
 type Summary = Awaited<ReturnType<typeof purchaseSummary>>;
@@ -37,14 +39,31 @@ async function originalSource(snapshot: Doc, purchases: Summary, sales: Summary)
       'O total do relatório original diverge do total congelado na simulação.');
     if (saved.period) check(isDeepStrictEqual(saved.period, summary.period), 'O período fiscal original diverge do histórico.');
   }
+  if(source.analysisPeriod){
+    let period;
+    try{period=buildAnalysisPeriod(purchases.period,sales.period);assertCompleteAnalysisPeriod(period);}
+    catch(error){check(false,error instanceof Error?error.message:'O período de janeiro a setembro não concilia com as fontes.');}
+    check(isDeepStrictEqual(source.analysisPeriod,period)&&isDeepStrictEqual(snapshot.analysisPeriod,period),
+      'O período fixo congelado diverge da cobertura dos relatórios originais.');
+    check(isDeepStrictEqual(source.importedPeriods,{purchases:purchases.period,sales:sales.period}),
+      'Os períodos completos dos relatórios divergem das evidências congeladas.');
+  }
   if (source.operationVersion === OPERATION_CATALOG_VERSION) {
-    const months=await monthlyReportSource(purchases,sales,undefined,normalizeUf(source.sales.difal?.issuerUf));
-    check(months,'O histórico não conserva as competências mensais originais.');
+    const imported=await monthlyReportSource(purchases,sales,undefined,normalizeUf(source.sales.difal?.issuerUf),source.analysisPeriod?{periodPolicy:JAN_SEP_POLICY}:{});
+    check(imported,'O histórico não conserva as competências mensais originais.');
+    const months=source.analysisPeriod?imported!.filter(row=>source.analysisPeriod.includedMonths.includes(row.sourceMonth)):imported;
+    if(source.analysisPeriod){
+      check(isDeepStrictEqual(source.importedOperationAudit,aggregateOperationAudit(imported!)),
+        'A conferência completa dos relatórios diverge das evidências congeladas.');
+      check(isDeepStrictEqual(source.commercialComposition,aggregateCommercialComposition(months!.map(row=>row.commercialComposition!))),
+        'A composição comercial congelada diverge das linhas originais.');
+    }
     const fields=monthlyProjection(months!).annualGroupsCents;
     check(MONTHLY_FIELDS.every(key=>source.fields?.[key]===fields[key]),'As bases congeladas por natureza divergem dos relatórios originais.');
     check(isDeepStrictEqual(source.operationAudit,aggregateOperationAudit(months!)),'A conferência congelada de naturezas diverge dos relatórios originais.');
     const evidence=(row: any)=>({sourceMonth:row?.sourceMonth,month:row?.month,fields:row?.fields,
-      salesLines:row?.salesLines,purchaseLines:row?.purchaseLines,operationVersion:row?.operationVersion,operationAudit:row?.operationAudit});
+      salesLines:row?.salesLines,purchaseLines:row?.purchaseLines,operationVersion:row?.operationVersion,operationAudit:row?.operationAudit,
+      ...(source.analysisPeriod?{commercialComposition:row?.commercialComposition}:{})});
     check(Array.isArray(source.monthlyReports)&&isDeepStrictEqual(source.monthlyReports.map(evidence),months!.map(evidence)),
       'As bases e evidências de cada competência divergem dos relatórios originais.');
   } else {
@@ -77,7 +96,11 @@ async function originalSource(snapshot: Doc, purchases: Summary, sales: Summary)
     }
   }
   if (source.periodBasis === 'COLUMN_H') {
-    check(source.period && source.reportMonths === snapshot.reportMonths && source.period.months === snapshot.reportMonths &&
+    if(source.analysisPeriod)check(source.reportMonths===9&&snapshot.reportMonths===9&&isDeepStrictEqual(source.period,
+      {startDate:`${source.analysisPeriod.startMonth}-01`,endDate:`${source.analysisPeriod.endMonth}-30`,startMonth:source.analysisPeriod.startMonth,
+        endMonth:source.analysisPeriod.endMonth,months:9,observedMonths:source.analysisPeriod.includedMonths.length,missingMonths:[]}),
+    'As competências selecionadas divergem do período fixo congelado.');
+    else check(source.period && source.reportMonths === snapshot.reportMonths && source.period.months === snapshot.reportMonths &&
       isDeepStrictEqual(source.period, purchases.period) && sales.period &&
       purchases.period?.startMonth === sales.period.startMonth && purchases.period?.endMonth === sales.period.endMonth,
     'As competências originais não correspondem ao período congelado.');
@@ -116,9 +139,11 @@ export async function rebuildSimulationSource(snapshot: Doc): Promise<Source & {
   const originalIssuer = normalizeUf(sales.job.issuerUf), savedIssuer = normalizeUf(original.sales.difal?.issuerUf);
   check(!originalIssuer || !savedIssuer || originalIssuer === savedIssuer, 'As UFs congeladas do emitente são conflitantes.');
   const issuerUf = originalIssuer || savedIssuer;
-  const monthlyReports=await monthlyReportSource(purchases,sales,undefined,issuerUf);
-  check(monthlyReports,'Os relatórios originais não conservam as competências da coluna H. Reimporte-os para aplicar o catálogo de naturezas.');
+  const importedMonthlyReports=await monthlyReportSource(purchases,sales,undefined,issuerUf,original.analysisPeriod?{periodPolicy:JAN_SEP_POLICY}:{});
+  check(importedMonthlyReports,'Os relatórios originais não conservam as competências da coluna H. Reimporte-os para aplicar o catálogo de naturezas.');
+  const monthlyReports=original.analysisPeriod?importedMonthlyReports!.filter(row=>original.analysisPeriod.includedMonths.includes(row.sourceMonth)):importedMonthlyReports;
   const projection=monthlyProjection(monthlyReports!);
+  if(original.analysisPeriod)projection.analysisPeriod=original.analysisPeriod;
   const fields=projection.annualGroupsCents as OperationMonthlyReport['fields'];
   const operationAudit=aggregateOperationAudit(monthlyReports!);
   const difalMonths=monthlyDifal(monthlyReports!,sales.job._id);
@@ -128,7 +153,7 @@ export async function rebuildSimulationSource(snapshot: Doc): Promise<Source & {
   check(goodsCents>=0,'As devoluções de venda do relatório de compras superam as vendas de mercadorias reconstruídas.');
   const recalculatedSalesTotalCents=exactCents(goodsCents+fields.serviceRevenueCents);
   const selectedPurchasesTotalCents=exactCents(fields.purchasesOptantCents+fields.purchasesNonOptantCents);
-  const salesBalanceChangeCents=exactSignedCents(recalculatedSalesTotalCents-sales.totals.totalCents);
+  const salesBalanceChangeCents=exactSignedCents(recalculatedSalesTotalCents-(original.analysisPeriod?original.sales.selectedTotalCents:sales.totals.totalCents));
   const warnings=[
     'Recálculo sobre as linhas originais: natureza, valores e enquadramento da consulta foram preservados. Nenhum CNPJ foi consultado novamente.',
     'Receita inclui somente operações de venda e serviços 9000, menos devoluções de venda do relatório de compras. Compras incluem somente operações de compra e serviços 8000. Os quatro primeiros dígitos da natureza da coluna L dos relatórios são classificados pela coluna D (OPERAÇÃO) do catálogo; valores seguem Q - Y + AA - AB.',
@@ -146,6 +171,8 @@ export async function rebuildSimulationSource(snapshot: Doc): Promise<Source & {
   return {...original,generationId:snapshot.generationId,clientId:snapshot.clientId,
     company:structuredClone(snapshot.company||original.company),fields,revenueSplit:{version:'SALES_SERVICES_V1'},
     operationVersion:OPERATION_CATALOG_VERSION,operationAudit,projection,monthlyReports,
+    ...(original.analysisPeriod?{importedOperationAudit:aggregateOperationAudit(importedMonthlyReports!),
+      commercialComposition:aggregateCommercialComposition(monthlyReports!.map(row=>row.commercialComposition!))}:{}),
     purchases:{...original.purchases,totalCents:purchases.totals.totalCents,selectedTotalCents:selectedPurchasesTotalCents},
     sales:{...original.sales,totalCents:sales.totals.totalCents,selectedTotalCents:recalculatedSalesTotalCents,
       servicesTotalCents:sales.servicesTotalCents,operationTotals:sales.operationTotals,difal},

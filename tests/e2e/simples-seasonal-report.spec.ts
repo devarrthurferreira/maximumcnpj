@@ -21,6 +21,11 @@ async function save(page:Page){
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
   return response.json();
 }
+async function openCompleteDre(page:Page){
+  const detail=page.locator('[data-simulation-detail="dre"]');
+  if(await detail.getAttribute('open')===null)await detail.locator(':scope > summary').click();
+  await expect(detail.locator('[data-simulation-lazy="dre"]')).toHaveAttribute('data-loaded','true');
+}
 
 test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório completo e revisão de ICMS/ISS',async({page,browser,baseURL},info)=>{
   test.setTimeout(150_000);
@@ -51,7 +56,9 @@ test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório compl
   await page.locator('#generation-create').click();
   const purchases=Array.from({length:12},(_,i)=>({month:i+1,nature:'2102001',value:1000}));
   purchases.push({month:1,nature:'1202001',value:10000});
-  const sales=Array.from({length:12},(_,i)=>({month:i+1,nature:'6102001',value:i===0?560000:250000}));
+  // January–September contains R$ 3.3m after returns. October–December is
+  // deliberately present in the files and must stay outside the new analysis.
+  const sales=Array.from({length:12},(_,i)=>({month:i+1,nature:'6102001',value:i===0?560000:i<9?343750:250000}));
   for(const [name,rows] of [['compras.csv',purchases],['vendas.csv',sales]] as const){
     await expect(page.locator('#purchase-file')).toBeEnabled();
     await page.locator('#purchase-file').setInputFiles(report(name,[...rows]));
@@ -63,7 +70,9 @@ test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório compl
   await expect(page.locator('#icms-outside')).toHaveValue('inside');
   const saved=await save(page);
   expect(saved.result.annualRevenue).toBe(3_300_000);
-  expect(saved.result.simplesDiagnostic).toMatchObject({available:true,statusCode:'READY',revenueReference:3_300_000,rbt12:3_300_000,coveredMonths:12,completeYear:true,eligibilityVerified:false});
+  expect(saved.analysisPeriod).toMatchObject({version:'JAN_SEP_V1',months:9,complete:true,excludedMonths:['2026-10','2026-11','2026-12']});
+  expect(saved.result.monthlyResults).toHaveLength(9);expect(saved.monthlyDre.version).toBe('DRE_CALENDAR_V4');
+  expect(saved.result.simplesDiagnostic).toMatchObject({available:true,statusCode:'READY',revenueReference:3_300_000,rbt12:3_300_000,coveredMonths:9,completeYear:false,eligibilityVerified:false});
   for(const id of ['pure','hybrid']){
     const regime=saved.result.regimes.find((row:any)=>row.id===id);
     expect(regime.available).toBe(true);
@@ -74,11 +83,13 @@ test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório compl
     expect(months.reduce((total:number,row:any)=>total+row.dre.netProfit,0)).toBeCloseTo(regime.dre.netProfit,6);
   }
   expect(saved.result.regimes.find((row:any)=>row.id==='pure').dre.das).toBeCloseTo(-384_600,6);
-  expect(saved.result.regimes.find((row:any)=>row.id==='pure').dre.netProfit).toBeCloseTo(2_903_400,6);
+  expect(saved.result.regimes.find((row:any)=>row.id==='pure').dre.netProfit).toBeCloseTo(2_906_400,6);
   await expect(page.locator('[data-period="annual"]')).toHaveAttribute('aria-pressed','true');
   await expect(page.locator('#dre-report-period')).toHaveValue('complete');
+  await expect(page.locator('[data-dre-summary-row="revenue"]')).toContainText('3.300.000,00');
+  await openCompleteDre(page);
   await expect(page.locator('[data-simples-diagnostic="READY"]')).toContainText('3.300.000,00');
-  await expect(page.locator('[data-report-coverage]')).toContainText('12');
+  await expect(page.locator('[data-report-coverage]')).toContainText('9 de 9 competências');
   const closing=page.locator('[data-revenue-reconciliation="dre"]');
   await expect(closing.locator('[data-dre-row="revenueSourceGross"] td').first()).toContainText('3.310.000,00');
   await expect(closing.locator('[data-dre-row="revenueSalesReturns"] td').first()).toContainText('10.000,00');
@@ -101,9 +112,9 @@ test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório compl
   }
   await page.locator('[data-period="monthly"]').click();
   await page.locator('#dre-regime').selectOption('pure');await page.locator('#dre-month').selectOption('0');
-  await expect(page.locator('[data-dre-summary="revenue"]')).toContainText('550.000,00');
+  await expect(page.locator('[data-dre-summary-row="revenue"]')).toContainText('550.000,00');
   await page.locator('#dre-month').selectOption('1');
-  await expect(page.locator('[data-dre-summary="revenue"]')).toContainText('250.000,00');
+  await expect(page.locator('[data-dre-summary-row="revenue"]')).toContainText('343.750,00');
   await page.locator('[data-period="annual"]').click();
   await page.setViewportSize({width:320,height:900});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
@@ -115,12 +126,14 @@ test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório compl
     const reopened=await fresh.newPage();reopened.on('pageerror',error=>errors.push(error.message));
     await reopened.goto(`/simulator.html?simulation=${saved._id}`);
     await expect(reopened.locator('[data-period="annual"]')).toHaveAttribute('aria-pressed','true');
+    await openCompleteDre(reopened);
     await expect(reopened.locator('[data-simples-diagnostic="READY"]')).toBeVisible();
     expect(await(await fresh.request.get(`/api/v4/simulations/${saved._id}`)).json()).toEqual(saved);
     await reopened.locator('#create-version').click();await reopened.locator('#rbt12').fill('4000000');
     await reopened.locator('#rbt12-manual-confirm').check();
     const pending=await save(reopened);
     expect(pending.result.simplesDiagnostic.statusCode).toBe('LOCAL_TAX_REVIEW_REQUIRED');
+    await openCompleteDre(reopened);
     await expect(reopened.locator('[data-simples-message]')).toContainText(/não (significa|confirma) exclusão/);
     await reopened.locator('#icms-outside').selectOption('outside');
     await expect(reopened.locator('#results-top')).toHaveCount(0);

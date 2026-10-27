@@ -47,9 +47,11 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
   await page.goto('/generations.html');await page.locator('#generation-search').fill(code);await page.locator(`[data-select-company="${clientId}"]`).click();await page.locator('#generation-create').click();
   await expect(page).toHaveURL(/purchases\.html\?.*guided=1/);
   const purchases=[{month:1,nature:'1102001',value:3000,document:'11222333000181',name:'Fornecedor CNPJ sintético'},{month:1,nature:'8000002',value:200},{month:1,nature:'1202001',value:1000},{month:1,nature:'1949001',value:100},
-    {month:2,nature:'2102001',value:4000},{month:2,nature:'8000102',value:300},{month:2,nature:'1202001',value:500},{month:2,nature:'1949001',value:100}];
+    {month:2,nature:'2102001',value:4000},{month:2,nature:'8000102',value:300},{month:2,nature:'1202001',value:500},{month:2,nature:'1949001',value:100},
+    {month:9,nature:'1949001',value:0}];
   const sales=[{month:1,nature:'6108001',value:6000},{month:1,nature:'6108001',value:4000,document:'11222333000181',name:'Comprador CNPJ sintético'},{month:1,nature:'9000002',value:500},{month:1,nature:'6949001',value:900},
-    {month:2,nature:'5102001',value:12000},{month:2,nature:'9000002',value:700},{month:2,nature:'5949001',value:600}];
+    {month:2,nature:'5102001',value:12000},{month:2,nature:'9000002',value:700},{month:2,nature:'5949001',value:600},
+    {month:9,nature:'5949001',value:0}];
   for(const [name,rows] of [['compras.csv',purchases],['vendas.csv',sales]] as const){
     await expect(page.locator('#purchase-file')).toBeEnabled();await page.locator('#purchase-issuer-uf').selectOption('MG');
     await page.locator('#purchase-file').setInputFiles(report(name,[...rows]));await expect(page.locator('[data-guided-continue]')).toBeVisible();
@@ -65,7 +67,7 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
         await expect(detailed.locator('#purchase-report-view [data-anticipation-amount]')).toContainText('512,40');
         await expect(detailed.locator('#purchase-report-view [data-purchase-considered-total]')).toContainText('7.500,00');
         await detailed.locator('#purchase-view-filter').selectOption('lines');
-        await expect(detailed.locator('#purchase-result-list tbody tr')).toHaveCount(8);
+        await expect(detailed.locator('#purchase-result-list tbody tr')).toHaveCount(9);
         const legalEntity=detailed.locator('#purchase-result-list tbody tr').filter({hasText:'Fornecedor CNPJ sintético'});
         await expect(legalEntity).toContainText('3.000,00');await expect(legalEntity).toContainText('219,60');await expect(legalEntity).not.toContainText('Não se aplica');
         const downloading=detailed.waitForEvent('download');await detailed.locator('#purchase-csv').click();const download=await downloading,stream=await download.createReadStream(),parts:Buffer[]=[];
@@ -79,7 +81,7 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
         expect(at(cnpj,'Compras consideradas (R$)')).toBe('3000,00');
         expect(at(cnpj,'Versão da seleção de compras')).toBe('PURCHASE_NATURES_V1');
         const sourceRows=csvRows.slice(1);
-        expect(sourceRows).toHaveLength(8);
+        expect(sourceRows).toHaveLength(9);
         expect(sourceRows.reduce((sum,row)=>sum+Number(at(row,'Total calculado (R$)').replace(',','.')),0)).toBe(9200);
         expect(sourceRows.reduce((sum,row)=>sum+Number(at(row,'Compras consideradas (R$)').replace(',','.')),0)).toBe(7500);
         for(const row of sourceRows.filter(row=>['1202','1949'].includes(at(row,'Natureza / CFOP'))))expect(at(row,'Compras consideradas (R$)')).toBe('0,00');
@@ -116,7 +118,7 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
   await expect(page.locator('#salesCpfCents')).toHaveValue('5000.00');await expect(page.locator('#salesNonOptantCents')).toHaveValue('4000.00');await expect(page.locator('#serviceRevenue')).toHaveValue('500.00');await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('3200.00');
   await expect(page.locator('#month-context')).toContainText('78.000,00');
   await expect(page.locator('[data-difal-monthly]')).toContainText('1.000,00');await expect(page.locator('[data-anticipation-monthly]')).toContainText('219,60');
-  await expect(page.locator('#rbt12-schedule > details')).toHaveAttribute('open','');await expect(page.locator('#rbt12-schedule .projection-table-wrap tbody tr')).toHaveCount(2);await expect(page.locator('#rbt12-schedule')).toContainText('90.000,00');
+  await expect(page.locator('#rbt12-schedule > details')).toHaveAttribute('open','');await expect(page.locator('#rbt12-schedule .projection-table-wrap tbody tr')).toHaveCount(9);await expect(page.locator('#rbt12-schedule')).toContainText('90.000,00');
   await page.locator('.sim-report-details>summary').click();await page.locator('.sim-operation-audit>summary').click();
   await expect(page.locator('.sim-operation-audit')).toContainText('21.700,00');await expect(page.locator('.sim-operation-audit')).toContainText('7.500,00');await expect(page.locator('.sim-operation-audit')).toContainText('1.500,00');
   await page.locator('.sim-report-details>summary').click();
@@ -125,7 +127,8 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/simulations'&&response.request().method()==='POST');
   await page.locator('#generate-simulation').click();const response=await saving;expect(response.ok(),await response.text()).toBe(true);const saved=await response.json();
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
-  expect(saved.rbt12Schedule.rows.map((row:any)=>row.rbt12Cents)).toEqual([7_800_000,9_000_000]);
+  expect(saved.rbt12Schedule.rows.map((row:any)=>row.rbt12Cents)).toEqual(Array.from({length:9},(_,index)=>7_800_000+index*1_200_000));
+  expect(saved.analysisPeriod.version).toBe('JAN_SEP_V1');expect(saved.reportMonths).toBe(9);
   expect(saved.source.operationAudit).toMatchObject({salesReturnsCents:150_000,purchaseServicesCents:50_000,excludedSalesCents:150_000,excludedPurchaseCents:20_000});
   expect(saved.result.annualRevenue).toBe(21_700);
   expect(saved.draft.difalPolicy).toEqual({version:'DIFAL_SCENARIOS_V2',enabled:{pure:true,hybrid:true,presumed:false,actual:false},operations:{pure:{entry:true,exit:true},hybrid:{entry:true,exit:true}}});
@@ -133,21 +136,24 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
   expect(saved.difalProjection.sourceVersion).toBe('DIFAL_ESTIMATE_V4');
   expect(saved.anticipationProjection.sourceVersion).toBe('ICMS_ANTICIPATION_V4');
   expect(saved.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([-2200,-2200,0,0]);
-  expect(saved.result.monthlyResults.map((row:any)=>row.engineInput.rbt12)).toEqual([78_000,90_000]);
+  expect(saved.result.monthlyResults.map((row:any)=>row.engineInput.rbt12)).toEqual(Array.from({length:9},(_,index)=>78_000+index*12_000));
   expect(saved.result.regimes.filter((regime:any)=>['pure','hybrid'].includes(regime.id)).map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([-512.4,-512.4]);
   expect(saved.result.regimes.filter((regime:any)=>['presumed','actual'].includes(regime.id)).map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([0,0]);
   await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');await expect(page.locator('#dre-report-period')).toHaveValue('complete');
+  await page.locator('[data-simulation-detail="dre"] > summary').click();
+  await expect(page.locator('[data-simulation-lazy="dre"]')).toHaveAttribute('data-loaded','true');
   await page.getByRole('button',{name:'Mensal',exact:true}).click();
   await page.locator('#dre-regime').selectOption('pure');await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('219,60');
   await page.locator('#dre-month').selectOption('1');await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('292,80');
   await page.locator('#dre-regime').selectOption('actual');await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('0,00');
-  await page.getByRole('button',{name:'Anual',exact:true}).click();await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('512,40');
+  await page.locator('#dre-demonstrativo [data-period="annual"]').click();await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('512,40');
   const fresh=await browser.newContext({baseURL});
   try{
     const login=await fresh.request.post('/api/auth/login',{data:{email:process.env.ADMIN_EMAIL,password:process.env.ADMIN_PASSWORD},headers:{Origin:origin}});expect(login.ok()).toBe(true);
     const reopened=await fresh.newPage();reopened.on('pageerror',error=>errors.push(error.message));await reopened.goto(`/simulator.html?simulation=${saved._id}`);
     await expect(reopened.locator('#simulation-snapshot')).toBeVisible();await expect(reopened.locator('#simulator-form')).toHaveCount(0);await expect(reopened.locator('#rbt12-schedule')).toContainText('78.000,00');
     await expect(reopened.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');await expect(reopened.locator('#dre-report-period')).toHaveValue('complete');
+    await reopened.locator('[data-simulation-detail="dre"] > summary').click();
     await reopened.getByRole('button',{name:'Mensal',exact:true}).click();
     await reopened.locator('#dre-regime').selectOption('hybrid');await expect(reopened.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('219,60');
     const stored=await fresh.request.get(`/api/v4/simulations/${saved._id}`);expect(await stored.json()).toEqual(saved);
@@ -155,7 +161,7 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
     await expect(reopened.locator('#sim-difal-options [data-difal-option="pure"]')).toContainText('Incluído por escolha');
     await reopened.locator('#create-version').click();await expect(reopened.locator('#simulator-form')).toBeVisible();
     await expect(reopened.locator('#difal-enabled-pure')).toBeChecked();
-    await reopened.locator('.sim-difal-review > summary').click();
+    await expect(reopened.locator('#difal-entry-hybrid')).toBeVisible();
     await reopened.locator('#difal-enabled-pure').uncheck();await reopened.locator('#difal-entry-hybrid').uncheck();
     await reopened.locator('#rbt12-manual').click();await reopened.locator('#rbt12').fill('100000');await reopened.locator('#rbt12-manual-confirm').check();
     const childSaving=reopened.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/simulations'&&response.request().method()==='POST');

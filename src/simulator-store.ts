@@ -1,11 +1,13 @@
 import { getGeneration } from './generation-store.ts';
 import { reconciledPurchaseSummary as purchaseSummary } from './purchase-store.ts';
-import { PURCHASE_MODE, SALES_MODE, exactCents, exactSignedCents } from './purchase-domain.ts';
-import { need } from './security.ts';
-import {monthlyProjection, monthlyDifal} from '../public/simulator-monthly.js';
+import { PURCHASE_MODE, SALES_MODE, exactCents, exactSignedCents, type ReportPeriod } from './purchase-domain.ts';
+import { AppError, need } from './security.ts';
+import {monthlyProjection, monthlyDifal, MONTHLY_FIELDS} from '../public/simulator-monthly.js';
 import {monthlyReportSource, aggregateOperationAudit, type OperationMonthlyReport} from './simulation-monthly-source.ts';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.ts';
 import { sameReportCompetences } from './report-competence.ts';
+import {JAN_SEP_POLICY,buildAnalysisPeriod} from '../public/analysis-period.js';
+import {aggregateCommercialComposition} from './simulation-commercial-composition.ts';
 
 type FinancialSummary = Awaited<ReturnType<typeof purchaseSummary>>;
 
@@ -17,7 +19,8 @@ function sourceMetadata(summary: FinancialSummary) {
 }
 
 /** Only reconciled server snapshots can prefill a simulator; the browser never supplies totals. */
-export async function generationSimulator(id: string, clientId: string) {
+export async function generationSimulator(id: string, clientId: string, options:{periodPolicy?:typeof JAN_SEP_POLICY}={}) {
+  need(options.periodPolicy===undefined||options.periodPolicy===JAN_SEP_POLICY,'Política de período desconhecida.');
   need(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(clientId), 'Selecione a empresa para gerar o simulador.');
   const generation = await getGeneration(id);
   const company = generation.companies.find((company: any) => company.clientId === clientId);
@@ -35,16 +38,24 @@ export async function generationSimulator(id: string, clientId: string) {
       summary.calculationVersion === 'NET_V2' && summary.job.completedAt,
     'Os relatórios não correspondem à empresa e à geração selecionadas.', 409, 'SIMULATOR_INCONSISTENT');
   }
-  const monthlyReports = await monthlyReportSource(purchases, sales);
-  need(monthlyReports, 'Os relatórios não conservam as competências da coluna H. Reimporte compras e vendas para aplicar as naturezas por mês; o histórico permanece disponível.',409,'SIMULATION_MONTHS');
-  const projection = monthlyProjection(monthlyReports);
-  const fields = projection.annualGroupsCents as OperationMonthlyReport['fields'];
+  const analysisPeriod=options.periodPolicy===JAN_SEP_POLICY?(()=>{
+    try{return buildAnalysisPeriod(purchases.period,sales.period);}
+    catch(error){throw new AppError(409,'ANALYSIS_PERIOD',error instanceof Error?error.message:'Confira o ano e a cobertura de janeiro a setembro dos relatórios.');}
+  })():null;
+  const importedMonthlyReports = await monthlyReportSource(purchases, sales, undefined, undefined, options);
+  need(importedMonthlyReports, 'Os relatórios não conservam as competências da coluna H. Reimporte compras e vendas para aplicar as naturezas por mês; o histórico permanece disponível.',409,'SIMULATION_MONTHS');
+  const importedOperationAudit=aggregateOperationAudit(importedMonthlyReports);
+  need(importedOperationAudit.reportSalesCents===sales.totals.totalCents&&importedOperationAudit.reportPurchasesCents===purchases.totals.totalCents,
+    'A seleção das naturezas diverge dos relatórios conciliados.',409,'SIMULATOR_INCONSISTENT');
+  const included=analysisPeriod?new Set(analysisPeriod.includedMonths):null;
+  const monthlyReports=included?importedMonthlyReports.filter(row=>included.has(row.sourceMonth)):importedMonthlyReports;
+  const projection = monthlyReports.length?monthlyProjection(monthlyReports):null;
+  if(projection&&analysisPeriod)projection.analysisPeriod=analysisPeriod;
+  const fields = (projection?.annualGroupsCents||Object.fromEntries(MONTHLY_FIELDS.map(key=>[key,0]))) as OperationMonthlyReport['fields'];
   const operationAudit = aggregateOperationAudit(monthlyReports);
   const salesNetCents = exactSignedCents(fields.salesOptantCents + fields.salesNonOptantCents + fields.salesCpfCents);
   need(salesNetCents >= 0,
     'As devoluções de venda do relatório de compras superam as vendas de mercadorias no período. Revise os relatórios antes de simular.',409,'SIMULATOR_NEGATIVE_SALES');
-  need(operationAudit.reportSalesCents===sales.totals.totalCents&&operationAudit.reportPurchasesCents===purchases.totals.totalCents,
-    'A seleção das naturezas diverge dos relatórios conciliados.',409,'SIMULATOR_INCONSISTENT');
   const purchaseOther = purchases.reportingGroups.find(group => group.status === 'NAO_OPTANTE')!;
   const saleOther = sales.reportingGroups.find(group => group.status === 'NAO_OPTANTE')!;
   const classification = {
@@ -53,23 +64,29 @@ export async function generationSimulator(id: string, clientId: string) {
     sales: {unconfirmedCount: saleOther.unconfirmedCount, unconfirmedCents: saleOther.unconfirmedCents,
       otherDocumentsCount: saleOther.nonCnpjCount, otherDocumentsCents: saleOther.nonCnpjCents}
   };
-  let period = null, reportMonths = null, periodBasis = 'MANUAL';
-  if (purchases.period && sales.period) {
+  let period:ReportPeriod|null = null, reportMonths:number|null = null, periodBasis = 'MANUAL';
+  if(analysisPeriod){
+    period={startDate:`${analysisPeriod.startMonth}-01`,endDate:`${analysisPeriod.endMonth}-30`,startMonth:analysisPeriod.startMonth,endMonth:analysisPeriod.endMonth,
+      months:9,observedMonths:analysisPeriod.includedMonths.length,missingMonths:[...analysisPeriod.missingMonths]};
+    reportMonths=9;periodBasis='COLUMN_H';
+  } else if (purchases.period && sales.period) {
     // Compare independent reports by competence; exact snapshot/date reconciliation remains in purchaseSummary.
     need(sameReportCompetences(purchases.period, sales.period),
       `Compras e vendas cobrem competências diferentes pela coluna H (${purchases.period.startMonth} a ${purchases.period.endMonth} vs. ${sales.period.startMonth} a ${sales.period.endMonth}). Use arquivos com o mesmo mês/ano inicial e final. Diferenças de dias no mesmo mês são permitidas.`, 409, 'SIMULATOR_PERIOD');
     period = purchases.period; reportMonths = period.months; periodBasis = 'COLUMN_H';
   }
   const warnings = [
-    period ? `Período identificado automaticamente pela coluna H: ${period.startMonth} a ${period.endMonth} (${period.months} ${period.months === 1 ? 'mês' : 'meses'}). Compras e vendas têm as mesmas competências; dias sem movimento não alteram o período mensal.` :
+    analysisPeriod?`Período fixo: janeiro a setembro de ${analysisPeriod.sourceYear}. Cobertura comum das entradas e saídas: ${analysisPeriod.includedMonths.length}/9 competências. ${analysisPeriod.complete?'Os valores são a soma efetiva dos nove meses.':`A geração aguarda: ${analysisPeriod.missingMonths.join(', ')}.`}`:
+      period ? `Período identificado automaticamente pela coluna H: ${period.startMonth} a ${period.endMonth} (${period.months} ${period.months === 1 ? 'mês' : 'meses'}). Compras e vendas têm as mesmas competências; dias sem movimento não alteram o período mensal.` :
       'Histórico anterior sem período fiscal persistido: confirme manualmente quantos meses os dois arquivos representam.',
     'O enquadramento é o observado na consulta, sem comprovação retroativa para a data de cada nota. Não confirmados permanecem identificados na fonte.'
   ];
+  if(analysisPeriod?.excludedMonths.length)warnings.push(`Competências fora do período, preservadas nos relatórios originais e excluídas do cálculo: ${analysisPeriod.excludedMonths.join(', ')}.`);
   if ((purchases.period && !sales.period) || (!purchases.period && sales.period)) warnings.push('Somente um dos relatórios possui período automático. Para preservar compatibilidade histórica, confirme o período manualmente.');
   if (classification.purchases.unconfirmedCount || classification.sales.unconfirmedCount) {
     warnings.push('Há CNPJs não confirmados: seus valores estão em Não optantes, conforme a regra gerencial, e não equivalem a uma negativa fiscal.');
   }
-  if (classification.purchases.nonCnpjCount) warnings.push('As compras de CPF e outros documentos não consultáveis estão em Compras de empresas fora do Simples, com subtotal disponível para conferência.');
+  if (classification.purchases.nonCnpjCount) warnings.push(analysisPeriod?'A composição de compras separa CPF e outros documentos. O motor preserva o agrupamento gerencial de documentos não consultáveis, com os subtotais identificados para conferência.':'As compras de CPF e outros documentos não consultáveis estão em Compras de empresas fora do Simples, com subtotal disponível para conferência.');
   if (classification.sales.otherDocumentsCount) warnings.push('As vendas com CNO, documentos inválidos ou ausentes estão em Vendas Não Optantes SN. Vendas identificadas como CPF têm campo próprio.');
   warnings.push('Receita: somente operações de venda do catálogo na coluna D, menos devoluções de venda identificadas no relatório de compras. Compras: somente operações de compra e serviços de natureza 8000. A classificação usa os quatro primeiros dígitos; a base monetária permanece Q - Y + AA - AB.');
   if (operationAudit.salesReturnsCents) warnings.push('As devoluções de venda do relatório de compras foram abatidas da receita na competência da coluna H, preservando o enquadramento consultado de cada documento.');
@@ -81,10 +98,13 @@ export async function generationSimulator(id: string, clientId: string) {
   const icmsPending=monthlyReports.reduce((total,row)=>total+row.icmsOperations.sales.pendingLines+row.icmsOperations.purchases.pendingLines+row.icmsOperations.salesReturns.pendingLines,0);
   if(icmsPending)warnings.push(`${icmsPending} operações elegíveis de ICMS dependem de UF confirmada. Os cenários com ICMS fora do DAS aguardam essa conferência.`);
   if (fields.serviceRevenueCents > 0) warnings.push('Vendas de serviços foram separadas das mercadorias e preenchem a receita de serviços pela competência de cada linha, sem duplicar o faturamento. Naturezas iniciadas por 9000 são serviços, independentemente do sufixo.');
-  const difal = monthlyDifal(monthlyReports, sales.job._id);
+  const difal = monthlyReports.length?monthlyDifal(monthlyReports, sales.job._id):null;
   const selectedSalesTotalCents=exactCents(salesNetCents+fields.serviceRevenueCents);
   const selectedPurchasesTotalCents=exactCents(fields.purchasesOptantCents+fields.purchasesNonOptantCents);
   return {projection, monthlyReports, operationVersion:OPERATION_CATALOG_VERSION, operationAudit, revenueSplit: {version: 'SALES_SERVICES_V1'}, generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
+    ...(analysisPeriod?{analysisPeriod,periodPolicy:JAN_SEP_POLICY,importedOperationAudit,
+      importedPeriods:{purchases:purchases.period,sales:sales.period},
+      commercialComposition:monthlyReports.length?aggregateCommercialComposition(monthlyReports.map(row=>row.commercialComposition!)):null}:{}),
     // This optional preference seeds a new draft; it does not change source amounts or historical drafts.
     ...(company.difalPolicy ? {difalPolicy: company.difalPolicy} : {}),
     purchases: {...sourceMetadata(purchases),selectedTotalCents:selectedPurchasesTotalCents},

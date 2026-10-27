@@ -1,4 +1,32 @@
-# Maximum CNPJ · v0.40.1
+# Maximum CNPJ · v0.41.0
+
+## Janeiro a setembro e comparação resumida dos regimes — 27/10/2026
+
+As novas análises usam **janeiro a setembro, nove competências do mesmo ano**, tanto quando os documentos têm nove meses quanto quando contêm o ano completo. Outubro a dezembro permanecem nos documentos e na auditoria da importação, mas ficam fora das receitas, compras, despesas, tributos, DIFAL e resultado desta comparação. O consolidado soma os valores efetivos dos nove meses; não multiplica uma média mensal e não extrapola para doze meses.
+
+O ano dos documentos é separado do ano do cenário tributário. A faixa de período na visão geral e nos dois setores mostra janeiro a setembro e a cobertura das entradas e saídas. Os relatórios podem ter extensões originais diferentes, desde que ambos cubram os nove meses do mesmo ano. A cobertura é a interseção dos períodos reconciliados: um mês ausente em uma das fontes permanece pendente. Intervalos internos sem movimento seguem a conciliação já existente; meses fora do intervalo de um relatório não viram zero. A conclusão Fiscal e a geração exigem cobertura completa.
+
+### Receita, compras e resultado à vista
+
+A composição dos documentos apresenta **receita por B2B (CNPJ) e B2C (CPF)**, com valores e percentuais após abater as devoluções de venda. Documentos sem identificação válida ficam separados. O enquadramento dos clientes pode ser expandido: optantes do Simples, fora do Simples, CPF, enquadramento não confirmado e outros documentos. A composição das compras mostra esses mesmos enquadramentos, com o denominador dos percentuais visível. As consultas e classificações já salvas são reaproveitadas; abrir a análise não dispara uma nova consulta cadastral.
+
+A composição conserva a origem dos documentos: vendas de mercadorias e serviços entram na receita; devoluções de venda nas entradas reduzem a receita; mercadorias e serviços de compra entram nas compras. Ela não altera os grupos financeiros ou as bases do motor. Ajustes manuais de receita e compras são refletidos no DRE, sem redistribuir artificialmente valores entre clientes ou fornecedores. Percentuais de grupos com saldo negativo conservam o sinal; sem denominador positivo a participação fica indisponível.
+
+A DRE abre com uma comparação resumida de **Simples Puro, Simples Híbrido, Lucro Presumido e Lucro Real**, respeitando os regimes escolhidos. Receita, devoluções, impostos sobre receita, receita líquida, compras, despesas, tributos sobre o lucro e resultado podem ser conferidos lado a lado. Impostos, lucro/prejuízo e margem ficam destacados. Os créditos utilizados aparecem em uma informação agregada, já considerados nos tributos ou no custo correspondente, sem serem somados novamente ao lucro nem apresentados como promessa de restituição. As linhas individuais de crédito potencial/utilizado de CBS e IBS continuam fora da DRE.
+
+O consolidado recebe a indicação **Jan–Set**, com acesso aos nove meses e à DRE completa. Detalhes continuam sob demanda. CSV, JSON e impressão usam o calendário capturado no resultado: nove meses no modelo novo e o calendário original nas versões antigas. Valores indisponíveis continuam identificados; a apresentação não preenche resultados fiscais pendentes com zero.
+
+### Preenchimento e histórico
+
+No Contábil, **Preparar janeiro a setembro** adiciona os nove meses de uma vez, com campos em branco e preservando valores existentes do mesmo ano. O modelo CSV traz as nove competências. A colagem aceita o ano completo, conserva outubro a dezembro e mostra o subtotal Jan–Set; dados fora do período não impedem a conclusão por estarem em branco. Trocar explicitamente o ano de um rascunho com despesas anteriores exige confirmar a retirada dessas competências do trabalho atual; versões já geradas permanecem salvas.
+
+A pergunta **Terá DIFAL?** permanece no Fiscal, com os controles de entrada e saída visíveis ao escolher Sim e independentes para Puro e Híbrido. A exclusão continua disponível na carteira, visão geral e modais. O carregamento dos metadados e da composição atualiza somente os blocos correspondentes, conservando foco, campos e rascunhos.
+
+O período novo é registrado como `JAN_SEP_V1` na fonte, confirmação Fiscal, entrada do cálculo, resultado e projeção. Novas análises geridas e a interface avulsa enviam essa política; chamadas legadas sem a opção mantêm o comportamento anterior. O modelo mensal novo é `1.11.0-jan-sep`. Snapshots anteriores preservam versão, hash, valores e calendário; a análise solicita nova conferência Fiscal antes de gerar sua próxima versão no período fixo.
+
+**RBT12 continua sendo uma referência própria de doze meses**, capturada do extrato ou informada e confirmada conforme o fluxo existente. O período de nove meses da comparação não substitui essa referência, não redefine limites do Simples e não altera silenciosamente as regras tributárias dos históricos. As regras fiscais continuam sujeitas à homologação do modelo e à situação de cada empresa.
+
+Validação local com Node 22 e MongoDB descartável: tipos, build e versão/documentação; **369 testes de regras**, **146 verificações de integração/projeção/competências**, **172 testes Python/PDF/OCR** e **38 cenários direcionados de navegador** aprovados. A conferência inclui importação de 12 meses com recorte para 9, cobertura parcial bloqueada, despesas/ajustes Q4 preservados, RBT12 própria, receita de R$ 3,3 milhões, devoluções, ICMS e DIFAL, histórico imutável, CSV/PDF completos, recuperação de rascunhos e metadados tardios. Desktop e telas de 320/390 px inspecionados; os dois casos finais de histórico foram repetidos em base nova após a conta sintética atingir o limite de logins das rodadas locais.
 
 ## Excluir análises pela carteira e pelos modais — 26/10/2026
 

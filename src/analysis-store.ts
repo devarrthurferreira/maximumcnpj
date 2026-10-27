@@ -10,7 +10,9 @@ import {generationSimulator} from './simulator-store.ts';
 import {createAnalysisSimulation,createSimulation,getSimulation,validateSimulationRequest,assertSimulationNotDeleted,removeAnalysisSimulationSnapshot} from './simulation-history.ts';
 import {readRbt12Reference,rbt12InputSource} from './simulation-extrato.ts';
 import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
-import {baselineMonth,MONTHLY_MODEL_VERSION} from '../public/simulator-monthly.js';
+import {baselineMonth} from '../public/simulator-monthly.js';
+import {JAN_SEP_POLICY,JAN_SEP_MODEL_VERSION,buildAnalysisPeriod,isAnalysisMonth} from '../public/analysis-period.js';
+import type {AnalysisPeriod} from '../public/analysis-period.js';
 import {resolveRegimeSelection,requiresSimplesReference} from '../public/regime-selection.js';
 import {upgradeDifalPolicy} from '../public/simulator-engine.js';
 import type {DifalPolicy} from '../public/simulator-engine.js';
@@ -22,7 +24,7 @@ import type {AnalysisDeletionReceipt} from './analysis-deletion.ts';
 
 type Author={id:string;name:string};
 type Sector<T>={revision:number;status:'DRAFT'|'COMPLETE';data:T;completedAt:Date|null;updatedAt:Date;updatedBy:Author;
-  confirmation?:{fingerprint:string;generationId:string;purchaseJobId:string;salesJobId:string;extractionId:string|null;months:string[];configRevision:number}|null};
+  confirmation?:{fingerprint:string;generationId:string;purchaseJobId:string;salesJobId:string;extractionId:string|null;months:string[];configRevision:number;analysisPeriod?:AnalysisPeriod}|null};
 type Current={id:string;analysisRevision:number|null;createdAt:Date;modelVersion:string|null;legacy:boolean};
 type Analysis=Doc & {clientId:string;company:{name:string;code:string|null;cnpj?:string|null};version:string;activated:boolean;revision:number;
   config:AnalysisConfig;fiscal:Sector<FiscalData>;accounting:Sector<AccountingData>;currentSimulation:Current|null;
@@ -33,7 +35,7 @@ type Source=Awaited<ReturnType<typeof generationSimulator>>;
 export type AnalysisReadOptions={summary?:boolean;includeSource?:boolean};
 type SourceError={code:string;message:string};
 type Readiness={ready:boolean;issues:AnalysisIssue[];months:string[];checked:Awaited<ReturnType<typeof fiscalSource>>|null;
-  source:Source|null;sourceError:SourceError|null;verification?:'SAVED'};
+  source:Source|null;sourceError:SourceError|null;analysisPeriod:AnalysisPeriod|null;verification?:'SAVED'};
 const PAGE_SIZE=20;
 const author=(actor:LookupActor):Author=>({id:actor._id,name:actor.name});
 const conflict=()=>new AppError(409,'ANALYSIS_CONFLICT','A análise mudou ou está sendo gerada. Reabra os dados antes de salvar para preservar o trabalho de todos.');
@@ -55,17 +57,18 @@ function ordered(value:any):any {
 }
 function fingerprint(source:Source,reference:unknown,config:AnalysisConfig,data:FiscalData){
   return digest(JSON.stringify(ordered({generationId:source.generationId,clientId:source.clientId,purchases:source.purchases,sales:source.sales,
-    monthlyReports:source.monthlyReports,fields:source.fields,period:source.period,operationVersion:source.operationVersion,
+    monthlyReports:source.monthlyReports,fields:source.fields,period:source.period,analysisPeriod:source.analysisPeriod,importedOperationAudit:source.importedOperationAudit,operationVersion:source.operationVersion,
     reference,year:config.year,regimeSelection:config.regimeSelection,salesAnnex:data.salesAnnex,serviceAnnex:data.serviceAnnex,
     difalPolicy:data.difalPolicy,icmsOutside:data.icmsOutside,monthlyOverrides:data.monthlyOverrides})));
 }
 async function fiscalSource(item:Analysis,data=item.fiscal.data,onSource?:(source:Source)=>void){
   need(data.generationId,'Importe as entradas e saídas da empresa.',422,'ANALYSIS_FISCAL_INCOMPLETE');
-  const source=await generationSimulator(data.generationId,item.clientId);
+  const source=await generationSimulator(data.generationId,item.clientId,{periodPolicy:JAN_SEP_POLICY});
   // The Fiscal form still needs the reconciled months while its RBT12 is pending.
   onSource?.(source);
   const months=source.monthlyReports?.map(row=>row.sourceMonth)||[];
-  need(months.length>=1 && months.length<=12,'Os relatórios precisam conservar de 1 a 12 competências da coluna H.',422,'ANALYSIS_MONTHS');
+  need(source.analysisPeriod?.complete && months.length===9,
+    `Complete a cobertura das entradas e saídas de janeiro a setembro. Faltam: ${source.analysisPeriod?.missingMonths.join(', ')||'competências confirmadas nos dois relatórios'}.`,422,'ANALYSIS_PERIOD_INCOMPLETE');
   let reference:unknown=null;
   if(requiresSimplesReference(item.config.regimeSelection)){
     const kind=rbt12InputSource(data.rbt12Source,data.rbt12Source==='MANUAL'?data.rbt12ManualConfirmed:undefined,data.rbt12ExtractionId,data.rbt12??undefined,item.config.regimeSelection);
@@ -84,9 +87,18 @@ async function fiscalSource(item:Analysis,data=item.fiscal.data,onSource?:(sourc
     need(!document.fileSha256 || document.fileSha256===(reference as any)?.fileSha256,
       'A leitura não corresponde ao arquivo atual do extrato.',409,'RBT12_EXTRACTION');
   }
-  if(data.monthlyOverrides)need(isDeepStrictEqual(data.monthlyOverrides.map(row=>row.sourceMonth),months),
+  if(data.monthlyOverrides)need(isDeepStrictEqual(data.monthlyOverrides.filter(row=>isAnalysisMonth(row.sourceMonth,source.analysisPeriod!.sourceYear)).map(row=>row.sourceMonth),months),
     'Os ajustes fiscais devem corresponder exatamente às competências dos relatórios. Revise os ajustes antes de concluir.',422,'ANALYSIS_MONTHS');
   return {source,months,reference,fingerprint:fingerprint(source,reference,item.config,data)};
+}
+function savedAnalysisPeriod(item:Analysis):AnalysisPeriod|null{
+  const confirmation=item.fiscal.confirmation;
+  if(!confirmation||confirmation.generationId!==item.fiscal.data.generationId)return null;
+  if(confirmation.analysisPeriod?.version===JAN_SEP_POLICY)return confirmation.analysisPeriod;
+  const months=confirmation.months;
+  if(!months?.length)return null;
+  try{const period={startMonth:months[0],endMonth:months.at(-1)!,months:months.length};return buildAnalysisPeriod(period,period);}
+  catch{return null;}
 }
 async function readiness(item:Analysis):Promise<Readiness>{
   const issues:AnalysisIssue[]=[];let checked:Awaited<ReturnType<typeof fiscalSource>>|null=null,source:Source|null=null,sourceError:SourceError|null=null;
@@ -98,40 +110,44 @@ async function readiness(item:Analysis):Promise<Readiness>{
     issues.push({code:'FISCAL_SOURCE_CHANGED',sector:'fiscal',message:'Os arquivos ou as opções fiscais mudaram após a confirmação. Confira e conclua o Fiscal novamente.'});
   }
   if(item.accounting.status!=='COMPLETE')issues.push({code:'ACCOUNTING_NOT_CONFIRMED',sector:'accounting',message:'Salve e conclua as despesas do setor Contábil.'});
-  if(!item.accounting.data.months.length || item.accounting.data.months.some(row=>ACCOUNTING_FIELDS.some(key=>row[key]===null))){
+  const analysisPeriod=(source as Source|null)?.analysisPeriod||savedAnalysisPeriod(item);
+  const months=analysisPeriod?.expectedMonths||checked?.months||[];
+  const accounting=item.accounting.data.months.filter(row=>isAnalysisMonth(row.sourceMonth,analysisPeriod?.sourceYear));
+  if(!accounting.length || accounting.some(row=>ACCOUNTING_FIELDS.some(key=>row[key]===null))){
     issues.push({code:'ACCOUNTING_VALUES_MISSING',sector:'accounting',message:'Preencha cada despesa ou confirme zero em todas as competências.'});
   }
-  if(checked && !isDeepStrictEqual(item.accounting.data.months.map(row=>row.sourceMonth),checked.months)){
-    issues.push({code:'ACCOUNTING_MONTHS_MISMATCH',sector:'accounting',message:`As despesas devem cobrir exatamente as competências dos relatórios: ${checked.months.join(', ')}.`});
+  if(months.length && !isDeepStrictEqual(accounting.map(row=>row.sourceMonth),months)){
+    issues.push({code:'ACCOUNTING_MONTHS_MISMATCH',sector:'accounting',message:`As despesas devem cobrir janeiro a setembro: ${months.join(', ')}.`});
   }
-  return {ready:issues.length===0,issues,months:checked?.months||[],checked,source,sourceError};
+  return {ready:issues.length===0,issues,months,analysisPeriod,checked,source,sourceError};
 }
 
 /** Navigation describes saved work only. It never authorizes publication or validates source files. */
 function savedReadiness(item:Analysis):Readiness{
   const issues:AnalysisIssue[]=[],confirmation=item.fiscal.confirmation;
-  const months=confirmation?.months||item.fiscal.data.monthlyOverrides?.map(row=>row.sourceMonth)||[];
+  const analysisPeriod=savedAnalysisPeriod(item),months=analysisPeriod?.expectedMonths||[];
   if(item.fiscal.status!=='COMPLETE')issues.push({code:'FISCAL_NOT_CONFIRMED',sector:'fiscal',message:'Salve e conclua o setor Fiscal.'});
   if(!item.fiscal.data.generationId)issues.push({code:'ANALYSIS_FISCAL_INCOMPLETE',sector:'fiscal',message:'Importe as entradas e saídas da empresa.'});
   if(item.fiscal.status==='COMPLETE'&&(!confirmation||confirmation.configRevision!==item.config.revision||
-    confirmation.generationId!==item.fiscal.data.generationId||!confirmation.fingerprint||!months.length)){
+    confirmation.generationId!==item.fiscal.data.generationId||!confirmation.fingerprint||!confirmation.analysisPeriod?.complete||!months.length)){
     issues.push({code:'FISCAL_SOURCE_CHANGED',sector:'fiscal',message:'Confira e conclua o Fiscal para estas escolhas da análise.'});
   }
   if(item.accounting.status!=='COMPLETE')issues.push({code:'ACCOUNTING_NOT_CONFIRMED',sector:'accounting',message:'Salve e conclua as despesas do setor Contábil.'});
-  if(!item.accounting.data.months.length||item.accounting.data.months.some(row=>ACCOUNTING_FIELDS.some(key=>row[key]===null))){
+  const accounting=item.accounting.data.months.filter(row=>isAnalysisMonth(row.sourceMonth,analysisPeriod?.sourceYear));
+  if(!accounting.length||accounting.some(row=>ACCOUNTING_FIELDS.some(key=>row[key]===null))){
     issues.push({code:'ACCOUNTING_VALUES_MISSING',sector:'accounting',message:'Preencha cada despesa ou confirme zero em todas as competências.'});
   }
-  if(months.length&&!isDeepStrictEqual(item.accounting.data.months.map(row=>row.sourceMonth),months)){
+  if(months.length&&!isDeepStrictEqual(accounting.map(row=>row.sourceMonth),months)){
     issues.push({code:'ACCOUNTING_MONTHS_MISMATCH',sector:'accounting',message:`As despesas devem cobrir exatamente as competências salvas do Fiscal: ${months.join(', ')}.`});
   }
-  return {ready:issues.length===0,issues,months,checked:null,source:null,sourceError:null,verification:'SAVED'};
+  return {ready:issues.length===0,issues,months,analysisPeriod,checked:null,source:null,sourceError:null,verification:'SAVED'};
 }
 
 async function presentation(item:Analysis,options:AnalysisReadOptions={},prepared?:Readiness){
   const {checked,source,sourceError,...ready}=options.summary?savedReadiness(item):prepared||await readiness(item);
   const {workspaceId:_workspace,_id:id,leaseOwner:_owner,leaseUntil:_until,activated:_activated,lastGeneration:_last,...rest}=item;
   const current=item.currentSimulation;
-  const analysis={...rest,id,readiness:ready,currentSimulation:current?{...current,stale:current.legacy || current.analysisRevision!==item.revision ||
+  const analysis={...rest,id,periodPolicy:JAN_SEP_POLICY,readiness:ready,currentSimulation:current?{...current,stale:current.legacy || current.modelVersion!==JAN_SEP_MODEL_VERSION || current.analysisRevision!==item.revision ||
     (!options.summary&&(!checked || checked.fingerprint!==item.fiscal.confirmation?.fingerprint))}:null};
   return {analysis,...(options.includeSource?{source,sourceError}:{})};
 }
@@ -279,14 +295,15 @@ export async function updateAnalysisSector(actor:LookupActor,id:string,kind:'fis
   const expected=analysisRevision(input.expectedSectorRevision),configRevision=analysisRevision(input.expectedConfigRevision);
   need(typeof input.complete==='boolean','Informe se deseja concluir o setor.');
   const prior=await record(id);need(prior.config.revision===configRevision && prior[kind].revision===expected,conflict().message,409,'ANALYSIS_CONFLICT');
-  const data=kind==='fiscal'?parseFiscalData(input.data,prior.config.regimeSelection):parseAccountingData(input.data,input.complete);
+  const data=kind==='fiscal'?parseFiscalData(input.data,prior.config.regimeSelection):parseAccountingData(input.data,input.complete,
+    {periodPolicy:JAN_SEP_POLICY,sourceYear:savedAnalysisPeriod(prior)?.sourceYear});
   let confirmation:Sector<FiscalData>['confirmation']=null;
   if(kind==='fiscal'){
     const fiscal=data as FiscalData;
     if(fiscal.generationId){const generation=await getGeneration(fiscal.generationId);need(generation.companies.some((company:any)=>company.clientId===prior.clientId),'A geração não pertence à empresa da análise.',409,'GENERATION_CLIENT');}
     if(fiscal.generationId!==prior.fiscal.data.generationId)need(fiscal.monthlyOverrides===null,'Ao trocar os arquivos, revise os ajustes fiscais anteriores.',409,'ANALYSIS_SOURCE_CHANGED');
     if(input.complete){const checked=await fiscalSource(prior,fiscal);confirmation={fingerprint:checked.fingerprint,generationId:fiscal.generationId!,purchaseJobId:checked.source.purchases.jobId,
-      salesJobId:checked.source.sales.jobId,extractionId:fiscal.rbt12ExtractionId,months:checked.months,configRevision};}
+      salesJobId:checked.source.sales.jobId,extractionId:fiscal.rbt12ExtractionId,months:checked.months,configRevision,analysisPeriod:checked.source.analysisPeriod};}
   }
   const now=new Date();const value={revision:expected+1,status:input.complete?'COMPLETE':'DRAFT',data,completedAt:input.complete?now:null,updatedAt:now,updatedBy:author(actor),confirmation};
   const updated=await(await analyses()).findOneAndUpdate(scope({_id:id,...active(),'config.revision':configRevision,[`${kind}.revision`]:expected,...leaseFree()}),
@@ -321,7 +338,7 @@ function calculationInput(item:Analysis,source:Source,simulationId:string){
     ...(requiresSimplesReference(item.config.regimeSelection)?{rbt12:f.rbt12!}:{}),difalPolicy:f.difalPolicy,icmsOutside:f.icmsOutside,
     values:{...first.values,salesRevenue:ANALYSIS_GROUPS.slice(0,3).reduce((sum,key)=>sum+Math.round(first.groups[key]*100),0)/100,
       simplePurchases:first.groups.purchasesOptantCents,regularPurchases:first.groups.purchasesNonOptantCents}};
-  return {simulationId,generationId:f.generationId,clientId:item.clientId,reportMonths:monthlyInputs.length,periodConfirmed:true,monthlyInputs,
+  return {simulationId,generationId:f.generationId,clientId:item.clientId,periodPolicy:JAN_SEP_POLICY,reportMonths:monthlyInputs.length,periodConfirmed:true,monthlyInputs,
     monthlyGroups:first.groups,draft,parentSimulationId:item.currentSimulation?.id||null,
     ...(f.rbt12Source==='MANUAL'?{rbt12Source:'MANUAL',rbt12ManualConfirmed:true}:f.rbt12Source==='NOT_REQUIRED'?{rbt12Source:'NOT_REQUIRED'}:{rbt12ExtractionId:f.rbt12ExtractionId})};
 }
@@ -345,7 +362,7 @@ export async function generateAnalysis(actor:LookupActor,id:string,input:unknown
   return withAnalysis(id,async(item,owner)=>{
     const prepared=await readiness(item);need(prepared.ready,prepared.issues.map(issue=>issue.message).join(' '),422,'ANALYSIS_NOT_READY');
     const source=prepared.checked!.source,sourceFingerprint=prepared.checked!.fingerprint;
-    const simulationId=deterministicId(`generate:${item._id}:${item.revision}:${MONTHLY_MODEL_VERSION}`);
+    const simulationId=deterministicId(`generate:${item._id}:${item.revision}:${JAN_SEP_MODEL_VERSION}`);
     if(item.currentSimulation?.id===simulationId){
       await saveGenerationRequest(id,requestKey,{requestId,revision:expected,simulationId,createdAt:new Date(),createdBy:author(actor)});
       return {analysis:await visible(item,options,prepared),simulation:await generatedSimulation(simulationId,options),reused:true};
@@ -514,7 +531,7 @@ export async function analysisVersions(id:string,page:number){
   const q=scope({clientId:item.clientId,deletedAt:{$exists:false},analysisPublication:{$ne:'PENDING'},
     $or:[{analysisId:id},...(legacyIds.length?[{_id:{$in:legacyIds}}]:[])]}),c=await collection('simulations');
   const [items,total]=await Promise.all([c.find(q).project({_id:1,clientId:1,generationId:1,title:1,createdAt:1,createdBy:1,year:1,modelVersion:1,annualRevenue:1,bestRegimeName:1,bestAnnualProfit:1,
-    parentSimulationId:1,analysisId:1,analysisRevision:1,reportMonths:1,'draft.regimeSelection':1}).sort({createdAt:-1,_id:-1}).skip((page-1)*PAGE_SIZE).limit(PAGE_SIZE).toArray(),c.countDocuments(q)]);
+    parentSimulationId:1,analysisId:1,analysisRevision:1,reportMonths:1,analysisPeriod:1,'draft.regimeSelection':1}).sort({createdAt:-1,_id:-1}).skip((page-1)*PAGE_SIZE).limit(PAGE_SIZE).toArray(),c.countDocuments(q)]);
   return {items:items.map(row=>({...row,current:row._id===item.currentSimulation?.id,legacy:!row.analysisId})),pagination:{page,pageSize:PAGE_SIZE,total,totalPages:Math.ceil(total/PAGE_SIZE)}};
 }
 /** Reprocessing never creates a second current, nor replaces a version edited or published in the meantime. */
