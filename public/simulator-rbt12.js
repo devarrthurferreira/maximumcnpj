@@ -1,3 +1,5 @@
+import {analysisMonthsForYear} from './analysis-period.js';
+
 export const RBT12_SCHEDULE_VERSION='RBT12_MONTHLY_SECTION_22_V1';
 const limit=100_000_000_000_000;
 const validCents=value=>Number.isSafeInteger(value)&&value>=0&&value<=limit;
@@ -67,4 +69,12 @@ export function buildRbt12Schedule(extraction,sourceMonths){
   });
   return {version:RBT12_SCHEDULE_VERSION,source:'SIMPLES_SECTION_22',sourceSection:'2.2',pa:extraction.pa,
     complete:rows.every(row=>row.status==='CONFIRMED'),rows};
+}
+
+/** Fixed MaximumCNPJ analyses calculate nine monthly RBT12 values (Jan–Sep).
+ * Each value still uses the twelve actual preceding revenue months; the history
+ * outside January–September is indispensable and must never be discarded.
+ */
+export function buildJanSepRbt12Schedule(extraction,sourceYear){
+  return buildRbt12Schedule(extraction,analysisMonthsForYear(sourceYear));
 }
