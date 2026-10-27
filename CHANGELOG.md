@@ -3,6 +3,14 @@
 - Abertura da análise em uma única etapa (empresa, setor e regimes); links legados para a etapa antiga continuam válidos.
 - Contábil oferece preenchimento opcional dos campos vazios com R$ 0,00 mediante confirmação, sem alterar valores já informados nem salvar automaticamente.
 
+## [0.44.1] — 2026-10-27
+
+- RBT12 mensal da análise limitada a janeiro–setembro (9 competências) com base móvel de 12 meses anteriores obtidos da seção 2.2, preservando as receitas históricas requeridas.
+- Mensagem de falha discrimina os meses históricos faltantes, evitando tratar falta de RBT12 como erro dos documentos de entradas e saídas já lidos.
+- Fiscal atualiza o status de cada arquivo assim que seus metadados estão disponíveis, sem esperar a reconciliação completa nem a leitura do extrato.
+- Leitura de PDF indica quando terminou de extrair e quando está salvando a referência no Fiscal.
+- Adiciona regressões para as nove RBT12 e para a confirmação rápida de entradas e saídas com a conciliação propositalmente lenta.
+
 ## [0.44.0] — 2026-10-27
 
 - Simplifica a carteira para empresa, situação e um acesso à análise, retirando atalhos e indicadores repetidos.
