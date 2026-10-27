@@ -1,5 +1,7 @@
 # Maximum CNPJ · v0.44.0
 
+**Fluxo de abertura mais rápido (refinamento de 27/10/2026):** escolha da empresa, setor e regimes agora aparece numa única etapa; o setor Fiscal vem pré-selecionado e pode ser trocado. No Contábil, uma ação opcional permite preencher com R$ 0,00 somente os campos vazios das competências visíveis, após confirmação explícita; não altera valores lançados, dados de outros anos ou salva automaticamente.
+
 ## Fluxo simplificado: empresa, dados e resultado — 27/10/2026
 
 A carteira passa a mostrar cada empresa em uma linha, com identificação, situação e **Abrir análise**. Dentro da empresa, os dois acessos principais são **Fiscal** e **Contábil**, seguidos de uma ação de resultado. Saem os atalhos repetidos, cartões de indicadores e barras que repetiam a mesma situação. Regimes, histórico e exclusão permanecem acessíveis como ações secundárias.
