@@ -1,5 +1,15 @@
 # Histórico de alterações
 
+## [0.42.0] — 2026-10-27
+
+- Refina carteira e análise com paleta neutra, contraste de títulos/valores, indicadores com ícones e cartões dos setores e resultado com hierarquia clara.
+- Compacta cabeçalhos, alternância Fiscal/Contábil, faixa Jan–Set e ações dos modais, preservando áreas de toque, foco, avisos, rascunhos e exclusão.
+- Destaca lucro, impostos e margem nos cartões da DRE; diferencia maior resultado disponível, prejuízo e indisponibilidade e reforça a linha final da comparação.
+- Organiza ações de CSV/PDF, orientação de rolagem e primeira coluna fixa no celular; alinha apresentação de receita/compras e percentuais por público/enquadramento.
+- Aproxima a DRE do início das versões salvas e reúne parâmetros no detalhe existente Dados usados no cálculo. Conserva documentos, valores, calendário, motor mensal `1.11.0-jan-sep` e versões anteriores.
+- Remove a animação repetida da DRE ao alternar a apresentação e mantém ações de confirmação da exclusão visíveis em telas baixas.
+- Validação local com Node 22 e MongoDB descartável: tipos, build, versão/documentação, **369 testes de regras**, **36 testes de integração** e **172 testes Python/PDF/OCR** aprovados. Os **28 cenários direcionados de navegador** cobrem Fiscal/Contábil, rascunhos, colagem, DIFAL, exclusão, fontes indisponíveis, DRE nova e histórica, detalhes sob demanda e CSV/PDF. Conferência visual adicional em desktop, 390 × 650 e 320 × 568 verifica área útil dos modais, foco dos campos, ações de confirmação, navegação e rolagem própria da tabela.
+
 ## [0.41.0] — 2026-10-27
 
 - Fixa novas análises em janeiro a setembro, com nove competências efetivas, seleção por interseção da cobertura das entradas/saídas e exclusão de outubro a dezembro dos totais. Mantém documentos completos e auditoria original para conferência.

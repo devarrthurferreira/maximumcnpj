@@ -1,4 +1,16 @@
-# Maximum CNPJ · v0.41.0
+# Maximum CNPJ · v0.42.0
+
+## Design das análises e da comparação tributária — 27/10/2026
+
+A carteira e a análise por empresa usam superfícies neutras, títulos com maior contraste e o vinho da Maximum nas ações principais. Os indicadores, os dois setores e o resultado têm hierarquia própria: Fiscal e Contábil mostram o conteúdo de cada setor, a situação salva e o acesso ao formulário. A faixa de janeiro a setembro reúne a cobertura dos nove meses em menos espaço, mantendo pendências explícitas.
+
+Os modais organizam título e troca de setor no mesmo cabeçalho quando houver espaço. O rodapé reúne navegação, rascunho e conclusão com áreas de toque de pelo menos 44 px. A exclusão ganha ícone e continua disponível na carteira, na análise e nos formulários. No celular, cabeçalho, etapas e ações ocupam menos altura; os campos, avisos e a confirmação de exclusão conservam sua rolagem e o funcionamento pelo teclado.
+
+A DRE destaca o **resultado por regime**, com o maior resultado disponível em evidência e impostos e margem logo abaixo. Prejuízo e indisponibilidade têm estilos próprios, inclusive quando o maior resultado ainda é negativo. A tabela tem primeira coluna fixa na rolagem horizontal, resultado final destacado e orientação de leitura no celular. Ações de CSV/PDF ficam agrupadas. Receita, compras, valores e percentuais B2B/B2C e enquadramentos usam a mesma linguagem visual.
+
+Nas versões salvas, a comparação aparece antes das conferências detalhadas de DIFAL. Os parâmetros da versão ficam em **Dados usados no cálculo**, junto dos valores capturados; a identificação do cenário e o acesso a editar continuam visíveis. Cálculos, limites, calendário Jan–Set, referência RBT12, valores dos documentos, exportações completas e histórico não são modificados por esta atualização de apresentação. O motor mensal permanece em `1.11.0-jan-sep`. A DRE não repete a animação de entrada ao alternar a visualização.
+
+Validação local com Node 22 e MongoDB descartável: tipos, build, versão/documentação, **369 testes de regras**, **36 testes de integração** e **172 testes Python/PDF/OCR** aprovados. Os **28 cenários direcionados de navegador** cobrem Fiscal/Contábil, rascunhos, colagem, DIFAL, exclusão, fontes indisponíveis, DRE nova e histórica, detalhes sob demanda e CSV/PDF. Conferência visual adicional em desktop, 390 × 650 e 320 × 568 verifica área útil dos modais, foco dos campos, ações de confirmação, navegação e rolagem própria da tabela.
 
 ## Janeiro a setembro e comparação resumida dos regimes — 27/10/2026
 
