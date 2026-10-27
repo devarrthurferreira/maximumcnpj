@@ -20,7 +20,13 @@ function syntheticReport(totalCents=450_000,natureCode='1102') {
   for(const column of [24,25,26,27])row[column]='0,00';
   return [header,row];
 }
-const reportFile=(name:string,totalCents:number)=>({name,mimeType:'text/csv',buffer:Buffer.from(syntheticReport(totalCents,name.includes('-sales')?'5102':'1102').map(row=>row.join(';')).join('\r\n'),'latin1')});
+function reportFile(name:string,totalCents:number){
+  const [header,first]=syntheticReport(totalCents,name.includes('-sales')?'5102':'1102');
+  // The real current flow declares all nine competencies in both documents.
+  // January retains the movement; February–September explicitly report zero.
+  const rows=Array.from({length:9},(_,index)=>{const row=[...first];row[7]=`15/${String(index+1).padStart(2,'0')}/2026`;if(index)row[16]='0,00';return row;});
+  return {name,mimeType:'text/csv',buffer:Buffer.from([header,...rows].map(row=>row.join(';')).join('\r\n'),'latin1')};
+}
 
 async function screenshots(page:Page,info:TestInfo,name:string) {
   for(const width of [1440,390]){
@@ -96,14 +102,15 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
   await page.locator('#rbt12').fill('150000');await page.locator('#rbt12-manual-confirm').check();
   const saving=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/v4/simulations'&&r.request().method()==='POST');
   await page.locator('#generate-simulation').click();const response=await saving;expect(response.ok(),await response.text()).toBe(true);const snapshot=await response.json();
-  expect(snapshot).toMatchObject({generationId:generation._id,clientId:realClient,rbt12Source:'MANUAL',reportMonths:1,periodBasis:'COLUMN_H',draft:{rbt12:150000,difalPolicy,values:{salesRevenue:12000,serviceRevenue:0,regularPurchases:4500}},source:{difalPolicy,revenueSplit:{version:'SALES_SERVICES_V1'},fields:{serviceRevenueCents:0},purchases:{totalCents:450000},sales:{totalCents:1200000}}});
+  expect(snapshot).toMatchObject({generationId:generation._id,clientId:realClient,rbt12Source:'MANUAL',reportMonths:9,periodBasis:'COLUMN_H',analysisPeriod:{version:'JAN_SEP_V1',complete:true,months:9},draft:{rbt12:150000,difalPolicy,values:{salesRevenue:12000,serviceRevenue:0,regularPurchases:4500}},source:{difalPolicy,revenueSplit:{version:'SALES_SERVICES_V1'},fields:{serviceRevenueCents:0},purchases:{totalCents:450000},sales:{totalCents:1200000}}});
+  expect(snapshot.source.monthlyReports).toHaveLength(9);expect(snapshot.result.monthlyResults).toHaveLength(9);
   expect(snapshot.rbt12Extraction).toBeFalsy();expect(snapshot.rbt12ExtractionId).toBeFalsy();expect(snapshot.result.method).toBe('REPORT_MONTHS_V1');expect(snapshot.result.annualRevenue).toBe(12000);
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');await screenshots(page,info,'guided-result');
   const mongo=new MongoClient(process.env.MONGODB_URI!);
   try{await mongo.connect();const db=mongo.db(process.env.MONGODB_DB),workspaceId=process.env.WORKSPACE_ID||'maximum';
     const stored=await db.collection<any>('simulations').findOne({_id:snapshot._id,workspaceId});expect(stored?.rbt12Source).toBe('MANUAL');expect(stored?.draft.rbt12).toBe(150000);
     expect(stored?.draft.difalPolicy).toEqual(difalPolicy);const storedGeneration=await db.collection<any>('generations').findOne({_id:generation._id,workspaceId});expect(storedGeneration?.companies.find((item:any)=>item.clientId===realClient).difalPolicy).toEqual(difalPolicy);
-    expect(await db.collection('purchaseLines').countDocuments({workspaceId,jobId:{$in:[snapshot.source.purchases.jobId,snapshot.source.sales.jobId]}})).toBe(2);
+    expect(await db.collection('purchaseLines').countDocuments({workspaceId,jobId:{$in:[snapshot.source.purchases.jobId,snapshot.source.sales.jobId]}})).toBe(18);
   }finally{await mongo.close();}
   const fresh=await browser.newContext({baseURL});
   try{
@@ -111,7 +118,7 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
     const reopened=await fresh.newPage();await reopened.goto(`/simulator.html?simulation=${snapshot._id}`);
     await expect(reopened.locator('#simulation-snapshot')).toContainText('informada manualmente');await expect(reopened.locator('#simulator-form')).toHaveCount(0);
     await expect(reopened.locator('[data-difal-option="pure"]')).toContainText('Não incluído por escolha');
-    await expect(reopened.locator('.sim-dre')).toContainText('12.000,00');await expect(reopened.locator('.sim-regime')).toHaveCount(4);
+    await expect(reopened.locator('.sim-dre')).toContainText('12.000,00');await expect(reopened.locator('[data-dre-regime-result]')).toHaveCount(4);
     await reopened.locator('#create-version').click();await expect(reopened.locator('#rbt12')).toBeEditable();
     await expect(reopened.locator('#difal-enabled-pure')).not.toBeChecked();await expect(reopened.locator('#difal-enabled-actual')).toHaveCount(0);await expect(reopened.locator('#difal-enabled-hybrid')).toBeChecked();await expect(reopened.locator('#difal-entry-hybrid')).not.toBeChecked();await expect(reopened.locator('#difal-exit-hybrid')).toBeChecked();
     await reopened.locator('#rbt12-use-pdf').click();await readStatement(reopened);

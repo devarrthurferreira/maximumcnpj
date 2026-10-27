@@ -28,7 +28,7 @@ function horizontalBar(value, range, color, {showZero = true} = {}) {
   return `<svg class="sim-chart-bar" viewBox="0 0 500 28" preserveAspectRatio="none" aria-hidden="true" focusable="false"><rect class="sim-chart-track" x="2" y="5" width="496" height="18" rx="5"/>${showZero ? `<line class="sim-chart-zero" x1="${number(zero)}" x2="${number(zero)}" y1="1" y2="27"/>` : ''}${value === 0 ? `<circle cx="${number(zero)}" cy="14" r="2" fill="${color}"/>` : `<rect x="${number(Math.min(zero, end))}" y="5" width="${number(Math.abs(end - zero))}" height="18" rx="4" fill="${color}"/>`}</svg>`;
 }
 
-function profitChart(regimes, result, factor, unit) {
+function profitChart(regimes, result, factor, unit, captured=false) {
   const values = regimes.filter(regime => regime.available === true).map(regime => scaled(regime.annualProfit, factor));
   const range = domain(values);
   const available = values.filter(finite);
@@ -41,7 +41,7 @@ function profitChart(regimes, result, factor, unit) {
     const best = finite(value) && regime.id === result.bestRegimeId;
     const color = value < 0 ? '#bd778a' : best ? '#18776b' : '#780b24';
     return `<li class="sim-chart-row ${best ? 'is-best' : ''}"><div class="sim-chart-row-head"><span>${escape(regime.name)}${best ? '<small class="sim-chart-best">Maior resultado</small>' : ''}</span><strong class="${value < 0 ? 'is-negative' : ''}">${finite(value) ? escape(money(value)) : 'Indisponível'}</strong></div>${finite(value) ? horizontalBar(value, range, color) : `<p class="sim-chart-unavailable">${escape(regime.status || 'Este cenário não está disponível para comparação.')}</p>`}</li>`;
-  }).join('')}</ol>${available.length ? `<div class="sim-chart-axis" aria-hidden="true">${ticks.map(tick => `<span style="left:${number(tick.position * 100)}%" class="${tick.position === 0 ? 'is-start' : tick.position === 1 ? 'is-end' : ''}">${escape(money(tick.value))}</span>`).join('')}</div>` : '<p class="sim-chart-empty">Nenhum resultado disponível para comparar.</p>'}<p class="sim-chart-footnote">${allZero ? 'Todos os resultados disponíveis são iguais a zero.' : `Valores ${unit === 'por ano' ? 'anuais projetados' : 'médios mensais'}. Cenários indisponíveis não participam do gráfico.`}</p></figure>`;
+  }).join('')}</ol>${available.length ? `<div class="sim-chart-axis" aria-hidden="true">${ticks.map(tick => `<span style="left:${number(tick.position * 100)}%" class="${tick.position === 0 ? 'is-start' : tick.position === 1 ? 'is-end' : ''}">${escape(money(tick.value))}</span>`).join('')}</div>` : '<p class="sim-chart-empty">Nenhum resultado disponível para comparar.</p>'}<p class="sim-chart-footnote">${allZero ? 'Todos os resultados disponíveis são iguais a zero.' : `Valores ${captured?(unit==='no mês'?'da competência selecionada':'consolidados de janeiro a setembro'):unit === 'por ano' ? 'anuais projetados' : 'médios mensais'}. Cenários indisponíveis não participam do gráfico.`}</p></figure>`;
 }
 
 function burdenChart(regimes) {
@@ -81,10 +81,11 @@ function expenseChart(values, factor, unit) {
  * monthlyGroups uses the five report field names; despite their Cents suffix these
  * editable simulator values are BRL, matching monthlyGroupsUnit in saved simulations.
  */
-export function renderSimulationCharts({input = {}, result = {}, monthlyGroups = {}, period = 'annual',actualMonths=false,monthlyEntries=null} = {}) {
+export function renderSimulationCharts({input = {}, result = {}, monthlyGroups = {}, period = 'annual',actualMonths=false,monthlyEntries=null,analysisPeriod=null} = {}) {
   const monthly = period === 'monthly';
   const inputFactor = actualMonths?1:monthly ? 1 : 12, resultFactor = actualMonths?1:monthly ? 1 / 12 : 1;
-  const unit = monthly ? 'por mês' : 'por ano';
+  const fixed=(analysisPeriod||result.analysisPeriod)?.version==='JAN_SEP_V1';
+  const unit = monthly ? fixed?'no mês':'por mês' : fixed?'em Jan–Set':'por ano';
   const total=(kind,key)=>(monthlyEntries||[]).reduce((sum,row)=>sum+(row[kind]?.[key]||0),0);
   const values = actualMonths?Object.fromEntries(['serviceRevenue','salesRevenue','simplePurchases','regularPurchases','salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,total('values',key)])):input?.values || input || {};
   const groups = actualMonths?Object.fromEntries(['salesOptantCents','salesNonOptantCents','salesCpfCents'].map(key=>[key,total('groups',key)])):monthlyGroups || {};
@@ -99,5 +100,5 @@ export function renderSimulationCharts({input = {}, result = {}, monthlyGroups =
   const sales = revenue.slice(1).reduce((sum,item) => sum + (finite(item.value) ? item.value : 0),0);
   const expectedSales = scaled(values.salesRevenue, inputFactor);
   const consistent = finite(expectedSales) && Math.abs(sales - expectedSales) < .03 * inputFactor;
-  return `<section class="sim-charts" aria-label="Gráficos da simulação: valores ${escape(unit)}"><div class="sim-chart-comparison">${profitChart(regimes,result || {},resultFactor,unit)}${burdenChart(regimes)}</div><div class="sim-chart-breakdown">${composition({eyebrow:'RECEITA UTILIZADA',title:'Composição da receita utilizada',detail:'Serviços e os três grupos de vendas que compõem o valor utilizado no cenário.',items:revenue,unit,className:'sim-chart-revenue',consistent})}${composition({eyebrow:'PERFIL DOS FORNECEDORES',title:'Composição das compras',detail:'Compras agrupadas pelo enquadramento do fornecedor.',items:[{label:'Empresas do Simples',value:scaled(values.simplePurchases,inputFactor)},{label:'Empresas fora do Simples',value:scaled(values.regularPurchases,inputFactor)}],unit,className:'sim-chart-purchases'})}${expenseChart(values,inputFactor,unit)}</div></section>`;
+  return `<section class="sim-charts" aria-label="Gráficos da simulação: valores ${escape(unit)}"><div class="sim-chart-comparison">${profitChart(regimes,result || {},resultFactor,unit,fixed)}${burdenChart(regimes)}</div><div class="sim-chart-breakdown">${composition({eyebrow:'RECEITA UTILIZADA',title:'Composição da receita utilizada',detail:'Serviços e os três grupos de vendas que compõem o valor utilizado no cenário.',items:revenue,unit,className:'sim-chart-revenue',consistent})}${composition({eyebrow:'PERFIL DOS FORNECEDORES',title:fixed?'Compras utilizadas no cenário':'Composição das compras',detail:fixed?'Grupos do cálculo. O perfil dos documentos por Simples, fora do Simples e CPF aparece no resumo da análise.':'Compras agrupadas pelo enquadramento do fornecedor.',items:[{label:'Empresas do Simples',value:scaled(values.simplePurchases,inputFactor)},{label:fixed?'Demais compras do cenário':'Empresas fora do Simples',value:scaled(values.regularPurchases,inputFactor)}],unit,className:'sim-chart-purchases'})}${expenseChart(values,inputFactor,unit)}</div></section>`;
 }

@@ -13,6 +13,7 @@ import {analysisHistory,openAnalysis,getAnalysis,updateAnalysisConfig,updateAnal
 import {routeV4} from '../src/lookup-http.ts';
 import {baselineMonth} from '../public/simulator-monthly.js';
 import {defaultDifalPolicy} from '../public/simulator-engine.js';
+import {analysisMonthsForYear,JAN_SEP_POLICY,JAN_SEP_MODEL_VERSION} from '../public/analysis-period.js';
 
 test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concorrente, versões e adoção legada',
   {skip:!process.env.MONGODB_URI,timeout:120000},async t=>{
@@ -27,8 +28,8 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
   const route=(method:string,path:string,input:any={})=>routeV4(actor,method,new URL(`https://test/api/v4${path}`),input);
   let analysis:any,first:any,latest:any,legacy:any,legacyInput:any,legacyAnalysis:any,outsideAnalysis:any,freshAnalysis:any;
   const noDifal=()=>({...defaultDifalPolicy(),enabled:{pure:false,hybrid:false,presumed:false,actual:false}});
-  const accountingRows=(months=['2026-01','2026-02'])=>months.map((sourceMonth,index)=>({sourceMonth,salariesCents:1000*(index+1),rentCents:0,
-    cardExpensesCents:index,benefitsCents:0,adminExpensesCents:0}));
+  const accountingRows=(months=analysisMonthsForYear(2026))=>months.map((sourceMonth,index)=>({sourceMonth,salariesCents:index<2?1000*(index+1):0,rentCents:0,
+    cardExpensesCents:index===1?1:0,benefitsCents:0,adminExpensesCents:0}));
   const saveAccounting=async(rows=accountingRows(),complete=true)=>{
     const result=await updateAnalysisSector(accountant,analysis.id,'accounting',{expectedSectorRevision:analysis.accounting.revision,
       expectedConfigRevision:analysis.config.revision,complete,data:{months:rows}});analysis=result.analysis;return result;
@@ -37,12 +38,13 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
     const result=await updateAnalysisSector(actor,analysis.id,'fiscal',{expectedSectorRevision:analysis.fiscal.revision,
       expectedConfigRevision:analysis.config.revision,complete,data});analysis=result.analysis;return result;
   };
-  async function reports(generationId:string,clientId:string){
+  async function reports(generationId:string,clientId:string,legacy=false){
     const jobs:any[]=[];
     for(const [attach,nature,totals] of [[attachGenerationPurchase,'1102',[20000,30000]],[attachGenerationSale,'5102',[100000,200000]]] as const){
-      const {job}=await attach(actor,generationId,{clientId,importId:randomUUID(),fileName:`${nature}.csv`,expectedRows:2});jobs.push(job);
-      await uploadLookup(actor,job._id,{offset:0,rows:totals.map((totalCents,index)=>({document:'12345678900',name:'Pessoa sintética',recipientUf:'MG',
-        serviceDate:`2026-0${index+1}-15`,natureCode:nature,quantity:'1',totalCents,grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0}))});
+      const selectedTotals=legacy?[...totals]:[...totals,0];
+      const {job}=await attach(actor,generationId,{clientId,importId:randomUUID(),fileName:`${nature}.csv`,expectedRows:selectedTotals.length});jobs.push(job);
+      await uploadLookup(actor,job._id,{offset:0,rows:selectedTotals.map((totalCents,index)=>({document:'12345678900',name:'Pessoa sintética',recipientUf:'MG',
+        serviceDate:`2026-0${index===2?9:index+1}-15`,natureCode:nature,quantity:'1',totalCents,grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0}))});
       await finalizeLookup(actor,job._id);await processLookup(actor,job._id,(async()=>{throw new Error('CPF sintético não pode consultar API externa.');}) as typeof fetch);
     }
     return jobs;
@@ -69,12 +71,13 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       analysis=(await updateAnalysisSector(accountant,analysis.id,'accounting',{expectedSectorRevision:0,expectedConfigRevision:0,complete:false,data:{months:[blank]}})).analysis;
       assert.equal(analysis.accounting.data.months[0].salariesCents,null);
       await assert.rejects(updateAnalysisSector(accountant,analysis.id,'accounting',{expectedSectorRevision:1,expectedConfigRevision:0,complete:true,data:{months:[blank]}}),code('ANALYSIS_ACCOUNTING_INCOMPLETE'));
-      await saveAccounting(accountingRows(['2026-01']));assert.equal(analysis.accounting.status,'COMPLETE');assert.equal(analysis.readiness.ready,false);
+      await assert.rejects(saveAccounting(accountingRows(['2026-01'])),code('ANALYSIS_ACCOUNTING_INCOMPLETE'));
+      await saveAccounting(accountingRows(['2026-01']),false);assert.equal(analysis.accounting.status,'DRAFT');assert.equal(analysis.readiness.ready,false);
       await assert.rejects(updateAnalysisSector(accountant,analysis.id,'accounting',{expectedSectorRevision:0,expectedConfigRevision:0,complete:true,data:{months:accountingRows()}}),code('ANALYSIS_CONFLICT'));
       const fiscalRevision=analysis.fiscal.revision,accountingRevision=analysis.accounting.revision;
       const changes=await Promise.all([
         updateAnalysisSector(actor,analysis.id,'fiscal',{expectedSectorRevision:fiscalRevision,expectedConfigRevision:0,complete:false,data:analysis.fiscal.data}),
-        updateAnalysisSector(accountant,analysis.id,'accounting',{expectedSectorRevision:accountingRevision,expectedConfigRevision:0,complete:true,data:{months:accountingRows(['2026-01'])}})
+        updateAnalysisSector(accountant,analysis.id,'accounting',{expectedSectorRevision:accountingRevision,expectedConfigRevision:0,complete:false,data:{months:accountingRows(['2026-01'])}})
       ]);
       assert.equal(changes.length,2);analysis=(await getAnalysis(analysis.id)).analysis;
       assert.equal(analysis.fiscal.revision,fiscalRevision+1);assert.equal(analysis.accounting.revision,accountingRevision+1);
@@ -93,7 +96,7 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       assert.equal(analysis.fiscal.status,'COMPLETE');assert.equal(analysis.fiscal.confirmation.generationId,imported.generationId);
       assert.equal(analysis.readiness.ready,false);assert.ok(analysis.readiness.issues.some((issue:any)=>issue.code==='ACCOUNTING_MONTHS_MISMATCH'));
       await assert.rejects(generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:analysis.revision}),code('ANALYSIS_NOT_READY'));
-      await saveAccounting();assert.equal(analysis.readiness.ready,true);assert.deepEqual(analysis.readiness.months,['2026-01','2026-02']);
+      await saveAccounting();assert.equal(analysis.readiness.ready,true);assert.deepEqual(analysis.readiness.months,analysisMonthsForYear(2026));
       assert.equal(await(await collection('simplesExtractions')).countDocuments(scope()),0,'Sem Simples, não há extrato fabricado.');
       const foreign=await createGeneration(actor,{generationId:randomUUID(),clientIds:[outsideId]});
       await assert.rejects(saveFiscal({...analysis.fiscal.data,generationId:foreign._id},false),code('GENERATION_CLIENT'));
@@ -108,8 +111,9 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       assert.equal(first.analysisId,analysis.id);assert.equal(first.analysisRevision,revision);assert.equal(first.rbt12Source,'NOT_REQUIRED');
       assert.equal(first.rbt12Extraction,null);assert.equal(first.engineInput.rbt12,null);assert.equal(first.draft.rbt12,undefined);
       assert.deepEqual(first.result.regimes.map((row:any)=>row.id),['presumed','actual']);assert.equal(first.result.annualRevenue,3000);
-      assert.deepEqual(first.monthlyInputs.map((row:any)=>row.values.salaries),[10,20]);
-      assert.deepEqual(first.monthlyInputs.map((row:any)=>row.values.cardExpenses),[0,.01]);
+      assert.deepEqual(first.monthlyInputs.map((row:any)=>row.values.salaries),[10,20,0,0,0,0,0,0,0]);
+      assert.deepEqual(first.monthlyInputs.map((row:any)=>row.values.cardExpenses),[0,.01,0,0,0,0,0,0,0]);
+      assert.equal(first.analysisPeriod.version,JAN_SEP_POLICY);assert.equal(first.modelVersion,JAN_SEP_MODEL_VERSION);
       assert.equal(analysis.currentSimulation.id,first._id);assert.equal(analysis.currentSimulation.stale,false);
       assert.equal((await generateAnalysis(accountant,analysis.id,{requestId,expectedRevision:revision})).reused,true);
       assert.equal((await generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:revision})).simulation._id,first._id);
@@ -178,7 +182,7 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
         entry.values.salaries=index+21;entry.values.rent=index+31;entry.values.cardExpenses=index+.01;entry.values.benefits=index+41;entry.values.adminExpenses=index+51;return entry;
       });
       const firstInput=monthlyInputs[0],groups=firstInput.groups;
-      legacyInput={simulationId:randomUUID(),generationId:generation._id,clientId:legacyClientId,reportMonths:2,periodConfirmed:true,monthlyInputs,monthlyGroups:groups,
+      legacyInput={simulationId:randomUUID(),generationId:generation._id,clientId:legacyClientId,reportMonths:9,periodConfirmed:true,monthlyInputs,monthlyGroups:groups,
         rbt12Source:'MANUAL',rbt12ManualConfirmed:true,draft:{year:2027,salesAnnex:1,serviceAnnex:3,rbt12:200000,difalPolicy:defaultDifalPolicy(),
           values:{...firstInput.values,salesRevenue:groups.salesOptantCents+groups.salesNonOptantCents+groups.salesCpfCents,simplePurchases:groups.purchasesOptantCents,regularPurchases:groups.purchasesNonOptantCents}}};
       legacy=await createLegacySimulation(actor,legacyInput);const original=structuredClone(legacy);
@@ -200,8 +204,8 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       legacyAnalysis=(await openAnalysis(actor,{clientId:legacyClientId,year:2028,regimeSelection:selection})).analysis;
       assert.equal(legacyAnalysis.legacy,true);assert.equal(legacyAnalysis.config.year,2027);assert.equal(legacyAnalysis.fiscal.status,'DRAFT');assert.equal(legacyAnalysis.accounting.status,'DRAFT');
       assert.deepEqual(legacyAnalysis.fiscal.data.monthlyOverrides,monthlyInputs.map(row=>({sourceMonth:row.sourceMonth,groups:row.groups,serviceRevenue:row.values.serviceRevenue})));
-      assert.deepEqual(legacyAnalysis.accounting.data.months.map((row:any)=>row.salariesCents),[2100,2200]);
-      assert.deepEqual(legacyAnalysis.accounting.data.months.map((row:any)=>row.adminExpensesCents),[5100,5200]);
+      assert.deepEqual(legacyAnalysis.accounting.data.months.map((row:any)=>row.salariesCents),Array.from({length:9},(_,index)=>(21+index)*100));
+      assert.deepEqual(legacyAnalysis.accounting.data.months.map((row:any)=>row.adminExpensesCents),Array.from({length:9},(_,index)=>(51+index)*100));
       assert.deepEqual(await getSimulation(legacy._id),original);assert.deepEqual(await createLegacySimulation(actor,legacyInput),original);
       await assert.rejects(deleteSimulation(actor,legacy._id),code('ANALYSIS_VERSION_PROTECTED'));
       await assert.rejects(createLegacySimulation(actor,{...legacyInput,simulationId:randomUUID()}),code('ANALYSIS_WORKFLOW_REQUIRED'));

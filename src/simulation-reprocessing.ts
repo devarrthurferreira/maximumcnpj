@@ -19,6 +19,7 @@ import {resolveDifalApplication, upgradeDifalPolicy} from '../public/simulator-e
 import {REPROCESS_VERSION} from '../public/simulation-reprocess-contract.js';
 import {requiresSimplesReference} from '../public/regime-selection.js';
 import {promoteReprocessedAnalysis} from './analysis-store.ts';
+import {JAN_SEP_POLICY,JAN_SEP_MODEL_VERSION,assertCompleteAnalysisPeriod} from '../public/analysis-period.js';
 
 
 export {REPROCESS_VERSION};
@@ -27,8 +28,8 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const PAGE_SIZE = 100;
 const key = () => 'simulation-reprocessing:' + digest(JSON.stringify([scope().workspaceId, REPROCESS_VERSION]));
 const itemId = (originalId: string) => key() + ':' + originalId;
-export function reprocessedSimulationId(workspaceId: string, originalId: string) {
-  const value = digest(JSON.stringify([workspaceId, originalId, REPROCESS_VERSION, MODEL_VERSION]));
+export function reprocessedSimulationId(workspaceId: string, originalId: string, periodPolicy?:string) {
+  const value = digest(JSON.stringify([workspaceId, originalId, REPROCESS_VERSION, periodPolicy===JAN_SEP_POLICY?JAN_SEP_MODEL_VERSION:MODEL_VERSION]));
   return `${value.slice(0,8)}-${value.slice(8,12)}-5${value.slice(13,16)}-a${value.slice(17,20)}-${value.slice(20,32)}`;
 }
 function pending(condition: unknown, code: string, message: string): asserts condition {
@@ -58,7 +59,12 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   if(oldPeriod)pending(source.period && oldPeriod.startMonth === source.period.startMonth && oldPeriod.endMonth === source.period.endMonth && oldPeriod.months === source.period.months,
     'REPROCESS_PERIOD', 'As competências inicial e final diferem das competências congeladas no histórico.');
   const modern=original.result?.method==='REPORT_MONTHS_V1'&&Array.isArray(original.monthlyInputs);
-  const p = annualizeReports(source.fields, original.reportMonths);
+  if(source.analysisPeriod){
+    try{assertCompleteAnalysisPeriod(source.analysisPeriod,source.monthlyReports);}
+    catch(error){throw new AppError(409,'REPROCESS_PERIOD',error instanceof Error?error.message:'Período fixo inválido.');}
+    pending(modern&&isDeepStrictEqual(original.source.analysisPeriod,source.analysisPeriod),'REPROCESS_PERIOD','O período fixo diverge do histórico original.');
+  }
+  const p = source.analysisPeriod?{monthlyGroupsCents:source.monthlyReports[0].fields}:annualizeReports(source.fields, original.reportMonths);
   pending(p.monthlyGroupsCents.serviceRevenueCents !== undefined, 'REPROCESS_SERVICES', 'A separação dos serviços não está disponível na origem.');
   const frozen = original.baselineMonthlyGroups || (original.projection?.monthlyGroupsCents &&
     Object.fromEntries(REPORT_GROUPS.map(field=>[field,original.projection.monthlyGroupsCents[field]/100])));
@@ -165,7 +171,7 @@ export function planReprocessing(original: any, source: any, workspaceId: string
     simplePurchases:monthlyGroups.purchasesOptantCents,regularPurchases:monthlyGroups.purchasesNonOptantCents};
   const rbt12Schedule=rbt12Extraction?buildRbt12Schedule(rbt12Extraction,source.monthlyReports.map((row:any)=>row.sourceMonth)):null;
   pending(!rbt12Schedule||rbt12Schedule.complete,'RBT12_MONTHS_MISSING',`O extrato congelado não cobre todas as competências. Reimporte o extrato com as receitas mensais do quadro 2.2. ${rbt12Schedule?.rows.filter(row=>row.status!=='CONFIRMED').map(row=>`${row.sourceMonth}: faltam ${row.missingMonths.join(', ')}`).join('; ')||''}`);
-  const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports,monthlyInputs,source.sales.jobId,rbt12Schedule);}catch(error){throw new AppError(409,'REPROCESS_ADJUSTMENT',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
+  const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports,monthlyInputs,source.sales.jobId,rbt12Schedule,source.analysisPeriod);}catch(error){throw new AppError(409,'REPROCESS_ADJUSTMENT',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
   for (const [index, report] of source.monthlyReports.entries()) {
     const input = computed.engineInput.months[index].input;
     const applications = computed.result.monthlyResults[index].result.regimes.filter((regime: any) => regime.available).map((regime: any) => resolveDifalApplication({
@@ -185,9 +191,10 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   const alreadyCurrent=modern&&isDeepStrictEqual(original.result,computed.result)&&isDeepStrictEqual(original.projection,computed.projection)&&
     isDeepStrictEqual(original.difalProjection,computed.difalProjection)&&isDeepStrictEqual(original.engineInput,computed.engineInput)&&
     isDeepStrictEqual(original.monthlyDre,buildMonthlyDre(computed.result,draft.year,rbt12Extraction||rbt12Manual,source.period||null));
-  const input = {simulationId: reprocessedSimulationId(workspaceId, original._id), generationId: original.generationId,
+  const input = {simulationId: reprocessedSimulationId(workspaceId, original._id,source.analysisPeriod?.version), generationId: original.generationId,
     clientId: original.clientId, parentSimulationId: original._id, title: String(original.title || source.company.name).slice(0,140) + ' · Atualizada',
     reportMonths: original.reportMonths, periodConfirmed: true, monthlyGroups, draft, monthlyInputs,
+    ...(source.analysisPeriod?{periodPolicy:JAN_SEP_POLICY}:{}),
     ...(rbt12Source === 'MANUAL' ? {rbt12Source, rbt12ManualConfirmed: true} : rbt12Source==='NOT_REQUIRED'?{rbt12Source}:{rbt12ExtractionId: rbt12Extraction!.id})};
   return {alreadyCurrent, input, context: {version: REPROCESS_VERSION, originalId: original._id, source, rbt12Extraction, rbt12Manual, serviceRevenueMigration}};
 }
@@ -229,7 +236,7 @@ async function inventory(batch: Doc) {
 
 async function reprocessItem(actor: LookupActor, item: Doc) {
   const original = await getSimulation(item.originalId);
-  const targetId = reprocessedSimulationId(scope().workspaceId, original._id);
+  const targetId = reprocessedSimulationId(scope().workspaceId, original._id,original.source?.analysisPeriod?.version);
   // A completed child is recognized across operators and without re-reading mutable sources.
   const existing = await (await collection('simulations')).findOne(scope({_id:targetId,deletedAt:{$exists:false}}));
   if (existing?.reprocessing?.version === REPROCESS_VERSION && existing.reprocessing.originalId === original._id) {

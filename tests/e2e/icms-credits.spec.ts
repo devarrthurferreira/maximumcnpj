@@ -34,6 +34,12 @@ function report(name:string,source:SourceRow[]){
     for(const column of [24,25,26,27])row[column]='0,00';
     return row;
   });
+  // Both source documents explicitly cover all nine months. January carries
+  // the independent tax example; the remaining competencies report zero.
+  for(let month=2;month<=9;month++){
+    const row=[...rows[0]];row[7]=`15/${String(month).padStart(2,'0')}/2025`;
+    row[8]='Pessoa sintética sem movimento';row[14]='Competência declarada sem movimento';row[16]='0,00';rows.push(row);
+  }
   return {name,mimeType:'text/csv',buffer:Buffer.from([header,...rows].map(row=>row.join(';')).join('\r\n'),'latin1')};
 }
 
@@ -47,10 +53,16 @@ const creditRows=[
   ['icms.balance','Saldo credor potencial de ICMS','0,00']
 ] as const;
 
+async function openCompleteDre(page:Page){
+  const detail=page.locator('[data-simulation-detail="dre"]');
+  if(await detail.getAttribute('open')===null)await detail.locator(':scope > summary').click();
+  await expect(detail.locator('[data-simulation-lazy="dre"]')).toHaveAttribute('data-loaded','true');
+}
 async function assertAnnual(page:Page){
   await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');
   await page.locator('#dre-regime').selectOption('presumed');
-  const main=page.locator('#dre-demonstrativo > .dre-table-wrap');
+  await openCompleteDre(page);
+  const main=page.locator('#dre-demonstrativo [data-simulation-lazy="dre"] > .dre-table-wrap');
   const footer=page.locator('#dre-demonstrativo [data-icms-reconciliation="dre"]');
   await expect(footer).toHaveCount(1);
   await expect(footer.locator('[data-dre-row]')).toHaveCount(creditRows.length);
@@ -77,19 +89,20 @@ async function assertAnnual(page:Page){
 
 async function assertMonthly(page:Page){
   await page.getByRole('button',{name:'Mensal',exact:true}).click();
-  await page.getByRole('button',{name:'12 meses',exact:true}).click();
+  await openCompleteDre(page);
+  await page.getByRole('button',{name:'9 meses',exact:true}).click();
   await page.locator('#dre-regime').selectOption('presumed');
   const footer=page.locator('#dre-demonstrativo [data-icms-reconciliation="dre"]');
   for(const [key,,amount] of creditRows){
     const cells=footer.locator(`[data-dre-row="${key}"] td`);
-    await expect(cells).toHaveCount(13);
+    await expect(cells).toHaveCount(10);
     await expect(cells.first()).toHaveText(`R$ ${amount}`);
-    await expect(cells.nth(1)).toHaveText('—');
+    await expect(cells.nth(1)).toHaveText('R$ 0,00');
     await expect(cells.last()).toHaveText(`R$ ${amount}`);
   }
-  const revenue=page.locator('#dre-demonstrativo > .dre-table-wrap [data-dre-row="revenue"] td');
+  const revenue=page.locator('#dre-demonstrativo [data-simulation-lazy="dre"] > .dre-table-wrap [data-dre-row="revenue"] td');
   await expect(revenue.first()).toHaveText('R$ 2.700,00');
-  await expect(revenue.nth(1)).toHaveText('—');
+  await expect(revenue.nth(1)).toHaveText('R$ 0,00');
   await expect(revenue.last()).toHaveText('R$ 2.700,00');
   await page.locator('#dre-regime').selectOption('pure');
   await expect(footer.locator('[data-dre-row="icms.potential"] td').first()).toHaveText('—');
@@ -153,9 +166,11 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
 
   // Independent arithmetic: 1,000×18% + 2,000×12% = 420; eligible purchases
   // 300×18% + 500×12% = 114; returns 100×18% + 200×12% = 42; due = 264.
-  expect(saved.modelVersion).toBe('1.10.0-regime-selection');
+  expect(saved.modelVersion).toBe('1.11.0-jan-sep');
+  expect(saved.analysisPeriod).toMatchObject({version:'JAN_SEP_V1',months:9,complete:true});
+  expect(saved.monthlyDre.version).toBe('DRE_CALENDAR_V4');
   expect(saved.result.method).toBe('REPORT_MONTHS_V1');expect(saved.result.annualRevenue).toBe(2700);
-  expect(saved.source.monthlyReports).toHaveLength(1);expect(saved.result.monthlyResults).toHaveLength(1);
+  expect(saved.source.monthlyReports).toHaveLength(9);expect(saved.result.monthlyResults).toHaveLength(9);
   expect(saved.source.fields).toMatchObject({salesCpfCents:270_000,salesOptantCents:0,salesNonOptantCents:0,purchasesOptantCents:0,purchasesNonOptantCents:140_000,serviceRevenueCents:0});
   expect(saved.source.operationAudit).toMatchObject({grossSalesCents:300_000,salesReturnsCents:30_000,purchaseGoodsCents:80_000,purchaseServicesCents:60_000});
   const operations=saved.source.monthlyReports[0].icmsOperations;
@@ -182,7 +197,7 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
   const jobIds=[saved.source.purchases.jobId,saved.source.sales.jobId],sourceFilter={workspaceId,jobId:{$in:jobIds}};
   const frozen=async()=>({jobs:await db.collection<any>('lookupJobs').find({_id:{$in:jobIds},workspaceId}).sort({_id:1}).toArray(),rows:await db.collection<any>('purchaseLines').find(sourceFilter).sort({jobId:1,index:1}).toArray(),lookups:await db.collection('lookupItems').find(sourceFilter).sort({jobId:1,cnpj:1}).toArray()});
   const original=await frozen();
-  expect(original.rows).toHaveLength(8);expect(original.lookups).toHaveLength(0);
+  expect(original.rows).toHaveLength(24);expect(original.lookups).toHaveLength(0);
   expect(original.rows.every(row=>row.documentKind==='CPF'&&!row.valid)).toBe(true);
   const services=original.rows.filter(row=>String(row.natureCode).startsWith('8000'));
   expect(services.map(row=>row.totalCents).sort((a,b)=>a-b)).toEqual([20_000,40_000]);
@@ -238,7 +253,7 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
       const annual=csvRows.find(row=>row[0]===scope&&row[2]===label)!;
       expect(annual,label).toBeDefined();expect(annual[5]).toBe('Não disponível');expect(annual[7]).toBe(amount);
       const monthly=csvRows.find(row=>row[0]==='Lucro Presumido'&&row[1]===scope&&row[3]===label)!;
-      expect(monthly,label).toBeDefined();expect(monthly[6]).toBe(amount);expect(monthly[7]).toBe('Não disponível');expect(monthly[18]).toBe(amount);
+      expect(monthly,label).toBeDefined();expect(monthly[6]).toBe(amount);expect(monthly[7]).toBe('0,00');expect(monthly[15]).toBe(amount);
       expect(csvRows.filter(row=>(row[0]==='DRE'&&row[2]===label)||(row[1]==='DRE'&&row[3]===label))).toHaveLength(0);
     }
     const netIcms=csvRows.filter(row=>row[0]==='DRE'&&row[2].includes('ICMS líquido fora do DAS'));
@@ -253,7 +268,7 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
       await expect(printed.locator(`[data-dre-row="${key}"]`)).toHaveCount(5);
       await expect(printed.locator('[data-icms-reconciliation="dre"]').first().locator(`[data-dre-row="${key}"] td`).nth(2)).toHaveText(`R$ ${amount}`);
       const monthly=printed.locator(`[data-report-part="monthly"][data-report-regime="presumed"] [data-dre-row="${key}"] td`);
-      await expect(monthly.first()).toHaveText(`R$ ${amount}`);await expect(monthly.nth(1)).toHaveText('—');await expect(monthly.last()).toHaveText(`R$ ${amount}`);
+      await expect(monthly.first()).toHaveText(`R$ ${amount}`);await expect(monthly.nth(1)).toHaveText('R$ 0,00');await expect(monthly.last()).toHaveText(`R$ ${amount}`);
     }
     await expect(printed.locator('[data-report-memory="icms.purchaseCredit"]')).toContainText('114,00');
     await expect(printed.locator('[data-report-memory="icms.returnCredit"]')).toContainText('42,00');

@@ -61,8 +61,8 @@ test('receita bruta menos devoluções concilia relatório, DRE salva e nova ses
   await page.locator(`[data-select-company="${clientId}"]`).click();
   for(const id of ['pure','hybrid'])await page.locator(`#generation-difal-${id}`).uncheck();
   await page.locator('#generation-create').click();
-  const purchases=[{month:8,nature:'2102001',value:400},{month:8,nature:'1202001',value:150},{month:9,nature:'2102001',value:500},{month:9,nature:'1202001',value:250}];
-  const sales=[{month:8,nature:'6102001',value:1000},{month:8,nature:'9000002',value:200},{month:8,nature:'6202001',value:100},{month:8,nature:'5901001',value:50},{month:9,nature:'6102001',value:800},{month:9,nature:'9000002',value:200}];
+  const purchases=[{month:1,nature:'1949001',value:0},{month:8,nature:'2102001',value:400},{month:8,nature:'1202001',value:150},{month:9,nature:'2102001',value:500},{month:9,nature:'1202001',value:250}];
+  const sales=[{month:1,nature:'5949001',value:0},{month:8,nature:'6102001',value:1000},{month:8,nature:'9000002',value:200},{month:8,nature:'6202001',value:100},{month:8,nature:'5901001',value:50},{month:9,nature:'6102001',value:800},{month:9,nature:'9000002',value:200}];
   for(const [name,rows] of [['compras.csv',purchases],['vendas.csv',sales]] as const){
     await expect(page.locator('#purchase-file')).toBeEnabled();
     await expect(page.locator('#purchase-issuer-uf')).toHaveValue('MG');
@@ -72,15 +72,19 @@ test('receita bruta menos devoluções concilia relatório, DRE salva e nova ses
   }
   await expect(page.locator('#guided-rbt12-stage')).toBeVisible();await page.locator('#guided-rbt12-skip').click();
   await page.locator('#rbt12').fill('100000');await page.locator('#rbt12-manual-confirm').check();
+  await page.locator('#report-competence').selectOption('7');
   await expect(page.locator('#salesCpfCents')).toHaveValue('850.00');
   await expect(page.locator('#serviceRevenue')).toHaveValue('200.00');
   const saved=await save(page);
   expect(saved.source.operationAudit).toMatchObject({grossSalesCents:180_000,serviceSalesCents:40_000,salesReturnsCents:40_000,excludedSalesCents:15_000});
   expect(saved.result.annualRevenue).toBe(1800);
   expect(saved.result.regimes.map((regime:any)=>regime.dre.revenue)).toEqual([1800,1800,1800,1800]);
-  expect(saved.result.monthlyResults.map((month:any)=>month.result.regimes[0].dre.revenue)).toEqual([1050,750]);
+  expect(saved.reportMonths).toBe(9);expect(saved.analysisPeriod.version).toBe('JAN_SEP_V1');
+  expect(saved.result.monthlyResults.map((month:any)=>month.result.regimes[0].dre.revenue)).toEqual([...Array(7).fill(0),1050,750]);
   expect(saved.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,0,0,0]);
-  await page.getByRole('button',{name:'Anual',exact:true}).click();
+  await page.locator('[data-period="annual"]').click();
+  await page.locator('[data-simulation-detail="dre"] > summary').click();
+  await expect(page.locator('[data-simulation-lazy="dre"]')).toHaveAttribute('data-loaded','true');
   await expect(page.locator('.sim-dre').getByRole('heading',{name:'Fechamento da receita',exact:true})).toBeVisible();
   const closing=page.locator('[data-revenue-reconciliation="dre"]');
   for(const [key,value] of [['revenueSourceGross','2.200,00'],['revenueSalesReturns','400,00'],['revenueAfterReturns','1.800,00'],['revenueManualAdjustment','0,00'],['revenueUsed','1.800,00']]){
@@ -129,7 +133,9 @@ test('receita bruta menos devoluções concilia relatório, DRE salva e nova ses
     await expect(reopened.locator('#simulation-snapshot')).toBeVisible();
     await expect(reopened.locator('[data-period="annual"]')).toHaveAttribute('aria-pressed','true');
     await reopened.locator('[data-period="monthly"]').click();
+    await reopened.locator('#dre-month').selectOption('7');
     await reopened.locator('#dre-regime').selectOption('pure');
+    await reopened.locator('[data-simulation-detail="dre"] > summary').click();
     const savedClosing=reopened.locator('[data-revenue-reconciliation="dre"]');
     await expect(savedClosing.locator('[data-dre-row="revenueSourceGross"] td').first()).toContainText('1.200,00');
     await expect(savedClosing.locator('[data-dre-row="revenueSalesReturns"] td').first()).toContainText('150,00');
@@ -141,7 +147,7 @@ test('receita bruta menos devoluções concilia relatório, DRE salva e nova ses
     expect(await (await fresh.request.get(`/api/v4/simulations/${saved._id}`)).json()).toEqual(saved);
     await reopened.locator('#create-version').click();
     await expect(reopened.locator('#simulator-form')).toBeVisible();
-    await reopened.locator('#report-competence').selectOption('0');
+    await reopened.locator('#report-competence').selectOption('7');
     await expect(reopened.locator('label[for="salesCpfCents"]')).toContainText('após devoluções');
     await reopened.locator('#salesCpfCents').fill('950');
     const editorClosing=reopened.locator('#simulator-revenue-reconciliation');

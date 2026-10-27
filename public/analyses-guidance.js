@@ -1,3 +1,5 @@
+import {JAN_SEP_POLICY,buildAnalysisPeriod,analysisMonthsForYear,isAnalysisMonth} from './analysis-period.js';
+
 export const ACCOUNTING_FIELDS=[
   ['salariesCents','Salários e pró-labore'],['rentCents','Aluguéis'],
   ['cardExpensesCents','Taxas de cartão'],['benefitsCents','Benefícios'],
@@ -7,8 +9,43 @@ export const ACCOUNTING_FIELDS=[
 const SECTORS=['fiscal','accounting'];
 const names={fiscal:'Fiscal',accounting:'Contábil'};
 
+export const usesFixedAnalysisPeriod=analysis=>analysis?.periodPolicy===JAN_SEP_POLICY;
+function metadataPeriods(analysis,generation) {
+  const generationId=analysis?.fiscal?.data?.generationId;
+  if(!generationId||generation?._id!==generationId)return null;
+  const company=generation.companies?.find(row=>row.clientId===analysis.clientId);
+  if(!company)return null;
+  const purchase=company.purchase,sales=company.sales;
+  if(!purchase||!sales||purchase._id!==company.purchaseJobId||sales._id!==company.salesJobId||
+    purchase.status!=='COMPLETED'||sales.status!=='COMPLETED'||purchase.mode!=='PURCHASES_V1'||sales.mode!=='SALES_V1'||
+    [purchase,sales].some(job=>job.clientId!==analysis.clientId||job.generationId!==generationId))return null;
+  return [purchase.reportPeriod,sales.reportPeriod];
+}
+
+/** Read-only coverage hints. They never confirm missing financial amounts. */
+export function analysisPeriodFor(analysis,source,generation) {
+  if(source?.analysisPeriod?.version===JAN_SEP_POLICY)return source.analysisPeriod;
+  if(analysis?.readiness?.analysisPeriod?.version===JAN_SEP_POLICY)return analysis.readiness.analysisPeriod;
+  if(!usesFixedAnalysisPeriod(analysis))return null;
+  const periods=metadataPeriods(analysis,generation);if(!periods)return null;
+  try{return buildAnalysisPeriod(...periods);}catch{return null;}
+}
+
+/** Retain amounts outside the selected window in storage, but exclude them from current totals. */
+export function scopedAccountingMonths(analysis,months=[],source=null,generation=null) {
+  if(!usesFixedAnalysisPeriod(analysis))return months;
+  const period=analysisPeriodFor(analysis,source,generation);
+  return months.filter(row=>isAnalysisMonth(row.sourceMonth)&&(!period||Number(row.sourceMonth.slice(0,4))===period.sourceYear));
+}
+
 /** Metadata guides entry only; it never confirms source values or authorizes generation. */
-export function accountingSourceMonths(analysis,source,generation) {
+export function accountingSourceMonths(analysis,source,generation,accountingMonths=analysis?.accounting?.data?.months||[]) {
+  if(usesFixedAnalysisPeriod(analysis)){
+    const period=analysisPeriodFor(analysis,source,generation);
+    if(period)return period.expectedMonths;
+    const years=[...new Set(accountingMonths.filter(row=>isAnalysisMonth(row.sourceMonth)).map(row=>Number(row.sourceMonth.slice(0,4))))];
+    return years.length===1?analysisMonthsForYear(years[0]):[];
+  }
   if(source?.monthlyReports?.length)return source.monthlyReports.map(row=>row.sourceMonth);
   if(analysis?.readiness?.months?.length)return analysis.readiness.months;
   const generationId=analysis?.fiscal?.data?.generationId;

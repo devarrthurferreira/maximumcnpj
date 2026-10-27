@@ -121,10 +121,10 @@ async function prepareFiscalSource(request:APIRequestContext,baseURL:string,anal
   // Node derives and validates both monthly sources. CPF rows need no external CNPJ service.
   for(const kind of ['purchases','sales'] as const){
     const attached=await api(request,baseURL,'POST','/api/v4/generations/'+prepared.generationId+'/'+kind,{
-      clientId,importId:randomUUID(),fileName:code+'-'+kind+'.csv',expectedRows:2,issuerUf:'MG'
+      clientId,importId:randomUUID(),fileName:code+'-'+kind+'.csv',expectedRows:9,issuerUf:'MG'
     });
-    await api(request,baseURL,'POST','/api/v4/'+kind+'/'+attached.job._id+'/rows',{offset:0,rows:[1,2].map(month=>{
-      const totalCents=(kind==='sales'?1_000_000:100_000)*month;
+    await api(request,baseURL,'POST','/api/v4/'+kind+'/'+attached.job._id+'/rows',{offset:0,rows:Array.from({length:9},(_,index)=>index+1).map(month=>{
+      const totalCents=month<=2?(kind==='sales'?1_000_000:100_000)*month:0;
       return {document:'12345678900',name:'Pessoa sintética',serviceDate:'2025-0'+month+'-15',quantity:'1',
         natureCode:kind==='sales'?'5102001':'1102001',description:'Competência sintética de usabilidade',recipientUf:'MG',
         grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents};
@@ -332,7 +332,7 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
   expect(analysis.accounting.status).toBe('DRAFT');expect(analysis.readiness.ready).toBe(false);
   await expect(page.locator('#analysis-generate')).toBeDisabled();
   await page.locator('#analysis-wizard button[value="complete"]').click();
-  await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('Use zero somente');
+  await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('Adicione as competências que faltam');
   await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','values');
   expect(patches).toEqual(['/api/v4/analyses/'+id+'/fiscal','/api/v4/analyses/'+id+'/accounting']);
   await expect(expense(page,'2025-01','cardExpensesCents')).toHaveValue('');
@@ -344,8 +344,21 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
   const beforeExplicitCompletion=(await api(page.request,baseURL!,'GET','/api/v4/analyses/'+id)).analysis;
   expect(beforeExplicitCompletion.accounting.status).toBe('DRAFT');
   expect(beforeExplicitCompletion.accounting.data.months).toEqual(expectedMonths);
+  // Preparing the fixed period adds seven empty months and preserves the two edited ones.
+  await openDetails(page,'analysis-accounting-tools');await expect(page.locator('#analysis-new-source-year')).toHaveValue('2025');
+  await page.locator('#analysis-add-month').click();await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
+  await page.locator('#analysis-wizard button[value="complete"]').click();
+  await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('Use zero somente');
+  expect(patches).toEqual(['/api/v4/analyses/'+id+'/fiscal','/api/v4/analyses/'+id+'/accounting']);
+  const remainingMonths=Array.from({length:7},(_,index)=>({sourceMonth:'2025-0'+(index+3),salariesCents:0,rentCents:0,cardExpensesCents:0,benefitsCents:0,adminExpensesCents:0}));
+  for(const month of remainingMonths){
+    await openDetails(page,'analysis-month-'+month.sourceMonth);
+    for(const field of ['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents']){
+      await expect(expense(page,month.sourceMonth,field)).toHaveValue('');await expense(page,month.sourceMonth,field).fill('0');
+    }
+  }
   analysis=await saveSector(page,id,'accounting',true);
-  expect(analysis.accounting.data.months).toEqual([{...expectedMonths[0],cardExpensesCents:0},expectedMonths[1]]);
+  expect(analysis.accounting.data.months).toEqual([{...expectedMonths[0],cardExpensesCents:0},expectedMonths[1],...remainingMonths]);
   expect(analysis.readiness.ready).toBe(true);
   await expect(page.locator('#analysis-generate')).toBeEnabled();
   await switchSector(page,'accounting','values');await openDetails(page,'analysis-accounting-summary-panel');
@@ -360,7 +373,8 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
   expect(snapshot.rbt12Source).toBe('NOT_REQUIRED');expect(snapshot.result.regimes.map((row:any)=>row.id)).toEqual(['actual']);
   expect(snapshot.monthlyInputs.map((row:any)=>({sourceMonth:row.sourceMonth,values:row.values}))).toEqual([
     {sourceMonth:'2025-01',values:{serviceRevenue:0,salaries:1234.56,rent:250,cardExpenses:0,benefits:0,adminExpenses:10.5}},
-    {sourceMonth:'2025-02',values:{serviceRevenue:0,salaries:2000,rent:300,cardExpenses:12.34,benefits:5,adminExpenses:0}}
+    {sourceMonth:'2025-02',values:{serviceRevenue:0,salaries:2000,rent:300,cardExpenses:12.34,benefits:5,adminExpenses:0}},
+    ...remainingMonths.map(({sourceMonth})=>({sourceMonth,values:{serviceRevenue:0,salaries:0,rent:0,cardExpenses:0,benefits:0,adminExpenses:0}}))
   ]);
   expect((await analysisWorkspace.db.collection<any>('analyses').findOne({_id:id,workspaceId:analysisWorkspace.workspaceId}))?.currentSimulation.id).toBe(simulationId);
   await page.goto('/analyses.html?search='+created.code);

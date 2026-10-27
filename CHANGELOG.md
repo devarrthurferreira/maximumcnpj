@@ -1,5 +1,18 @@
 # Histórico de alterações
 
+## [0.41.0] — 2026-10-27
+
+- Fixa novas análises em janeiro a setembro, com nove competências efetivas, seleção por interseção da cobertura das entradas/saídas e exclusão de outubro a dezembro dos totais. Mantém documentos completos e auditoria original para conferência.
+- Aceita relatórios de nove ou doze meses e intervalos originais diferentes com a mesma janela Jan–Set. Cobertura parcial fica explícita e bloqueia conclusão Fiscal/geração; nenhum mês sem suporte vira zero.
+- Captura a política `JAN_SEP_V1` em fontes, confirmação, entrada, resultado e projeção; usa `1.11.0-jan-sep` somente nos cálculos novos. Conserva modelos, hashes e calendários dos snapshots legados e separa a referência RBT12 de doze meses.
+- Mostra composição congelada da receita por B2B/B2C e do enquadramento de clientes/fornecedores, com devoluções abatidas, valores, percentuais e denominadores. Não confirmados e documentos sem identificação ficam explícitos, sem nova consulta ou mudança nos grupos do motor.
+- Apresenta uma DRE resumida com quatro regimes, receita, compras, despesas, impostos e resultado destacado; mantém acesso aos detalhes e aos nove meses. Agrega informação de créditos utilizados sem contar o benefício duas vezes ou reintroduzir as linhas individuais de crédito potencial/utilizado de CBS/IBS.
+- Adapta CSV, JSON, impressão, calendário e rótulos auxiliares ao período capturado; histórico de doze meses conserva sua apresentação. Composição dos documentos permanece distinguida dos ajustes manuais do cenário.
+- Prepara os nove meses contábeis em um clique, gera modelo CSV Jan–Set e aceita colagem anual com Q4 guardado fora do subtotal. Campos em branco no período seguem pendentes; despesas e ajustes fora da janela ficam salvos, sem entrar no cálculo.
+- Expõe cobertura mensal nos setores e na visão geral e mostra os controles de DIFAL de entrada/saída ao selecionar Sim. Preserva rascunhos, consultas leves, detalhes sob demanda e exclusão por carteira/modais.
+
+- Validação: tipos, build e versão/documentação; **369 testes de regras**, **146 verificações de integração/projeção/competências**, **172 testes Python/PDF/OCR** e **38 cenários direcionados de navegador** aprovados. A conferência inclui importação de 12 meses com recorte para 9, cobertura parcial bloqueada, despesas/ajustes Q4 preservados, RBT12 própria, receita de R$ 3,3 milhões, devoluções, ICMS e DIFAL, histórico imutável, CSV/PDF completos, recuperação de rascunhos e metadados tardios. Desktop e telas de 320/390 px inspecionados; os dois casos finais de histórico foram repetidos em base nova após a conta sintética atingir o limite de logins das rodadas locais.
+
 ## [0.40.1] — 2026-10-26
 
 - Expõe **Excluir análise** na carteira e no rodapé de todos os modais de uma análise existente, além da visão geral, com a mesma confirmação da empresa e permissão de escrita.

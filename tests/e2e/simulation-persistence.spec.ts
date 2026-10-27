@@ -1,5 +1,5 @@
 import {MongoClient} from 'mongodb';
-import {readStatement,statementHistory} from './extrato-helper.ts';
+import {mockStatement,statementHistory,documentId} from './extrato-helper.ts';
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
@@ -39,8 +39,19 @@ async function generate(page: Page) {
   const snapshot = await response.json();
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
   await expect(page.locator('#saved-simulation-link')).toHaveAttribute('href', `/simulator.html?simulation=${snapshot._id}`);
-  await expect(page.locator('.sim-regime')).toHaveCount(4);
+  await expect(page.locator('[data-dre-regime-result]')).toHaveCount(4);
   return snapshot;
+}
+
+function septemberStatement(){
+  const original=statementHistory(),next={...original.rbt12Window[0],period:'08/2026',month:'2026-08',usedInRbt12:true};
+  const priorRevenues=[...original.priorRevenues,next].map(row=>({...row,usedInRbt12:row.month>='2025-09'}));
+  return {...original,pa:'09/2026',priorRevenues,rbt12Window:priorRevenues.slice(-12),
+    rbt12Basis:{...original.rbt12Basis,startMonth:'2025-09',endMonth:'2026-08'}};
+}
+async function openCompleteDre(page:Page){
+  await page.locator('[data-simulation-detail="dre"] > summary').click();
+  await expect(page.locator('[data-simulation-lazy="dre"]')).toHaveAttribute('data-loaded','true');
 }
 
 test('Real saved simulation survives a fresh login and a new version preserves every original detail', async ({ page, browser, baseURL }) => {
@@ -65,16 +76,24 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   const jobIds: Record<string, string> = {};
   for (const [kind, totalCents] of [['purchases', 450_000], ['sales', 1_200_000]] as const) {
     const attached = await post(page.request, origin, `/api/v4/generations/${generationId}/${kind}`, {
-      clientId, importId: randomUUID(), fileName: `${code}-${kind}.csv`, expectedRows: 1,
+      clientId, importId: randomUUID(), fileName: `${code}-${kind}.csv`, expectedRows: 3,
     });
     jobIds[kind] = attached.job._id;
     await post(page.request, origin, `/api/v4/${kind}/${attached.job._id}/rows`, {
       offset: 0,
       rows: [{
+        document: '12345678900', name: 'Sem movimento em janeiro', serviceDate: '2026-01-15', quantity: '1',
+        natureCode: kind === 'sales' ? '5102' : '1102', description: 'Competência confirmada', recipientUf: 'SP',
+        grossCents: 0, discountCents: 0, accessoryCents: 0, freightCents: 0, abatementCents: 0, totalCents: 0,
+      },{
         document: '12345678900', name: 'Pessoa sintética', serviceDate: '2026-08-15', quantity: '1',
         natureCode: kind === 'sales' ? '5102' : '1102', description: 'Operação sintética', recipientUf: 'SP',
         grossCents: totalCents + 2_000, discountCents: 2_500, accessoryCents: 999,
         freightCents: 800, abatementCents: 300, totalCents,
+      },{
+        document: '12345678900', name: 'Sem movimento em setembro', serviceDate: '2026-09-15', quantity: '1',
+        natureCode: kind === 'sales' ? '5102' : '1102', description: 'Competência confirmada', recipientUf: 'SP',
+        grossCents: 0, discountCents: 0, accessoryCents: 0, freightCents: 0, abatementCents: 0, totalCents: 0,
       }],
     });
     const completed = await post(page.request, origin, `/api/v4/${kind}/${attached.job._id}/finalize`, {});
@@ -83,19 +102,23 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   }
 
   await page.goto(`/simulator.html?generation=${generationId}&client=${clientId}`);
+  await page.locator('#report-competence').selectOption('7');
   await expect(page.locator('#salesCpfCents')).toHaveValue('12000.00');
   await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('4500.00');
   await expect(page.locator('#period-months')).toBeDisabled();
-  await expect(page.locator('#period-months')).toHaveValue('1');
+  await expect(page.locator('#period-months')).toHaveValue('9');
   await expect(page.locator('#period-confirm')).toBeChecked();
   await expect(page.locator('#salesRevenue')).toHaveValue('12000.00');
   await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('4500.00');
-  const extractionId=randomUUID();
+  const extractionId=randomUUID(),statement=septemberStatement();
   const mongo=new MongoClient(process.env.MONGODB_URI!);
   try{await mongo.connect();await mongo.db(process.env.MONGODB_DB).collection('simplesExtractions').insertOne({
-    _id:extractionId as any,clientId,workspaceId:process.env.WORKSPACE_ID||'maximum',parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result:statementHistory()
+    _id:extractionId as any,clientId,workspaceId:process.env.WORKSPACE_ID||'maximum',parserVersion:'SIMPLES_SECTION_22_V2',fileName:'sintetico.pdf',fileSha256:'synthetic',result:statement
   });}finally{await mongo.close();}
-  await readStatement(page,15000000,extractionId);
+  await mockStatement(page,15000000,extractionId);
+  await page.route('**/api/simples?*',route=>route.fulfill({json:{extractionId,documentId,clientId,originalStored:true,searchableStored:true,fileName:'sintetico.pdf',...statement}}));
+  await page.locator('#rbt12-pdf').setInputFiles({name:'sintetico.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic-transport-only')});
+  await page.locator('#rbt12-read').click();await expect(page.locator('#rbt12')).toHaveValue('150000.00');
   const manual = { serviceRevenue: 1250.50, salaries: 900, benefits: 150, adminExpenses: 99.95, rent: 800, cardExpenses: 60 };
   for (const [id, value] of Object.entries(manual)) await page.locator(`#${id}`).fill(String(value));
   await page.locator('#simulation-year').selectOption('2028');
@@ -105,22 +128,25 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   const first = await generate(page);
   expect(first).toMatchObject({
     generationId, clientId, company: { code, name: companyName },
-    reportMonths: 1, periodBasis: 'COLUMN_H', periodConfirmed: true, monthlyGroupsUnit: 'BRL', parentSimulationId: null,
+    reportMonths: 9, analysisPeriod:{version:'JAN_SEP_V1',complete:true},periodBasis: 'COLUMN_H', periodConfirmed: true, monthlyGroupsUnit: 'BRL', parentSimulationId: null,
     monthlyGroups: { salesOptantCents: 0, salesNonOptantCents: 0, salesCpfCents: 12000, purchasesOptantCents: 0, purchasesNonOptantCents: 4500 },
     draft: { year: 2028, salesAnnex: 2, serviceAnnex: 5, rbt12: 150000, values: { ...manual, salesRevenue: 12000, simplePurchases: 0, regularPurchases: 4500 } },
     source: { purchases: { jobId: jobIds.purchases, totalCents: 450_000 }, sales: { jobId: jobIds.sales, totalCents: 1_200_000 } },
     result: { annualRevenue: 13_250.50 },
   });
   expect(first.result.regimes).toHaveLength(4);
-  expect(first.rbt12Schedule).toMatchObject({complete:true,rows:[{sourceMonth:'2026-08',rbt12Cents:15000000,startMonth:'2025-08',endMonth:'2026-07'}]});
+  expect(first.rbt12Schedule.complete).toBe(true);expect(first.rbt12Schedule.rows).toHaveLength(9);
+  expect(first.rbt12Schedule.rows[7]).toMatchObject({sourceMonth:'2026-08',rbt12Cents:15000000,startMonth:'2025-08',endMonth:'2026-07'});
+  expect(first.rbt12Schedule.rows[8]).toMatchObject({sourceMonth:'2026-09',rbt12Cents:15000000,startMonth:'2025-09',endMonth:'2026-08'});
   expect(first.result.monthlyResults[0].engineInput.rbt12).toBe(150000);
-  expect(first.monthlyDre.months).toHaveLength(12);expect(first.monthlyDre.rbt12Reference.rbt12Cents).toBe(15000000);
+  expect(first.monthlyDre.months).toHaveLength(9);expect(first.monthlyDre.rbt12Reference.rbt12Cents).toBe(15000000);
   expect(first.result.memory.length).toBeGreaterThan(0);
   expect(first.createdAt).toBeTruthy();
   expect(first.createdBy.id).toBeTruthy();
   expect(first.modelVersion).toBe(first.result.version);
   const original = await get(page.request, `/api/v4/simulations/${first._id}`);
   expect(original).toEqual(first);
+  await openCompleteDre(page);
   // Compare cells consistently: innerText adds table separators and CSS uppercase,
   // while Playwright's default toHaveText reads the underlying textContent.
   const originalDre = await page.locator('.sim-dre tbody tr > *').allTextContents();
@@ -128,10 +154,10 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   await page.locator('[data-period="monthly"]').click();
   await expect(page.locator('#dre-month')).toHaveValue('7');
   await expect(page.locator('.sim-dre [data-dre-row="revenue"]').locator('td')).toHaveText(['R$ 13.250,50','R$ 13.250,50']);
-  await page.getByRole('button',{name:'12 meses',exact:true}).click();
-  // Only August is imported; other months are unavailable, not an extrapolated average.
+  await page.getByRole('button',{name:'9 meses',exact:true}).click();
+  // Covered months without movement remain zero; August retains its own values.
   await expect(page.locator('.sim-dre [data-dre-row="revenue"]').locator('td')).toHaveText([
-    ...Array(7).fill('—'),'R$ 13.250,50',...Array(4).fill('—'),'R$ 13.250,50'
+    ...Array(7).fill('R$ 0,00'),'R$ 13.250,50','R$ 0,00','R$ 13.250,50'
   ]);
   await page.getByRole('button',{name:'Um mês por vez',exact:true}).click();
 
@@ -152,19 +178,19 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     await expect(reopened).toHaveURL(new RegExp(`simulation=${first._id}$`));
     await expect(reopened.locator('#simulation-snapshot')).toBeVisible();
     await expect(reopened.locator('#simulator-form')).toHaveCount(0);
-    await expect(reopened.locator('#simulation-snapshot .sim-captured-details')).toContainText('RBT12 de referência do PA 08/2026: R$ 150.000,00');
-    await expect(reopened.locator('#simulation-snapshot table tbody tr')).toContainText('2026-08');
-    await expect(reopened.locator('#simulation-snapshot table tbody tr')).toContainText('12.000,00');
-    await expect(reopened.locator('#simulation-snapshot table tbody tr')).toContainText('1.250,50');
+    await expect(reopened.locator('#simulation-snapshot .sim-captured-details')).toContainText('RBT12 de referência do PA 09/2026: R$ 150.000,00');
+    const august=reopened.locator('#simulation-snapshot table tbody tr').filter({hasText:'2026-08'});
+    await expect(august).toContainText('12.000,00');await expect(august).toContainText('1.250,50');
     await expect(reopened.locator('.sim-snapshot-meta')).toContainText('2028 · Vendas: Anexo II');
     await expect(reopened.locator('.sim-snapshot-meta')).toContainText('Serviços: Anexo V');
-    await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
+    await openCompleteDre(reopened);await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
     expect(await get(fresh.request, `/api/v4/simulations/${first._id}`)).toEqual(original);
 
     await reopened.locator('#create-version').click();
     await expect(reopened.locator('#simulator-form')).toBeVisible();
-    await expect(reopened.locator('#period-months')).toHaveValue('1');
+    await expect(reopened.locator('#period-months')).toHaveValue('9');
     await expect(reopened.locator('#period-months')).toBeDisabled();
+    await reopened.locator('#report-competence').selectOption('7');
     await expect(reopened.locator('#serviceRevenue')).toHaveValue('1250.50');
     await expect(reopened.locator('#purchasesNonOptantCents')).toHaveValue('4500.00');
     await expect(reopened.locator('#sales-annex')).toHaveValue('2');
@@ -188,6 +214,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
 
     await reopened.goto(permalink);
     await expect(reopened.locator('#simulation-snapshot')).toBeVisible();
+    await openCompleteDre(reopened);
     await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
 
     // Delete only the newly created version through the authenticated history UI.
@@ -212,14 +239,14 @@ test('Real saved simulation survives a fresh login and a new version preserves e
       expect(await db.collection('simulations').countDocuments({_id:first._id,workspaceId})).toBe(1);
       expect(await db.collection('simplesExtractions').countDocuments({_id:extractionId as any,workspaceId})).toBe(1);
     }finally{await deletionDb.close();}
-    await reopened.locator(`#history-results a[href="${permalink}"]`).click();await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
+    await reopened.locator(`#history-results a[href="${permalink}"]`).click();await openCompleteDre(reopened);await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
 
     const generationDb=new MongoClient(process.env.MONGODB_URI!);
     try{
       await generationDb.connect();const db=generationDb.db(process.env.MONGODB_DB),workspaceId=process.env.WORKSPACE_ID||'maximum';
       const ids=Object.values(jobIds),chunks=ids.map(id=>`lookup:${id}:0`);
       expect(await db.collection<any>('lookupJobs').countDocuments({_id:{$in:ids},workspaceId})).toBe(2);
-      expect(await db.collection('purchaseLines').countDocuments({jobId:{$in:ids},workspaceId})).toBe(2);
+      expect(await db.collection('purchaseLines').countDocuments({jobId:{$in:ids},workspaceId})).toBe(6);
       expect(await db.collection<any>('chunks').countDocuments({_id:{$in:chunks},workspaceId})).toBe(2);
       await reopened.goto('/generations.html?view=history');await reopened.locator(`button[data-delete-generation="${generationId}"]`).click();
       await expect(reopened.locator('#delete-generation-target')).toContainText(companyName);
@@ -236,7 +263,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
       expect(await db.collection<any>('clients').countDocuments({_id:clientId,workspaceId})).toBe(1);
       expect(await db.collection<any>('simplesExtractions').countDocuments({_id:extractionId,workspaceId})).toBe(1);
       expect(await get(fresh.request,`/api/v4/simulations/${first._id}`)).toEqual(original);
-      await reopened.goto(permalink);await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
+      await reopened.goto(permalink);await openCompleteDre(reopened);await expect(reopened.locator('.sim-dre tbody tr > *')).toHaveText(originalDre);
     }finally{await generationDb.close();}
     expect(browserErrors).toEqual([]);
   } finally {

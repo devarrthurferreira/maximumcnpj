@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ACCOUNTING_FIELDS,accountingSummary,analysisGuidance} from '../public/analyses-guidance.js';
+import {ACCOUNTING_FIELDS,accountingSummary,analysisGuidance,accountingSourceMonths,analysisPeriodFor,scopedAccountingMonths} from '../public/analyses-guidance.js';
+import {JAN_SEP_POLICY,analysisMonthsForYear,buildAnalysisPeriod} from '../public/analysis-period.js';
 
 const month=(sourceMonth,values)=>({sourceMonth,...Object.fromEntries(ACCOUNTING_FIELDS.map(([key],index)=>[key,values[index]]))});
 const readyAnalysis=()=>({
@@ -101,4 +102,61 @@ test('total completo exige cobertura exata e soma os valores de cada competênci
   const mismatched=accountingSummary(input,['2026-08']);
   assert.equal(mismatched.complete,false);assert.equal(mismatched.totalCents,null);assert.equal(mismatched.enteredCents,87351);
   assert.deepEqual(mismatched.extraMonths,['2026-09']);
+});
+
+const fiscalMetadata=(purchasesEnd='2026-09',salesEnd='2026-12')=>({
+  _id:'generation',companies:[{clientId:'client',purchaseJobId:'purchase',salesJobId:'sales',
+    purchase:{_id:'purchase',clientId:'client',generationId:'generation',status:'COMPLETED',mode:'PURCHASES_V1',reportPeriod:{startMonth:'2026-01',endMonth:purchasesEnd,months:Number(purchasesEnd.slice(5))}},
+    sales:{_id:'sales',clientId:'client',generationId:'generation',status:'COMPLETED',mode:'SALES_V1',reportPeriod:{startMonth:'2026-01',endMonth:salesEnd,months:Number(salesEnd.slice(5))}}
+  }]
+});
+const fixedAnalysis=()=>({...readyAnalysis(),clientId:'client',periodPolicy:JAN_SEP_POLICY,readiness:{ready:false,issues:[]}});
+
+test('períodos originais diferentes podem orientar os mesmos nove meses sem confirmar valores',()=>{
+  const analysis=fixedAnalysis(),metadata=fiscalMetadata(),before=structuredClone(analysis);
+  assert.deepEqual(accountingSourceMonths(analysis,null,metadata),analysisMonthsForYear(2026));
+  const period=analysisPeriodFor(analysis,null,metadata);
+  assert.equal(period.complete,true);assert.deepEqual(period.excludedMonths,['2026-10','2026-11','2026-12']);
+  assert.equal(analysisGuidance(analysis).canGenerate,false);assert.deepEqual(analysis,before);
+});
+
+test('cobertura parcial sugere nove competências e mantém as pendências fiscais explícitas',()=>{
+  const analysis=fixedAnalysis(),metadata=fiscalMetadata('2026-09','2026-03');
+  const period=analysisPeriodFor(analysis,null,metadata);
+  assert.equal(period.complete,false);assert.equal(period.includedMonths.length,3);assert.equal(period.missingMonths.length,6);
+  assert.deepEqual(accountingSourceMonths(analysis,null,metadata),analysisMonthsForYear(2026));
+  assert.equal(accountingSummary([],accountingSourceMonths(analysis,null,metadata)).missingFields,45);
+});
+
+test('metadados de outra empresa ou leitura incompleta não definem o período',()=>{
+  const analysis=fixedAnalysis(),metadata=fiscalMetadata();
+  metadata.companies[0].sales.clientId='another';
+  assert.equal(analysisPeriodFor(analysis,null,metadata),null);
+  metadata.companies[0].sales.clientId='client';metadata.companies[0].sales.status='PROCESSING';
+  assert.equal(analysisPeriodFor(analysis,null,metadata),null);
+});
+
+test('resumo contábil de nove meses ignora Q4 e outro ano sem apagar dados salvos',()=>{
+  const analysis=fixedAnalysis(),metadata=fiscalMetadata();
+  const rows=[...analysisMonthsForYear(2026).map(sourceMonth=>month(sourceMonth,[100,0,0,0,0])),month('2026-10',[999999,null,null,null,null]),month('2025-02',[888888,0,0,0,0])];
+  const before=structuredClone(rows),selected=scopedAccountingMonths(analysis,rows,null,metadata);
+  const summary=accountingSummary(selected,analysisMonthsForYear(2026));
+  assert.equal(summary.complete,true);assert.equal(summary.totalCents,900);assert.equal(selected.length,9);assert.deepEqual(rows,before);
+  assert.equal(scopedAccountingMonths(readyAnalysis(),rows),rows);
+});
+
+test('período reconciliado prevalece sobre metadados e o ano não é o ano do cenário',()=>{
+  const analysis=fixedAnalysis();analysis.config={year:2028};
+  const period=buildAnalysisPeriod({startMonth:'2025-01',endMonth:'2025-09',months:9},{startMonth:'2025-01',endMonth:'2025-09',months:9});
+  const source={analysisPeriod:period};
+  assert.equal(analysisPeriodFor(analysis,source,fiscalMetadata()).sourceYear,2025);
+  assert.deepEqual(accountingSourceMonths(analysis,source,fiscalMetadata()),analysisMonthsForYear(2025));
+});
+
+test('ano preparado no rascunho prevalece sobre despesas antigas quando o Fiscal ainda não definiu o ano',()=>{
+  const analysis=fixedAnalysis();analysis.accounting.data.months=[month('2025-01',[100,0,0,0,0])];
+  const draft=analysisMonthsForYear(2026).map(sourceMonth=>month(sourceMonth,[200,0,0,0,0]));
+  assert.deepEqual(accountingSourceMonths(analysis,null,null,draft),analysisMonthsForYear(2026));
+  assert.deepEqual(accountingSourceMonths(analysis,null,null,[]),[]);
+  assert.deepEqual(accountingSourceMonths(analysis,null,null),analysisMonthsForYear(2025));
 });

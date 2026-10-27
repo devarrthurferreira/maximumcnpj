@@ -531,3 +531,29 @@ body:has(#analysis-delete-dialog[open]){overflow:hidden}
 @media(max-width:600px){.analysis-difal-panel{padding:12px 13px}.analysis-difal-question>legend{float:none;line-height:1.7;margin:0 0 8px;font-size:13px}.analysis-difal-choice-options{display:flex;width:100%}.analysis-difal-choice-options>label{min-width:0;flex:1}.analysis-difal-details .analysis-difal-options{grid-template-columns:1fr}.analysis-difal-summary{font-size:10px}#analysis-new-difal .analysis-difal-panel{padding:11px 12px}.analysis-delete-dialog{width:calc(100vw - 24px);border-radius:13px}.analysis-delete-content{padding:19px}.analysis-delete-content h2{font-size:20px}.analysis-delete-target{padding:12px 13px}.analysis-delete-actions{display:grid;grid-template-columns:1fr}.analysis-delete-actions>button{width:100%}.analysis-delete-content>.analysis-delete-effect{padding:11px 12px}}
 
 @media(max-width:600px){.analysis-company-footer-actions{width:100%}}
+
+/* The selected nine-month window is visible before documents and amounts. */
+.analysis-period{padding:16px 18px;border:1px solid #dbcbd1;border-radius:13px;background:#fff;margin-bottom:18px;min-width:0}
+.analysis-period-heading{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.analysis-period-heading>div{display:grid;gap:5px;min-width:0}
+.analysis-period-heading strong{font-size:17px;line-height:1.4;color:#5c2537}
+.analysis-period-heading .analysis-eyebrow{font-size:9px;letter-spacing:.11em}
+.analysis-period-count{padding:7px 11px;border-radius:999px;background:#f2e5eb;color:#6b1832;font-size:11px;font-weight:750;white-space:nowrap}
+.analysis-period-months{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:5px;margin-top:13px}
+.analysis-period-months>span{display:flex;justify-content:center;align-items:center;gap:5px;min-width:0;padding:7px 2px;border:1px solid #e6dde1;border-radius:6px;background:#faf7f9;font-size:11px;font-weight:650;color:#775765}
+.analysis-period-months small{font-size:10px;line-height:1}
+.analysis-period-months .is-covered{background:#eff6f2;border-color:#cfdfd5;color:#29563d}
+.analysis-period-months .is-missing{background:#fff8ed;border-color:#ead5b3;color:#805521}
+.analysis-period-status{margin:9px 0 0;font-size:11px;line-height:1.7;color:#745b65}
+.analysis-period-warning,.analysis-period-excluded{padding:10px 12px;margin:10px 0 0;border:1px solid #ead5b3;border-radius:8px;background:#fff9ef;font-size:11px;line-height:1.75;color:#775528;overflow-wrap:anywhere}
+.analysis-period-excluded{margin:10px 0 15px}
+.analysis-prepare-period{flex-wrap:wrap}
+.analysis-prepare-period label{max-width:190px}
+.analysis-prepare-period>.analysis-note{flex-basis:100%;margin:0}
+.analysis-prepare-period input[readonly]{background:#f6f0f3;color:#614451}
+#analysis-commercial-composition:not(:empty){margin-top:20px}
+#analysis-commercial-composition .commercial-composition-heading h2{font-size:18px}
+.analysis-expense-month[hidden]{display:none!important}
+.analysis-expense-month.is-outside-period{border-color:#e0c9a8}
+.analysis-expense-month-name [data-accounting-period-note]{display:block;font-size:10px;font-weight:500;color:#805521;margin-top:3px}
+@media(max-width:600px){.analysis-period{padding:13px 12px}.analysis-period-heading strong{font-size:15px}.analysis-period-months{gap:3px}.analysis-period-months>span{font-size:10px;gap:2px}.analysis-period-months small{font-size:9px}.analysis-period-status,.analysis-period-warning{font-size:10px}.analysis-prepare-period{display:grid;grid-template-columns:1fr;gap:10px}.analysis-prepare-period label{max-width:none}.analysis-prepare-period>button{width:100%}}

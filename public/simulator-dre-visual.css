@@ -159,3 +159,95 @@
 }
 @media(max-width:370px) { .dre-summary-cards article,.dre-evolution-metrics article { grid-template-columns:1fr; gap:6px; } .dre-summary-cards article>strong { text-align:left; font-size:24px; } }
 @media print { .dre-overview,.dre-quick-nav,.dre-heading,.dre-table-heading,.dre-reading-footer,.dre-reading-note,.dre-period-panel,.dre-evolution,.dre-evolution-year,.dre-evolution-unavailable { display:none!important; } .sim-comparison-details { display:none; } }
+
+/* January–September: the comparison is visible first; full accounting detail is lazy. */
+.sim-fixed-period { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px 20px; padding:22px; border:1px solid #c9dcd2; background:#f4f9f6; border-radius:12px; }
+.sim-fixed-period h2 { margin:8px 0; font-size:21px; color:#244e40; }
+.sim-fixed-period p { margin:0; color:#52685e; font-size:12px; line-height:1.6; }
+.sim-fixed-period>strong { align-self:start; color:#28634c; font-size:12px; padding:8px 11px; background:#e3f0e8; border-radius:20px; }
+.sim-fixed-period>.sim-help { grid-column:1/-1; }
+.sim-fixed-period.is-pending { background:#fffaf0; border-color:#e8d8b6; }
+.sim-fixed-period.is-pending>strong { background:#f7ecd4; color:#7b5b1f; }
+.dre-executive .dre-report-coverage { margin-bottom:18px; }
+.dre-regime-results { display:grid; grid-template-columns:repeat(var(--dre-regime-count,4),minmax(0,1fr)); gap:12px; margin:20px 0 16px; }
+.dre-regime-result { min-width:0; padding:20px 16px; border:1px solid #ded8dc; border-radius:12px; background:#fff; }
+.dre-regime-result header { min-height:56px; }
+.dre-regime-result h3 { margin:0 0 6px; color:#4d3542; font-size:14px; line-height:1.45; }
+.dre-regime-result header>span { display:block; color:#27634e; font-size:10px; font-weight:600; line-height:1.4; }
+.dre-regime-result .dre-result-caption { color:#536c61; font-size:11px; }
+.dre-regime-result>strong { display:block; color:#205d46; font-size:clamp(20px,2vw,27px); font-weight:700; letter-spacing:-.6px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; margin:7px 0 16px; }
+.dre-regime-result dl { margin:0; padding-top:12px; border-top:1px solid #e9e5e7; }
+.dre-regime-result dl>div { display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px 8px; margin-top:8px; font-size:11px; }
+.dre-regime-result dt { color:#786674; }
+.dre-regime-result dd { margin:0; color:#453440; font-weight:600; font-variant-numeric:tabular-nums; }
+.dre-regime-result>p { color:#7a5965; font-size:11px; line-height:1.6; margin:12px 0 0; }
+.dre-regime-result.is-best { background:#f4f9f6; border:2px solid #397c60; padding:19px 15px; }
+.dre-regime-result.is-loss>strong,.dre-regime-result.is-loss .dre-result-caption { color:#922d44; }
+.dre-regime-result.is-unavailable { background:#f8f6f7; border-style:dashed; }
+.dre-regime-result.is-unavailable>strong,.dre-regime-result.is-unavailable .dre-result-caption { color:#73656f; }
+.dre-difal-choices { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:13px 16px; margin:0 0 20px; border:1px solid #e8e0e5; border-radius:8px; background:#faf8f9; font-size:11px; color:#67515e; }
+.dre-difal-choices>strong { color:#4d3542; }
+.dre-difal-choices small { flex:1 1 100%; color:#7c6a74; line-height:1.5; }
+.dre-executive-table table { min-width:720px; }
+.dre-executive-table .dre-summary-composition th,.dre-executive-table .dre-summary-composition td { font-size:11px; background:#fcfafb; color:#7d6b76; padding-top:10px; padding-bottom:10px; }
+.dre-executive-table .dre-summary-composition th { padding-left:24px; }
+.simulator-clean .dre-executive-table [data-dre-summary-row=netProfit] th,.simulator-clean .dre-executive-table [data-dre-summary-row=netProfit] td { background:#164c43; color:#fff; padding-top:18px; padding-bottom:18px; font-size:14px; }
+.simulator-clean .dre-executive-table [data-dre-summary-row=netProfit] td.dre-loss-cell { background:#7a263a; }
+.simulator-clean .dre-executive-table [data-dre-summary-row=netProfit] td.dre-unavailable-cell { background:#554d53; }
+.dre-executive-table [data-dre-summary-row=netProfit] .dre-negative { color:#ffe1d9; }
+.dre-applied-credits { margin:20px 0; padding:18px 20px; border:1px solid #dddfe5; border-radius:10px; background:#f7f8fb; }
+.dre-applied-credits h3 { margin:0 0 7px; font-size:14px; color:#435166; }
+.dre-applied-credits p { margin:0; font-size:11px; line-height:1.7; color:#627084; max-width:850px; }
+.dre-applied-credits dl { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px 18px; margin:16px 0 0; }
+.dre-applied-credits dt { color:#657084; font-size:11px; }
+.dre-applied-credits dd { margin:7px 0 0; font-size:16px; color:#3c4b60; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.dre-full-details { margin:24px 0 0; border:1px solid #dfd3db; border-radius:10px; }
+.dre-full-details>summary { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px 20px; padding:18px; color:#614052; font-weight:600; font-size:14px; background:#faf7f9; cursor:pointer; border-radius:10px; }
+.dre-full-details>summary::after { content:'+'; margin-left:auto; font-size:20px; }
+.dre-full-details[open]>summary::after { content:'−'; }
+.dre-full-details>summary small { font-size:11px; color:#846f7b; font-weight:400; }
+.dre-full-details>summary:focus-visible { outline:2px solid #750207; outline-offset:3px; }
+.dre-full-details>[data-simulation-lazy] { padding:0 18px; }
+.dre-full-details>[data-simulation-lazy][data-loaded=true] { padding-top:18px; padding-bottom:18px; }
+.dre-report-complete-note,.dre-commercial-adjustments { font-size:11px; color:#7b6b74; line-height:1.7; margin:14px 0 0; }
+.dre-commercial-adjustments { padding:12px 15px; margin-top:-4px; background:#fff8e8; border-radius:8px; color:#785e2d; }
+.sim-difal-options.is-fixed-period .sim-difal-options-grid { gap:14px; }
+@media(max-width:1100px) {
+ .dre-regime-results { grid-template-columns:repeat(2,minmax(0,1fr)); }
+ .dre-regime-result header { min-height:42px; }
+ .dre-applied-credits dl { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:650px) {
+ .sim-fixed-period { grid-template-columns:1fr; padding:18px; }
+ .sim-fixed-period>strong { justify-self:start; }
+ .dre-regime-results { grid-template-columns:1fr; gap:9px; }
+ .dre-regime-result,.dre-regime-result.is-best { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:6px 14px; padding:15px; }
+ .dre-regime-result header { grid-column:1/-1; min-height:0; display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+ .dre-regime-result h3 { margin:0; }
+ .dre-regime-result header>span { text-align:right; max-width:130px; }
+ .dre-regime-result .dre-result-caption { grid-column:1; margin-top:8px; align-self:end; }
+ .dre-regime-result>strong { grid-column:1; margin:0; font-size:21px; align-self:start; }
+ .dre-regime-result dl { grid-column:2; grid-row:2/4; padding:0 0 0 12px; border-top:0; border-left:1px solid #e2dbe0; align-self:center; }
+ .dre-regime-result dl>div { display:block; margin:6px 0; }
+ .dre-regime-result dd { margin:4px 0; }
+ .dre-regime-result>p { grid-column:1/-1; margin-top:6px; }
+ .dre-difal-choices { display:grid; gap:8px; padding:13px; }
+ .dre-applied-credits { padding:16px 14px; }
+ .dre-applied-credits dl { grid-template-columns:1fr; gap:12px; }
+ .dre-applied-credits dl>div { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+ .dre-applied-credits dd { margin:0; font-size:15px; }
+ .dre-full-details>summary { padding:16px 13px; }
+ .dre-full-details>summary small { flex:1 1 100%; }
+ .dre-full-details>summary::after { display:none; }
+ .dre-full-details>[data-simulation-lazy] { padding-left:8px; padding-right:8px; }
+ .dre-executive-table .dre-summary-composition th { padding-left:11px; }
+}
+@media print {
+ .dre-full-details { border:0; margin:0; }
+ .dre-full-details>summary,.dre-report-complete-note,.dre-regime-results,.dre-difal-choices { display:none!important; }
+ .dre-full-details>[data-simulation-lazy] { padding:0!important; }
+ .dre-applied-credits { break-inside:avoid; }
+ .dre-applied-credits dl { grid-template-columns:repeat(4,minmax(0,1fr)); }
+ .dre-executive-table table { min-width:0; }
+ .dre-executive-table { break-inside:avoid; }
+}

@@ -6,11 +6,16 @@ import {csvParse} from '../../src/domain.ts';
 // Real UI, authenticated API and disposable MongoDB: no intercepted requests.
 // CPF-only reports avoid contacting any external company lookup provider.
 function report(name:string,nature:string,cents:number){
-  const header=Array(28).fill(''),row=Array(28).fill('');
+  const header=Array(28).fill('');
   for(const [column,label] of [[0,'CNPJ / CPF / CNO'],[7,'Data Escrituração/Serviço'],[8,'Razão Social'],[9,'Estado'],[11,'Natureza'],[14,'Descrição'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']] as const)header[column]=label;
-  row[0]='123.456.789-00';row[7]='15/08/2026';row[8]='Pessoa sintética';row[9]='SP';row[11]=nature;row[14]='Operação sintética';row[15]='1';row[16]=(cents/100).toFixed(2).replace('.',',');
-  for(const column of [24,25,26,27])row[column]='0,00';
-  return {name,mimeType:'text/csv',buffer:Buffer.from([header,row].map(value=>value.join(';')).join('\r\n'),'latin1')};
+  const rows=Array.from({length:9},(_,index)=>{
+    const row=Array(28).fill('');
+    row[0]='123.456.789-00';row[7]=`15/0${index+1}/2026`;row[8]='Pessoa sintética';row[9]='SP';row[11]=nature;row[14]='Operação sintética';row[15]='1';
+    // January retains the original movement; the other eight months explicitly have no amount.
+    row[16]=((index===0?cents:0)/100).toFixed(2).replace('.',',');
+    for(const column of [24,25,26,27])row[column]='0,00';return row;
+  });
+  return {name,mimeType:'text/csv',buffer:Buffer.from([header,...rows].map(value=>value.join(';')).join('\r\n'),'latin1')};
 }
 
 test('saída desmarcada na empresa permanece excluída após importação, CSV, salvamento e nova sessão reais',async({page,browser,baseURL},info)=>{
@@ -50,6 +55,8 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
   }
   await expect(page.locator('#guided-rbt12-stage')).toBeVisible();await page.locator('#guided-rbt12-skip').click();
   await page.locator('#rbt12').fill('100000');await page.locator('#rbt12-manual-confirm').check();
+  await expect(page.locator('#report-competence option')).toHaveCount(9);
+  await page.locator('#report-competence').selectOption('0');await expect(page.locator('#report-competence')).toHaveValue('0');
   await expect(page.locator('#month-summary-difal')).toContainText('0,00');
   await expect(page.locator('[data-difal-monthly]')).toContainText('0,00');
   await expect(page.locator('[data-anticipation-monthly]')).toContainText('36,60');
@@ -57,6 +64,9 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
   await page.locator('#generate-simulation').click();const response=await saving;
   expect(response.ok(),await response.text()).toBe(true);const saved=await response.json();
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
+  expect(saved.reportMonths).toBe(9);
+  expect(saved.source.analysisPeriod).toMatchObject({version:'JAN_SEP_V1',sourceYear:2026,months:9,complete:true});
+  expect(saved.source.monthlyReports.map((row:any)=>row.sourceMonth)).toEqual(Array.from({length:9},(_,index)=>'2026-0'+(index+1)));
   expect(saved.draft.difalPolicy).toEqual(policy);expect(saved.source.difalPolicy).toEqual(policy);
   expect(saved.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,0,0,0]);
   expect(saved.result.regimes.map((regime:any)=>Math.round(regime.dre.icmsAnticipation*100))).toEqual([-3660,-3660,0,0]);
@@ -81,9 +91,12 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
     const reopened=await fresh.newPage();reopened.on('pageerror',error=>errors.push(error.message));
     await reopened.goto(`/simulator.html?simulation=${saved._id}`);
     await expect(reopened.locator('[data-difal-monthly]')).toContainText('0,00');
+    await expect(reopened.locator('[data-anticipation-monthly]')).toContainText('36,60');
     await reopened.locator('#dre-regime').selectOption('pure');
-    await expect(reopened.locator('[data-dre-row="difal"] td').first()).toContainText('0,00');
-    await expect(reopened.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('36,60');
+    const complete=reopened.locator('#dre-demonstrativo [data-simulation-detail="dre"]');
+    await complete.locator(':scope > summary').click();await expect(complete.locator('[data-simulation-lazy="dre"]')).toHaveAttribute('data-loaded','true');
+    await expect(complete.locator('[data-dre-row="difal"] td').first()).toContainText('0,00');
+    await expect(complete.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('36,60');
     expect(await (await fresh.request.get(`/api/v4/simulations/${saved._id}`)).json()).toEqual(saved);
     await reopened.goto(`/purchases.html?type=SALES&client=${clientId}&job=${jobId}`);
     await expect(reopened.locator('[data-difal-amount]')).toContainText('0,00');

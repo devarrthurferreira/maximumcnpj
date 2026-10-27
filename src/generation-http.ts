@@ -4,6 +4,7 @@ import { rateLimit, workspace } from './store.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { generationSimulator } from './simulator-store.ts';
 import { generationRevenue } from './purchase-store.ts';
+import {JAN_SEP_POLICY} from '../public/analysis-period.js';
 
 export async function routeGenerations(actor: LookupActor, method: string, url: URL, input: any) {
   const path = url.pathname.replace('/api/v4/generations', '');
@@ -14,7 +15,11 @@ export async function routeGenerations(actor: LookupActor, method: string, url: 
   if (match) {
     if (!match[2] && method === 'GET') return getGeneration(match[1]);
     if (!match[2] && method === 'DELETE') return deleteGeneration(actor, match[1]);
-    if (match[2] === 'simulator' && method === 'GET') return generationSimulator(match[1], url.searchParams.get('clientId') || '');
+    if (match[2] === 'simulator' && method === 'GET') {
+      const periodPolicy=url.searchParams.get('periodPolicy');
+      need(periodPolicy===null||periodPolicy===JAN_SEP_POLICY,'Política de período desconhecida.');
+      return generationSimulator(match[1],url.searchParams.get('clientId')||'',periodPolicy?{periodPolicy}:{});
+    }
     if (match[2] === 'revenue' && method === 'GET') return generationRevenue(match[1], url.searchParams.get('clientId') || '');
     if (match[2] === 'purchases' && method === 'POST') return attachGenerationPurchase(actor, match[1], input);
     if (match[2] === 'sales' && method === 'POST') return attachGenerationSale(actor, match[1], input);

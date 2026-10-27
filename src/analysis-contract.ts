@@ -3,6 +3,7 @@ import {parseRegimeSelection, requiresSimplesReference} from '../public/regime-s
 import type {RegimeSelection} from '../public/regime-selection.js';
 import {parseDifalPolicy, upgradeDifalPolicy} from '../public/simulator-engine.js';
 import type {DifalPolicy} from '../public/simulator-engine.js';
+import {JAN_SEP_POLICY,isAnalysisMonth,analysisMonthsForYear} from '../public/analysis-period.js';
 
 export const ANALYSIS_VERSION = 'ANALYSIS_SECTORS_V1';
 export const ANALYSIS_GROUPS = ['salesOptantCents','salesNonOptantCents','salesCpfCents','purchasesOptantCents','purchasesNonOptantCents'] as const;
@@ -57,15 +58,23 @@ function uniqueMonths<T extends {sourceMonth:string}>(rows:T[]):T[] {
   need(new Set(rows.map(row=>row.sourceMonth)).size===rows.length,'Cada competência deve aparecer uma única vez.');
   return rows.sort((a,b)=>a.sourceMonth.localeCompare(b.sourceMonth));
 }
-export function parseAccountingData(value:unknown,complete=false):AccountingData {
+export function parseAccountingData(value:unknown,complete=false,options:{periodPolicy?:typeof JAN_SEP_POLICY;sourceYear?:number}={}):AccountingData {
   analysisObject(value,['months']);
   need(Array.isArray(value.months) && value.months.length<=12,'Informe até 12 competências explicitamente.');
   const months=uniqueMonths(value.months.map((row:unknown)=>{
     analysisObject(row,['sourceMonth',...ACCOUNTING_FIELDS]);
     return {sourceMonth:month(row.sourceMonth),...Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,cents(row[key])]))} as AccountingMonth;
   }));
-  need(!complete || (months.length>0 && months.every(row=>ACCOUNTING_FIELDS.every(key=>row[key]!==null))),
+  const selected=options.periodPolicy===JAN_SEP_POLICY?months.filter(row=>isAnalysisMonth(row.sourceMonth,options.sourceYear)):months;
+  need(!complete||options.periodPolicy!==JAN_SEP_POLICY||options.sourceYear!==undefined||new Set(selected.map(row=>row.sourceMonth.slice(0,4))).size<=1,
+    'Prepare janeiro a setembro de um único ano para concluir o Contábil.',422,'ANALYSIS_ACCOUNTING_INCOMPLETE');
+  need(!complete || (selected.length>0 && selected.every(row=>ACCOUNTING_FIELDS.every(key=>row[key]!==null))),
     'Preencha todas as despesas de cada competência. Informe 0 explicitamente quando não houver valor.',422,'ANALYSIS_ACCOUNTING_INCOMPLETE');
+  if(complete&&options.periodPolicy===JAN_SEP_POLICY){
+    const expected=analysisMonthsForYear(options.sourceYear??Number(selected[0].sourceMonth.slice(0,4)));
+    need(JSON.stringify(selected.map(row=>row.sourceMonth))===JSON.stringify(expected),
+      'Conclua as despesas de janeiro a setembro do mesmo ano. Salve como rascunho para continuar o preenchimento depois.',422,'ANALYSIS_ACCOUNTING_INCOMPLETE');
+  }
   return {months};
 }
 export function defaultFiscalData(selection:RegimeSelection):FiscalData {

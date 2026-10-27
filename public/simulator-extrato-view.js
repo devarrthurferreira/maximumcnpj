@@ -34,6 +34,6 @@ export function renderSection22(data) {
     ${(data.warnings||[]).map(w=>`<p class="sim-extrato-warning" role="note">${esc(w)}</p>`).join('')}</div>`;
 }
 export function renderMonthlyDre({result,year,reference,period,regimeId,calendar,presentation,showPercent=false,monthView=true,month=0,reportPeriod='complete'}) {
-  const data=['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3'].includes(calendar?.version)?calendar:buildMonthlyDre(result,year,reference,period);
+  const data=['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3','DRE_CALENDAR_V4'].includes(calendar?.version)?calendar:buildMonthlyDre(result,year,reference,period);
   return renderCompleteMonthlyDre({presentation:presentation||buildDrePresentation({result,calendar:data}),calendar:data,year:data.year,regimeId,showPercent,monthView,month,reportPeriod});
 }
