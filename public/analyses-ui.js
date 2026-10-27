@@ -2,7 +2,7 @@ import {mountNavigation} from './navigation.js';
 import {analysisRequest} from './analyses-api.js';
 import {defaultRegimeSelection,parseRegimeSelection,requiresSimplesReference,REGIME_SELECTION_VERSION} from './regime-selection.js';
 import {defaultDifalPolicy,parseDifalPolicy} from './simulator-engine.js';
-import {buildRbt12Schedule} from './simulator-rbt12.js';
+import {buildJanSepRbt12Schedule} from './simulator-rbt12.js';
 import {analysisDocumentStatus,loadAnalysisExtraction,retryAnalysisExtraction,uploadAnalysisExtraction} from './analyses-extrato.js';
 import {parseAccountingPaste,planAccountingPaste,ACCOUNTING_IMPORT_CSV_TEMPLATE} from './analysis-accounting-import.js';
 import {renderAccountingPaste} from './analyses-accounting-paste.js';
@@ -629,13 +629,25 @@ async function ensureEvidence({force=false}={}) {
   const controller=new AbortController(),task={key,controller,promise:null};evidenceTask=task;
   S.evidenceKey=key;S.evidenceState='loading';S.evidenceError='';refreshEvidence();
   task.promise=(async()=>{
-    const reads=await Promise.allSettled([
-      analysisRequest(apiPath('/'+id+'?includeSource=1'),{signal:controller.signal}),
-      generationMetadata(record,{force}),
-      requiresSimplesReference(record.config.regimeSelection)&&fiscal.rbt12Source==='SIMPLES_SECTION_22'&&fiscal.rbt12ExtractionId?
-        S.reference?.extractionId===fiscal.rbt12ExtractionId&&S.reference?.documentId===fiscal.rbt12DocumentId?Promise.resolve(S.reference):
-          loadAnalysisExtraction({clientId:record.clientId,documentId:fiscal.rbt12DocumentId,extractionId:fiscal.rbt12ExtractionId,cnpj:record.company.cnpj,signal:controller.signal}):Promise.resolve(null)
-    ]);
+    const sourceRead=analysisRequest(apiPath('/'+id+'?includeSource=1'),{signal:controller.signal});
+    const generationRead=generationMetadata(record,{force});
+    const referenceRead=requiresSimplesReference(record.config.regimeSelection)&&fiscal.rbt12Source==='SIMPLES_SECTION_22'&&fiscal.rbt12ExtractionId?
+      S.reference?.extractionId===fiscal.rbt12ExtractionId&&S.reference?.documentId===fiscal.rbt12DocumentId?Promise.resolve(S.reference):
+        loadAnalysisExtraction({clientId:record.clientId,documentId:fiscal.rbt12DocumentId,extractionId:fiscal.rbt12ExtractionId,cnpj:record.company.cnpj,signal:controller.signal}):Promise.resolve(null);
+    const active=()=>!controller.signal.aborted&&evidenceTask===task&&
+      currentContext(id,sequence)&&evidenceKey(S.analysis)===key&&S.modalKind==='fiscal'&&S.modalOpen;
+    // The lighter generation metadata can show Entradas and Saídas as completed
+    // immediately, independently of the slower reconciliation and PDF reading.
+    const reportUpdated=()=>{if(active())refreshEvidence();};
+    void generationRead.then(reportUpdated,reportUpdated);
+    // A confirmed extrato becomes visible as soon as it arrives; it must not
+    // hold the report badges hostage or silently invalidate their success.
+    void referenceRead.then(reference=>{
+      if(active()&&reference&&S.fiscalDraft.rbt12Source==='SIMPLES_SECTION_22'&&
+         S.fiscalDraft.rbt12ExtractionId===fiscal.rbt12ExtractionId&&
+         S.fiscalDraft.rbt12DocumentId===fiscal.rbt12DocumentId){S.reference=reference;S.pdfStatus='';refreshEvidence();}
+    },error=>{if(active()){S.pdfStatus=error.message||'Não foi possível confirmar a leitura do extrato.';refreshEvidence();}});
+    const reads=await Promise.allSettled([sourceRead,generationRead,referenceRead]);
     if(controller.signal.aborted||evidenceTask!==task||!currentContext(id,sequence)||evidenceKey(S.analysis)!==key)return;
     let error='';
     S.generationError='';
@@ -660,7 +672,8 @@ async function ensureEvidence({force=false}={}) {
       const reference=reads[2].value;
       if(reference&&usesReference){if(S.reference!==reference)S.pdfStatus='';S.reference=reference;}
     }else if(usesReference)S.pdfStatus=reads[2].reason?.message||'Não foi possível confirmar a leitura do extrato. Verifique o PDF vinculado.';
-    S.evidenceError=S.generationError||error||(reads[2].status==='rejected'&&usesReference?S.pdfStatus:'');
+    // O erro do PDF pertence ao campo RBT12; não transforma entradas/saídas já concluídas em documentos com erro.
+    S.evidenceError=S.generationError||error;
     S.evidenceState=S.evidenceError?'error':'ready';
     evidenceTask=null;refreshEvidence();refreshGuidance();
   })().catch(error=>{
@@ -696,11 +709,12 @@ async function openAnalysis(id) {
 }
 
 function schedule() {
-  if(!S.reference||!S.source?.monthlyReports?.length)return null;
-  const months=S.source.monthlyReports;
-  if(scheduleCache.reference===S.reference&&scheduleCache.months===months)return scheduleCache.value;
-  let value=null;try{value=buildRbt12Schedule(S.reference,months.map(row=>row.sourceMonth));}catch{}
-  scheduleCache={reference:S.reference,months,value};return value;
+  const period=S.analysis&&analysisPeriodFor(S.analysis,S.source,S.generation);
+  if(!S.reference||!period?.sourceYear)return null;
+  const year=period.sourceYear;
+  if(scheduleCache.reference===S.reference&&scheduleCache.year===year)return scheduleCache.value;
+  let value=null;try{value=buildJanSepRbt12Schedule(S.reference,year);}catch{}
+  scheduleCache={reference:S.reference,year,value};return value;
 }
 function detailOptions() {
   return {analysis:S.analysis,sector:S.sector,modalKind:S.modalKind,configDraft:S.configDraft,
@@ -985,6 +999,7 @@ async function readPdf(file) {
         rbt12ExtractionId:null,rbt12:null,rbt12ManualConfirmed:false};S.fiscalDirty=true;
       await patchSector('fiscal',S.fiscalDraft,false);
     }});
+    pdfProgress('Seção 2.2 lida. Salvando a referência RBT12 no Fiscal…');
     await savePdfReference(reference);feedback('Extrato lido e vinculado à análise. O Fiscal ainda precisa ser concluído.');
   } catch(error){
     if(error.documentId)S.fiscalDraft.rbt12DocumentId=error.documentId;

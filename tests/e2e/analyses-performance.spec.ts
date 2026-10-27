@@ -87,6 +87,9 @@ test('Evidência fiscal lenta permite preencher e trocar setores, deduplica a le
     await salary(page).fill('123.45');await switchSector(page,'fiscal');
     await expect(page.locator('#analysis-fiscal-evidence')).toContainText('Conferindo documentos fiscais');
     await expect.poll(()=>counts.source).toBe(1);
+    // A conciliação de valores está bloqueada, mas o status dos dois arquivos deve aparecer imediatamente.
+    await expect(page.locator('[data-analysis-document="PURCHASES"]')).toContainText('Leitura concluída');
+    await expect(page.locator('[data-analysis-document="SALES"]')).toContainText('Leitura concluída');
     if(await page.locator('#analysis-wizard').getAttribute('data-wizard-step')!=='tax')await page.locator('#analysis-wizard-next').click();
     await openDetails(page,'analysis-fiscal-options');await page.locator('#analysis-sales-annex').selectOption('2');
     await switchSector(page,'accounting');await expect(salary(page)).toHaveValue('123.45');
