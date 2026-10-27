@@ -735,3 +735,14 @@ body:has(#analysis-delete-dialog[open]){overflow:hidden}
  .analysis-difal-choice-options>label{min-width:65px;padding:8px 10px}
  .analysis-difal-panel{padding:8px 12px}
 }
+
+/* Abertura em uma etapa e preenchimento contábil com uma ação opcional. */
+.analysis-wizard-body .analysis-company-results{max-height:180px}
+.analysis-one-step-options{display:grid;gap:14px;margin-top:20px;padding-top:18px;border-top:1px solid var(--analysis-line)}
+.analysis-one-step-options #analysis-wizard-review{min-width:0}
+.analysis-one-step-options .analysis-setup-company{margin-bottom:0}
+.analysis-one-step-options .analysis-new-config{margin-top:0}
+.analysis-accounting-quickbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 15px;margin:12px 0 16px;border:1px solid var(--analysis-line);border-radius:10px;background:var(--analysis-soft)}
+.analysis-accounting-quickbar p{font-size:12px;line-height:1.6;color:var(--analysis-muted);margin:0}
+.analysis-accounting-quickbar button{flex:none;font-size:12px}
+@media(max-width:650px){.analysis-accounting-quickbar{align-items:stretch;flex-direction:column}.analysis-accounting-quickbar button{width:100%;white-space:normal}}
