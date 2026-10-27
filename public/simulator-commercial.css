@@ -42,7 +42,38 @@
 .commercial-composition-notes>p{margin:0;font-size:11px;line-height:1.7;color:#667085}
 .commercial-unavailable{border:1px solid #e6d7bb;border-radius:12px;background:#fff9ef;padding:18px;font-size:12px;line-height:1.7;color:#8a5a17}
 .commercial-unavailable>p{margin:5px 0 0}
+.commercial-compact{margin:24px 0}
+.commercial-disclosure{border:1px solid #e5e7ec;border-radius:14px;background:#fff}
+.commercial-disclosure>summary{display:grid;grid-template-columns:minmax(170px,1fr) minmax(0,2fr) 16px;align-items:center;gap:20px;min-height:44px;padding:18px 20px;cursor:pointer;list-style:none}
+.commercial-disclosure>summary::-webkit-details-marker{display:none}
+.commercial-disclosure>summary::after{content:'+';font-size:22px;color:#667085;font-weight:400;text-align:right}
+.commercial-disclosure[open]>summary::after{content:'−'}
+.commercial-disclosure>summary:focus-visible{outline:2px solid #750207;outline-offset:3px;border-radius:14px}
+.commercial-disclosure-title{display:grid;gap:6px;min-width:0}
+.commercial-disclosure-title>strong{font-size:14px;color:#344054;line-height:1.5}
+.commercial-disclosure-title>span{font-size:11px;color:#667085;line-height:1.6}
+.commercial-disclosure-title .commercial-disclosure-action{margin-top:3px;color:#750207;font-weight:600}
+.commercial-disclosure-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;min-width:0}
+.commercial-disclosure-metrics>span{display:grid;gap:5px;min-width:0}
+.commercial-disclosure-metrics small{font-size:11px;color:#667085;font-weight:400;line-height:1.5}
+.commercial-disclosure-metrics strong{font-size:19px;letter-spacing:-.4px;color:#252832;font-variant-numeric:tabular-nums;line-height:1.4;white-space:nowrap}
+.commercial-disclosure-metrics strong.is-negative{color:#9e3245}
+.commercial-disclosure-metrics>span>span{font-size:10px;font-weight:400;color:#667085;line-height:1.65}
+.commercial-disclosure[open]>summary{grid-template-columns:minmax(0,1fr) 16px;border-bottom:1px solid #e5e7ec}
+.commercial-disclosure[open] .commercial-disclosure-metrics,.commercial-disclosure[open] .commercial-disclosure-action{display:none}
+.commercial-disclosure .commercial-composition{margin:0;padding:20px}
+.commercial-disclosure .commercial-composition-heading{display:none}
+.commercial-disclosure .commercial-card{box-shadow:none;background:#fafbfc}
+.commercial-compact-alerts{padding:10px 14px;margin:8px 0 0;background:#fffbf2;border:1px solid #eadfc9;border-radius:9px}
+.commercial-compact-alerts p{margin:3px 0;font-size:11px;line-height:1.65;color:#8a5a17}
+.commercial-disclosure[open]+.commercial-compact-alerts{display:none}
 @media(max-width:720px){
+ .commercial-disclosure>summary{grid-template-columns:minmax(0,1fr) 16px;gap:14px;padding:16px}
+ .commercial-disclosure>summary::after{grid-column:2;grid-row:1;align-self:start}
+ .commercial-disclosure-metrics{grid-column:1/-1;gap:16px;padding-top:14px;border-top:1px solid #e5e7ec}
+ .commercial-disclosure-metrics strong{font-size:17px}
+ .commercial-disclosure-metrics>span{overflow-wrap:anywhere}
+ .commercial-disclosure .commercial-composition{padding:12px}
  .commercial-composition{margin:24px 0}
  .commercial-composition-grid{grid-template-columns:1fr;gap:14px}
  .commercial-composition-heading{align-items:flex-start;flex-direction:column;gap:5px}
@@ -57,7 +88,19 @@
  .commercial-revenue-bridge>div{gap:10px}
  .commercial-revenue-bridge dt{max-width:62%}
 }
+@media(max-width:450px){
+ .commercial-disclosure-metrics{grid-template-columns:minmax(0,1fr);gap:14px}
+ .commercial-disclosure-metrics>span{grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:baseline}
+ .commercial-disclosure-metrics strong{font-size:clamp(15px,4.3vw,18px)}
+ .commercial-disclosure-metrics>span>span{grid-column:1/-1}
+}
 @media print{
+ .commercial-compact{margin:18px 0}
+ .commercial-disclosure{border:0}
+ .commercial-disclosure>summary,.commercial-compact-alerts{display:none!important}
+ .commercial-disclosure .commercial-composition{display:block!important;padding:0}
+ .commercial-disclosure .commercial-composition-heading{display:flex}
+ .commercial-disclosure .commercial-card{background:#fff}
  .commercial-composition{margin:18px 0}
  .commercial-composition-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
  .commercial-card{box-shadow:none;break-inside:avoid;padding:14px;border-color:#d8dce3}

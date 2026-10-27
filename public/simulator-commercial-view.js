@@ -44,7 +44,7 @@ function sourceLabel(months){
 }
 
 /** Pass a month composition for the monthly view, or the already aggregated selected period. */
-export function renderCommercialComposition(composition,{periodLabel='',title='Receitas e compras'}={}){
+export function renderCommercialComposition(composition,{periodLabel='',title='Receitas e compras',compact=false}={}){
   if(composition==null)return '';
   if(!valid(composition))return '<section class="commercial-composition commercial-unavailable" data-commercial-unavailable role="status"><strong>Composição comercial indisponível</strong><p>Os dados desta versão não permitem conferir a distribuição de receitas e compras.</p></section>';
   const {revenue,purchases}=composition;
@@ -52,11 +52,19 @@ export function renderCommercialComposition(composition,{periodLabel='',title='R
   const pending=[...revenue.byTaxStatus,...purchases.byTaxStatus].some(group=>group.key==='NAO_CONFIRMADO'&&active(group));
   const revenueBase=revenue.totalCents>0?`Percentuais sobre ${money(revenue.totalCents)} de receita após devoluções.`:'A receita após devoluções não tem saldo positivo para calcular participações.';
   const purchaseBase=purchases.totalCents>0?`Percentuais sobre ${money(purchases.totalCents)} de compras selecionadas.`:'Sem compras selecionadas para calcular participações.';
-  return `<section class="commercial-composition" data-commercial-composition aria-label="${esc(title)}"><div class="commercial-composition-heading"><h2>${esc(title)}</h2><span>${esc(periodLabel||sourceLabel(composition.sourceMonths))}</span></div><div class="commercial-composition-grid">
+  const content=`<section class="commercial-composition" data-commercial-composition aria-label="${esc(title)}"><div class="commercial-composition-heading"><h2>${esc(title)}</h2><span>${esc(periodLabel||sourceLabel(composition.sourceMonths))}</span></div><div class="commercial-composition-grid">
     <article class="commercial-card" data-commercial-side="revenue"><header><div class="commercial-card-title">${commercialIcon('revenue')}<span class="commercial-card-label">Receita após devoluções</span></div><strong class="commercial-card-total${revenue.totalCents<0?' is-negative':''}" data-commercial-total>${esc(money(revenue.totalCents))}</strong><p class="commercial-denominator">${esc(revenueBase)}</p></header><div class="commercial-breakdown" data-commercial-audience>${rows(revenue.byCustomerType,{customers:true})}</div>
       <details class="commercial-tax-details"><summary>Enquadramento dos clientes</summary><div class="commercial-breakdown" data-commercial-tax-status>${rows(revenue.byTaxStatus)}</div></details>
       <dl class="commercial-revenue-bridge"><div><dt>Vendas e serviços antes das devoluções</dt><dd>${esc(money(revenue.grossCents))}</dd></div><div><dt>Devoluções de venda abatidas</dt><dd>${esc(money(-revenue.returnsCents))}</dd></div></dl>
     </article>
     <article class="commercial-card" data-commercial-side="purchases"><header><div class="commercial-card-title">${commercialIcon('purchases')}<span class="commercial-card-label">Compras selecionadas</span></div><strong class="commercial-card-total" data-commercial-total>${esc(money(purchases.totalCents))}</strong><p class="commercial-denominator">${esc(purchaseBase)}</p></header><div class="commercial-breakdown" data-commercial-tax-status>${rows(purchases.byTaxStatus)}</div><p class="commercial-card-note">Mercadorias e serviços incluídos nas compras. Devoluções de venda são abatidas da receita.</p></article>
     </div><div class="commercial-composition-notes"><p>Valores dos documentos selecionados. B2B e B2C usam o documento do cliente: CNPJ em B2B e CPF em B2C. Os demais documentos ficam em Não identificado.</p>${pending?'<p>Enquadramentos não confirmados aparecem separadamente conforme a consulta salva.</p>':''}${negative?'<p>As devoluções geraram saldo negativo em um ou mais grupos. Os valores e percentuais mantêm esse sinal.</p>':''}</div></section>`;
+  if(!compact)return content;
+  const audience=revenue.byCustomerType.filter(group=>['B2B','B2C'].includes(group.key));
+  const unidentified=revenue.byCustomerType.some(group=>group.key==='UNIDENTIFIED'&&active(group));
+  const alerts=[pending?'Há enquadramentos não confirmados; confira os grupos dos documentos.':'',
+    unidentified?'Há receita com documentos não identificados; confira sua composição.':'',
+    negative?'Há grupos com saldo negativo após devoluções; valores e percentuais conservam o sinal.':'',
+    revenue.totalCents<=0?'Receita sem saldo positivo: participações indisponíveis.':''].filter(Boolean);
+  return `<div class="commercial-compact"><details class="commercial-disclosure"><summary><span class="commercial-disclosure-title"><strong>${esc(title)}</strong><span>${esc(periodLabel||sourceLabel(composition.sourceMonths))}</span><span class="commercial-disclosure-action">Conferir receita e compras <span aria-hidden="true">↗</span></span></span><span class="commercial-disclosure-metrics"><span><small>Receita após devoluções</small><strong${revenue.totalCents<0?' class="is-negative"':''}>${esc(money(revenue.totalCents))}</strong><span>${audience.map(group=>`${esc(labels[group.key])}: ${esc(share(group.percent))}`).join(' · ')}</span></span><span><small>Compras dos documentos</small><strong>${esc(money(purchases.totalCents))}</strong><span>Simples, fora do Simples e CPF</span></span></span></summary>${content}</details>${alerts.length?`<div class="commercial-compact-alerts" role="note">${alerts.map(note=>`<p>${esc(note)}</p>`).join('')}</div>`:''}</div>`;
 }
