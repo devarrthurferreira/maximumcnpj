@@ -52,3 +52,27 @@ test('legado não inventa composição; dados inconsistentes e HTML do título s
   assert.match(html,/&lt;img src=x onerror=alert\(1\)&gt;/);assert.match(html,/&lt;b&gt;jan\/2026&lt;\/b&gt;/);
   assert.doesNotMatch(html,/<img|<b>jan/);
 });
+
+test('resumo recolhido conserva a base dos percentuais e deixa pendências de documentos visíveis',()=>{
+  const source=summarizeCommercialMonth('2026-01',[row('1102',2500,cnpj('NAO_CONFIRMADO'))],[
+    row('5102',10000,cnpj('OPTANTE')),row('9000',5000),row('5102',1000,{documentKind:'AUSENTE'})
+  ]),before=structuredClone(source),html=clean(renderCommercialComposition(source,{compact:true}));
+  const summary=html.split('<summary>')[1].split('</summary>')[0];
+  assert.match(summary,/Receita após devoluções/);assert.match(summary,/R\$ 160,00/);
+  assert.match(summary,/B2B · CNPJ: 62,50%/);assert.match(summary,/B2C · CPF: 31,25%/);
+  assert.match(summary,/Compras dos documentos/);assert.match(summary,/R\$ 25,00/);
+  const notices=html.split('class="commercial-compact-alerts"')[1];
+  assert.match(notices,/enquadramentos não confirmados/);assert.match(notices,/documentos não identificados/);
+  assert.match(html,/data-commercial-group="UNIDENTIFIED"/);assert.match(html,/data-commercial-group="NAO_CONFIRMADO"/);
+  assert.deepEqual(source,before);
+  assert.doesNotMatch(renderCommercialComposition(source),/commercial-disclosure|commercial-compact-alerts/);
+});
+
+test('resumo recolhido não esconde saldos negativos nem inventa percentuais sem receita positiva',()=>{
+  const source=summarizeCommercialMonth('2026-01',[row('1202',3000)],[row('9000',1000)]);
+  const html=clean(renderCommercialComposition(source,{compact:true})),summary=html.split('<summary>')[1].split('</summary>')[0];
+  assert.match(summary,/-R\$ 20,00/);assert.match(summary,/B2B · CNPJ: —/);assert.match(summary,/B2C · CPF: —/);
+  const notices=html.split('class="commercial-compact-alerts"')[1];
+  assert.match(notices,/saldo negativo após devoluções/);assert.match(notices,/participações indisponíveis/);
+  assert.doesNotMatch(summary,/0,00%/);
+});

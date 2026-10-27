@@ -1,4 +1,30 @@
-# Maximum CNPJ · v0.41.0
+# Maximum CNPJ · v0.43.0
+
+## Uma área de trabalho por empresa, com o resultado à frente — 27/10/2026
+
+A carteira oferece acesso direto ao **Fiscal, Contábil e Resultado** de cada empresa e destaca uma ação principal para continuar. Pendências de documentos, extrato, despesas e configuração abrem a etapa correspondente. A visão da empresa reúne preparação e resultado em um único painel, com situação de cada setor e pendência principal acionável. Fiscal e Contábil continuam independentes: os dois trabalhos precisam ser conferidos para gerar, sem impor uma ordem de preenchimento. Uma busca sem resultados oferece a opção de limpar a pesquisa.
+
+Nos modais, a faixa de janeiro a setembro mostra ano, cobertura e os nove meses em uma apresentação compacta. A visão geral conserva a conferência completa. Atualizações de fonte e status substituem somente seus blocos, preservando campos, foco, rascunhos e a variante compacta do período.
+
+A versão salva abre com um único cabeçalho de empresa, identificação, data, responsável e acesso à edição. Os links de retorno e histórico aparecem uma vez. A DRE vem em seguida, com os resultados dos regimes logo após os controles de período; **Base dos documentos** e **Cenário tributário** ficam identificados separadamente. O seletor **Regime da DRE completa** fica junto dos detalhes e não representa um filtro dos quatro cartões. Os valores monetários ficam juntos, com tipografia ajustada ao espaço e rolagem interna na tabela.
+
+A composição dos documentos pode ser expandida depois do demonstrativo. Seu resumo mantém receita após devoluções, compras e percentuais B2B/B2C; enquadramentos não confirmados, documentos não identificados, saldos negativos e ausência de base positiva permanecem sinalizados mesmo recolhidos. A DRE completa, a memória, as exportações e os parâmetros capturados continuam disponíveis. A confirmação de salvamento e a tentativa de recuperação permanecem no fluxo de geração; a versão somente de leitura não oferece abrir a própria página novamente.
+
+Esta entrega modifica apresentação e navegação, com o motor mensal em `1.11.0-jan-sep` e os contratos de cálculo, fonte, histórico e autorização preservados.
+
+Validação local com Node 22 e MongoDB descartável: tipos, build, versão/documentação, **371 testes de regras**, **36 testes de integração**, **172 testes Python/PDF/OCR** e **32 cenários de navegador** aprovados. A conferência inclui setores, rascunhos, foco, metadados tardios, DIFAL, exclusão, reabertura de versões, recuperação de salvamento, impressão e exportações. O aviso de ano ainda não identificado foi preservado após a compactação. Inspeção visual em desktop, 390 × 650 e 320 × 568 confirma cifras completas, três acessos legíveis na carteira, controles dos modais visíveis e acesso direto ao Contábil sem reconciliação fiscal. Revisão independente não identificou bloqueios no diff final.
+
+## Design das análises e da comparação tributária — 27/10/2026
+
+A carteira e a análise por empresa usam superfícies neutras, títulos com maior contraste e o vinho da Maximum nas ações principais. Os indicadores, os dois setores e o resultado têm hierarquia própria: Fiscal e Contábil mostram o conteúdo de cada setor, a situação salva e o acesso ao formulário. A faixa de janeiro a setembro reúne a cobertura dos nove meses em menos espaço, mantendo pendências explícitas.
+
+Os modais organizam título e troca de setor no mesmo cabeçalho quando houver espaço. O rodapé reúne navegação, rascunho e conclusão com áreas de toque de pelo menos 44 px. A exclusão ganha ícone e continua disponível na carteira, na análise e nos formulários. No celular, cabeçalho, etapas e ações ocupam menos altura; os campos, avisos e a confirmação de exclusão conservam sua rolagem e o funcionamento pelo teclado.
+
+A DRE destaca o **resultado por regime**, com o maior resultado disponível em evidência e impostos e margem logo abaixo. Prejuízo e indisponibilidade têm estilos próprios, inclusive quando o maior resultado ainda é negativo. A tabela tem primeira coluna fixa na rolagem horizontal, resultado final destacado e orientação de leitura no celular. Ações de CSV/PDF ficam agrupadas. Receita, compras, valores e percentuais B2B/B2C e enquadramentos usam a mesma linguagem visual.
+
+Nas versões salvas, a comparação aparece antes das conferências detalhadas de DIFAL. Os parâmetros da versão ficam em **Dados usados no cálculo**, junto dos valores capturados; a identificação do cenário e o acesso a editar continuam visíveis. Cálculos, limites, calendário Jan–Set, referência RBT12, valores dos documentos, exportações completas e histórico não são modificados por esta atualização de apresentação. O motor mensal permanece em `1.11.0-jan-sep`. A DRE não repete a animação de entrada ao alternar a visualização.
+
+Validação local com Node 22 e MongoDB descartável: tipos, build, versão/documentação, **369 testes de regras**, **36 testes de integração** e **172 testes Python/PDF/OCR** aprovados. Os **28 cenários direcionados de navegador** cobrem Fiscal/Contábil, rascunhos, colagem, DIFAL, exclusão, fontes indisponíveis, DRE nova e histórica, detalhes sob demanda e CSV/PDF. Conferência visual adicional em desktop, 390 × 650 e 320 × 568 verifica área útil dos modais, foco dos campos, ações de confirmação, navegação e rolagem própria da tabela.
 
 ## Janeiro a setembro e comparação resumida dos regimes — 27/10/2026
 

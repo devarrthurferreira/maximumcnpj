@@ -577,9 +577,9 @@ function ensureAccountingMetadata() {
 }
 function refreshPeriodViews() {
   if(!S.analysis)return;
-  const html=renderAnalysisPeriod(detailOptions());
+  const options=detailOptions(),html=renderAnalysisPeriod(options),compactHtml=renderAnalysisPeriod(options,{compact:true});
   for(const id of ['analysis-overview-period','analysis-fiscal-period','analysis-accounting-period']){
-    const host=$('#'+id);if(host)host.innerHTML=html;
+    const host=$('#'+id);if(host)host.innerHTML=id==='analysis-overview-period'?html:compactHtml;
   }
   const field=$('#analysis-new-source-year'),period=analysisPeriodFor(S.analysis,S.source,S.generation);
   if(field&&period){field.value=String(period.sourceYear);field.readOnly=true;}
@@ -722,6 +722,9 @@ function refreshGuidance() {
   document.querySelectorAll('[data-analysis-sector-status]').forEach(host=>{
     const status=guidance.sectors[host.dataset.analysisSectorStatus];
     if(status)host.innerHTML=`<span class="analysis-tag is-${status.kind}">${esc(status.label)}</span>`;
+  });
+  document.querySelectorAll('[data-analysis-sector-card]').forEach(card=>{
+    card.classList.toggle('is-complete',guidance.sectors[card.dataset.analysisSectorCard]?.complete===true);
   });
   const issuesOpen=$('#analysis-pending-issues')?.open;
   if($('#analysis-generation'))$('#analysis-generation').outerHTML=renderAnalysisGeneration(options);
