@@ -24,7 +24,7 @@ const S={user:null,clients:null,analysis:null,sector:null,source:null,generation
   evidenceState:'idle',evidenceError:'',evidenceKey:null,
   metadataState:'idle',metadataKey:null,generationUnavailable:false,
   configDirty:false,fiscalDirty:false,accountingDirty:false,versionsOpen:false,versionsData:null,versionsLoading:false,
-  generateRequest:null,newClient:'',newSearch:'',newSector:'',newYear:2027,newSelection:defaultRegimeSelection(),
+  generateRequest:null,newClient:'',newSearch:'',newSector:'fiscal',newYear:2027,newSelection:defaultRegimeSelection(),
   newChoiceIds:defaultRegimeSelection().selected,newExisting:null,newCheckingCompany:false,newCompanyError:'',companyCheckSequence:0,
   newDifalPolicy:defaultDifalPolicy(),newDifalChoice:null,difalEnabledMemory:{new:null,analysis:null},
   deleting:false,deleteTarget:null,deleteTrigger:null,
@@ -457,7 +457,7 @@ async function checkNewCompany({advance=false}={}) {
   } catch(error){if(ticket===S.companyCheckSequence&&S.newClient===clientId)S.newCompanyError=error.message;}
   finally{if(companyCheckController===controller)companyCheckController=null;if(ticket===S.companyCheckSequence&&S.newClient===clientId){
     S.newCheckingCompany=false;clearError();refreshNewCompanyState();
-    if(advance&&!S.newCompanyError&&S.modalOpen&&S.modalKind==='new'&&currentWizardState().id==='company')setWizardStep('setup');
+    if(advance&&!S.newCompanyError&&S.modalOpen&&S.modalKind==='new')refreshWizardReview();
   }}
 }
 function refreshCompanies() {
@@ -1189,6 +1189,20 @@ function bindAccounting() {
       if(S.accountingDraft.months.some(row=>row.sourceMonth===month))throw new Error('Esta competência já está no formulário. Preencha os valores no mês correspondente.');
       addMonths([month]);
     }catch(error){showError(error);}
+  };
+  if($('#analysis-zero-empty'))$('#analysis-zero-empty').onclick=()=>{
+    try {
+      captureAll();
+      const visible=new Set(displayedAccountingMonths().map(row=>row.sourceMonth));
+      const fields=ACCOUNTING_FIELDS.map(([key])=>key);
+      let missing=0;
+      for(const row of S.accountingDraft.months)if(visible.has(row.sourceMonth))for(const key of fields)if(row[key]===null)missing++;
+      if(!missing)return feedback('Não há campos vazios nas competências deste período.','info');
+      if(!confirm(`Preencher ${missing} campo(s) vazio(s) com R$ 0,00? Confirme somente se realmente não houve despesa nessas categorias e meses. Os valores informados serão preservados. Você ainda precisará salvar.`))return;
+      for(const row of S.accountingDraft.months)if(visible.has(row.sourceMonth))for(const key of fields)if(row[key]===null)row[key]=0;
+      markDirty('accounting');renderDetail();
+      feedback(`${missing} campo(s) preenchido(s) com zero. Confira os valores e salve o Contábil.`,'info');
+    } catch(error){showError(error);}
   };
   document.querySelectorAll('[data-zero-month]').forEach(button=>button.onclick=()=>{
     try{captureAll();const row=S.accountingDraft.months.find(item=>item.sourceMonth===button.dataset.zeroMonth);for(const [key] of ACCOUNTING_FIELDS)if(row[key]===null)row[key]=0;markDirty('accounting');renderDetail();}catch(error){showError(error);}
