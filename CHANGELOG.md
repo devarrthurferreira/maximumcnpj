@@ -1,5 +1,8 @@
 # Histórico de alterações
 
+- Abertura da análise em uma única etapa (empresa, setor e regimes); links legados para a etapa antiga continuam válidos.
+- Contábil oferece preenchimento opcional dos campos vazios com R$ 0,00 mediante confirmação, sem alterar valores já informados nem salvar automaticamente.
+
 ## [0.44.0] — 2026-10-27
 
 - Simplifica a carteira para empresa, situação e um acesso à análise, retirando atalhos e indicadores repetidos.
