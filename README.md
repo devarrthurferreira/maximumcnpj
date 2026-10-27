@@ -1,6 +1,12 @@
-# Maximum CNPJ · v0.44.0
+# Maximum CNPJ · v0.44.1
 
 **Fluxo de abertura mais rápido (refinamento de 27/10/2026):** escolha da empresa, setor e regimes agora aparece numa única etapa; o setor Fiscal vem pré-selecionado e pode ser trocado. No Contábil, uma ação opcional permite preencher com R$ 0,00 somente os campos vazios das competências visíveis, após confirmação explícita; não altera valores lançados, dados de outros anos ou salva automaticamente.
+
+## RBT12 de janeiro a setembro e status dos arquivos — v0.44.1
+
+A análise MaximumCNPJ apresenta **somente nove RBT12 mensais, de janeiro a setembro do ano de origem**. Cada competência utiliza obrigatoriamente as **12 receitas anteriores** registradas no quadro 2.2 do PGDAS-D, inclusive meses do ano anterior. Não é correto calcular RBT12 somando apenas nove meses ou zerando competências ausentes. As receitas históricas são preservadas para auditoria, mas outubro–dezembro não geram linhas de análise.
+
+No Fiscal, entradas e saídas exibem a confirmação de leitura assim que o status dos relatórios chega, sem aguardar a reconciliação mais demorada nem o processamento do extrato. A leitura RBT12 é mostrada separadamente; erro de extrato não invalida visualmente documentos de compras e vendas concluídos. Histórico ausente passa a indicar os **meses da receita histórica que faltam**, sem estimativas. O PDF é sinalizado como lido antes da etapa de persistência, que continua obrigatória.
 
 ## Fluxo simplificado: empresa, dados e resultado — 27/10/2026
 
