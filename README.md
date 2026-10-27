@@ -1,4 +1,18 @@
-# Maximum CNPJ · v0.43.0
+# Maximum CNPJ · v0.44.0
+
+**Fluxo de abertura mais rápido (refinamento de 27/10/2026):** escolha da empresa, setor e regimes agora aparece numa única etapa; o setor Fiscal vem pré-selecionado e pode ser trocado. No Contábil, uma ação opcional permite preencher com R$ 0,00 somente os campos vazios das competências visíveis, após confirmação explícita; não altera valores lançados, dados de outros anos ou salva automaticamente.
+
+## Fluxo simplificado: empresa, dados e resultado — 27/10/2026
+
+A carteira passa a mostrar cada empresa em uma linha, com identificação, situação e **Abrir análise**. Dentro da empresa, os dois acessos principais são **Fiscal** e **Contábil**, seguidos de uma ação de resultado. Saem os atalhos repetidos, cartões de indicadores e barras que repetiam a mesma situação. Regimes, histórico e exclusão permanecem acessíveis como ações secundárias.
+
+O período de janeiro a setembro fica compacto, com cobertura detalhada ao expandir e pendências sempre identificadas. Os formulários mantêm suas etapas e os dados digitados; explicações e composição dos documentos ficam junto de suas conferências. Não há preenchimento, gravação ou conclusão automática ao fechar ou trocar de setor.
+
+No resultado salvo, a identificação da empresa ocupa menos espaço e a edição fica em um botão discreto. A DRE Jan–Set aproxima os valores dos regimes da primeira tela, reúne os controles de período e mantém a tabela resumida à vista. O regime da DRE completa, referências e demais conferências ficam nos detalhes, com as indisponibilidades sinalizadas. O menu deixa de repetir a chamada promocional para iniciar uma análise.
+
+Cálculos, valores capturados, calendário, DIFAL, autenticação, permissões, histórico e exportações completas permanecem com os mesmos contratos. Motor mensal `1.11.0-jan-sep`.
+
+Validação com Node 22 e MongoDB descartável: tipos, build, versão/documentação, **371 testes de regras**, **36 testes de integração**, **172 testes Python/PDF/OCR** e **38 cenários de navegador** aprovados. A conferência visual em desktop, 390 × 650 e 320 × 568 verifica valores inteiros, ausência de rolagem horizontal na página, acesso aos campos e ações dos modais. O primeiro lucro aparece na primeira tela nos dois tamanhos móveis; a abertura empresa → Contábil não relê a fonte fiscal. Os testes de apresentação acompanham a retirada dos indicadores da carteira e a mudança dos créditos para a DRE completa, preservando as verificações de valores, vínculos e exportações.
 
 ## Uma área de trabalho por empresa, com o resultado à frente — 27/10/2026
 

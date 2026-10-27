@@ -1,5 +1,18 @@
 # Histórico de alterações
 
+- Abertura da análise em uma única etapa (empresa, setor e regimes); links legados para a etapa antiga continuam válidos.
+- Contábil oferece preenchimento opcional dos campos vazios com R$ 0,00 mediante confirmação, sem alterar valores já informados nem salvar automaticamente.
+
+## [0.44.0] — 2026-10-27
+
+- Simplifica a carteira para empresa, situação e um acesso à análise, retirando atalhos e indicadores repetidos.
+- Reorganiza a empresa em dois acessos compactos, Fiscal e Contábil, e uma ação de resultado; mantém configuração, histórico e exclusão acessíveis.
+- Recolhe a conferência de cobertura Jan–Set e a composição dos documentos, com pendências explícitas, hosts estáveis e rascunhos preservados.
+- Compacta a identificação da versão salva e aproxima lucro, impostos e tabela resumida do início da DRE. Reúne período e referências e mantém o seletor de regime junto da DRE completa, fora do conteúdo montado sob demanda.
+- Remove a chamada promocional repetida do menu, preservando links, preferências de navegação, teclado e controle de acesso.
+- Mantém cálculos, dados, calendário, DIFAL, autenticação, exportações completas e motor mensal `1.11.0-jan-sep`.
+- Validação: tipos, build, versão/documentação, **371 regras**, **36 integrações**, **172 Python/PDF/OCR** e **38 cenários de navegador** aprovados. Desktop, 390 × 650 e 320 × 568 conferidos; lucro visível na abertura móvel, cifras completas, rascunhos/foco/exclusão preservados e Contábil sem releitura fiscal.
+
 ## [0.43.0] — 2026-10-27
 
 - Reúne preparação e resultado em uma área de trabalho por empresa, com acesso direto Fiscal/Contábil/Resultado na carteira, próximo passo principal e links para a etapa da pendência.
