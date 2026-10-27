@@ -84,11 +84,12 @@ test('resumo é padrão e DRE completa materializa valores mensais de janeiro a 
   assert.match(html,/DRE resumida/);assert.equal((html.match(/data-dre-regime-result=/g)||[]).length,4);
   assert.match(html,/data-dre-summary-row="revenue"/);assert.match(html,/data-dre-summary-row="netProfit"/);
   assert.match(html,/data-simulation-lazy="dre"><\/div>/);assert.doesNotMatch(html,/data-dre-row=/);
-  assert.match(html,/Créditos tributários utilizados/);assert.match(html,/não somar novamente/);assert.match(html,/B2B · CNPJ/);assert.match(html,/B2C · CPF/);
+  assert.doesNotMatch(html,/Créditos tributários utilizados/);assert.match(html,/B2B · CNPJ/);assert.match(html,/B2C · CPF/);
   const monthly=renderCompleteMonthlyDre({...input,month:8,regimeId:'pure'});
   const options=monthly.match(/<select id="dre-month">([\s\S]*?)<\/select>/)?.[1];
   assert.equal((options.match(/<option /g)||[]).length,9);assert.match(options,/Setembro/);assert.doesNotMatch(options,/Outubro|Novembro|Dezembro/);
   const detail=renderDreCompleteDetails({...input,monthly:true,month:8,monthView:false,regimeId:'pure'});
+  assert.match(detail,/Créditos tributários utilizados/);assert.match(detail,/não somar novamente/);
   const revenue=detail.match(/data-dre-row="revenue">([\s\S]*?)<\/tr>/)?.[1];
   assert.equal((revenue.match(/<td /g)||[]).length,10);assert.match(detail,/>9 meses<\/button>/);
   assert.match(detail,/Consolidado Jan–Set/);assert.match(detail,/data-dre-row="icmsAnticipation"/);

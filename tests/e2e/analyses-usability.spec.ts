@@ -379,8 +379,9 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
   expect((await analysisWorkspace.db.collection<any>('analyses').findOne({_id:id,workspaceId:analysisWorkspace.workspaceId}))?.currentSimulation.id).toBe(simulationId);
   await page.goto('/analyses.html?search='+created.code);
   await expect(page.locator('[data-analysis-id="'+id+'"]')).toHaveAttribute('data-analysis-state','current');
-  await expect(page.locator('[data-analysis-count="current"] strong')).toHaveText('1');
-  await expect(page.locator('[data-analysis-count="ready"] strong')).toHaveText('0');
-  await expect(page.locator('[data-analysis-count="working"] strong')).toHaveText('0');
+  const card=page.locator('[data-analysis-id="'+id+'"]');
+  await expect(card.locator('.analysis-company-status')).toHaveText('Resultado salvo');
+  await card.getByRole('link',{name:'Abrir análise'}).click();
+  await expect(page.locator('#analysis-generation a')).toHaveAttribute('href','/simulator.html?simulation='+simulationId);
   expect(errors).toEqual([]);
 });

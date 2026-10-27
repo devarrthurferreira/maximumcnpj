@@ -21,7 +21,7 @@ function ensureStylesheet(href) {
   link.dataset.navigationStyle = href;
   document.head.append(link);
 }
-ensureStylesheet('/navigation.css?v=0.20.2');
+ensureStylesheet('/navigation.css?v=0.44.0');
 
 function navigationLabel(label) {
   return `<span class="navigation-label">${escape(label)}</span>`;
@@ -29,13 +29,6 @@ function navigationLabel(label) {
 
 function brandMark() {
   return `<a href="/#overview" class="navigation-rail-cap" aria-label="Maximum CNPJ · Visão geral"><span class="navigation-mark" aria-hidden="true"><img src="/img/maximum-symbol.png" width="78" height="65" alt=""></span><span class="navigation-brand-copy"><small>Sua central contábil</small><strong>Maximum CNPJ</strong></span></a>`;
-}
-
-function navigationShortcut(canCreate) {
-  return `<section class="navigation-shortcut" aria-label="${canCreate ? 'Começar uma análise' : 'Consultar relatórios'}">
-    <div class="navigation-preview" aria-hidden="true"><div class="navigation-preview-sheet"><span>${icon('report')}<b>Maximum</b></span><i></i><i></i><i></i></div></div>
-    <div class="navigation-shortcut-copy"><strong>${canCreate ? 'Sua próxima análise<br>começa aqui.' : 'Suas análises,<br>sempre à mão.'}</strong><p>${canCreate ? 'Fiscal e Contábil, com o trabalho de cada empresa organizado.' : 'Acompanhe o trabalho e os resultados salvos da sua equipe.'}</p><a href="${canCreate ? '/analyses.html?view=new' : '/analyses.html'}">${canCreate ? 'Começar análise' : 'Consultar análises'}<span aria-hidden="true">→</span></a></div>
-  </section>`;
 }
 
 export function navigationMarkup(user, active = 'overview', internal = false) {
@@ -49,7 +42,7 @@ export function navigationMarkup(user, active = 'overview', internal = false) {
       <div class="navigation-group" role="group" aria-label="Principal"><span class="navigation-section" aria-hidden="true">Principal</span>${entry('overview','Visão geral','home','/#overview')}${entry('clients','Empresas','companies','/#clients')}</div>
       <div class="navigation-group" role="group" aria-label="Análises"><span class="navigation-section" aria-hidden="true">Análises</span>${entry('analyses','Análises','start','/analyses.html',canCreate)}${entry('history','Relatórios','history','/generations.html?view=history')}${entry('simulations','Versões salvas','simulations','/simulations.html')}</div>
     </nav></div>
-    <div class="navigation-bottom">${navigationShortcut(canCreate)}<div class="side-bottom navigation-utility-dock">${entry('settings','Configurações','settings','/#settings')}<button id="logout" class="navigation-item navigation-logout" type="button" aria-label="Sair da conta"><span class="navigation-icon">${icon('logout')}</span>${navigationLabel('Sair')}</button><div class="navigation-profile" title="${escape(name)}"><span class="navigation-avatar" aria-hidden="true">${escape(Array.from(name)[0]?.toUpperCase() || 'M')}</span><span class="navigation-user-copy"><strong>${escape(name)}</strong><small>${escape(role)}</small></span><span class="sr-only">Usuário conectado: ${escape(name)}</span></div></div></div>`;
+    <div class="navigation-bottom"><div class="side-bottom navigation-utility-dock">${entry('settings','Configurações','settings','/#settings')}<button id="logout" class="navigation-item navigation-logout" type="button" aria-label="Sair da conta"><span class="navigation-icon">${icon('logout')}</span>${navigationLabel('Sair')}</button><div class="navigation-profile" title="${escape(name)}"><span class="navigation-avatar" aria-hidden="true">${escape(Array.from(name)[0]?.toUpperCase() || 'M')}</span><span class="navigation-user-copy"><strong>${escape(name)}</strong><small>${escape(role)}</small></span><span class="sr-only">Usuário conectado: ${escape(name)}</span></div></div></div>`;
 }
 
 export function markNavigation(active) {

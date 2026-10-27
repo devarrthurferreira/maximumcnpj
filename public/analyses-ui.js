@@ -579,7 +579,10 @@ function refreshPeriodViews() {
   if(!S.analysis)return;
   const options=detailOptions(),html=renderAnalysisPeriod(options),compactHtml=renderAnalysisPeriod(options,{compact:true});
   for(const id of ['analysis-overview-period','analysis-fiscal-period','analysis-accounting-period']){
-    const host=$('#'+id);if(host)host.innerHTML=id==='analysis-overview-period'?html:compactHtml;
+    const host=$('#'+id);if(!host)continue;
+    const open=host.querySelector('.analysis-period-details')?.open;
+    host.innerHTML=id==='analysis-overview-period'?html:compactHtml;
+    if(open&&host.querySelector('.analysis-period-details'))host.querySelector('.analysis-period-details').open=true;
   }
   const field=$('#analysis-new-source-year'),period=analysisPeriodFor(S.analysis,S.source,S.generation);
   if(field&&period){field.value=String(period.sourceYear);field.readOnly=true;}

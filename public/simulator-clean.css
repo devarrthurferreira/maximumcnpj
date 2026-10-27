@@ -6,18 +6,16 @@
 .simulator-clean .sim-hero p { margin: 0; font-size: 14px; }
 .simulator-clean .eyebrow { font-size: 10px; letter-spacing: 1px; }
 .sim-company-code, .sim-hero-caption { color: #667085; font-size: 12px; }
-.simulator-clean .sim-top-links:has(+ .sim-saved-header) { margin-bottom: 8px; }
-.sim-saved-header { padding: 22px 24px 0; border: 1px solid #e5e7ec; border-left: 4px solid #750207; border-radius: 14px; background: #fff; }
-.simulator-clean .sim-hero-saved { align-items: center; gap: 20px; padding-bottom: 18px; }
+.simulator-clean .sim-top-links:has(+ .sim-saved-header) { margin-bottom: 4px; }
+.sim-saved-header { padding: 0 0 16px; border-bottom: 1px solid #e5e7ec; }
+.simulator-clean .sim-hero-saved { align-items: center; gap: 12px; padding: 0; }
 .sim-saved-identity { min-width: 0; }
-.simulator-clean .sim-hero-saved h1 { font-size: clamp(23px, 2.4vw, 30px); line-height: 1.25; letter-spacing: -.75px; margin: 7px 0 9px; overflow-wrap: anywhere; }
+.simulator-clean .sim-hero-saved h1 { font-size: clamp(21px, 2vw, 25px); line-height: 1.3; letter-spacing: -.5px; margin: 0 0 5px; overflow-wrap: anywhere; }
 .simulator-clean .sim-company-details { display: flex; flex-wrap: wrap; gap: 5px 16px; font-size: 12px; color: #667085; font-variant-numeric: tabular-nums; }
 .sim-company-details:empty { display: none; }
-.sim-saved-actions { flex-shrink: 0; }
-.sim-saved-actions .primary { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 11px 16px; border-radius: 9px; font-size: 13px; text-align: center; }
-.sim-version-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 12px 0; border-top: 1px solid #e5e7ec; font-size: 11px; line-height: 1.5; color: #667085; }
-.sim-version-badge { display: inline-flex; align-items: center; gap: 7px; color: #216b51; font-weight: 600; }
-.sim-version-badge::before { content: ''; width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: currentColor; }
+.sim-saved-actions { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.sim-saved-actions .sim-edit-link { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 9px 13px; border: 1px solid #dfe2e8; border-radius: 8px; background: #fff; color: #750207; font-size: 12px; font-weight: 600; text-align: center; }
+.sim-version-strip { margin: 7px 0 0; font-size: 11px; line-height: 1.5; color: #667085; }
 .simulator-clean .sim-step-track { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 16px 0; padding: 5px; border: 1px solid #e5e7ec; background: #fff; border-radius: 10px; }
 .simulator-clean .sim-step-track a { display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px; border: 0; border-radius: 6px; text-align: center; }
 .simulator-clean .sim-step-track a:focus-visible { outline: 2px solid #750207; outline-offset: 1px; }
@@ -82,7 +80,7 @@
 .simulator-clean .sim-actions small { font-size: 12px; }
 .simulator-clean .sim-result-head h2 { color: #252832; font-size: 24px; letter-spacing: -.7px; margin: 7px 0; }
 .simulator-clean .sim-result { margin-top: 30px; animation: none; }
-.simulator-clean .sim-result-saved { margin-top: 20px; }
+.simulator-clean .sim-result-saved { margin-top: 12px; }
 .simulator-clean .sim-save-status[hidden] { display: none; }
 .sim-result-file { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; margin: 14px 0 18px; }
 .sim-result-file > span { color: #667085; font-size: 12px; }
@@ -123,12 +121,12 @@
   .simulator-clean .sim-top-links { gap: 12px; }
   .simulator-clean .sim-hero { padding: 0 0 16px; }
   .simulator-clean .sim-hero h1 { font-size: 27px; }
-  .sim-saved-header { padding: 17px 16px 0; }
-  .simulator-clean .sim-hero-saved { flex-direction: column; align-items: stretch; gap: 16px; padding-bottom: 16px; }
-  .simulator-clean .sim-hero-saved h1 { font-size: 24px; }
-  .sim-saved-actions .primary { width: 100%; }
-  .sim-version-strip { gap: 5px; align-items: flex-start; flex-direction: column; }
-  .simulator-clean .sim-result-saved { margin-top: 16px; }
+  .sim-saved-header { padding-bottom: 12px; }
+  .simulator-clean .sim-hero-saved { flex-direction: column; align-items: stretch; gap: 7px; padding: 0; }
+  .simulator-clean .sim-hero-saved h1 { font-size: 21px; }
+  .sim-saved-actions { gap: 10px; }
+  .sim-saved-actions .sim-edit-link { min-height: 44px; padding: 6px 11px; }
+  .simulator-clean .sim-result-saved { margin-top: 10px; }
   .sim-result-file { justify-content: space-between; gap: 8px; }
   .simulator-clean .sim-step-track { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .simulator-clean .sim-step-track a { font-size: 12px; }

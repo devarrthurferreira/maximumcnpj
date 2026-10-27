@@ -31,7 +31,7 @@ test('Maximum: menu claro abre com rótulos e preserva a preferência entre pág
   await expect(sidebar).toHaveCSS('background-color','rgb(255, 255, 255)');
   await expect(page.locator('.navigation-brand-copy')).toContainText('Maximum CNPJ');
   await expect(page.locator('.sidebar .nav a')).toHaveText(['Visão geral','Empresas','Análises','Relatórios','Versões salvas']);
-  await expect(page.locator('.navigation-shortcut a')).toHaveAttribute('href','/analyses.html?view=new');
+  await expect(page.locator('.navigation-shortcut')).toHaveCount(0);
   await expect(toggle).toHaveAttribute('aria-expanded','true');
   await page.screenshot({path:'test-results/maximum-brand/navbar-expandida.png',fullPage:true});
   await toggle.click();
@@ -134,8 +134,8 @@ test('Maximum: preferência antiga recolhida e acesso de visualização continua
   await expect(page.locator('#toggle-nav')).toHaveAttribute('aria-expanded','false');
   await expect(page.locator('[data-navigation=start]')).toHaveCount(0);
   await page.locator('#toggle-nav').click();
-  await expect(page.locator('.navigation-shortcut')).toContainText('Suas análises,');
-  await expect(page.locator('.navigation-shortcut a')).toHaveAttribute('href','/analyses.html');
+  await expect(page.locator('.navigation-shortcut')).toHaveCount(0);
+  await expect(page.locator('[data-navigation=analyses]')).toHaveAttribute('href','/analyses.html');
   await expect(page.locator('.navigation-user-copy')).toContainText('Visualização');
 });
 
