@@ -8,7 +8,7 @@ type Workspace={db:Db;workspaceId:string;account:Account};
 type Method='GET'|'POST'|'PATCH';
 type WizardKind='new'|'fiscal'|'accounting';
 const wizardSteps:Record<WizardKind,string[]>={
-  new:['company','setup'],fiscal:['documents','tax'],accounting:['values']
+  new:['setup'],fiscal:['documents','tax'],accounting:['values']
 };
 const test=base.extend<{analysisWorkspace:Workspace}>({
   analysisWorkspace:async({},use)=>{
@@ -155,7 +155,7 @@ test('Retomar uma empresa mostra as escolhas salvas e conserva regimes, valores 
   await expect(page.locator('#analysis-wizard-review')).toContainText('2028');
 
   // Changing the search cannot leave an invisible, previously selected company active.
-  await wizardStep(page,'new','company');
+  await wizardStep(page,'new','setup');
   await page.locator('#analysis-company-search').fill('empresa inexistente '+randomUUID());
   await expect(page.locator('#analysis-new-client')).toHaveValue('');
   await page.locator('#analysis-company-search').fill(created.code);
@@ -163,10 +163,7 @@ test('Retomar uma empresa mostra as escolhas salvas e conserva regimes, valores 
   await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','setup');
   await expect(page.locator('#analysis-wizard-review')).toContainText('Lucro Real');
   await page.locator('input[name="sector"][value="accounting"]').check();
-  await page.locator('#analysis-wizard-back').click();
-  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','company');
-  await page.locator('#analysis-wizard-next').click();
-  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','setup');
+  await expect(page.locator('#analysis-wizard-progress')).toBeHidden();
   await expect(page.locator('input[name="sector"][value="accounting"]')).toBeChecked();
   await expect(page.locator('#analysis-open-company')).toContainText('Continuar');
   expect(patches).toEqual([]);
