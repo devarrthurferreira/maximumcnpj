@@ -15,8 +15,8 @@ test('abertura e configurações em tela única, Fiscal em duas etapas',()=>{
 });
 
 test('retomada e consulta conservam as mesmas etapas, sem decidir permissões ou exigência de extrato',()=>{
-  assert.deepEqual(ids(wizardSteps('new',{resume:true})),['company','setup']);
-  assert.deepEqual(ids(wizardSteps('new',{resume:false})),['company','setup']);
+  assert.deepEqual(ids(wizardSteps('new',{resume:true})),['setup']);
+  assert.deepEqual(ids(wizardSteps('new',{resume:false})),['setup']);
   for(const kind of Object.keys(WIZARD_STEPS)){
     assert.deepEqual(wizardSteps(kind,{resume:true}),wizardSteps(kind));
     assert.deepEqual(wizardSteps(kind,{resume:true,canWrite:false}),wizardSteps(kind));
