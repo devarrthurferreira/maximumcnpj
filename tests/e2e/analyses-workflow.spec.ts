@@ -39,7 +39,7 @@ async function signIn(request:APIRequestContext,baseURL:string,{email,password}:
 }
 type WizardKind='new'|'fiscal'|'accounting'|'config';
 const wizardSteps:Record<WizardKind,string[]>={
-  new:['company','setup'],fiscal:['documents','tax'],accounting:['values'],config:['choices']
+  new:['setup'],fiscal:['documents','tax'],accounting:['values'],config:['choices']
 };
 async function wizardStep(page:Page,kind:WizardKind,step:string){
   const wizard=page.locator('#analysis-wizard'),steps=wizardSteps[kind];
