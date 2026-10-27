@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildRbt12Schedule,section22RevenueHistory,reconcileSection22Extraction,RBT12_SCHEDULE_VERSION} from '../public/simulator-rbt12.js';
+import {buildRbt12Schedule,buildJanSepRbt12Schedule,section22RevenueHistory,reconcileSection22Extraction,RBT12_SCHEDULE_VERSION} from '../public/simulator-rbt12.js';
 import {section22,section22Year2025} from './fixtures/section22.ts';
 
 const months2025=Array.from({length:12},(_,index)=>`2025-${String(index+1).padStart(2,'0')}`);
@@ -76,4 +76,25 @@ test('conferência não confirma valores multiplicados por12/100, somas de todo 
   source=>source.rbt12CalculatedCents*=100,source=>source.rbt12Reconciled=false,
   source=>source.rbt12Window.pop(),source=>source.rbt12Basis.startMonth='2024-01',
  ]){const source=section22Year2025();change(source);assert.throws(()=>reconcileSection22Extraction(source),TypeError);}
+});
+
+test('MaximumCNPJ gera somente nove RBT12 de janeiro a setembro, com janela móvel de doze meses',()=>{
+  const source=section22Year2025(),schedule=buildJanSepRbt12Schedule(source,2025);
+  assert.equal(schedule.rows.length,9);
+  assert.deepEqual(schedule.rows.map(row=>row.sourceMonth),months2025.slice(0,9));
+  assert.deepEqual(schedule.rows.map(row=>row.rbt12Cents),[7800000,9000000,10200000,11400000,12600000,13800000,15000000,16200000,17400000]);
+  assert.equal(schedule.rows[0].startMonth,'2024-01');
+  assert.equal(schedule.rows[8].endMonth,'2025-08');
+  assert.equal(schedule.rows[8].window.length,12);
+  assert.deepEqual(source.priorRevenues.map(row=>row.month).slice(0,2),['2024-01','2024-02']);
+  assert.throws(()=>buildJanSepRbt12Schedule(source,2025.5),TypeError);
+});
+
+test('Histórico ausente bloqueia somente as janelas que dependem dele, sem fabricar meses zerados',()=>{
+  const source=section22Year2025();source.priorRevenues.splice(0,1);
+  const schedule=buildJanSepRbt12Schedule(source,2025);
+  assert.equal(schedule.rows.length,9);assert.equal(schedule.complete,false);
+  assert.deepEqual(schedule.rows[0].missingMonths,['2024-01']);
+  assert.equal(schedule.rows[0].rbt12Cents,null);
+  assert.equal(schedule.rows[1].status,'CONFIRMED');
 });
