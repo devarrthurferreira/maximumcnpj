@@ -163,13 +163,17 @@ test('5102 histórico V1: todas as competências, prefill atual, nova DRE, expor
     original.engineInput=draftToInput(original.draft,original.difalProjection);
     original.result=calculateSimulation(original.draft,original.difalProjection);
     original.monthlyDre=buildMonthlyDre(original.result,original.draft.year,original.rbt12Manual,original.source.period);
+    original.createdAt=new Date('2026-10-20T12:00:00Z');
     await simulations.replaceOne(scope({_id:simulationId}),original);
     const oldChild={...structuredClone(original),_id:randomUUID(),parentSimulationId:simulationId,
+      createdAt:new Date('2026-10-21T12:00:00Z'),
       reprocessing:{version:'SERVICES_DIFAL_2026_10_V1',originalId:simulationId}};
     await simulations.insertOne(oldChild);
     const result=await reprocessSimulations(actor,{});
     assert.equal(result.version,REPROCESS_VERSION); assert.equal(result.total,1); assert.equal(result.counts.ok,1);
-    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,simulationId));
+    assert.equal(result.items[0].originalId,oldChild._id,'A família usa a revisão histórica mais recente.');
+    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,oldChild._id));
+    assert.equal(child.parentSimulationId,oldChild._id);
     assert.equal(child.difalProjection.sourceVersion,DIFAL_VERSION);
     assert(child.difalProjection.months.every((row:any)=>row.amountCents===940)); assert.equal(child.difalProjection.annualCents,11280);
     for (const regime of child.result.regimes) {
