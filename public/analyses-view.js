@@ -6,6 +6,7 @@ import {renderRbt12Schedule} from './simulator-source-view.js';
 import {ACCOUNTING_FIELDS,accountingSummary,analysisGuidance,accountingSourceMonths,analysisPeriodFor,scopedAccountingMonths,usesFixedAnalysisPeriod} from './analyses-guidance.js';
 import {renderCommercialComposition} from './simulator-commercial-view.js';
 import {BRAZIL_UFS,normalizeUf} from './difal.js';
+import {documentDifalSummary} from './analysis-document-difal.js';
 
 export {ACCOUNTING_FIELDS} from './analyses-guidance.js';
 export const ADJUSTMENT_FIELDS=[
@@ -142,7 +143,13 @@ function sectorChooser(analysis,options) {
   return `<section class="analysis-sectors-overview" aria-label="Setores da análise"><div class="analysis-sector-choice">${['fiscal','accounting'].map(sector=>`<a class="analysis-sector-tab analysis-sector-card${guidance.sectors[sector].complete?' is-complete':''}" href="${analysisUrl(analysis.id,sector)}" data-analysis-sector="${sector}" data-analysis-sector-card="${sector}" aria-haspopup="dialog"><span class="analysis-sector-icon" aria-hidden="true">${icon(sector==='fiscal'?'report':'companies')}</span><div class="analysis-sector-card-heading"><strong>${sectorName(sector)}</strong><p>${sector==='fiscal'?'Documentos e impostos':'Despesas da empresa'}</p></div><span data-analysis-sector-status="${sector}" title="${savedBy(analysis[sector])}">${badge(guidance.sectors[sector])}</span><b>${options.canWrite?'Abrir':'Consultar'} <span aria-hidden="true">→</span></b></a>`).join('')}</div></section>`;
 }
 
-export function renderFiscalReports({analysis,generation,canWrite,generationUnavailable=false,documentUploads={},documentIssuerUf}) {
+function renderDocumentDifal(summary,type) {
+  if(!summary)return '';
+  const amount=summary.amountCents===null?(summary.state==='pending'?'Pendente':'Indisponível'):money(summary.amountCents/100);
+  return `<div class="analysis-document-difal${summary.state==='ready'?'':' is-pending'}" data-analysis-document-difal="${type}" data-difal-state="${summary.state}" role="status"><div class="analysis-document-difal-heading"><span>${esc(summary.label)}</span><strong data-analysis-document-difal-amount>${esc(amount)}</strong></div><small>${esc(summary.context)}</small>${summary.note?`<p>${esc(summary.note)}</p>`:''}</div>`;
+}
+
+export function renderFiscalReports({analysis,generation,canWrite,generationUnavailable=false,documentUploads={},documentIssuerUf,fiscalDraft,configDraft,fiscalDifalChoice}) {
   const data=analysis.fiscal.data,company=generation&&generation._id===data.generationId&&!generationUnavailable?generation.companies?.find(item=>item.clientId===analysis.clientId):null;
   const slots=[['PURCHASES','Entradas','Compras e devoluções de venda.','purchase','purchaseJobId'],['SALES','Saídas','Vendas de mercadorias e serviços.','sales','salesJobId']];
   const issuerUf=normalizeUf(documentIssuerUf??analysis.company?.uf),needsDocument=slots.some(([,,,key])=>company?.[key]?.status!=='COMPLETED');
@@ -158,8 +165,10 @@ export function renderFiscalReports({analysis,generation,canWrite,generationUnav
     if(canWrite&&!complete&&(upload.error&&pending||job?.status==='PROCESSING'||isReadyToFinalize(job)))action=`<button type="button" class="analysis-button primary" data-analysis-document-retry="${type}" ${running?'disabled':''}>${upload.error?'Tentar novamente':'Retomar leitura'}</button>`;
     if(href&&job&&(complete||!canWrite))action=`<a class="analysis-button" href="${href}">${complete?'Conferir relatório':'Conferir leitura'} →</a>`;
     const repairs=Array.isArray(upload.repairs)?upload.repairs.length:Number(upload.repairs)||0;
+    const difal=renderDocumentDifal(documentDifalSummary({job,type,jobId,clientId:analysis.clientId,generationId:data.generationId,
+      policy:(fiscalDraft||data).difalPolicy,regimeSelection:(configDraft||analysis.config).regimeSelection,choice:fiscalDifalChoice}),type);
     const details=`${canSelect&&!running?`<p class="analysis-document-hint">${job?.status==='UPLOADING'?'Selecione o mesmo arquivo para continuar.':'Arraste o arquivo ou selecione acima.'}<br>CSV, XLSX ou XLS · até 10 MiB</p>`:''}${upload.progress?`<p class="analysis-document-progress" data-analysis-document-progress="${type}" role="status" aria-live="polite">${esc(upload.progress)}</p>`:''}${upload.error?`<p class="analysis-document-error" data-analysis-document-error="${type}" role="alert">${esc(upload.error)}</p>`:''}${repairs?`<p class="analysis-document-hint">${repairs} linha(s) alinhada(s) automaticamente, preservando os valores originais.</p>`:''}`;
-    return `<article class="analysis-document analysis-document-inline${canSelect?' is-uploadable':''}${complete?' is-complete':''}${running?' is-loading':''}" data-analysis-document="${type}" ${canSelect?`data-analysis-document-drop="${type}"`:''} aria-busy="${running}"><span class="analysis-document-icon">${icon('report')}</span><div class="analysis-document-copy"><h3>${label}</h3><p>${description}</p>${fileName?`<p class="analysis-document-filename">${esc(fileName)}</p>`:''}${badge(state)}</div>${action?`<div class="analysis-document-actions">${action}</div>`:''}${details?`<div class="analysis-document-upload-details">${details}</div>`:''}</article>`;
+    return `<article class="analysis-document analysis-document-inline${canSelect?' is-uploadable':''}${complete?' is-complete':''}${running?' is-loading':''}" data-analysis-document="${type}" ${canSelect?`data-analysis-document-drop="${type}"`:''} aria-busy="${running}"><span class="analysis-document-icon">${icon('report')}</span><div class="analysis-document-copy"><h3>${label}</h3><p>${description}</p>${fileName?`<p class="analysis-document-filename">${esc(fileName)}</p>`:''}${badge(state)}${difal}</div>${action?`<div class="analysis-document-actions">${action}</div>`:''}${details?`<div class="analysis-document-upload-details">${details}</div>`:''}</article>`;
   }).join('')}</div>${canWrite?`<details class="analysis-document-options"><summary>Outras opções dos documentos</summary><div class="analysis-actions"><button type="button" id="analysis-start-import">${generationUnavailable?'Preparar nova importação':data.generationId?'Substituir os relatórios fiscais':'Preparar importação de entradas e saídas'}</button></div><p class="analysis-note">As versões e os relatórios anteriores continuam no histórico. Os relatórios conservam as opções de DIFAL desta importação; a simulação usa as escolhas atuais após concluir o Fiscal.</p></details>`:''}${company&&generation?._id===data.generationId&&!generationUnavailable?`<p class="analysis-document-history"><a href="/generations.html?${new URLSearchParams({id:data.generationId,analysis:analysis.id,client:analysis.clientId})}">Conferir todos os relatórios desta empresa →</a></p>`:''}</div>`;
 }
 

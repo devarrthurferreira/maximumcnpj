@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.50.0] — 2026-10-28
+
+- Mostra a estimativa do DIFAL diretamente nos cartões de Entradas e Saídas após concluir cada leitura, com valor em reais e identificação da antecipação de ICMS na entrada.
+- Acompanha as opções atuais do Fiscal por direção e regime selecionado, sem somar cenários nem alterar a política capturada dos relatórios.
+- Usa somente os totais salvos do documento vinculado, sem nova consulta ou recálculo; não aguarda o segundo arquivo, RBT12 ou conciliação completa.
+- Distingue zero, estimativa parcial, pendência de UF e resumo indisponível, com apresentação responsiva e acesso de consulta preservado.
+- Mantém regras fiscais, recorte de competências, DRE, relatórios, dados históricos e controles de acesso.
+
 ## [0.49.0] — 2026-10-28
 
 - Moderniza capa, cartões, hierarquia de seções e gráficos vetoriais do PDF com o timbrado Luna preservado.
