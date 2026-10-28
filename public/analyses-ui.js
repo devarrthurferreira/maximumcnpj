@@ -417,6 +417,7 @@ function changeDifal(prefix,input) {
   if(prefix==='new'){S.newDifalPolicy=policy;S.newDifalChoice=choice;}
   else {S.fiscalDraft.difalPolicy=policy;S.fiscalDifalChoice=choice;}
   refreshDifalControls(prefix,policy,selection,choice);
+  if(prefix==='analysis')refreshDocumentUploads();
   if(input.matches('[data-difal-choice]')&&choice==='yes'){
     const details=$('#'+prefix+'-difal-details');if(details)details.open=true;
   }

@@ -1,4 +1,14 @@
-# Maximum CNPJ · v0.49.0
+# Maximum CNPJ · v0.50.0
+
+## DIFAL após a leitura dos documentos — v0.50.0
+
+Os cartões de **Entradas** e **Saídas**, no Fiscal da análise, mostram o valor assim que a leitura do respectivo arquivo termina. Entradas apresenta **DIFAL de entrada**, identificado como antecipação de ICMS; Saídas apresenta **DIFAL de saída**. A exibição acompanha as escolhas atuais de DIFAL do rascunho, por operação e regime Simples selecionado, inclusive antes de salvar. Desabilitar a operação retira o destaque sem modificar os documentos importados.
+
+O valor é a **estimativa do arquivo**, em reais, já calculada e armazenada pelo servidor. Não depende da conclusão do outro documento, da RBT12 ou da conciliação completa da análise. Esse total de origem pode diferir da aplicação final na DRE, que respeita as competências e condições de cada cenário. Não há soma entre Puro e Híbrido, recálculo tributário ou mudança nas escolhas capturadas dos relatórios.
+
+Zero confirmado, estimativa parcial com UFs pendentes, cálculo totalmente pendente e resumo histórico indisponível têm apresentações distintas. A estimativa só aparece para o documento concluído e vinculado à empresa e geração abertas. Os valores permanecem acessíveis ao reabrir a análise e para usuários com acesso de consulta; o layout se adapta ao celular.
+
+Validação local com dados sintéticos: tipos, build e versões conferidos; **423 testes de regras**, **72 integrações de compras/gerações/análises**, **225 Python/PDF/Mongo/OCR** e **5 cenários novos de navegador** aprovados. Os testes importam os documentos em ambas as ordens, verificam os valores antes do segundo arquivo, reabertura, opções do rascunho, acesso de consulta, preservação da origem, zero e pendências. Conferência visual em 1280, 390 e 320 px.
 
 ## PDF com leitura executiva e navegação — v0.49.0
 
