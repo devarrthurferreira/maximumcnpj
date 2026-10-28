@@ -796,3 +796,10 @@ body:has(#analysis-delete-dialog[open]){overflow:hidden}
  .analysis-document-upload-details{grid-column:1/-1}
  .analysis-document-inline .analysis-tag{font-size:10px;margin-top:6px}
 }
+
+/* RBT12 can be attached beside Entradas and Saídas without changing stages. */
+.analysis-inline-rbt12{margin-top:14px;border-style:dashed;border-color:#c9b5b8}
+.analysis-inline-rbt12-options{margin-top:10px}
+.analysis-inline-rbt12-options button{min-height:36px;padding:5px 0;border:0;background:transparent;color:var(--analysis-muted);font-size:11px;text-align:left;white-space:normal}
+.analysis-inline-rbt12-options button:hover{color:#750207;text-decoration:underline}
+.analysis-inline-rbt12 .analysis-document-progress{white-space:pre-line}

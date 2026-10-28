@@ -1,5 +1,12 @@
 # Histórico de alterações
 
+## [0.45.4] — 2026-10-28
+
+- Finalização financeira em partes retomáveis, com cópia idempotente e conferência antes de disponibilizar o resumo.
+- Retoma documentos totalmente enviados sem selecionar o arquivo novamente; interface acompanha o progresso e limita tentativas de erros transitórios.
+- RBT12 em PDF diretamente na etapa de Entradas e Saídas, com leitura automática pela seção 2.2.
+- Diagnóstico seguro de timeout, conexão e capacidade, sem expor dados privados; preserva o código da requisição na interface.
+
 ## [0.45.3] — 2026-10-28
 
 - Seleção ou arrastar de arquivos diretamente nos cartões de Entradas e Saídas, com leitura, envio e progresso na própria análise.

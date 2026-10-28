@@ -1,4 +1,5 @@
 import {analysisRequest} from './analyses-api.js';
+import {finalizeFinancialDocument,isReadyToFinalize} from './purchase-finalization.js';
 import {DIFAL_VERSION,normalizeUf} from './difal.js';
 import {ANTICIPATION_VERSION} from './icms-anticipation.js';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.js';
@@ -91,7 +92,7 @@ export async function uploadFiscalDocument({file,review,type,generationId,client
   const active=current&&current._id===existing?ownedJob(current,{...context,importId:existing}):null;
   if(active&&['CANCELLED','INVALID'].includes(active.status))throw new Error('Este envio foi cancelado. Atualize a análise para adicionar outro arquivo.');
   if(!pending){
-    const needsRows=!active||active.status==='UPLOADING';
+    const needsRows=!active||active.status==='UPLOADING'&&!isReadyToFinalize(active);
     if(needsRows){
       checkFile(file);checkReview(review);
       if(active&&(file.name!==active.fileName||review.rows.length!==active.expectedRows))throw new Error('Para retomar, selecione o mesmo arquivo, com o mesmo nome e número de linhas.');
@@ -106,7 +107,7 @@ export async function uploadFiscalDocument({file,review,type,generationId,client
   }
   const own=job=>ownedJob(job,{...context,importId:pending.importId}),path=routeFor(type)+'/'+pending.importId;
   let job=active||pending.job;
-  if(!job||job.status==='UPLOADING'){
+  if(!job||job.status==='UPLOADING'&&!isReadyToFinalize(job)){
     if(!Array.isArray(pending.rows)||!pending.rows.length)throw new Error('Selecione novamente o arquivo original para retomar este envio.');
     onProgress('Salvando o documento…');
     const attached=await request('/api/v4/generations/'+generationId+'/'+(type==='SALES'?'sales':'purchases'),'POST',{
@@ -122,10 +123,14 @@ export async function uploadFiscalDocument({file,review,type,generationId,client
         if(!Number.isInteger(saved.uploaded)||saved.uploaded<next)throw new Error('O envio não avançou. Retome para continuar o mesmo documento.');
         pending.offset=next;onPending(pending);onProgress(`${number(next)} de ${number(pending.rows.length)} linhas salvas…`);
       }
-      job=own(await request(path+'/finalize','POST',{}));pending.job=job;onPending(pending);
+      job={...job,uploaded:pending.rows.length};pending.job=job;onPending(pending);
     }
   }
   own(job);
+  if(job.status==='UPLOADING'){
+    job=own(await finalizeFinancialDocument(job,{request,onProgress,signal,onJob:next=>{pending.job=next;onPending(pending);}}));
+    pending.job=job;onPending(pending);
+  }
   while(job.status==='PROCESSING'){
     const count=Number.isInteger(job.received)&&Number.isInteger(job.summary?.unique)?` ${number(job.received)} de ${number(job.summary.unique)} concluídos.`:'';
     onProgress('Documento salvo. Consultando os CNPJs…'+count);

@@ -1,4 +1,5 @@
 import {mountNavigation} from './navigation.js';
+import {finalizeFinancialDocument,isReadyToFinalize} from './purchase-finalization.js';
 import {requiresSimplesReference} from './regime-selection.js';
 import {difalDirectionSelection} from './difal-policy.js';
 import {renderRevenueReconciliation} from './revenue-reconciliation-view.js';
@@ -43,11 +44,13 @@ async function api(url, method = 'GET', data) {
     if (!r.ok) {
       if (r.status === 401) throw new Error('Sua sessão expirou. Entre novamente pelo painel.');
       const failure=new Error(d.message || 'Não foi possível concluir a operação.');
-      failure.status=r.status;failure.code=d.error;failure.resource=url;throw failure;
+      failure.status=r.status;failure.code=d.error;failure.resource=url;failure.retryable=d.retryable===true;failure.requestId=d.requestId;
+      if(r.status>=500&&/^[a-f0-9-]{36}$/i.test(d.requestId||''))failure.message+=' Código da requisição: '+d.requestId+'.';
+      throw failure;
     }
     return d;
   } catch (e) {
-    if (e.name === 'AbortError') throw new Error('O servidor excedeu o tempo de resposta. Retome o mesmo relatório para continuar do progresso salvo.');
+    if (e.name === 'AbortError') throw Object.assign(new Error('O servidor excedeu o tempo de resposta. Retome o mesmo relatório para continuar do progresso salvo.'),{code:'NETWORK_TIMEOUT',retryable:true});
     throw e;
   } finally { clearTimeout(timeout); }
 }
@@ -268,7 +271,7 @@ function setBusy(busy) {
     if ($(selector)) $(selector).disabled = busy || !!S.pending || !S.company;
   }
   if ($('#purchase-issuer-uf')) $('#purchase-issuer-uf').disabled = busy || !!S.pending || !!S.resume || !S.company;
-  document.querySelectorAll('[data-open-purchase], [data-report-type]').forEach(b => b.disabled = busy || !!S.pending);
+  document.querySelectorAll('[data-open-purchase], [data-report-type], #purchase-finalize, #purchase-cancel').forEach(b => b.disabled = busy || !!S.pending);
 }
 async function companyChanged() {
   if (S.busy || S.pending) { $('#purchase-company').value = S.company; return; }
@@ -276,6 +279,7 @@ async function companyChanged() {
   S.issuerUf = normalizeUf(S.clients.find(item => item._id === S.company)?.uf);
   if ($('#purchase-issuer-uf')) $('#purchase-issuer-uf').value = S.issuerUf;
   clearError(); resetPreview(); $('#purchase-report-view').innerHTML = ''; $('#purchase-next-step').innerHTML = ''; renderFlow(); setBusy(false);
+  if ($('#purchase-import')) $('#purchase-import').hidden = false;
   if (guided && $('#purchase-guided-company')) {
     const company = S.clients.find(item => item._id === S.company);
     $('#purchase-guided-company').textContent = company ? `${company.code || 'Sem código'} · ${company.name}` : '';
@@ -392,7 +396,8 @@ async function upload() {
       pending.offset = nextOffset;
       status(`${number(pending.offset)} / ${number(pending.rows.length)} linhas enviadas…`);
     }
-    await api(path(`/${pending.importId}/finalize`), 'POST', {});
+    const uploaded=await api(path('/'+pending.importId));
+    await finalizeFinancialDocument(uploaded,{request:api,onProgress:status});
     S.pending = null; S.resume = null; setBusy(false); button.disabled = true; button.textContent = 'Relatório importado';
     status('Relatório salvo. Consultando os CNPJs únicos…');
     await loadHistory(1); await openJob(pending.importId, true);
@@ -416,6 +421,7 @@ async function openJob(id, auto = false, loadedJob = null) {
   setBusy(false);
   history.replaceState(null, '', '/purchases.html?' + urlParams({job:job._id}));
   await renderJob(seq);
+  if (auto && isReadyToFinalize(S.job)&&writable()) { await resumeFinalization();return; }
   if (auto && S.job.status === 'PROCESSING') { S.paused = false; scheduleProcess(seq); }
 }
 function jobTitle(job) {
@@ -430,15 +436,34 @@ async function renderJob(seq = S.seq) {
     if (seq !== S.seq) return;
     S.summary = summary; renderSummary(); if (!guided) await loadRows(1); await renderNextStep(seq); return;
   }
+  if(isReadyToFinalize(job)){
+    $('#purchase-report-view').innerHTML=`${jobTitle(job)}<section class="card purchase-guided-message"><h2>Concluir a leitura do documento</h2><p>As ${number(job.uploaded)} linhas já foram enviadas. Retome a finalização sem selecionar o arquivo novamente.</p>${writable()?`<div class="row wrap"><button id="purchase-finalize" class="primary">Retomar leitura</button><button id="purchase-cancel" class="${guided?'':'danger'}">${guided?'Trocar arquivo':'Cancelar relatório'}</button></div>`:''}<p id="purchase-finalize-status" class="purchase-status" role="status"></p></section>`;
+    if($('#purchase-import'))$('#purchase-import').hidden=true;
+    if($('#purchase-finalize'))$('#purchase-finalize').onclick=()=>void resumeFinalization();
+    if(guided)wireGuidedCancel();else wireCancel(job);
+    return;
+  }
   if (guided) { renderGuidedJob(seq); return; }
   $('#purchase-report-view').innerHTML = `${jobTitle(job)}<section class="card stack"><div class="purchase-split"><h2>${esc(jobLabels[job.status] || job.status)}</h2><span class="badge">${number(job.uploaded)} linhas importadas</span></div>${job.status === 'PROCESSING' ? `<p data-processing-count>${number(job.received)} / ${number(job.summary?.unique)} CNPJs com consulta concluída.</p><progress class="purchase-progress" value="${Number(job.received || 0)}" max="${Math.max(1, Number(job.summary?.unique || 0))}"></progress><p class="hint">Mantenha esta tela aberta para consultar. Você pode pausar e voltar ao histórico para retomar. Cada CNPJ válido é consultado uma vez neste relatório.</p>${writable() ? '<div class="row wrap"><button id="purchase-process" class="primary">Consultar / retomar</button><button id="purchase-pause">Pausar nesta tela</button></div>' : ''}<p id="purchase-process-status" class="hint" role="status"></p>` : job.status === 'UPLOADING' ? `<p>Selecione novamente o arquivo <strong>${esc(job.fileName)}</strong> na área de importação e confira as colunas. As partes já salvas serão verificadas; somente as pendências serão adicionadas.</p><p class="hint">${job.calculationVersion === 'NET_V2' ? 'Esta importação usa Q − Y + AA − AB.' : 'Este histórico usa a regra original Q. Para aplicar a regra nova, cancele este relatório e importe novamente.'}</p>` : '<p>Este relatório foi cancelado. Os registros concluídos foram preservados no histórico; ele não gera indicadores finais.</p>'}${!['COMPLETED','CANCELLED'].includes(job.status) && writable() ? '<button id="purchase-cancel" class="danger">Cancelar relatório</button>' : ''}</section>`;
   if ($('#purchase-process')) $('#purchase-process').onclick = () => { S.paused = false; clearError(); process(seq); };
   if ($('#purchase-pause')) $('#purchase-pause').onclick = () => { stopProcessing(); $('#purchase-process-status').textContent = 'Pausado nesta tela. Uma chamada já iniciada pode terminar; o progresso fica salvo.'; };
+  wireCancel(job);
+}
+function wireCancel(job) {
   if ($('#purchase-cancel')) $('#purchase-cancel').onclick = async () => {
-    if (!confirm('Cancelar este relatório? Os registros já salvos ficam no histórico, sem emitir indicadores finais.')) return;
+    if (S.busy || S.pending || !confirm('Cancelar este relatório? Os registros já salvos ficam no histórico, sem emitir indicadores finais.')) return;
     stopProcessing();
     try { await api(path(`/${job._id}/cancel`), 'POST', {}); await openJob(job._id); await loadHistory(S.historyPage); } catch (e) { error(e); }
   };
+}
+async function resumeFinalization() {
+  if(S.busy||S.pending||!writable()||!isReadyToFinalize(S.job))return;
+  const job=S.job;setBusy(true);clearError();
+  try {
+    await finalizeFinancialDocument(job,{request:api,onProgress:message=>{status(message);if($('#purchase-finalize-status'))$('#purchase-finalize-status').textContent=message;}});
+    S.resume=null;setBusy(false);await openJob(job._id,true);
+  }catch(e){error(e);}
+  finally{setBusy(false);if($('#purchase-finalize'))$('#purchase-finalize').disabled=false;}
 }
 function renderGuidedJob(seq) {
   const job = S.job;

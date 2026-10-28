@@ -13,6 +13,7 @@ import { appOrigin, permittedOrigin } from './origins.ts';
 import { routeV4 } from './lookup-http.ts';
 import { provisionMaximumForLogin, provisionMaximumTeam } from './team.ts';
 import { serveSimplesDocument } from './blob-documents.ts';
+import { serviceFailure } from './service-errors.ts';
 const PUBLIC = resolve(process.cwd(), 'public');
 const cookieName = () => process.env.NODE_ENV === 'production' ? '__Host-maximum_session' : 'maximum_session';
 const cookie = (value: string, age=43200) => `${cookieName()}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}${process.env.NODE_ENV==='production'?'; Secure':''}`;
@@ -135,10 +136,10 @@ export async function handler(req: IncomingMessage,res: ServerResponse) {
     need(allowed[extname(file)],'Arquivo não encontrado.',404);
     try { const s=await stat(file); need(s.isFile(),'Arquivo não encontrado.',404); const data=await readFile(file); res.writeHead(200,{'Content-Type':allowed[extname(file)],'Cache-Control':'no-cache'}); res.end(req.method==='HEAD'?undefined:data); }
     catch(e) { if(e instanceof AppError)throw e; throw new AppError(404,'NOT_FOUND','Arquivo não encontrado. Execute npm run build.'); }
-  } catch(e:any) {
-    const app=e instanceof AppError?e:e?.code===11000?new AppError(409,'DUPLICATE','Este registro já existe. Atualize a página.'):new AppError(503,'SERVICE_UNAVAILABLE','Serviço indisponível. Confira o MongoDB e as configurações do servidor.');
-    console.error(JSON.stringify({requestId,code:app.code,status:app.status}));
-    if(!res.headersSent)json(res,app.status,{ error:app.code,message:app.message,requestId }); else res.end();
+  } catch(e:unknown) {
+    const {app,retryable,diagnostic}=serviceFailure(e);
+    console.error(JSON.stringify({requestId,code:app.code,status:app.status,...(diagnostic?{failure:diagnostic}:{})}));
+    if(!res.headersSent)json(res,app.status,{ error:app.code,message:app.message,requestId,...(retryable===undefined?{}:{retryable}) }); else res.end();
   }
 }
 export function startServer(port=Number(process.env.PORT||3000)) {

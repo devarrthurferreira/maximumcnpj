@@ -144,39 +144,123 @@ export async function purchaseJob(id: string, mode: FinancialMode = PURCHASE_MOD
   need(isFinancialMode(mode) && job.mode === mode, `Relatório de ${financialLabel(mode)} não encontrado.`, 404, 'NOT_FOUND');
   return job;
 }
-/** Caller owns the same job lease used by upload and provider processing. */
+const FINALIZATION_VERSION = 'FINANCIAL_FINALIZE_V1';
+const FINALIZATION_BATCH = 500;
+const FINALIZATION_ROWS_PER_REQUEST = 1000;
+const FINANCIAL_COPY_FIELDS = ['_id','workspaceId','jobId','index','document','documentKind','cnpj','name','serviceDate','quantity',
+  'natureCode','description','operation','natureOperation','operationVersion','recipientUf','difal','anticipation','totalCents','balanceCents','valid','kind',...COMPONENT_FIELDS];
+const financialCopyProjection = Object.fromEntries(FINANCIAL_COPY_FIELDS.map(field=>[field,1]));
+type FinalizationProgress = {version:string;phase:'COPYING'|'PREPARING'|'VERIFYING'|'COMMITTING';copiedRows:number;totalRows:number;
+  preparedCnpjs:number;totalCnpjs:number;verifiedRows:number;lastCnpj:string};
+function stableFinancialValue(value:any):string {
+  if(value===undefined)return 'undefined';
+  if(value===null||typeof value!=='object')return JSON.stringify(value);
+  if(Array.isArray(value))return '['+value.map(stableFinancialValue).join(',')+']';
+  return '{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+stableFinancialValue(value[key])).join(',')+'}';
+}
+function financialCopy(line:Doc) {return Object.fromEntries(FINANCIAL_COPY_FIELDS.filter(field=>Object.hasOwn(line,field)).map(field=>[field,line[field]]));}
+async function checkCopiedFinancialRows(job:Doc,source:Doc[]) {
+  const saved=await (await collection('purchaseLines')).find(scope({jobId:job._id,index:{$gte:source[0].index,$lte:source[source.length-1].index}}))
+    .project<Doc>(financialCopyProjection).sort({index:1}).maxTimeMS(20000).toArray();
+  need(saved.length===source.length&&saved.every((line,index)=>stableFinancialValue(line)===stableFinancialValue(financialCopy(source[index]))),
+    'A cópia financeira diverge do documento enviado. Os dados foram preservados para conferência.',409,'PURCHASE_TOTAL');
+}
+async function financialSourceBatch(job:Doc,offset:number) {
+  const source=await (await collection('lookupStage')).find(scope({jobId:job._id,index:{$gte:offset,$lt:Math.min(job.expectedRows,offset+FINALIZATION_BATCH)}}))
+    .project<Doc>(financialCopyProjection).sort({index:1}).maxTimeMS(20000).toArray();
+  need(source.length===Math.min(FINALIZATION_BATCH,job.expectedRows-offset)&&source.every((line,index)=>line.index===offset+index),
+    'Envio incompleto ou expirado. Reenvie a planilha.',409,'INCOMPLETE');
+  return source;
+}
+async function saveFinalizationProgress(job:Doc,progress:FinalizationProgress) {
+  const saved=await (await collection('lookupJobs')).updateOne(scope({_id:job._id,status:'UPLOADING',leaseOwner:job.leaseOwner}),{$set:{finalization:progress}});
+  need(saved.matchedCount===1,'A finalização foi atualizada por outra requisição. Tente novamente para retomar.',409,'JOB_BUSY');
+}
+function finalizationProgress(job:Doc):FinalizationProgress {
+  const progress=job.finalization;
+  if(!progress)return {version:FINALIZATION_VERSION,phase:'COPYING',copiedRows:0,totalRows:job.expectedRows,preparedCnpjs:0,totalCnpjs:0,verifiedRows:0,lastCnpj:''};
+  need(progress.version===FINALIZATION_VERSION&&['COPYING','PREPARING','VERIFYING','COMMITTING'].includes(progress.phase)&&
+    progress.totalRows===job.expectedRows&&Number.isInteger(progress.copiedRows)&&progress.copiedRows>=0&&progress.copiedRows<=job.expectedRows&&
+    Number.isInteger(progress.verifiedRows)&&progress.verifiedRows>=0&&progress.verifiedRows<=job.expectedRows&&
+    Number.isInteger(progress.preparedCnpjs)&&progress.preparedCnpjs>=0&&progress.preparedCnpjs<=job.expectedRows&&
+    Number.isInteger(progress.totalCnpjs)&&progress.totalCnpjs>=0&&progress.totalCnpjs<=job.expectedRows&&
+    typeof progress.lastCnpj==='string'&&(!progress.lastCnpj||normalizeCnpj(progress.lastCnpj).valid&&normalizeCnpj(progress.lastCnpj).cnpj===progress.lastCnpj)&&
+    (progress.preparedCnpjs===0?progress.lastCnpj==='':progress.lastCnpj!=='')&&
+    (progress.phase==='COPYING'?progress.preparedCnpjs===0&&progress.verifiedRows===0&&progress.totalCnpjs===0:progress.copiedRows===job.expectedRows)&&
+    (progress.phase==='PREPARING'?progress.verifiedRows===0&&progress.totalCnpjs===0:true)&&
+    (['VERIFYING','COMMITTING'].includes(progress.phase)?progress.preparedCnpjs===progress.totalCnpjs:true)&&
+    (progress.phase==='COMMITTING'?progress.verifiedRows===job.expectedRows:true),
+    'Progresso de finalização inconsistente. Os documentos foram preservados para conferência.',409,'RESULT_COUNT');
+  return {...progress};
+}
+/** Each request owns a job lease and copies a bounded, retry-safe portion of the source. */
 export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
   need(isFinancialMode(job.mode), 'Tipo de relatório inválido.');
-  const id = job._id, stage = await collection('lookupStage'), rows = await collection('purchaseLines');
-  const count = await stage.countDocuments(scope({jobId: id}));
-  need(count === job.expectedRows && job.uploaded === count, 'Envio incompleto ou expirado. Reenvie a planilha.', 409, 'INCOMPLETE');
-  const groups = await financialGroups('lookupStage', id, job);
-  const {difal,anticipation} = await financialTaxes('lookupStage', id, job);
-  const period = calculationVersion(job) === 'NET_V2' ? await financialPeriod('lookupStage', id, job) : null;
-  const valid = groups.filter(g => g.valid), invalid = groups.filter(g => !g.valid).reduce((sum, g) => sum + g.lines, 0);
-  const totalCents = exactCents(groups.reduce((sum, g) => sum + exactCents(g.totalCents), 0));
-  // Persist only approved financial components plus row/document identity. Never retain the uploaded workbook.
-  await stage.aggregate([
-    {$match: scope({jobId: id})},
-    {$project: {_id: 1, workspaceId: 1, jobId: 1, index: 1, document: 1, documentKind: 1, cnpj: 1, name: 1, serviceDate: 1, quantity: 1, natureCode: 1, description: 1, operation: 1, natureOperation: 1, operationVersion: 1, recipientUf: 1, difal: 1, anticipation: 1, totalCents: 1, balanceCents: 1, valid: 1, kind: 1, ...Object.fromEntries(COMPONENT_FIELDS.map(field => [field, 1]))}},
-    {$merge: {into: 'purchaseLines', on: '_id', whenMatched: 'keepExisting', whenNotMatched: 'insert'}}
-  ], {maxTimeMS: 20000}).toArray();
-  need(await rows.countDocuments(scope({jobId: id})) === count, 'Cópia financeira incompleta.', 409, 'RESULT_COUNT');
-  const items = await collection('lookupItems');
-  for (let p = 0; p < valid.length; p += 500) {
-    await items.bulkWrite(valid.slice(p, p + 500).map(g => ({updateOne: {filter: scope({_id: `${id}:${g._id}`}), update: {$setOnInsert: {
-      ...scope(), jobId: id, clientId: job.clientId, cnpj: g._id, submittedName: g.name, kind: financialKind(job.mode), uf: '', occurrences: g.lines,
-      totalCents: exactCents(g.totalCents), state: 'PENDING', attempts: 0, createdAt: new Date()
-    }}, upsert: true}})));
+  const id=job._id,stage=await collection('lookupStage'),rows=await collection('purchaseLines'),items=await collection('lookupItems');
+  const count=await stage.countDocuments(scope({jobId:id}));
+  need(count===job.expectedRows&&job.uploaded===count,'Envio incompleto ou expirado. Reenvie a planilha.',409,'INCOMPLETE');
+  const progress=finalizationProgress(job),large=count>FINALIZATION_ROWS_PER_REQUEST;
+  if(progress.phase==='COPYING'){
+    const limit=Math.min(count,progress.copiedRows+FINALIZATION_ROWS_PER_REQUEST);
+    while(progress.copiedRows<limit){
+      const source=await financialSourceBatch(job,progress.copiedRows);
+      await rows.bulkWrite(source.map(line=>({updateOne:{filter:scope({_id:line._id}),update:{$setOnInsert:financialCopy(line)},upsert:true}})),{ordered:false});
+      // Existing partial copies must match exactly; never overwrite them to hide a mismatch.
+      await checkCopiedFinancialRows(job,source);
+      progress.copiedRows+=source.length;await saveFinalizationProgress(job,progress);
+    }
+    if(progress.copiedRows===count){progress.phase='PREPARING';await saveFinalizationProgress(job,progress);}
+    if(large)return getJob(id);
   }
-  need(await items.countDocuments(scope({jobId: id})) === valid.length, 'Quantidade de CNPJs inconsistente.', 409, 'RESULT_COUNT');
-  const summary = {lines: count, unique: valid.length, invalid, duplicates: count - invalid - valid.length};
-  const update: any = {summary, ...(period ? {reportPeriod: period} : {}), purchaseInput: {...(difal ? {difal} : {}), ...(anticipation ? {anticipation} : {}), totalCents, cnpjCents: exactCents(valid.reduce((sum, g) => sum + g.totalCents, 0)), ...(job.mode === SALES_MODE ? {balanceCents: exactSignedCents(groups.reduce((sum, g) => sum + exactSignedCents(g.balanceCents), 0))} : {}), ...(calculationVersion(job) === 'NET_V2' ? {components: componentTotals(groups)} : {})}, status: 'PROCESSING', received: 0, startedAt: new Date()};
-  // Non-CNPJ documents do not need provider lookups; sales CPF remains its own managerial group.
-  if (!valid.length) { update.status = 'COMPLETED'; update.completedAt = new Date(); }
-  await (await collection('lookupJobs')).updateOne(scope({_id: id}), {$set: update});
-  await stage.deleteMany(scope({jobId: id}));
-  await audit(actor._id, job.mode === SALES_MODE ? 'sales.validated' : 'purchases.validated', id);
+  if(progress.phase==='PREPARING'){
+    do {
+    // The compound source index bounds the remaining CNPJs. Only this batch is held in memory.
+    const groups=await stage.aggregate([
+      {$match:scope({jobId:id,valid:true,...(progress.lastCnpj?{cnpj:{$gt:progress.lastCnpj}}:{})})},
+      {$sort:{cnpj:1,index:1}},{$group:{_id:'$cnpj',name:{$first:'$name'},lines:{$sum:1},totalCents:{$sum:'$totalCents'}}},
+      {$sort:{_id:1}},{$limit:FINALIZATION_BATCH}
+    ],{maxTimeMS:20000}).toArray();
+    if(groups.length){
+      await items.bulkWrite(groups.map(group=>({updateOne:{filter:scope({_id:`${id}:${group._id}`}),update:{$setOnInsert:{
+        ...scope(),jobId:id,clientId:job.clientId,cnpj:group._id,submittedName:group.name,kind:financialKind(job.mode),uf:'',occurrences:group.lines,
+        totalCents:exactCents(group.totalCents),state:'PENDING',attempts:0,createdAt:new Date()
+      }},upsert:true}})),{ordered:false});
+      const saved=await items.find(scope({jobId:id,cnpj:{$in:groups.map(group=>group._id)}})).toArray(),byCnpj=new Map(saved.map(item=>[item.cnpj,item]));
+      need(saved.length===groups.length&&groups.every(group=>{const item=byCnpj.get(group._id);return item&&item.clientId===job.clientId&&item.occurrences===group.lines&&item.totalCents===group.totalCents&&item.kind===financialKind(job.mode);}),
+        'As consultas preparadas divergem do documento enviado.',409,'PURCHASE_TOTAL');
+      progress.preparedCnpjs+=groups.length;progress.lastCnpj=groups[groups.length-1]._id;
+    }
+    if(groups.length<FINALIZATION_BATCH){progress.totalCnpjs=progress.preparedCnpjs;progress.phase='VERIFYING';}
+    await saveFinalizationProgress(job,progress);
+    } while(!large&&progress.phase==='PREPARING');
+    if(large)return getJob(id);
+  }
+  if(progress.phase==='VERIFYING'){
+    const limit=Math.min(count,progress.verifiedRows+FINALIZATION_ROWS_PER_REQUEST);
+    while(progress.verifiedRows<limit){
+      const source=await financialSourceBatch(job,progress.verifiedRows);await checkCopiedFinancialRows(job,source);
+      progress.verifiedRows+=source.length;await saveFinalizationProgress(job,progress);
+    }
+    if(progress.verifiedRows===count){progress.phase='COMMITTING';await saveFinalizationProgress(job,progress);}
+    if(large)return getJob(id);
+  }
+  need(progress.phase==='COMMITTING','Finalização incompleta. Retome o mesmo documento.',409,'INCOMPLETE');
+  // Keep the existing financial reconciliation before publishing any totals or final state.
+  const groups=await financialGroups('lookupStage',id,job);
+  const {difal,anticipation}=await financialTaxes('lookupStage',id,job);
+  const period=calculationVersion(job)==='NET_V2'?await financialPeriod('lookupStage',id,job):null;
+  const valid=groups.filter(group=>group.valid),invalid=groups.filter(group=>!group.valid).reduce((sum,group)=>sum+group.lines,0);
+  const totalCents=exactCents(groups.reduce((sum,group)=>sum+exactCents(group.totalCents),0));
+  need(await rows.countDocuments(scope({jobId:id}))===count,'Cópia financeira incompleta.',409,'RESULT_COUNT');
+  need(await items.countDocuments(scope({jobId:id}))===valid.length&&progress.preparedCnpjs===valid.length,'Quantidade de CNPJs inconsistente.',409,'RESULT_COUNT');
+  const summary={lines:count,unique:valid.length,invalid,duplicates:count-invalid-valid.length};
+  const update:any={summary,...(period?{reportPeriod:period}:{}),purchaseInput:{...(difal?{difal}:{}),...(anticipation?{anticipation}:{}),totalCents,
+    cnpjCents:exactCents(valid.reduce((sum,group)=>sum+group.totalCents,0)),...(job.mode===SALES_MODE?{balanceCents:exactSignedCents(groups.reduce((sum,group)=>sum+exactSignedCents(group.balanceCents),0))}:{}),
+    ...(calculationVersion(job)==='NET_V2'?{components:componentTotals(groups)}:{})},status:'PROCESSING',received:0,startedAt:new Date()};
+  if(!valid.length){update.status='COMPLETED';update.completedAt=new Date();}
+  const committed=await (await collection('lookupJobs')).updateOne(scope({_id:id,status:'UPLOADING',leaseOwner:job.leaseOwner}),{$set:update,$unset:{finalization:''}});
+  need(committed.matchedCount===1,'A finalização foi atualizada por outra requisição. Retome o mesmo documento.',409,'JOB_BUSY');
+  await stage.deleteMany(scope({jobId:id}));await audit(actor._id,job.mode===SALES_MODE?'sales.validated':'purchases.validated',id);
   return getJob(id);
 }
 

@@ -45,7 +45,7 @@ async function completeFiscal(page:Page,id:string){
   return analysis;
 }
 
-test('Extrato da análise é salvo, retomado em nova sessão e desvinculado ao confirmar RBT12 manual',async({page,browser,baseURL})=>{
+test('RBT12 é enviada junto de entradas e saídas, retomada em nova sessão e desvinculada ao confirmar valor manual',async({page,browser,baseURL},info)=>{
   test.setTimeout(90_000);page.setDefaultTimeout(15_000);
   expect(process.env.MONGODB_URI,'Use somente MongoDB descartável').toBeTruthy();
   const mongo=new MongoClient(process.env.MONGODB_URI!);await mongo.connect();
@@ -146,21 +146,41 @@ test('Extrato da análise é salvo, retomado em nova sessão e desvinculado ao c
       });
     }
 
-    await mockPdfTransport(page);await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await fiscalStep(page,'rbt12');
-    await expect(page.locator('#analysis-rbt12-pdf')).toBeEnabled();
+    await mockPdfTransport(page);await page.goto(`/analyses.html?id=${id}&sector=fiscal&step=documents`);
+    await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','documents');
+    await expect(page.locator('#analysis-inline-rbt12-pdf')).toBeEnabled();
+    await expect(page.locator('#analysis-inline-rbt12-view')).toContainText('RBT12 · seção 2.2');
+    await expect(page.locator('#analysis-inline-rbt12-view')).toContainText('Aguardando extrato');
+    // Invalid uploads show their reason in the same card and never request storage.
+    await page.locator('#analysis-inline-rbt12-pdf').setInputFiles({name:'arquivo-invalido.csv',mimeType:'text/csv',buffer:Buffer.from('não é um PDF')});
+    await expect(page.locator('#analysis-inline-pdf-status')).toContainText('em PDF');
+    await expect(page.locator('#analyses-app')).toHaveAttribute('aria-busy','false');
+    expect(counts).toEqual({tickets:0,uploads:0,reads:0,loads:0});
     const referenceSaved=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/fiscal`&&
       response.request().method()==='PATCH'&&response.request().postDataJSON().data.rbt12ExtractionId===extractionId);
-    await page.locator('#analysis-rbt12-pdf').setInputFiles({name:fileName,mimeType:'application/pdf',buffer:pdf});
+    const chooser=page.waitForEvent('filechooser');
+    await page.getByRole('button',{name:'Adicionar RBT12 em PDF',exact:true}).click();
+    await (await chooser).setFiles({name:fileName,mimeType:'application/pdf',buffer:pdf});
     await expect.poll(()=>counts.reads).toBe(1);
     await expect(page.locator('#analyses-app')).toHaveAttribute('aria-busy','true');
     await expect(page.locator('#analysis-wizard-close')).toBeDisabled();
     await page.keyboard.press('Escape');
     await expect(page.locator('#analysis-wizard')).toBeVisible();
-    await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','rbt12');
+    await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','documents');
+    await expect(page.locator('#analysis-inline-pdf-status')).toContainText('Lendo a seção 2.2');
     releaseRead();
     const saved=await referenceSaved;expect(saved.ok(),await saved.text()).toBe(true);
     await expect(page.locator('#analyses-app')).toHaveAttribute('aria-busy','false');
     await expect(page.locator('#analysis-pdf-status')).toContainText('Leitura confirmada');
+    await expect(page.locator('#analysis-inline-pdf-status')).toContainText('Leitura confirmada');
+    await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','documents');
+    await expect(page.locator('#analysis-inline-rbt12-view')).toContainText(fileName);
+    const originalViewport=page.viewportSize();
+    await page.setViewportSize({width:390,height:760});
+    await page.locator('#analysis-inline-rbt12-view').scrollIntoViewIfNeeded();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+    await page.screenshot({path:info.outputPath('analysis-rbt12-documents-mobile.png'),fullPage:true});
+    if(originalViewport)await page.setViewportSize(originalViewport);
     await expect(page.locator('.analysis-reference')).toContainText('PA 08/2026');
     await expect(page.locator('.analysis-reference > strong')).toHaveText('R$ 150.000,01');
     const linked=(await get(page.request,`/api/v4/analyses/${id}`)).analysis;
@@ -198,6 +218,22 @@ test('Extrato da análise é salvo, retomado em nova sessão e desvinculado ao c
     await resumed.reload();await fiscalStep(resumed,'rbt12');await expect(resumed.locator('#analysis-rbt12')).toHaveValue('180000.25');
     await expect(resumed.locator('#analysis-rbt12-confirm')).toBeChecked();
     await expect(resumed.locator('.analysis-reference,#analysis-rbt12-pdf')).toHaveCount(0);
+    expect(counts).toEqual({tickets:1,uploads:1,reads:1,loads:1});expect(errors).toEqual([]);
+
+    // Read-only access never exposes the new upload controls.
+    await db.collection<any>('users').updateOne({_id:account.id,workspaceId},{$set:{role:'viewer'}});
+    await resumed.goto(`/analyses.html?id=${id}&sector=fiscal&step=documents`);
+    await expect(resumed.locator('#analysis-inline-rbt12-view')).toContainText('Referência manual registrada');
+    await expect(resumed.locator('#analysis-inline-rbt12-pdf,#analysis-add-rbt12-document')).toHaveCount(0);
+    expect(counts).toEqual({tickets:1,uploads:1,reads:1,loads:1});
+
+    // Regimes without Simples keep RBT12 optional and do not ask for a PDF.
+    await db.collection<any>('users').updateOne({_id:account.id,workspaceId},{$set:{role:'admin'}});
+    const configSaved=await resumed.request.patch(`/api/v4/analyses/${id}/config`,{headers:{Origin:new URL(baseURL!).origin},data:{
+      expectedConfigRevision:manual.config.revision,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['actual']}
+    }});expect(configSaved.ok(),await configSaved.text()).toBe(true);
+    await resumed.reload();await expect(resumed.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','documents');
+    await expect(resumed.locator('#analysis-inline-rbt12-view,#analysis-inline-rbt12-pdf,#analysis-add-rbt12-document')).toHaveCount(0);
     expect(counts).toEqual({tickets:1,uploads:1,reads:1,loads:1});expect(errors).toEqual([]);
   }finally{
     releaseRead();

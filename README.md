@@ -1,5 +1,21 @@
-# Maximum CNPJ · v0.45.3
+# Maximum CNPJ · v0.45.4
 
+
+## Finalização retomável e RBT12 junto dos documentos — v0.45.4
+
+O envio de entradas e saídas passa a finalizar os documentos em etapas limitadas por requisição, com progresso salvo. A cópia financeira deixa de usar uma única operação para todo o arquivo. Cada parte preserva os valores originais e verifica os dados já gravados; a publicação do resumo e a liberação dos relatórios continuam dependendo da conferência completa de linhas, documentos, valores, impostos e competências.
+
+Quando todas as linhas já foram recebidas, **Retomar leitura** conclui a finalização sem pedir o CSV novamente, inclusive após recarregar a página. A análise e a tela de importação acompanham as etapas automaticamente. Interrupções temporárias identificadas de conexão ou tempo têm tentativas limitadas, sempre sobre o mesmo relatório; conflitos, dados inconsistentes e limites de armazenamento continuam sendo exibidos como pendências. Não se cria outra geração para contornar um erro de envio.
+
+**RBT12 · seção 2.2** oferece **Adicionar PDF** diretamente junto de Entradas e Saídas para as análises que incluem Simples. Selecionar o PDF inicia o fluxo existente de armazenamento privado e leitura, mostrando progresso e confirmação na mesma etapa. A conferência do extrato e a referência manual permanecem disponíveis nas opções. As regras de competências disponíveis de janeiro a setembro e a janela histórica de 12 meses da RBT12 permanecem inalteradas.
+
+O diagnóstico distingue timeout, indisponibilidade de conexão e a mensagem explícita de limite de armazenamento do MongoDB. Falhas inesperadas registram somente categorias e códigos técnicos seguros, sem mensagens do driver, documentos, consultas ou credenciais. O código da requisição acompanha os erros do servidor para investigação. O erro 503 observado anteriormente foi localizado na finalização; o log antigo ocultava a exceção original, portanto não permite afirmar a causa específica do MongoDB.
+
+Não há migração destrutiva. As fontes temporárias permanecem até a conclusão, versões salvas não são recalculadas e o motor continua em `1.12.0-available-months`.
+
+Uma carga sintética local com 50.000 linhas concluiu a finalização em 102 chamadas, com até 1.000 linhas copiadas por chamada. A maior requisição levou 1,9 s; o tempo agregado foi 18,7 s, com totais exatos e limpeza da fonte temporária ao concluir. Esse teste comprova a retomada em partes no ambiente descartável, sem reproduzir nem medir o erro histórico de produção.
+
+Verificação: tipos, build e versões conferidos; 392 testes de regras, 22 integrações existentes de compras, 5 regressões de finalização, 9 de gerações, 36 de análises e 172 Python/PDF/OCR aprovados com dados sintéticos. Os 31 cenários direcionados de navegador cobrem envio clássico e direto, 3.401 linhas, interrupção transitória, retomada após recarregar sem arquivo, troca de empresa, cancelamento de fonte expirada, permissões e PDF RBT12 na mesma etapa. As regressões de banco incluem 501 CNPJs alfanuméricos, cópias parciais legadas, resposta perdida após gravação e bloqueio de valores adulterados.
 
 ## Envio de arquivos na própria análise — v0.45.3
 
