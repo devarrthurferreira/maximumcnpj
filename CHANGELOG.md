@@ -1,5 +1,12 @@
 # Histórico de alterações
 
+## [0.46.0] — 2026-10-28
+
+- Atualiza a premissa padrão de CBS para 11,3% nos novos cálculos e créditos do regime regular.
+- Memória e relatórios mostram as taxas efetivamente usadas; identifica a referência do TCU como premissa sujeita à definição normativa.
+- Versiona o motor e o lote de atualização de simulações; novas revisões usam a CBS atual, preservando snapshots, fontes e valores históricos.
+- Mantém IBS, partilhas do DAS, créditos específicos do Simples e a seleção das competências disponíveis.
+
 ## [0.45.4] — 2026-10-28
 
 - Finalização financeira em partes retomáveis, com cópia idempotente e conferência antes de disponibilizar o resumo.

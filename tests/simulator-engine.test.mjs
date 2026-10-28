@@ -1,7 +1,7 @@
 // Regression fixtures ported from calculadora@d60e8bc3b2edcc2ebd4ff11cf584689f01d0d381.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateTax, DEFAULT_RATES, EXAMPLE_INPUT, TAX_BANDS, taxInputSchema, createEmptyDraft, draftToInput, calculateSimulation, defaultDifalPolicy, parseDifalPolicy, upgradeDifalPolicy, resolveDifalApplication } from '../public/simulator-engine.js';
+import { calculateTax, DEFAULT_RATES, EXAMPLE_INPUT, TAX_BANDS, MODEL_VERSION, taxInputSchema, createEmptyDraft, draftToInput, calculateSimulation, defaultDifalPolicy, parseDifalPolicy, upgradeDifalPolicy, resolveDifalApplication } from '../public/simulator-engine.js';
 import {projectDifal} from '../public/simulator-projection.js';
 
 test('wizard keeps absent revenue and expense fields blank until explicitly completed', () => {
@@ -75,8 +75,12 @@ function zero()           {
   return input;
 }
 
-test('reproduces all four reviewed spreadsheet results without intermediate rounding', () => {
-  const result = calculateTax(example());
+test('historical explicit CBS rates reproduce the four reviewed spreadsheet results without intermediate rounding', () => {
+  const input = example();
+  input.rates.cbs = .0911;
+  input.credits.simpleRegular.cbsRate = .0911;
+  input.credits.regular.cbsRate = .0911;
+  const before = structuredClone(input), result = calculateTax(input);
   [143383.96938144, 118395.342618603, 90447.081624, 93819.7790064].forEach((value, index) => close(result.regimes[index].annualProfit, value));
   close(result.credits.icms.debit, 17999.9928);
   close(result.credits.icms.potential, 22464);
@@ -84,6 +88,50 @@ test('reproduces all four reviewed spreadsheet results without intermediate roun
   close(result.credits.icms.balance, 4464.0072);
   assert.equal(result.bestRegimeId, 'pure');
   close(result.difference, 143383.96938144 - 90447.081624);
+  assert.deepEqual(input, before);
+  assert.match(result.warnings.find(row => row.code === 'model-period').detail, /CBS de 9,11%/);
+});
+
+test('new CBS default applies 11.3% to debits and regular credits while preserving the inside-DAS credit', () => {
+  assert.equal(DEFAULT_RATES.cbs, .113);
+  assert.equal(MODEL_VERSION, '1.13.0-cbs-113');
+  const input = zero();
+  Object.assign(input, {salesRevenue:10000, rbt12:120000, simplePurchases:2000, simpleRegularPurchases:500, regularPurchases:3000});
+  input.credits.simple.base = 1500;
+  input.credits.simpleRegular.base = 500;
+  input.credits.regular.base = 3000;
+  const before = structuredClone(input), result = calculateTax(input);
+  assert.equal(input.credits.simple.cbsRate, .015);
+  assert.equal(input.credits.simpleRegular.cbsRate, .113);
+  assert.equal(input.credits.regular.cbsRate, .113);
+  // Independent arithmetic: R$120,000 × 11.3%; credits=(1,500×1.5% + 3,500×11.3%)×12.
+  close(result.credits.cbs.debit, 13560);
+  close(result.credits.cbs.potential, 5016);
+  close(result.credits.cbs.used, 5016);
+  close(result.credits.cbs.due, 8544);
+  for (const regime of result.regimes) {
+    close(regime.dre.cbsDebit, regime.id==='pure'?0:-13560);
+    close(regime.dre.cbsUsed, regime.id==='pure'?0:5016);
+  }
+  close(result.regimes.find(row=>row.id==='pure').dre.das, -4800);
+  assert.match(result.warnings.find(row=>row.code==='model-period').detail, /CBS de 11,3%/);
+  assert.deepEqual(input, before);
+});
+
+test('explicit custom CBS and supplier credit rates remain independent of the new default', () => {
+  const input = zero();
+  Object.assign(input, {salesRevenue:10000, rbt12:120000, simplePurchases:2000, simpleRegularPurchases:500, regularPurchases:3000});
+  input.rates.cbs = .05;
+  input.credits.simple = {base:1500, cbsRate:.007, ibsRate:.0002};
+  input.credits.simpleRegular = {base:500, cbsRate:.04, ibsRate:.001};
+  input.credits.regular = {base:3000, cbsRate:.02, ibsRate:.001};
+  const before = structuredClone(input), result = calculateTax(input);
+  close(result.credits.cbs.debit, 6000);
+  close(result.credits.cbs.potential, 1086);
+  close(result.credits.cbs.due, 4914);
+  assert.equal(memory(result,'rate.cbs'), .05);
+  assert.match(result.warnings.find(row=>row.code==='model-period').detail, /CBS de 5%/);
+  assert.deepEqual(input, before);
 });
 
 test('every required numeric field rejects absent, blank, null and numeric-string zero', () => {
@@ -199,7 +247,7 @@ test('Simples regular supplier purchases are a subset, never duplicate CMV', () 
   input.credits.simpleRegular.base = 1000;
   const result = calculateTax(input);
   close(result.regimes[2].dre.cmv, -(input.simplePurchases + input.regularPurchases) * 12);
-  close(result.credits.cbs.potential, ((input.simplePurchases - 1000) * .015 + 1000 * .0911 + 10400 * .0911) * 12);
+  close(result.credits.cbs.potential, ((input.simplePurchases - 1000) * .015 + 1000 * .113 + 10400 * .113) * 12);
   close(result.credits.icms.potential, input.regularPurchases * 12 * .18);
 });
 
@@ -476,7 +524,7 @@ test('antecipação de ICMS deduz 7,32% de compras interestaduais somente nos do
  const input={...example(),difalMonthly:100},baseline=calculateTax(input);
  const anticipation={version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73_200}; // R$10.000 ×7,32%.
  const result=calculateTax({...input,icmsAnticipation:anticipation});
- assert.equal(result.version,'1.10.0-regime-selection');assert.equal(baseline.version,'1.10.0-regime-selection');
+ assert.equal(result.version,MODEL_VERSION);assert.equal(baseline.version,MODEL_VERSION);
  assert.deepEqual(result.credits,baseline.credits);close(result.annualRevenue,baseline.annualRevenue);
  for(const regime of result.regimes){
   const old=baseline.regimes.find(row=>row.id===regime.id),d=regime.dre,charge=['pure','hybrid'].includes(regime.id)?8784:0;

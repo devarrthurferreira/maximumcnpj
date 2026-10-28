@@ -12,11 +12,12 @@ import {uploadLookup, finalizeLookup} from '../src/lookup-jobs.ts';
 import {createSimulation, getSimulation, deleteSimulation} from '../src/simulation-history.ts';
 import {reprocessSimulations, simulationReprocessingStatus, reprocessedSimulationId, SERVICE_REVENUE_MIGRATION_REVISION} from '../src/simulation-reprocessing.ts';
 import {annualizeReports, projectScenario} from '../public/simulator-projection.js';
-import {calculateSimulation, draftToInput, defaultDifalPolicy, upgradeDifalPolicy} from '../public/simulator-engine.js';
+import {calculateSimulation, calculateTax, draftToInput, defaultDifalPolicy, upgradeDifalPolicy} from '../public/simulator-engine.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import {section22} from './fixtures/section22.ts';
 import {digest, token} from '../src/security.ts';
 import {handler} from '../src/server.ts';
+import {openAnalysis,getAnalysis} from '../src/analysis-store.ts';
 
 const actor = {_id:'reprocess-admin',role:'admin',name:'Administradora sintética',email:'admin@example.test'};
 const operator = {...actor,_id:'reprocess-operator',role:'operator',name:'Operador sintético',email:'operator@example.test'};
@@ -126,6 +127,88 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.equal(await (await collection('simulationReprocessItems')).countDocuments(scope()),5,'Filhos não entram no inventário.');
   });
 
+  await t.test('CBS V10 cria um lote próprio após V9 concluído e conserva os snapshots de 9,11%',async()=>{
+   switchWorkspace('cbs-version');const input=await fixture();
+   const original=await save(input,90,true,record=>{
+    record.createdAt=new Date('2026-10-20T12:00:00Z');
+    record.modelVersion='1.10.0-regime-selection';
+    record.engineInput.rates.cbs=.0911;
+    for(const group of ['simpleRegular','regular'])record.engineInput.credits[group].cbsRate=.0911;
+    record.result=calculateTax(record.engineInput);record.result.version=record.modelVersion;
+    record.result.warnings=[{code:'model-period',severity:'info',title:'Cenário de 2027/2028',detail:'CBS de 9,11% na versão histórica sintética.'}];
+    record.taxSources=[{label:'Referência histórica sintética',url:'https://example.test/historico'}];
+    record.monthlyDre=buildMonthlyDre(record.result,record.draft.year,record.rbt12Manual,record.source.period);
+   });
+   const oldVersion='ICMS_OPERATIONS_2026_10_V9',oldBatchId='simulation-reprocessing:'+digest(JSON.stringify([scope().workspaceId,oldVersion]));
+   const oldDate=new Date('2026-10-21T12:00:00Z');
+   const oldChild={...structuredClone(original),_id:id(91),parentSimulationId:original._id,
+    reprocessing:{version:oldVersion,originalId:original._id,completedAt:oldDate},createdAt:oldDate};
+   const oldBatch={...scope(),_id:oldBatchId,version:oldVersion,startedAt:oldDate,updatedAt:oldDate,inventoryComplete:true,cursor:original._id};
+   const oldItem={...scope(),_id:oldBatchId+':'+original._id,batchId:oldBatchId,originalId:original._id,childId:oldChild._id,
+    status:'OK',code:'UPDATED',message:'Revisão V9 sintética concluída.',company:original.company,title:original.title,updatedAt:oldDate,attempts:1};
+   const simulations=await collection('simulations'),batches=await collection('simulationReprocessBatches'),items=await collection('simulationReprocessItems');
+   await simulations.insertOne(oldChild);await batches.insertOne(oldBatch);await items.insertOne(oldItem);
+   const before=await simulationReprocessingStatus();
+   assert.equal(before.version,'CBS_2026_10_V10');assert.equal(before.total,0);assert.equal(before.inventoryComplete,false);
+   assert.equal((await getSimulation(original._id)).engineInput.rates.cbs,.0911);
+   assert.equal((await getSimulation(oldChild._id)).engineInput.rates.cbs,.0911);
+   await reprocessSimulations(actor,{});const done=await finish();
+   assert.equal(done.version,'CBS_2026_10_V10');assert.equal(done.total,1);
+   assert.deepEqual(done.counts,{queued:0,processing:0,ok:1,pending:0,failed:0});
+   const childId=reprocessedSimulationId(scope().workspaceId,oldChild._id),child=await getSimulation(childId);
+   assert.notEqual(childId,oldChild._id);assert.equal(child.parentSimulationId,oldChild._id);
+   assert.equal(done.items[0].originalId,oldChild._id,'A família usa a revisão automática mais recente.');
+   assert.equal(child.reprocessing.version,'CBS_2026_10_V10');
+   assert.equal(child.engineInput.months[0].input.rates.cbs,.113);
+   assert.equal(child.engineInput.months[0].input.credits.regular.cbsRate,.113);
+   assert.equal(child.engineInput.months[0].input.credits.simpleRegular.cbsRate,.113);
+   assert.equal(child.engineInput.months[0].input.credits.simple.cbsRate,.015);
+   assert(Math.abs(child.result.credits.cbs.debit-160*.113)<1e-10);
+   assert(Math.abs(child.result.credits.cbs.potential-12*.113)<1e-10);
+   assert.match(done.items[0].message,/CBS de 11,3%/);
+   assert.deepEqual(await simulations.findOne(scope({_id:original._id})),original);
+   assert.deepEqual(await simulations.findOne(scope({_id:oldChild._id})),oldChild);
+   assert.deepEqual(await batches.findOne(scope({_id:oldBatchId})),oldBatch);
+   assert.deepEqual(await items.findOne(scope({_id:oldItem._id})),oldItem);
+   await reprocessSimulations(operator,{});
+   assert.equal(await simulations.countDocuments(scope({parentSimulationId:original._id})),1,'O original conserva somente o filho V9.');
+   assert.equal(await simulations.countDocuments(scope({parentSimulationId:oldChild._id})),1,'Há exatamente um filho CBS V10 da revisão anterior.');
+   assert.deepEqual(await getSimulation(childId),child);
+  });
+
+  for(const selected of ['latest','current-old','orphan'] as const)await t.test(`CBS escolhe uma base por família e atualiza a versão ativa: ${selected}`,async()=>{
+   switchWorkspace('cbs-family-'+selected);const input=await fixture(),familyOffset={latest:100,'current-old':200,orphan:300}[selected],original=await save(input,familyOffset);
+   const simulations=await collection('simulations'),siblings=[] as any[];
+   for(const [index,version] of ['V7','V8','V9'].entries()){
+    const child={...structuredClone(original),_id:id(familyOffset+1+index),parentSimulationId:original._id,
+     reprocessing:{version:'ICMS_OPERATIONS_2026_10_'+version,originalId:original._id,completedAt:new Date(`2026-10-${20+index}T12:00:00Z`)},
+     createdAt:new Date(`2026-10-${20+index}T12:00:00Z`)};
+    await simulations.insertOne(child);siblings.push(child);
+   }
+   if(selected==='orphan')await deleteSimulation(actor,original._id);
+   const chosen=selected==='current-old'?siblings[0]:siblings[2];
+   if(selected==='current-old')await simulations.insertMany(Array.from({length:498},(_,index)=>({...scope(),_id:id(1000+index),
+    clientId:original.clientId,generationId:original.generationId,parentSimulationId:original._id,
+    company:original.company,title:'Revisão sintética para paginação',createdAt:new Date('2026-10-25T12:00:00Z'),
+    reprocessing:{version:'LEGACY_PAGING_SYNTHETIC',originalId:original._id}})));
+   const opened=await openAnalysis(actor,{clientId:input.clientId,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid','presumed','actual']}});
+   await simulations.updateOne(scope({_id:chosen._id}),{$set:{analysisId:opened.analysis.id,analysisRevision:opened.analysis.revision,analysisPublication:'PUBLISHED'}});
+   await(await collection('analyses')).updateOne(scope({_id:opened.analysis.id}),{$set:{currentSimulation:{id:chosen._id,
+    analysisRevision:opened.analysis.revision,createdAt:chosen.createdAt,modelVersion:chosen.modelVersion,legacy:false}}});
+   const frozen=await simulations.find(scope()).sort({_id:1}).toArray();
+   const first=await reprocessSimulations(actor,{});
+   if(selected==='current-old'){assert.equal(first.hasMore,true);assert.equal(first.counts.ok,1,'A primeira página já promoveu a versão escolhida.');}
+   const done=await finish();assert.equal(done.total,1);
+   assert.equal(done.items[0].originalId,chosen._id);
+   const childId=reprocessedSimulationId(scope().workspaceId,chosen._id),child=await getSimulation(childId);
+   assert.equal(child.engineInput.months[0].input.rates.cbs,.113);
+   assert.equal((await getAnalysis(opened.analysis.id,{summary:true})).analysis.currentSimulation.id,childId);
+   assert.deepEqual(await simulations.find(scope({_id:{$in:frozen.map(old=>old._id)}})).sort({_id:1}).toArray(),frozen);
+   await reprocessSimulations(operator,{});assert.equal((await simulationReprocessingStatus()).total,1);
+   assert.equal(await simulations.countDocuments(scope({'reprocessing.version':'CBS_2026_10_V10'})),1);
+   if(selected==='orphan')assert.equal((await getSimulation(chosen._id)).parentSimulationDeleted,true);
+  });
+
   await t.test('UF pendente mantém a fonte conferida, mas só impede a revisão de imposto aplicável',async()=>{
    switchWorkspace('difal-policy-pending');const input=await fixture('');
    const off={version:'DIFAL_SCENARIOS_V1',enabled:{pure:false,hybrid:false,presumed:false,actual:false}};
@@ -156,7 +239,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const original=await save({...input,draft:{...input.draft,difalPolicy:policy}},80);
    const jobs=await collection('lookupJobs'),lines=await collection('purchaseLines');
    const sourcesBefore={jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({_id:1}).toArray()};
-   const done=await reprocessSimulations(actor,{});assert.equal(done.version,'ICMS_OPERATIONS_2026_10_V9');
+   const done=await reprocessSimulations(actor,{});assert.equal(done.version,'CBS_2026_10_V10');
    assert.deepEqual(done.counts,{queued:0,processing:0,ok:1,pending:0,failed:0});
    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id));
    assert.deepEqual(child.draft.difalPolicy,policy);assert.deepEqual(child.result.difalPolicy,policy);

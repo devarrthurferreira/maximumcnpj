@@ -65,13 +65,14 @@ export function mountSimulationReprocess(root, user, onComplete) {
       state.finished && !state.running ? issues ? 'Há simulações que precisam de conferência. Veja os motivos nos detalhes.' :
         data?.total ? 'As simulações verificadas estão atualizadas.' : 'Nenhuma simulação precisa de atualização neste lote.' :
       !data ? 'Verificando o andamento…' : !writable ? 'Seu acesso permite acompanhar a atualização. Um administrador ou operador pode continuar o processamento.' :
-      !data.inventoryComplete ? 'Identificando as simulações que precisam de atualização…' : 'Serviços, DIFAL, naturezas e créditos de ICMS estão sendo conferidos em cada simulação.');
+      !data.inventoryComplete ? 'Identificando as simulações que precisam de atualização…' : 'A premissa de CBS de 11,3%, serviços, DIFAL, naturezas e créditos de ICMS estão sendo conferidos em cada simulação.');
     const detail = state.detail || data;
     const processed = counts ? counts.ok + counts.pending + counts.failed : 0;
     const showProgress = data?.inventoryComplete && data.total > 0 && processed <= data.total;
     root.innerHTML = `<section class="history-reprocess" aria-labelledby="history-reprocess-heading" aria-busy="${state.running}">
       <div class="history-reprocess-summary"><div><h2 id="history-reprocess-heading">${heading}</h2><p class="history-reprocess-status" role="status">${escapeHtml(message)}</p></div>
       <dl class="history-reprocess-counts">${[['ok','OK'],['pending','Pendente'],['failed','Falhou']].map(([key,label]) => `<div data-reprocess-count="${key}"><dt>${label}</dt><dd>${counts ? number(counts[key]) : '—'}</dd></div>`).join('')}</dl></div>
+      <p class="history-reprocess-progress">Esta revisão adota CBS de 11,3% como premissa. Os originais conservam os valores e as alíquotas capturados.</p>
       ${showProgress ? `<progress class="history-reprocess-meter" max="${data.total}" value="${processed}" aria-label="Progresso da revisão do histórico" aria-valuetext="${processed} de ${data.total} processadas; ${counts.ok} OK, ${counts.pending} pendentes, ${counts.failed} com falha"></progress><p class="history-reprocess-completed">${number(processed)} de ${number(data.total)} processadas · confira os resultados OK, pendentes e com falha acima.</p>` : ''}
       ${data ? `<p class="history-reprocess-progress">${number(data.total)} simulações no lote · ${number(counts.queued)} aguardando · ${number(counts.processing)} em processamento</p>` : ''}
       ${state.fatal ? `<a class="history-reprocess-session" href="/">${state.fatal === 401 ? 'Entrar novamente' : 'Voltar ao painel'}</a>` : state.error ? '<button type="button" data-reprocess-retry>Tentar atualização novamente</button>' : ''}

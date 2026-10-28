@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test';
-import {calculateSimulation,draftToInput,TAX_SOURCES,MODEL_VERSION,CALCULATOR_SOURCE_COMMIT} from '../../public/simulator-engine.js';
+import {calculateSimulation,calculateTax,draftToInput,TAX_SOURCES,MODEL_VERSION,CALCULATOR_SOURCE_COMMIT} from '../../public/simulator-engine.js';
 import {annualizeReports,projectDifal} from '../../public/simulator-projection.js';
 import {buildMonthlyDre} from '../../public/simulator-calendar.js';
 import {baselineMonth,monthlyProjection,calculateMonthlySimulation} from '../../public/simulator-monthly.js';
@@ -22,6 +22,56 @@ async function open(page:any,saved:any){
   await expect(page.locator('.dre-complete')).toBeVisible();
 }
 async function downloadText(page:any,selector:string){const pending=page.waitForEvent('download');await page.locator(selector).click();const download=await pending;const stream=await download.createReadStream();let text='';for await(const chunk of stream!)text+=chunk;return {text,name:download.suggestedFilename()};}
+
+for(const historical of [false,true])test(`CBS ${historical?'histórica de 9,11% preserva o snapshot':'padrão de 11,3% concilia'} na tela, CSV e impressão`,async({page},info)=>{
+  const saved=fixture(),rate=historical ? .0911 : .113;
+  if(historical){
+    // Independent captured input: reopening this snapshot must never apply today's defaults.
+    saved.engineInput.rates.cbs=.0911;
+    saved.engineInput.credits.simpleRegular.cbsRate=.0911;saved.engineInput.credits.regular.cbsRate=.0911;
+    saved.result=calculateTax(saved.engineInput);saved.modelVersion='1.10.0-regime-selection';saved.result.version=saved.modelVersion;
+    saved.result.warnings=[{code:'model-period',severity:'info',title:'Cenário de 2027/2028',detail:'CBS de 9,11% e IBS de 0,10% são hipóteses editáveis.'}];
+    saved.taxSources=[{label:'Referência histórica capturada',url:'https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm'}];
+    saved.monthlyDre=buildMonthlyDre(saved.result,2027,saved.rbt12Manual);
+  }
+  // R$ 150.000 of yearly revenue; credits are R$ 12.000 × 1,5% + R$ 42.000 × CBS.
+  const debit=historical?13665:16950,credit=historical?4006.2:4926,rateLabel=historical?'9,11%':'11,3%';
+  expect(saved.engineInput.rates.cbs).toBe(rate);expect(saved.engineInput.credits.regular.cbsRate).toBe(rate);
+  expect(saved.engineInput.credits.simple.cbsRate).toBe(.015);
+  expect(saved.result.credits.cbs.debit).toBeCloseTo(debit,8);expect(saved.result.credits.cbs.used).toBeCloseTo(credit,8);
+  const before=JSON.stringify(saved),writes:string[]=[],errors:string[]=[];
+  page.on('request',request=>{if(request.url().includes('/api/')&&!['GET','HEAD'].includes(request.method()))writes.push(request.method()+' '+request.url());});
+  page.on('pageerror',error=>errors.push(error.message));
+  await open(page,saved);
+  const money=(value:number)=>value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+  for(let visit=0;visit<2;visit++){
+    if(visit)await page.reload();
+    await expect(page.locator('.dre-complete > .dre-table-wrap [data-dre-row="cbsDebit"] td').nth(3)).toContainText(money(-debit));
+    await expect(page.locator('.dre-complete > .dre-table-wrap [data-dre-row="cbsUsed"] td').nth(3)).toContainText(money(credit));
+    await page.locator('[data-simulation-detail="memory"] > summary').click();
+    await expect(page.locator('[data-memory-id="rate.cbs"]')).toContainText(rateLabel);
+    await expect(page.locator('[data-memory-id="group.regular.cbsRate"]')).toContainText(rateLabel);
+    await expect(page.locator('[data-memory-id="group.simple.cbsRate"]')).toContainText('1,5%');
+  }
+  await page.locator('#dre-report-period').selectOption('annual');
+  const csv=(await downloadText(page,'#export-dre-csv')).text,lines=csv.split('\r\n');
+  const cells=(label:string)=>lines.find(line=>line.startsWith('"DRE";')&&line.includes(label))!.split(';').slice(5,9);
+  expect(cells('Débito de CBS')).toEqual(['0,00',...Array(3).fill((-debit).toFixed(2).replace('.',','))]);
+  expect(cells('Crédito CBS utilizado')).toEqual(['0,00',...Array(3).fill(credit.toFixed(2).replace('.',','))]);
+  expect(lines.find(line=>line.startsWith('"Memória";')&&line.includes('CBS de saída'))!.split(';')[4]).toBe(historical?'9,11':'11,30');
+  const exported=JSON.parse((await downloadText(page,'#export-simulation')).text);
+  expect(exported.engineInput).toEqual(saved.engineInput);expect(exported.result).toEqual(saved.result);expect(exported.monthlyDre).toEqual(saved.monthlyDre);
+  await page.evaluate(()=>{window.print=()=>{};});await page.locator('#print-dre').click();
+  const printed=page.locator('#dre-print-document');
+  await expect(printed.locator('[data-report-memory="rate.cbs"]')).toContainText(rateLabel);
+  await expect(printed).toContainText('CBS de '+rateLabel);
+  if(historical){await expect(printed).not.toContainText('CBS de 11,3');expect(csv).not.toContain('CBS de 11,3');}
+  await page.emulateMedia({media:'print'});
+  await page.pdf({path:info.outputPath(historical?'cbs-historical-911.pdf':'cbs-current-113.pdf'),preferCSSPageSize:true,printBackground:true});
+  await page.emulateMedia({media:'screen'});
+  expect(writes).toEqual([]);expect(errors).toEqual([]);expect(JSON.stringify(saved)).toBe(before);
+});
+
 test('evolução compara competências reais e informa ausência sem gravar ou alterar o histórico',async({page},info)=>{
   const original=fixture(),draft=original.draft;
   const reports=[100000,150000,0].map((sales,index)=>({sourceMonth:`2025-0${index+1}`,month:index+1,salesLines:sales?1:0,purchaseLines:1,
@@ -229,7 +279,7 @@ test('relatório completo inicia no anual e reúne quatro regimes, competência 
   await expect(print.locator('[data-report-part="annual"]')).toHaveCount(1);await expect(print.locator('[data-report-part="monthly"]')).toHaveCount(4);
   await expect(print.locator('[data-report-part="references"]')).toHaveCount(1);await expect(print.locator('[data-revenue-reconciliation="dre"]')).toHaveCount(5);
   await expect(print.locator('[data-revenue-reconciliation="dre"]').first()).toContainText('3.303.000,00');await expect(print.locator('[data-revenue-reconciliation="dre"]').first()).toContainText('3.000,00');
-  await expect(print).toContainText('Cenário 2027');await expect(print).toContainText('Origem: 2025-01');await expect(print).toContainText('CBS de 9,11%');await expect(print).toContainText('R$ 3.300.000,00');
+  await expect(print).toContainText('Cenário 2027');await expect(print).toContainText('Origem: 2025-01');await expect(print).toContainText(/CBS de 11,3(?:0)?%/);await expect(print).toContainText('R$ 3.300.000,00');
   const parts=await print.locator('[data-report-part]').evaluateAll(elements=>elements.map(element=>(element as HTMLElement).dataset.reportPart));expect(parts).toEqual(['annual','monthly','monthly','monthly','monthly','references']);
   await page.emulateMedia({media:'print'});await expect(page.locator('.shell')).toBeHidden();await expect(print).toBeVisible();
   const pdf=info.outputPath('dre-relatorio-completo-33-milhoes.pdf');await page.pdf({path:pdf,preferCSSPageSize:true,printBackground:true});await info.attach('Relatório completo anual e mensal',{path:pdf,contentType:'application/pdf'});

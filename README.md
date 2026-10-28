@@ -1,4 +1,16 @@
-# Maximum CNPJ · v0.45.4
+# Maximum CNPJ · v0.46.0
+
+## CBS de 11,3% nas novas simulações — v0.46.0
+
+A premissa padrão de CBS passa de **9,11% para 11,3%**, tanto no débito do regime regular quanto nos créditos regulares correspondentes. O cálculo mensal, a consolidação das competências disponíveis, a memória, a DRE e suas exportações usam a taxa capturada em cada nova versão. IBS, partilhas do DAS e o crédito específico das compras do Simples com CBS dentro do DAS mantêm seus parâmetros próprios.
+
+O percentual de 11,3% é a referência divulgada pelo [TCU em 28/10/2026](https://sites.tcu.gov.br/reforma-tributaria/visao-cbs-2027.html), cuja fixação cabe ao [Senado](https://www12.senado.leg.br/noticias/audios/2026/10/reforma-tributaria-aliquota-da-cbs-sera-definida-pelo-senado). Nesta entrega, **11,3% é a premissa exata solicitada para o cenário**, sem redução implícita. A [Receita Federal](https://www.gov.br/receitafederal/pt-br/acesso-a-informacao/acoes-e-programas/reforma-tributaria-do-consumo/entenda) descreve a redução transitória de 0,1 ponto percentual em 2027/2028; a aplicação legal, inclusive benefícios e regimes específicos, exige conferência própria. O simulador identifica as taxas como premissas e não como alíquotas definitivas universais.
+
+Snapshots anteriores conservam valores, taxas, avisos e fontes capturados. Abrir uma DRE antiga não a recalcula. O fluxo existente de atualização em **Versões salvas** passa ao lote `CBS_2026_10_V10`: ao abrir o histórico com permissão de escrita, ele pode criar revisões vinculadas com o modelo atual, preservando os originais e os ajustes mensais válidos. Nenhum lote é iniciado pela implantação. O motor usa `1.13.0-cbs-113` e, nas análises de janeiro a setembro, `1.13.0-cbs-113-available-months`.
+
+O lote escolhe uma base por família de revisões automáticas, priorizando a versão em uso pela análise e depois a mais recente. Revisões manuais permanecem independentes. A escolha é preservada entre páginas e retomadas, inclusive quando o original foi excluído e uma revisão anterior continua válida.
+
+Verificação com dados sintéticos: tipos/build e versões conferidos; 395 testes de regras, 55 de simulações/reprocessamento, 36 de análises, 13 de projeção, 7 de competências e 172 Python/PDF/OCR aprovados. Os 22 cenários direcionados de navegador e os testes de exportação conferem CBS atual de 11,3%, histórico de 9,11%, DRE, memória, CSV, JSON e PDF. A regressão de 502 versões verifica promoção da versão ativa, paginação e retomada sem duplicar revisões.
 
 
 ## Finalização retomável e RBT12 junto dos documentos — v0.45.4
