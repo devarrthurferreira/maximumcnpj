@@ -97,7 +97,7 @@ for(const guided of [false,true])test(`DIFAL ${guided?'guided':'full'} import pr
   const create=async(route:any)=>{
     const payload=route.request().postDataJSON();creates.push(payload);
     if(creates.length===1)return route.fulfill({status:503,json:{message:'Falha temporária sintética'}});
-    job={_id:payload.importId,clientId,clientCode:client.code,clientName:client.name,generationId:guided?generationId:undefined,type:'SALES',difalVersion:version,operationVersion:OPERATION_CATALOG_VERSION,issuerUf:payload.issuerUf,calculationVersion:'NET_V2',fileName:payload.fileName,status:'UPLOADING',expectedRows:1,uploaded:0,createdAt:'2026-10-09T12:00:00Z'};
+    job={_id:payload.importId,clientId,clientCode:client.code,clientName:client.name,generationId:guided?generationId:undefined,type:'SALES',mode:'SALES_V1',difalVersion:version,operationVersion:OPERATION_CATALOG_VERSION,issuerUf:payload.issuerUf,calculationVersion:'NET_V2',fileName:payload.fileName,status:'UPLOADING',expectedRows:1,uploaded:0,createdAt:'2026-10-09T12:00:00Z'};
     return route.fulfill({json:guided?{generation:generation(),job}:job});
   };
   await page.route('**/api/v4/generations/'+generationId,route=>route.fulfill({json:generation()}));
