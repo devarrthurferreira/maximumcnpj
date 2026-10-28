@@ -39,6 +39,9 @@ type Readiness={ready:boolean;issues:AnalysisIssue[];months:string[];checked:Awa
 const PAGE_SIZE=20;
 const author=(actor:LookupActor):Author=>({id:actor._id,name:actor.name});
 const conflict=()=>new AppError(409,'ANALYSIS_CONFLICT','A análise mudou ou está sendo gerada. Reabra os dados antes de salvar para preservar o trabalho de todos.');
+const missingGeneration=(error:unknown)=>error instanceof AppError && ['NOT_FOUND','GENERATION_DELETED'].includes(error.code);
+const unavailableGeneration=()=>new AppError(409,'ANALYSIS_GENERATION_UNAVAILABLE',
+  'Os relatórios de entradas e saídas vinculados a esta análise não estão mais disponíveis. Prepare novos relatórios no setor Fiscal e importe os arquivos novamente. As informações preenchidas e as versões salvas continuam preservadas.');
 const leaseFree=()=>({$or:[{leaseUntil:{$exists:false}},{leaseUntil:{$lt:new Date()}}]});
 const active=()=>({deletionStartedAt:{$exists:false}});
 
@@ -63,7 +66,9 @@ function fingerprint(source:Source,reference:unknown,config:AnalysisConfig,data:
 }
 async function fiscalSource(item:Analysis,data=item.fiscal.data,onSource?:(source:Source)=>void){
   need(data.generationId,'Importe as entradas e saídas da empresa.',422,'ANALYSIS_FISCAL_INCOMPLETE');
-  let source=await generationSimulator(data.generationId,item.clientId,{periodPolicy:JAN_SEP_POLICY});
+  let source:Source;
+  try{source=await generationSimulator(data.generationId,item.clientId,{periodPolicy:JAN_SEP_POLICY});}
+  catch(error){if(missingGeneration(error))throw unavailableGeneration();throw error;}
   // The Fiscal form still needs the reconciled months while its RBT12 is pending.
   onSource?.(source);
   let months=source.monthlyReports?.map(row=>row.sourceMonth)||[];
@@ -314,7 +319,18 @@ export async function updateAnalysisSector(actor:LookupActor,id:string,kind:'fis
   let confirmation:Sector<FiscalData>['confirmation']=null;
   if(kind==='fiscal'){
     const fiscal=data as FiscalData;
-    if(fiscal.generationId){const generation=await getGeneration(fiscal.generationId);need(generation.companies.some((company:any)=>company.clientId===prior.clientId),'A geração não pertence à empresa da análise.',409,'GENERATION_CLIENT');}
+    if(fiscal.generationId){
+      try{
+        const generation=await getGeneration(fiscal.generationId);
+        need(generation.companies.some((company:any)=>company.clientId===prior.clientId),'A geração não pertence à empresa da análise.',409,'GENERATION_CLIENT');
+      }catch(error){
+        // An existing link may outlive explicitly deleted source reports. Saving
+        // options/RBT12 must remain possible so the user can prepare a new import.
+        // Never accept a new missing link, or bypass ownership/integrity failures.
+        if(!missingGeneration(error)||fiscal.generationId!==prior.fiscal.data.generationId)throw error;
+        if(input.complete)throw unavailableGeneration();
+      }
+    }
     if(fiscal.generationId!==prior.fiscal.data.generationId)need(fiscal.monthlyOverrides===null,'Ao trocar os arquivos, revise os ajustes fiscais anteriores.',409,'ANALYSIS_SOURCE_CHANGED');
     if(input.complete){const checked=await fiscalSource(prior,fiscal);confirmation={fingerprint:checked.fingerprint,generationId:fiscal.generationId!,purchaseJobId:checked.source.purchases.jobId,
       salesJobId:checked.source.sales.jobId,extractionId:fiscal.rbt12ExtractionId,months:checked.months,configRevision,analysisPeriod:checked.source.analysisPeriod};}

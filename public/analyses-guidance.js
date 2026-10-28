@@ -104,6 +104,7 @@ export function accountingSummary(months=[],expectedMonths=[]) {
 function issueAction(issue,analysis) {
   const code=String(issue.code||'');
   if(code.startsWith('RBT12_'))return {action:'reference',label:'Conferir extrato ou RBT12'};
+  if(code==='ANALYSIS_GENERATION_UNAVAILABLE')return {action:'import',label:'Preparar nova importação'};
   if(code==='ANALYSIS_FISCAL_INCOMPLETE'||code==='SIMULATOR_INCOMPLETE'){
     return {action:'import',label:analysis.fiscal?.data?.generationId?'Retomar documentos fiscais':'Adicionar entradas e saídas'};
   }

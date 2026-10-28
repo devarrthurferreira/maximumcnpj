@@ -47,9 +47,20 @@ function showError(error) {
   feedback('');
   const host=$('#analysis-error');host.replaceChildren();host.hidden=false;
   const conflict=error?.status===409&&error?.code==='ANALYSIS_CONFLICT';
+  const missingGeneration=error?.code==='ANALYSIS_GENERATION_UNAVAILABLE'&&S.analysis;
+  if(missingGeneration){
+    cancelEvidence();cancelMetadata();S.generation=null;S.source=null;S.generationUnavailable=true;
+    S.generationError=error.message;S.metadataState='error';S.metadataKey=evidenceKey(S.analysis);
+    S.evidenceState='error';S.evidenceError=error.message;S.evidenceKey=evidenceKey(S.analysis);
+    if(S.modalKind==='fiscal')S.modalSteps.fiscal='documents';
+  }
   const message=document.createElement('p');
   message.textContent=conflict?'Este trabalho foi atualizado em outra aba ou por outra pessoa. Seus campos continuam nesta tela. Confira a versão salva antes de continuar.':error?.message||'Não foi possível concluir a operação. Tente novamente.';
   host.append(message);
+  if(missingGeneration){
+    const button=document.createElement('button');button.type='button';button.textContent='Conferir documentos fiscais';
+    button.onclick=()=>openWizard('fiscal',{step:'documents'});host.append(button);
+  }
   if(conflict){
     const button=document.createElement('button');button.type='button';button.textContent='Recarregar o trabalho salvo';
     button.onclick=async()=>{
@@ -692,7 +703,7 @@ async function ensureEvidence({force=false}={}) {
     },error=>{if(active()){S.pdfStatus=error.message||'Não foi possível confirmar a leitura do extrato.';refreshEvidence();}});
     const reads=await Promise.allSettled([sourceRead,generationRead,referenceRead]);
     if(controller.signal.aborted||evidenceTask!==task||!currentContext(id,sequence)||evidenceKey(S.analysis)!==key)return;
-    let error='';
+    let error='',generationUnavailable=false;
     S.generationError='';
     if(reads[0].status==='fulfilled'){
       try{
@@ -702,7 +713,10 @@ async function ensureEvidence({force=false}={}) {
         S.source=data.source||null;
         // A late check never advances a saved revision underneath an edited form.
         if(S.analysis.revision===record.revision&&checked.revision===record.revision)adoptAnalysis(checked,{preserveDrafts:true});
-        if(data.sourceError&&fiscal.generationId)error=data.sourceError.message||'Não foi possível conferir os documentos fiscais vinculados.';
+        if(data.sourceError&&fiscal.generationId){
+          error=data.sourceError.message||'Não foi possível conferir os documentos fiscais vinculados.';
+          generationUnavailable=data.sourceError.code==='ANALYSIS_GENERATION_UNAVAILABLE';
+        }
       }catch(failure){error=failure.message;}
     }else error=reads[0].reason?.message||'Não foi possível conferir os documentos fiscais.';
     if(reads[1].status==='fulfilled'){
@@ -716,6 +730,11 @@ async function ensureEvidence({force=false}={}) {
       if(reference&&usesReference){if(S.reference!==reference)S.pdfStatus='';S.reference=reference;}
     }else if(usesReference)S.pdfStatus=reads[2].reason?.message||'Não foi possível confirmar a leitura do extrato. Verifique o PDF vinculado.';
     // O erro do PDF pertence ao campo RBT12; não transforma entradas/saídas já concluídas em documentos com erro.
+    if(generationUnavailable||reads[1].status==='rejected'&&reads[1].reason?.status===404){
+      S.generation=null;S.source=null;S.generationUnavailable=true;
+      if(generationUnavailable)S.generationError=error;
+      S.metadataState='error';S.metadataKey=key;
+    }
     S.evidenceError=S.generationError||error;
     S.evidenceState=S.evidenceError?'error':'ready';
     evidenceTask=null;refreshEvidence();refreshGuidance();
@@ -967,7 +986,7 @@ async function saveSector(sector,complete) {
     feedback(complete?`${sectorName(sector)} concluído. ${hasLocalWork()?'Há preenchimentos locais que ainda precisam ser conferidos e salvos.':S.analysis.readiness.ready?'Os dois setores estão prontos para gerar a análise.':'Acompanhe abaixo o que ainda falta para gerar.'}`:`Trabalho ${sectorName(sector)} salvo. Você pode continuar depois nesta mesma análise.`);
   } catch(error){
     if(sector==='fiscal'&&String(error.code||'').startsWith('RBT12_'))S.modalSteps.fiscal='rbt12';
-    if(sector==='fiscal'&&['ANALYSIS_FISCAL_INCOMPLETE','SIMULATOR_INCOMPLETE'].includes(error.code))S.modalSteps.fiscal='documents';
+    if(sector==='fiscal'&&['ANALYSIS_FISCAL_INCOMPLETE','SIMULATOR_INCOMPLETE','ANALYSIS_GENERATION_UNAVAILABLE'].includes(error.code))S.modalSteps.fiscal='documents';
     if(sector==='accounting'&&error.code==='ACCOUNTING_MONTHS_MISMATCH'){
       S.modalSteps.accounting='values';S.detailOpen['analysis-accounting-tools']=true;
       if($('#analysis-accounting-tools'))$('#analysis-accounting-tools').open=true;

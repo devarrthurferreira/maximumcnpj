@@ -117,3 +117,29 @@ test('Histórico de gerações permanece consultável para viewer sem botão Exc
  await page.goto('/generations.html?view=history');await expect(page.locator('.generation-history-item')).toBeVisible();
  await expect(page.locator('[data-delete-generation]')).toHaveCount(0);await expect(page.getByRole('dialog')).toHaveCount(0);
 });
+
+for(const screen of ['generation','purchase','sales-job'])test(`Link indisponível em ${screen} oferece retorno ao Fiscal sem criar documentos`,async({page})=>{
+ await session(page);
+ const analysisId='00000000-0000-4000-8000-000000000090',jobId='00000000-0000-4000-8000-000000000091';
+ const analysis={id:analysisId,clientId:clients[0]._id,fiscal:{data:{generationId:id}}};let writes=0;
+ await page.route('**/api/v4/analyses/'+analysisId,route=>route.fulfill({json:{analysis}}));
+ await page.route(/\/api\/v4\/(generations|purchases|sales)(?:[/?]|$)/,route=>{
+  if(route.request().method()!=='GET')writes++;
+  return route.fulfill({status:404,json:{error:'NOT_FOUND',message:'Geração não encontrada.'}});
+ });
+ const params=new URLSearchParams({...(screen==='generation'?{id}:{generation:id,guided:'1'}),analysis:analysisId,client:clients[0]._id,
+  ...(screen==='sales-job'?{type:'SALES',job:jobId}:{})});
+ await page.goto((screen==='generation'?'/generations.html?':'/purchases.html?')+params);
+ await expect(page.getByRole('heading',{name:'Relatórios indisponíveis'})).toBeVisible();
+ await expect(page.getByRole('link',{name:'Voltar ao Fiscal da empresa'})).toHaveAttribute('href',`/analyses.html?id=${analysisId}&sector=fiscal&step=documents`);
+ await expect(page.getByRole('link',{name:'Abrir histórico de relatórios'})).toHaveAttribute('href','/generations.html?view=history');
+ expect(writes).toBe(0);
+});
+
+test('Falha temporária ao abrir geração mantém o erro real sem afirmar que foi excluída',async({page})=>{
+ await session(page);
+ await page.route('**/api/v4/generations/'+id,route=>route.fulfill({status:503,json:{message:'Banco temporariamente indisponível.'}}));
+ await page.goto('/generations.html?id='+id);
+ await expect(page.locator('#generation-error')).toContainText('Banco temporariamente indisponível');
+ await expect(page.locator('#generation-unavailable')).toHaveCount(0);
+});
