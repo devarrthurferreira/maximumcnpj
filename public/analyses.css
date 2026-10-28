@@ -747,6 +747,42 @@ body:has(#analysis-delete-dialog[open]){overflow:hidden}
 .analysis-accounting-quickbar button{flex:none;font-size:12px}
 @media(max-width:650px){.analysis-accounting-quickbar{align-items:stretch;flex-direction:column}.analysis-accounting-quickbar button{width:100%;white-space:normal}}
 
+/* Copying fills the existing monthly draft; each month stays independently editable. */
+.analysis-accounting-copy{margin:16px 0;padding:16px;border:1px solid var(--analysis-line);border-radius:12px;background:#fff;min-width:0}
+.analysis-accounting-copy h3{margin:0 0 12px;font-size:14px;color:var(--analysis-ink)}
+.analysis-accounting-copy-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;min-width:0;margin:0;padding:0;border:0}
+.analysis-accounting-copy-mode{display:flex;align-items:flex-start;gap:8px;min-width:0;padding:11px;border:1px solid var(--analysis-line);border-radius:9px;cursor:pointer;background:#fff}
+.analysis-accounting-copy-mode.is-selected{border-color:#9b4b55;background:#fcf2f3}
+.analysis-accounting-copy-mode:focus-within{outline:2px solid #a46b74;outline-offset:2px}
+.analysis-accounting-copy-mode input[type=radio]{flex:none;width:17px;height:17px;min-height:17px;margin:2px 0 0;padding:0;accent-color:#750207}
+.analysis-accounting-copy-mode span{display:block;min-width:0}
+.analysis-accounting-copy-mode strong{display:block;font-size:12px;line-height:1.5;font-weight:650;color:var(--analysis-ink)}
+.analysis-accounting-copy-mode small{display:block;margin-top:4px;font-size:11px;line-height:1.5;font-weight:400;color:var(--analysis-muted)}
+.analysis-accounting-copy p{font-size:12px;line-height:1.65;margin:0;color:var(--analysis-text);overflow-wrap:anywhere}
+.analysis-accounting-copy .analysis-accounting-copy-manual{margin-top:12px;color:var(--analysis-muted)}
+.analysis-accounting-copy-controls{display:grid;gap:13px;margin-top:16px;padding-top:16px;border-top:1px solid var(--analysis-line)}
+.analysis-accounting-copy-selectors{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}
+.analysis-accounting-copy-selectors label{display:grid;gap:6px;min-width:0;font-size:12px;color:var(--analysis-text);font-weight:600}
+.analysis-accounting-copy select{width:100%;min-width:0;min-height:44px;font-size:13px}
+.analysis-accounting-copy-preview{display:grid;gap:7px}
+.analysis-accounting-copy-preview .analysis-accounting-copy-warning{padding:10px 12px;border-left:3px solid #b47e38;border-radius:4px;background:#fff8ec;color:#79521f}
+.analysis-accounting-copy-controls>button{justify-self:start;min-height:44px;white-space:normal}
+.analysis-accounting-copy-result{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.analysis-accounting-copy-result:has(>p:not([hidden]),>button:not([hidden])){margin-top:14px;padding-top:12px;border-top:1px solid var(--analysis-line)}
+.analysis-accounting-copy-result p{flex:1;min-width:180px;color:#375b44}
+.analysis-accounting-copy-result button{flex:none;min-height:44px;font-size:12px;white-space:normal}
+.analysis-accounting-copy [hidden]{display:none!important}
+@media(max-width:700px){
+ .analysis-accounting-copy-modes{grid-template-columns:1fr}
+ .analysis-accounting-copy-mode{min-height:58px}
+}
+@media(max-width:500px){
+ .analysis-accounting-copy{padding:13px}
+ .analysis-accounting-copy-selectors{grid-template-columns:1fr}
+ .analysis-accounting-copy-controls>button,.analysis-accounting-copy-result button{width:100%;justify-self:stretch}
+ .analysis-accounting-copy-result p{min-width:0;flex-basis:100%}
+}
+
 /* Each fiscal stage has its own content; the nine accounting rows remain easy to scan. */
 #analysis-fiscal-form .analysis-config-year{display:grid;gap:6px;max-width:220px;margin-top:20px}
 #analysis-fiscal-form .analysis-config-year select{min-height:44px}

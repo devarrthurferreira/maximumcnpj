@@ -1,5 +1,12 @@
 # Histórico de alterações
 
+## [0.47.0] — 2026-10-28
+
+- Contábil oferece preenchimento individual, cópia de uma competência para outra e repetição dos valores em todos os meses exibidos.
+- Apresenta origem, destinos e aviso de substituição antes de aplicar; mantém edição por mês, rascunho e ação para desfazer a última cópia.
+- Exige as cinco contas da origem preenchidas, aceita zero explícito e preserva competências fora do período.
+- Mantém persistência mensal, permissões, revisões concorrentes, histórico e seleção dos meses fiscais disponíveis para a DRE.
+
 ## [0.46.0] — 2026-10-28
 
 - Atualiza a premissa padrão de CBS para 11,3% nos novos cálculos e créditos do regime regular.

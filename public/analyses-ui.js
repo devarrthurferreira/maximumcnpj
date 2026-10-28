@@ -8,6 +8,7 @@ import {defaultDifalPolicy,parseDifalPolicy} from './simulator-engine.js';
 import {buildRbt12Schedule} from './simulator-rbt12.js';
 import {analysisDocumentStatus,loadAnalysisExtraction,retryAnalysisExtraction,uploadAnalysisExtraction} from './analyses-extrato.js';
 import {parseAccountingPaste,planAccountingPaste,ACCOUNTING_IMPORT_CSV_TEMPLATE} from './analysis-accounting-import.js';
+import {planAccountingCopy} from './analysis-accounting-repeat.js';
 import {renderAccountingPaste} from './analyses-accounting-paste.js';
 import {analysisGuidance,accountingSourceMonths,analysisPeriodFor,scopedAccountingMonths,usesFixedAnalysisPeriod} from './analyses-guidance.js';
 import {analysisMonthsForYear,isAnalysisMonth} from './analysis-period.js';
@@ -15,7 +16,7 @@ import {wizardStep,initialWizardStep,normalizeWizardStep} from './analyses-wizar
 import {createAnalysisModal,restoreAnalysisNotices} from './analyses-modal.js';
 import {ACCOUNTING_FIELDS,ADJUSTMENT_FIELDS,esc,money,monthLabel,sectorName,analysisUrl,companyResults,
   renderNewAnalysis,renderNewCompanyContext,renderAnalysisList,renderAnalysisDetail,renderAnalysisVersions,
-  renderAnalysisGuidance,renderAccountingSummary,renderAnalysisGeneration,renderWizardReview,
+  renderAnalysisGuidance,renderAccountingSummary,renderAccountingCopy,renderAnalysisGeneration,renderWizardReview,
   renderDifalChoice,difalChoiceSummary,renderFiscalReports,renderFiscalReference,renderFiscalEvidence,renderAccountingSourceMonths,
   renderAnalysisPeriod,renderFiscalComposition,renderInlineRbt12} from './analyses-view.js';
 
@@ -32,6 +33,7 @@ const S={user:null,clients:null,analysis:null,sector:null,source:null,generation
   newDifalPolicy:defaultDifalPolicy(),newDifalChoice:null,fiscalDifalChoice:undefined,difalEnabledMemory:{new:null,analysis:null},
   deleting:false,deleteTarget:null,deleteTrigger:null,
   paste:{text:'',preview:null,error:'',replaceConfirmed:false,open:false,pending:false},detailOpen:{},
+  accountingCopy:{mode:'manual',sourceMonth:'',targetMonth:'',message:'',previewKey:null,undo:null},
   modalKind:null,modalOpen:false,modalSteps:{},modalReturn:null};
 let modal=null;
 let companyCheckController=null,evidenceTask=null,metadataTask=null,accountingSummaryFrame=0;
@@ -79,7 +81,10 @@ function showError(error) {
 function markDirty(sector) {
   const changed=!S[sector+'Dirty'];
   S[sector+'Dirty']=true;S.generateRequest=null;
-  if(sector==='accounting')invalidatePastePreview('Os valores do formulário mudaram. Confira novamente a colagem antes de aplicá-la.');
+  if(sector==='accounting'){
+    S.accountingCopy.undo=null;S.accountingCopy.message='';S.accountingCopy.previewKey=null;
+    invalidatePastePreview('Os valores do formulário mudaram. Confira novamente a colagem antes de aplicá-la.');
+  }
   const generate=$('#analysis-generate');if(generate)generate.disabled=true;
   feedback('');
   if(changed)refreshGuidance();
@@ -250,7 +255,10 @@ function adoptAnalysis(value,{preserveDrafts=false}={}) {
   S.analysis=record;
   if(!preserveDrafts||!S.configDirty){S.configDraft=clone(record.config);S.configDirty=false;}
   if(!preserveDrafts||!S.fiscalDirty){S.fiscalDraft=clone(record.fiscal.data);S.fiscalDirty=false;}
-  if(!preserveDrafts||!S.accountingDirty){S.accountingDraft=clone(record.accounting.data);S.accountingDirty=false;}
+  if(!preserveDrafts||!S.accountingDirty){
+    S.accountingDraft=clone(record.accounting.data);S.accountingDirty=false;
+    S.accountingCopy.undo=null;S.accountingCopy.message='';S.accountingCopy.previewKey=null;
+  }
   if(!S.fiscalDraft.difalPolicy)S.fiscalDraft.difalPolicy=defaultDifalPolicy();
 }
 function pagination(data) {
@@ -656,6 +664,7 @@ function refreshPeriodViews() {
     const excluded=S.accountingDraft.months.length-scopedAccountingMonths(S.analysis,S.accountingDraft.months,S.source,S.generation).length;
     const note=$('#analysis-accounting-excluded');if(note)note.innerHTML=excluded?`<p class="analysis-period-excluded">${excluded} competência(s) fora do período permanecem salvas e não entram nos totais abaixo.</p>`:'';
   }
+  refreshAccountingCopy();
 }
 function refreshEvidence() {
   const status=$('#analysis-fiscal-evidence');if(status)status.innerHTML=renderFiscalEvidence(detailOptions());
@@ -761,6 +770,7 @@ async function openAnalysis(id) {
   S.analysis=null;adoptAnalysis(response.analysis);S.generateRequest=null;
   S.difalEnabledMemory.analysis=null;
   S.paste={text:'',preview:null,error:'',replaceConfirmed:false,open:false,pending:false};S.detailOpen={};
+  S.accountingCopy={mode:'manual',sourceMonth:'',targetMonth:'',message:'',previewKey:null,undo:null};
   S.modalSteps={};S.modalReturn=null;
   S.generation=null;S.source=null;S.generationError='';S.reference=null;S.documentStatus=null;S.pdfStatus='';
   S.documentUploads={};S.documentIssuerUf=null;S.documentUfEdited=false;
@@ -790,7 +800,7 @@ function schedule() {
 }
 function detailOptions() {
   return {analysis:S.analysis,sector:S.sector,modalKind:S.modalKind,configDraft:S.configDraft,
-    fiscalDraft:S.fiscalDraft,fiscalDifalChoice:S.fiscalDifalChoice,accountingDraft:S.accountingDraft,source:S.source,generation:S.generation,
+    fiscalDraft:S.fiscalDraft,fiscalDifalChoice:S.fiscalDifalChoice,accountingDraft:S.accountingDraft,accountingCopy:S.accountingCopy,source:S.source,generation:S.generation,
     evidenceState:S.evidenceState,evidenceError:S.evidenceError,
     metadataState:S.metadataState,generationUnavailable:S.generationUnavailable,
     generationError:S.generationError,reference:S.reference,schedule:schedule(),documentStatus:S.documentStatus,
@@ -1415,13 +1425,113 @@ function refreshMonthTotal(host) {
     $('[data-accounting-total]',host).textContent=values.every(value=>value===null)?'Não incluído · sem valores':values.some(value=>value===null)?'Preenchimento incompleto':money(values.reduce((sum,value)=>sum+value,0)/100);
   } catch { $('[data-accounting-total]',host).textContent='Preenchimento incompleto'; }
 }
+function accountingCopyAllowedMonths() {
+  return scopedAccountingMonths(S.analysis,S.accountingDraft.months,S.source,S.generation).map(row=>row.sourceMonth);
+}
+function accountingCopyPreviewRows() {
+  const visible=new Map(displayedAccountingMonths().map(row=>[row.sourceMonth,row]));
+  return S.accountingDraft.months.map(row=>visible.get(row.sourceMonth)||row);
+}
+function accountingCopyPlan(months,allowedMonths) {
+  const {mode,sourceMonth,targetMonth}=S.accountingCopy;
+  const targetMonths=mode==='repeat'?allowedMonths.filter(month=>month!==sourceMonth):[targetMonth];
+  return planAccountingCopy(months,{sourceMonth,targetMonths,allowedMonths});
+}
+function accountingCopyPlanKey(plan,allowedMonths) {
+  return JSON.stringify([S.analysis.id,S.analysis.accounting.revision,S.analysis.config.revision,allowedMonths,plan.sourceMonth,plan.targetMonths,plan.changes]);
+}
+function refreshAccountingCopy() {
+  const host=$('#analysis-accounting-copy');if(!host||!S.accountingDraft||!writable())return;
+  const state=S.accountingCopy,allowed=accountingCopyAllowedMonths(),scopeKey=allowed.join(',');
+  if(state.undo&&(state.undo.analysisId!==S.analysis.id||state.undo.revision!==S.analysis.accounting.revision||
+    state.undo.configRevision!==S.analysis.config.revision||state.undo.scopeKey!==scopeKey)){
+    state.undo=null;state.message='';
+  }
+  if(!allowed.includes(state.sourceMonth))state.sourceMonth=allowed[0]||'';
+  const targets=allowed.filter(month=>month!==state.sourceMonth);
+  if(!targets.includes(state.targetMonth))state.targetMonth=targets.find(month=>month>state.sourceMonth)||targets[0]||'';
+  const controlsKey=JSON.stringify([state.mode,state.sourceMonth,state.targetMonth,allowed]);
+  if(host.dataset.controlsKey!==controlsKey){
+    const focused=host.contains(document.activeElement)?document.activeElement.id:null;
+    host.innerHTML=renderAccountingCopy(detailOptions());host.dataset.controlsKey=controlsKey;
+    host.querySelectorAll('[name="accounting-fill-mode"]').forEach(input=>input.onchange=()=>{
+      if(S.busy||!writable())return;
+      state.mode=input.value;state.message='';state.previewKey=null;refreshAccountingCopy();
+    });
+    $('#analysis-accounting-copy-source').onchange=event=>{
+      if(S.busy||!writable())return;
+      state.sourceMonth=event.target.value;state.message='';state.previewKey=null;refreshAccountingCopy();
+    };
+    $('#analysis-accounting-copy-target').onchange=event=>{
+      if(S.busy||!writable())return;
+      state.targetMonth=event.target.value;state.message='';state.previewKey=null;refreshAccountingCopy();
+    };
+    $('#analysis-accounting-copy-apply').onclick=applyAccountingCopy;
+    $('#analysis-accounting-copy-undo').onclick=undoAccountingCopy;
+    if(focused)$('#'+focused)?.focus({preventScroll:true});
+  }
+  const status=$('#analysis-accounting-copy-status'),undo=$('#analysis-accounting-copy-undo');
+  status.textContent=state.message;status.hidden=!state.message;undo.hidden=!state.undo;undo.disabled=S.busy;
+  const preview=$('#analysis-accounting-copy-preview'),apply=$('#analysis-accounting-copy-apply');
+  state.previewKey=null;apply.disabled=true;
+  if(state.mode==='manual'){preview.replaceChildren();return;}
+  try{
+    if(!allowed.length)throw new Error('Prepare os meses deste período antes de copiar os valores.');
+    if(!targets.length)throw new Error('É necessário ter outro mês neste período para receber a cópia.');
+    const plan=accountingCopyPlan(accountingCopyPreviewRows(),allowed);
+    preview.innerHTML=`<p><strong>Origem:</strong> ${esc(monthLabel(plan.sourceMonth))} · Total mensal de ${money(plan.totalCents/100)}.</p>
+      <p><strong>${state.mode==='repeat'?`Repetir nos ${plan.targetMonths.length} outros meses deste período`:'Mês de destino'}:</strong> ${plan.targetMonths.map(month=>esc(monthLabel(month))).join(' · ')}.</p>
+      ${plan.overwrittenMonths.length?`<p class="analysis-accounting-copy-warning"><strong>A cópia substituirá valores já informados em:</strong> ${plan.overwrittenMonths.map(month=>esc(monthLabel(month))).join(' · ')}. Confira os destinos antes de copiar.</p>`:''}
+      <p>${plan.changedFields?'As cinco contas serão copiadas. Depois, você pode ajustar cada mês e salvar o Contábil.':'Os meses de destino já têm os mesmos valores. Nenhuma alteração é necessária.'}</p>`;
+    apply.textContent=plan.overwrittenMonths.length?'Copiar e substituir':state.mode==='repeat'?'Repetir valores':'Aplicar cópia';
+    apply.disabled=S.busy||!plan.changedFields;state.previewKey=accountingCopyPlanKey(plan,allowed);
+  }catch(error){
+    preview.innerHTML=`<p class="analysis-accounting-copy-warning">${esc(error.message)}</p><p>Preencha as cinco contas do mês de origem. Use zero somente nas categorias sem despesa.</p>`;
+    apply.textContent=state.mode==='repeat'?'Repetir valores':'Aplicar cópia';
+  }
+}
+function applyAccountingCopy() {
+  if(S.busy||!writable()||S.accountingCopy.mode==='manual')return;
+  try{
+    clearError();const reviewedKey=S.accountingCopy.previewKey;
+    captureAll();const allowed=accountingCopyAllowedMonths(),plan=accountingCopyPlan(S.accountingDraft.months,allowed);
+    if(reviewedKey!==accountingCopyPlanKey(plan,allowed)){
+      S.accountingCopy.message='Os valores ou o período mudaram. Confira os destinos e clique novamente para copiar.';
+      refreshAccountingCopy();return;
+    }
+    if(!plan.changedFields)return;
+    const before=clone(S.accountingDraft.months);
+    S.accountingDraft={months:plan.months};markDirty('accounting');
+    S.accountingCopy.undo={before,after:JSON.stringify(plan.months),analysisId:S.analysis.id,
+      revision:S.analysis.accounting.revision,configRevision:S.analysis.config.revision,scopeKey:allowed.join(',')};
+    S.accountingCopy.message=`Valores de ${monthLabel(plan.sourceMonth)} copiados para ${plan.targetMonths.length===1?monthLabel(plan.targetMonths[0]):plan.targetMonths.length+' outros meses'}. Confira os valores e salve o Contábil.`;
+    renderDetail();
+    if(plan.targetMonths.length===1)focusSection(`[data-accounting-month="${plan.targetMonths[0]}"] [data-accounting-field]`);
+    else $('#analysis-accounting-copy-undo')?.focus({preventScroll:true});
+  }catch(error){showError(error);refreshAccountingCopy();}
+}
+function undoAccountingCopy() {
+  if(S.busy||!writable()||!S.accountingCopy.undo)return;
+  try{
+    clearError();captureAll();const undo=S.accountingCopy.undo,allowed=accountingCopyAllowedMonths();
+    if(undo.analysisId!==S.analysis.id||undo.revision!==S.analysis.accounting.revision||undo.configRevision!==S.analysis.config.revision||
+      undo.scopeKey!==allowed.join(',')||undo.after!==JSON.stringify(S.accountingDraft.months)){
+      S.accountingCopy.undo=null;S.accountingCopy.message='A cópia não pode ser desfeita depois de outras alterações. Os valores atuais foram mantidos.';
+      refreshAccountingCopy();return;
+    }
+    S.accountingDraft={months:clone(undo.before)};markDirty('accounting');
+    S.accountingCopy.message='Cópia desfeita. Os valores anteriores foram restaurados neste rascunho.';
+    renderDetail();$('#analysis-accounting-mode-'+S.accountingCopy.mode)?.focus({preventScroll:true});
+  }catch(error){showError(error);}
+}
 function bindAccounting() {
   renderPaste();
   bindAccountingSourceActions();
+  refreshAccountingCopy();
   $('#analysis-accounting-summary-panel').ontoggle=()=>scheduleAccountingSummary();
   $('#analysis-accounting-form').oninput=event=>{
     if(!event.target.matches('[data-accounting-field]'))return;
-    markDirty('accounting');const host=event.target.closest('[data-accounting-month]');if(host)refreshMonthTotal(host);scheduleAccountingSummary();
+    markDirty('accounting');const host=event.target.closest('[data-accounting-month]');if(host)refreshMonthTotal(host);scheduleAccountingSummary();refreshAccountingCopy();
   };
   $('#analysis-accounting-form').onsubmit=event=>{event.preventDefault();void saveSector('accounting',event.submitter?.value==='complete');};
   if($('#analysis-add-month'))$('#analysis-add-month').onclick=()=>{

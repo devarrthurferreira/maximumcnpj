@@ -114,16 +114,16 @@ function observePatches(page:Page){
   });
   return paths;
 }
-async function prepareFiscalSource(request:APIRequestContext,baseURL:string,analysis:any,clientId:string,code:string){
+async function prepareFiscalSource(request:APIRequestContext,baseURL:string,analysis:any,clientId:string,code:string,monthCount=9){
   const prepared=await api(request,baseURL,'POST','/api/v4/analyses/'+analysis.id+'/fiscal/import',{
     expectedSectorRevision:analysis.fiscal.revision,expectedConfigRevision:analysis.config.revision
   });
   // Node derives and validates both monthly sources. CPF rows need no external CNPJ service.
   for(const kind of ['purchases','sales'] as const){
     const attached=await api(request,baseURL,'POST','/api/v4/generations/'+prepared.generationId+'/'+kind,{
-      clientId,importId:randomUUID(),fileName:code+'-'+kind+'.csv',expectedRows:9,issuerUf:'MG'
+      clientId,importId:randomUUID(),fileName:code+'-'+kind+'.csv',expectedRows:monthCount,issuerUf:'MG'
     });
-    await api(request,baseURL,'POST','/api/v4/'+kind+'/'+attached.job._id+'/rows',{offset:0,rows:Array.from({length:9},(_,index)=>index+1).map(month=>{
+    await api(request,baseURL,'POST','/api/v4/'+kind+'/'+attached.job._id+'/rows',{offset:0,rows:Array.from({length:monthCount},(_,index)=>index+1).map(month=>{
       const totalCents=month<=2?(kind==='sales'?1_000_000:100_000)*month:0;
       return {document:'12345678900',name:'Pessoa sintética',serviceDate:'2025-0'+month+'-15',quantity:'1',
         natureCode:kind==='sales'?'5102001':'1102001',description:'Competência sintética de usabilidade',recipientUf:'MG',
@@ -377,4 +377,121 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
   await card.getByRole('link',{name:'Abrir análise'}).click();
   await expect(page.locator('#analysis-generation a')).toHaveAttribute('href','/simulator.html?simulation='+simulationId);
   expect(errors).toEqual([]);
+});
+
+
+const repeatFields=['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents'];
+const repeatRow=(sourceMonth:string,values:(number|null)[]=Array(5).fill(null))=>({sourceMonth,...Object.fromEntries(repeatFields.map((key,index)=>[key,values[index]]))});
+async function repeatValues(page:Page,month:string){
+  return Promise.all(repeatFields.map(async key=>{const value=await expense(page,month,key).inputValue();return value===''?null:Math.round(Number(value)*100);}));
+}
+async function fillRepeatMonth(page:Page,month:string,values:number[]){
+  await openDetails(page,'analysis-month-'+month);
+  for(let index=0;index<repeatFields.length;index++)await expense(page,month,repeatFields[index]).fill((values[index]/100).toFixed(2));
+}
+
+test('Contábil · repetição: copia entre meses, desfaz e salva ajustes independentes',async({page,baseURL,analysisWorkspace})=>{
+  test.setTimeout(60_000);const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await signIn(page.request,baseURL!,analysisWorkspace.account);
+  const created=await createAnalysis(page.request,baseURL!,2027),initial=[repeatRow('2025-01')];
+  let analysis=await patchSector(page.request,baseURL!,created.analysis,'accounting',{months:initial});
+  const patches=observePatches(page);
+  await page.goto('/analyses.html?id='+analysis.id+'&sector=accounting');
+  await expect(page.locator('#analysis-accounting-mode-manual')).toBeChecked();
+  const amounts=[12345,0,678,901,234];await fillRepeatMonth(page,'2025-01',amounts);
+  await page.locator('#analysis-accounting-mode-copy').check();
+  await page.locator('#analysis-accounting-copy-source').selectOption('2025-01');
+  await page.locator('#analysis-accounting-copy-target').selectOption('2025-02');
+  await expect(page.locator('#analysis-accounting-copy-apply')).toBeEnabled();
+  await page.locator('#analysis-accounting-copy-apply').click();
+  expect(await repeatValues(page,'2025-02')).toEqual(amounts);
+  expect(await repeatValues(page,'2025-01')).toEqual(amounts);expect(patches).toEqual([]);
+  await page.locator('#analysis-accounting-copy-undo').click();
+  expect(await repeatValues(page,'2025-02')).toEqual(Array(5).fill(null));
+  expect(await repeatValues(page,'2025-01')).toEqual(amounts);
+  await page.locator('#analysis-accounting-copy-apply').click();
+  await openDetails(page,'analysis-month-2025-02');await expense(page,'2025-02','rentCents').fill('7.89');
+  expect(await repeatValues(page,'2025-02')).toEqual([12345,789,678,901,234]);
+  expect(await repeatValues(page,'2025-01')).toEqual(amounts);
+  await expect(page.locator('#analysis-accounting-copy-undo')).toBeHidden();
+  expect(patches).toEqual([]);
+  expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+analysis.id)).analysis.accounting.data.months).toEqual(initial);
+  analysis=await saveSector(page,analysis.id,'accounting');
+  expect(analysis.accounting.status).toBe('DRAFT');
+  expect(analysis.accounting.data.months.find((row:any)=>row.sourceMonth==='2025-01')).toEqual(repeatRow('2025-01',amounts));
+  expect(analysis.accounting.data.months.find((row:any)=>row.sourceMonth==='2025-02')).toEqual(repeatRow('2025-02',[12345,789,678,901,234]));
+  await page.reload();await expect(page.locator('#analysis-accounting-form')).toBeVisible();
+  expect(await repeatValues(page,'2025-01')).toEqual(amounts);expect(await repeatValues(page,'2025-02')).toEqual([12345,789,678,901,234]);
+  expect(patches).toEqual(['/api/v4/analyses/'+analysis.id+'/accounting']);expect(errors).toEqual([]);
+});
+
+test('Contábil · repetição: aplica a todos os meses visíveis, preserva outros períodos e concilia a DRE parcial',async({page,baseURL,analysisWorkspace},info)=>{
+  test.setTimeout(90_000);const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await signIn(page.request,baseURL!,analysisWorkspace.account);
+  const created=await createAnalysis(page.request,baseURL!,2027);
+  let analysis=await prepareFiscalSource(page.request,baseURL!,created.analysis,created.clientId,created.code,3);
+  const amounts=[12345,1000,0,500,255],outside=[repeatRow('2024-01',[88800,0,0,0,0]),repeatRow('2025-10',[77700,0,0,0,0])];
+  analysis=await patchSector(page.request,baseURL!,analysis,'accounting',{months:[repeatRow('2025-01',amounts),repeatRow('2025-02',[99900,0,0,0,0]),...outside]});
+  const patches=observePatches(page);
+  await page.goto('/analyses.html?id='+analysis.id+'&sector=accounting');
+  await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
+  await expect(page.locator('[data-accounting-month="2025-10"],[data-accounting-month="2024-01"]')).toHaveCount(0);
+  await page.locator('#analysis-accounting-mode-repeat').check();
+  await page.locator('#analysis-accounting-copy-source').selectOption('2025-01');
+  await expect(page.locator('#analysis-accounting-copy-apply')).toContainText('substituir');
+  await page.setViewportSize({width:1440,height:1000});
+  await page.locator('#analysis-accounting-copy').scrollIntoViewIfNeeded();
+  await page.screenshot({path:info.outputPath('contabil-repetir-desktop.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:650});
+  await page.locator('#analysis-accounting-copy-preview').scrollIntoViewIfNeeded();
+  await page.screenshot({path:info.outputPath('contabil-repetir-mobile.png'),fullPage:true});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.locator('#analysis-accounting-copy-apply').click();
+  for(let month=1;month<=9;month++)expect(await repeatValues(page,'2025-0'+month)).toEqual(amounts);
+  await expect(page.locator('[data-accounting-summary-total]')).toContainText('1.269,00');
+  expect(patches).toEqual([]);
+  analysis=await saveSector(page,analysis.id,'accounting',true);
+  expect(analysis.accounting.data.months).toHaveLength(11);
+  for(const row of outside)expect(analysis.accounting.data.months.find((item:any)=>item.sourceMonth===row.sourceMonth)).toEqual(row);
+  expect(analysis.readiness.months).toEqual(['2025-01','2025-02','2025-03']);
+  await expect(page.locator('#analysis-generate')).toBeEnabled();await page.locator('#analysis-generate').click();
+  await expect(page.locator('#simulation-snapshot')).toBeVisible();
+  const simulationId=new URL(page.url()).searchParams.get('simulation');expect(simulationId).toBeTruthy();
+  const snapshot=await api(page.request,baseURL!,'GET','/api/v4/simulations/'+simulationId);
+  expect(snapshot.reportMonths).toBe(3);expect(snapshot.source.analysisPeriod.includedMonths).toEqual(['2025-01','2025-02','2025-03']);
+  expect(snapshot.monthlyInputs.map((row:any)=>({sourceMonth:row.sourceMonth,values:row.values}))).toEqual(['2025-01','2025-02','2025-03'].map(sourceMonth=>({sourceMonth,values:{serviceRevenue:0,salaries:123.45,rent:10,cardExpenses:0,benefits:5,adminExpenses:2.55}})));
+  expect(errors).toEqual([]);
+});
+
+test('Contábil · repetição: bloqueia origem incompleta e aceita cinco valores zero explícitos',async({page,baseURL,analysisWorkspace})=>{
+  await signIn(page.request,baseURL!,analysisWorkspace.account);
+  const created=await createAnalysis(page.request,baseURL!,2027);
+  const analysis=await patchSector(page.request,baseURL!,created.analysis,'accounting',{months:[repeatRow('2025-01')]});
+  const patches=observePatches(page);await page.goto('/analyses.html?id='+analysis.id+'&sector=accounting');
+  await page.locator('#analysis-accounting-mode-copy').check();
+  await page.locator('#analysis-accounting-copy-source').selectOption('2025-01');
+  await page.locator('#analysis-accounting-copy-target').selectOption('2025-02');
+  await expect(page.locator('#analysis-accounting-copy-apply')).toBeDisabled();
+  await expense(page,'2025-01','salariesCents').fill('0');
+  await expect(page.locator('#analysis-accounting-copy-apply')).toBeDisabled();
+  expect(await repeatValues(page,'2025-02')).toEqual(Array(5).fill(null));
+  await fillRepeatMonth(page,'2025-01',[0,0,0,0,0]);
+  await expect(page.locator('#analysis-accounting-copy-apply')).toBeEnabled();await page.locator('#analysis-accounting-copy-apply').click();
+  expect(await repeatValues(page,'2025-01')).toEqual([0,0,0,0,0]);expect(await repeatValues(page,'2025-02')).toEqual([0,0,0,0,0]);
+  expect(await repeatValues(page,'2025-03')).toEqual(Array(5).fill(null));
+  await expect(page.locator('[data-accounting-summary-months]')).toHaveText('2 / 9');expect(patches).toEqual([]);
+});
+
+test('Contábil · repetição: acesso de consulta conserva valores e não oferece ações de cópia',async({page,baseURL,analysisWorkspace})=>{
+  await signIn(page.request,baseURL!,analysisWorkspace.account);
+  const created=await createAnalysis(page.request,baseURL!,2027),amounts=[12345,0,0,0,0];
+  const analysis=await patchSector(page.request,baseURL!,created.analysis,'accounting',{months:[repeatRow('2025-01',amounts)]});
+  await analysisWorkspace.db.collection<any>('users').updateOne({_id:analysisWorkspace.account.id,workspaceId:analysisWorkspace.workspaceId},{$set:{role:'viewer'}});
+  const patches=observePatches(page);await page.goto('/analyses.html?id='+analysis.id+'&sector=accounting');
+  await expect(page.locator('#analysis-accounting-form')).toBeVisible();
+  await expect(expense(page,'2025-01','salariesCents')).toBeDisabled();
+  await expect(page.locator('#analysis-accounting-copy-apply:not([disabled])')).toHaveCount(0);
+  await expect(page.locator('#analysis-accounting-copy-undo:not([disabled])')).toHaveCount(0);
+  expect(await repeatValues(page,'2025-01')).toEqual(amounts);expect(patches).toEqual([]);
+  expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+analysis.id)).analysis.accounting).toEqual(analysis.accounting);
 });
