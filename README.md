@@ -8,7 +8,7 @@ Gerações existentes são conferidas antes da navegação. Relatórios já conc
 
 A tela de envio aceita CSV, XLSX e XLS nos formatos fiscais já suportados. Nenhuma migração ou mudança de cálculo é necessária.
 
-Verificação: tipos, build e versões, 382 testes de regras, 9 integrações de gerações, 172 Python/PDF/OCR e 13 cenários de navegador aprovados. Os quatro novos cenários verificam o primeiro acesso pela empresa, envio real de CSV nas duas ordens, preservação do primeiro relatório, metadados atrasados e acesso somente de consulta. Os controles foram conferidos em desktop e celular.
+Verificação: tipos, build e versões, 382 testes de regras, 9 integrações de gerações, 172 Python/PDF/OCR e 13 cenários de navegador aprovados. Os quatro novos cenários verificam o primeiro acesso pela empresa, envio real de CSV nas duas ordens, preservação do primeiro relatório, metadados atrasados e acesso somente de consulta. Os controles foram conferidos em desktop e celular. As verificações de navegação conferem o caminho e os parâmetros do envio, respeitando a normalização da ordem da URL pela tela fiscal.
 
 ## Recuperação de geração indisponível — v0.45.1
 

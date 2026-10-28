@@ -86,7 +86,7 @@ for(const firstType of ['PURCHASES','SALES'] as const)test(`Adicionar ${firstTyp
     await page.screenshot({path:info.outputPath('fiscal-add-documents-desktop.png'),fullPage:true});
   }
   await card(page,firstType).getByRole('button',{name:'Adicionar documento'}).click();
-  await expect(page).toHaveURL(/\/purchases\.html\?generation=/);
+  await expect(page).toHaveURL(url=>url.pathname==='/purchases.html'&&!!url.searchParams.get('generation'));
   const firstUrl=new URL(page.url()),generationId=firstUrl.searchParams.get('generation');
   expect(generationId).toBeTruthy();expect(firstUrl.searchParams.get('type')||'PURCHASES').toBe(firstType);
   expect(firstUrl.searchParams.get('client')).toBe(analysis.clientId);expect(firstUrl.searchParams.get('analysis')).toBe(analysis.id);
@@ -99,7 +99,7 @@ for(const firstType of ['PURCHASES','SALES'] as const)test(`Adicionar ${firstTyp
   await expect(card(page,firstType)).toContainText('Leitura concluída');
   await expect(card(page,firstType).getByRole('link',{name:'Conferir relatório'})).toBeVisible();
   await card(page,secondType).getByRole('button',{name:'Adicionar documento'}).click();
-  await expect(page).toHaveURL(/\/purchases\.html\?generation=/);
+  await expect(page).toHaveURL(url=>url.pathname==='/purchases.html'&&!!url.searchParams.get('generation'));
   expect(new URL(page.url()).searchParams.get('generation')).toBe(generationId);
   expect(new URL(page.url()).searchParams.get('type')||'PURCHASES').toBe(secondType);
   await upload(page,secondType);
@@ -122,7 +122,7 @@ test('Adicionar documento aguarda a geração existente e não cria outra enquan
     await page.goto(documentsUrl(analysis.id));await expect.poll(()=>metadataReads).toBe(1);
     const button=card(page,'SALES').getByRole('button',{name:'Adicionar documento'});await expect(button).toBeVisible();
     await button.click();expect(imports).toBe(0);release();
-    await expect(page).toHaveURL(/\/purchases\.html\?generation=/);
+    await expect(page).toHaveURL(url=>url.pathname==='/purchases.html'&&!!url.searchParams.get('generation'));
     expect(new URL(page.url()).searchParams.get('generation')).toBe(prepared.generationId);expect(new URL(page.url()).searchParams.get('type')).toBe('SALES');
     expect(imports).toBe(0);await expect(page.locator('#purchase-file')).toBeEnabled();
   }finally{release();await page.unroute(pattern,held);}

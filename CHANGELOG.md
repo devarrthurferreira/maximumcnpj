@@ -5,6 +5,7 @@
 - Entradas e Saídas passam a oferecer Adicionar documento desde a primeira abertura do Fiscal, preparando a importação quando necessário e abrindo o tipo correto.
 - Reutiliza a geração válida para adicionar o documento faltante, preservando o relatório já enviado; substituições continuam explícitas.
 - Mantém autorização, vínculo da empresa, proteção de rascunhos e recuperação de documentos indisponíveis.
+- Verifica navegação pelo tipo e vínculo dos documentos, sem depender da ordem dos parâmetros na URL.
 
 ## [0.45.1] — 2026-10-28
 
