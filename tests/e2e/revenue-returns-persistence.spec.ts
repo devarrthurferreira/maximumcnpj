@@ -134,8 +134,8 @@ test('receita bruta menos devoluções concilia relatório, DRE salva e nova ses
     await expect(reopened.locator('[data-period="annual"]')).toHaveAttribute('aria-pressed','true');
     await reopened.locator('[data-period="monthly"]').click();
     await reopened.locator('#dre-month').selectOption('7');
-    await reopened.locator('#dre-regime').selectOption('pure');
     await reopened.locator('[data-simulation-detail="dre"] > summary').click();
+    await reopened.locator('#dre-regime').selectOption('pure');
     const savedClosing=reopened.locator('[data-revenue-reconciliation="dre"]');
     await expect(savedClosing.locator('[data-dre-row="revenueSourceGross"] td').first()).toContainText('1.200,00');
     await expect(savedClosing.locator('[data-dre-row="revenueSalesReturns"] td').first()).toContainText('150,00');

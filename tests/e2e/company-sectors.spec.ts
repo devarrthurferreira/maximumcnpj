@@ -12,7 +12,7 @@ test('Empresas: setores preservam a empresa, busca aceita CNPJ formatado e pagin
  const row=page.locator('.company-table tbody tr');
  await expect(row).toHaveCount(1);
  await expect(row).toContainText('Empresa sintética 061');
- await expect(row.getByRole('link',{name:'Fiscal de Empresa sintética 061',exact:true})).toHaveAttribute('href',`/analyses.html?client=${companies[60]._id}&sector=fiscal`);
+ await expect(row.getByRole('link',{name:'Fiscal de Empresa sintética 061',exact:true})).toHaveAttribute('href',`/analyses.html?client=${companies[60]._id}&sector=fiscal&entry=company`);
  await expect(row.getByRole('link',{name:'Contábil de Empresa sintética 061',exact:true})).toHaveAttribute('href',`/analyses.html?client=${companies[60]._id}&sector=accounting`);
  await expect(row.getByRole('link',{name:'Histórico de Empresa sintética 061',exact:true})).toHaveAttribute('href',`/#activity?clientId=${companies[60]._id}`);
  await page.setViewportSize({width:390,height:844});

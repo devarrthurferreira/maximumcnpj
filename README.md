@@ -8,7 +8,7 @@ O cartão MongoDB usa `dbStats` para medir dados e índices alocados no banco. O
 
 ### Empresas e abertura da análise
 
-Cada empresa oferece **FISCAL | CONTÁBIL | HISTÓRICO**. A busca aceita código, nome e CNPJ formatado; a paginação mantém toda a carteira acessível. Fiscal abre o fluxo de regimes, DIFAL, RBT12 e documentos de entradas/saídas. Contábil abre os nove meses de janeiro a setembro para preenchimento das contas existentes. Histórico abre os registros da empresa escolhida.
+Cada empresa oferece **FISCAL | CONTÁBIL | HISTÓRICO**. A busca aceita código, nome e CNPJ formatado; a paginação mantém toda a carteira acessível. Pela lista de empresas, Fiscal abre diretamente os documentos de entradas/saídas, com atalho para a etapa RBT12. Contábil abre imediatamente os nove meses de janeiro a setembro para preenchimento das contas existentes, inclusive quando o trabalho ainda não foi iniciado. Abrir um setor retoma a análise existente sem substituir suas escolhas; somente operadores/administradores podem iniciar uma análise. Histórico abre os registros da empresa escolhida.
 
 Análises inicia na busca da empresa; a segunda etapa é escolher o setor. No Fiscal, os quatro regimes podem ser selecionados para a DRE. O DIFAL tem uma etapa própria e, para cada Simples selecionado, três controles independentes: **Incluir DIFAL neste regime**, **ENTRADA - antecipação das compras** e **SAÍDAS - vendas**. A etapa RBT12 contém somente a referência do Simples, com leitura do extrato pela seção 2.2; entradas e saídas ficam na etapa seguinte.
 
@@ -28,7 +28,7 @@ Nenhuma migração destrutiva é necessária. Índices de leitura são criados p
 
 ### Verificação desta entrega
 
-Tipos, build e versões conferidos. Com Node 22.16, MongoDB 7 descartável e Python 3.12, passaram 382 testes de regras, 148 verificações de integração/projeção/competências e 172 testes Python/PDF/OCR. Os cenários direcionados de navegador incluem empresa → setor, leitura/persistência do extrato, DIFAL por regime, competências não consecutivas, DRE única, histórico, permissões e visualização em 320/390 px. Dados sintéticos são usados na verificação; nenhuma conta ou documento real é alterado pelos testes.
+Tipos, build e versões conferidos. Com Node 22.16, MongoDB 7 descartável e Python 3.12, passaram 382 testes de regras, 148 verificações de integração/projeção/competências e 172 testes Python/PDF/OCR. Os 196 cenários de navegador foram verificados: 194 na regressão completa e suas repetições direcionadas, mais dois novos casos de acesso direto por empresa. Cinco expectativas antigas de apresentação/versão foram adaptadas, preservando as verificações independentes de valores. A cobertura inclui empresa → setor, leitura/persistência do extrato, DIFAL por regime, competências não consecutivas, DRE única, histórico, permissões e visualização em 320/390 px. Dados sintéticos são usados na verificação; nenhuma conta ou documento real é alterado pelos testes.
 
 ## Registro das entregas anteriores
 

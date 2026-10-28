@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {MongoClient} from 'mongodb';
 import {hashPassword} from '../../src/security.ts';
 
-type Fixture={clientId:string;code:string};
+type Fixture={clientId:string;code:string;userId:string};
 const test=base.extend<{company:Fixture}>({company:async({page,baseURL},use)=>{
   expect(process.env.MONGODB_URI,'MongoDB descartável obrigatório').toBeTruthy();
   const mongo=new MongoClient(process.env.MONGODB_URI!);await mongo.connect();
@@ -13,7 +13,7 @@ const test=base.extend<{company:Fixture}>({company:async({page,baseURL},use)=>{
     await db.collection<any>('users').insertOne({_id:userId,workspaceId,email,passwordHash:await hashPassword(password),name:'Validação sintética parcial',role:'admin',active:true,mustChangePassword:false,createdAt:new Date()});
     await api(page.request,baseURL!,'POST','/api/auth/login',{email,password});
     const imported=await api(page.request,baseURL!,'POST','/api/v4/clients/import',{rows:[{code,name:'Empresa parcial '+code,uf:'MG'}]});
-    await use({clientId:imported.items[0].id,code});
+    await use({clientId:imported.items[0].id,code,userId});
   }finally{await db.collection<any>('sessions').deleteMany({workspaceId,userId});await db.collection<any>('users').deleteOne({_id:userId,workspaceId});await mongo.close();}
 }});
 async function api(request:APIRequestContext,baseURL:string,method:string,path:string,data?:unknown){
@@ -94,4 +94,40 @@ test('Contábil abre nove meses, ignora vazios e gera relatório único dos mese
   expect(stored.readiness.months).toEqual(['2025-01','2025-03']);
   expect(stored.accounting.data.months.filter((row:any)=>row.salariesCents!==null).map((row:any)=>row.sourceMonth)).toEqual(['2025-01','2025-03']);
   await page.screenshot({path:info.outputPath('partial-consolidated-dre.png'),fullPage:true});expect(errors).toEqual([]);
+});
+
+
+test('Botões da empresa abrem Contábil vazio diretamente e Fiscal nos documentos sem repetir escolha de setor',async({page,baseURL,company})=>{
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  const before=await api(page.request,baseURL!,'GET',`/api/v4/analyses?clientId=${company.clientId}&summary=1`);expect(before.items).toHaveLength(0);
+  await page.goto(`/analyses.html?client=${company.clientId}&sector=accounting&entry=company`);
+  const wizard=page.locator('#analysis-wizard');
+  await expect(wizard).toHaveAttribute('data-wizard-kind','accounting');await expect(wizard).toHaveAttribute('data-wizard-step','values');
+  await expect(page.locator('[data-accounting-month]')).toHaveCount(9);await expect(page.locator('#analysis-new-form')).toHaveCount(0);
+  const id=new URL(page.url()).searchParams.get('id');expect(id).toBeTruthy();
+  const saved=(await api(page.request,baseURL!,'GET',`/api/v4/analyses/${id}?summary=1`)).analysis;
+  expect(saved.accounting.data.months).toEqual([]);expect(saved.config.regimeSelection.selected).toEqual(['pure','hybrid','presumed','actual']);
+  await page.goto(`/analyses.html?client=${company.clientId}&sector=fiscal&entry=company`);
+  await expect(wizard).toHaveAttribute('data-wizard-kind','fiscal');await expect(wizard).toHaveAttribute('data-wizard-step','documents');
+  expect(new URL(page.url()).searchParams.get('id')).toBe(id);
+  await expect(page.locator('[data-analysis-document=PURCHASES]')).toBeVisible();await expect(page.locator('[data-analysis-document=SALES]')).toBeVisible();
+  await page.locator('.analysis-company-rbt12 [data-analysis-action=reference]').click();
+  await expect(wizard).toHaveAttribute('data-wizard-step','rbt12');await expect(page.locator('#analysis-rbt12-pdf')).toBeVisible();
+  const after=await api(page.request,baseURL!,'GET',`/api/v4/analyses?clientId=${company.clientId}&summary=1`);expect(after.items).toHaveLength(1);
+  expect(after.items[0].revision).toBe(saved.revision);expect(errors).toEqual([]);
+});
+
+
+test('Acesso à empresa sem setor ou com permissão de consulta não cria uma análise',async({page,baseURL,company})=>{
+  await page.goto(`/analyses.html?client=${company.clientId}`);
+  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-kind','new');
+  const before=await api(page.request,baseURL!,'GET',`/api/v4/analyses?clientId=${company.clientId}&summary=1`);expect(before.items).toHaveLength(0);
+  const mongo=new MongoClient(process.env.MONGODB_URI!);await mongo.connect();
+  try{
+    await mongo.db(process.env.MONGODB_DB).collection<any>('users').updateOne({_id:company.userId},{$set:{role:'viewer'}});
+    await page.goto(`/analyses.html?client=${company.clientId}&sector=accounting`);
+    await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-kind','new');
+    await expect(page.locator('#analysis-open-company')).toBeDisabled();
+    const after=await api(page.request,baseURL!,'GET',`/api/v4/analyses?clientId=${company.clientId}&summary=1`);expect(after.items).toHaveLength(0);
+  }finally{await mongo.close();}
 });

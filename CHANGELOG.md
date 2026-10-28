@@ -3,7 +3,7 @@
 ## [0.45.0] — 2026-10-28
 
 - Adiciona dashboard com consultas dos últimos sete dias, uso MongoDB e saldo quando o orçamento do banco estiver configurado, empresas recentes e histórico completo paginado e filtrável.
-- Empresas ganha acessos FISCAL, CONTÁBIL e HISTÓRICO, busca por CNPJ formatado e paginação sem truncar a carteira em 200 registros.
+- Empresas ganha acessos FISCAL, CONTÁBIL e HISTÓRICO, busca por CNPJ formatado e paginação sem truncar a carteira em 200 registros. Fiscal abre documentos e atalho RBT12; Contábil abre imediatamente os nove meses, criando ou retomando o trabalho da empresa com autorização.
 - Análises abre pela empresa, seguida do setor; Fiscal separa regimes, DIFAL por Simples, RBT12/OCR seção 2.2 e entradas/saídas.
 - Aceita uma a nove competências disponíveis entre janeiro e setembro; meses contábeis vazios são excluídos e meses iniciados exigem contas completas. O relatório único usa a interseção validada, sem extrapolação.
 - Captura os meses efetivos no resultado e ajusta DRE, DIFAL, calendário, CSV e PDF para competências parciais ou não consecutivas, preservando snapshots históricos e a janela própria de 12 meses da RBT12.

@@ -538,11 +538,27 @@ async function openNew(clientId='') {
 
 async function openCompany(clientId) {
   if(!uuid(clientId))throw new Error('Selecione uma empresa válida para abrir a análise.');
+  const query=new URLSearchParams(location.search),requestedSector=query.get('sector');
+  const sector=['fiscal','accounting'].includes(requestedSector)?requestedSector:null;
   const response=await analysisRequest(apiPath('?'+new URLSearchParams({clientId,page:'1',summary:'1'})));
-  const found=response.items?.find(item=>item.clientId===clientId);
+  if(!Array.isArray(response.items)||response.items.some(item=>item.clientId!==clientId))throw new Error('Não foi possível conferir a análise desta empresa.');
+  let found=response.items[0],created=false;
+  // An explicit company-sector button already identifies both choices. The server
+  // atomically creates or resumes the one analysis; a concurrent existing record
+  // keeps its configuration and data unchanged.
+  if(!found&&sector&&writable()){
+    const opened=await analysisRequest(apiPath('?summary=1'),{method:'POST',body:{clientId,year:2027,regimeSelection:defaultRegimeSelection()}});
+    found=assertAnalysis(opened.analysis);created=opened.created===true;
+    if(found.clientId!==clientId)throw new Error('A análise retornada não corresponde à empresa selecionada.');
+  }
   if(found){
-    const query=new URLSearchParams(location.search),sector=query.get('sector');
-    history.replaceState(null,'',analysisUrl(found.id,['fiscal','accounting'].includes(sector)?sector:undefined,query.get('view')==='versions'?'versions':undefined));
+    const target=new URL(analysisUrl(found.id,sector||undefined,query.get('view')==='versions'?'versions':undefined),location.origin);
+    if(created)target.searchParams.set('created','1');
+    if(query.get('entry')==='company'){
+      target.searchParams.set('entry','company');
+      if(sector==='fiscal')target.searchParams.set('step','documents');
+    }
+    history.replaceState(null,'',target.pathname+target.search);
     await openAnalysis(found.id);
   } else await openNew(clientId);
 }
