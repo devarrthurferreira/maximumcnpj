@@ -1,6 +1,7 @@
 import {mountNavigation} from './navigation.js';
 import {analysisRequest} from './analyses-api.js';
 import {readFiscalDocument,uploadFiscalDocument} from './analysis-document-upload.js';
+import {isReadyToFinalize} from './purchase-finalization.js';
 import {normalizeUf} from './difal.js';
 import {defaultRegimeSelection,parseRegimeSelection,requiresSimplesReference,REGIME_SELECTION_VERSION} from './regime-selection.js';
 import {defaultDifalPolicy,parseDifalPolicy} from './simulator-engine.js';
@@ -16,7 +17,7 @@ import {ACCOUNTING_FIELDS,ADJUSTMENT_FIELDS,esc,money,monthLabel,sectorName,anal
   renderNewAnalysis,renderNewCompanyContext,renderAnalysisList,renderAnalysisDetail,renderAnalysisVersions,
   renderAnalysisGuidance,renderAccountingSummary,renderAnalysisGeneration,renderWizardReview,
   renderDifalChoice,difalChoiceSummary,renderFiscalReports,renderFiscalReference,renderFiscalEvidence,renderAccountingSourceMonths,
-  renderAnalysisPeriod,renderFiscalComposition} from './analyses-view.js';
+  renderAnalysisPeriod,renderFiscalComposition,renderInlineRbt12} from './analyses-view.js';
 
 const $=(selector,root=document)=>root.querySelector(selector);
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
@@ -668,6 +669,8 @@ function refreshEvidence() {
   const searchable=$('#analysis-searchable-pdf');if(searchable)searchable.hidden=!(S.reference&&S.reference.searchableStored!==false);
   const pdfStatus=$('#analysis-pdf-status');if(pdfStatus&&!S.pdfBusy)pdfStatus.textContent=S.pdfStatus||
     (S.reference?'Leitura confirmada e salva no Fiscal. Confira a seção 2.2 abaixo.':S.fiscalDraft.rbt12DocumentId?'Há um PDF vinculado. Confira a leitura ou tente novamente.':'Nenhum extrato confirmado nesta análise.');
+  const inlineReference=$('#analysis-inline-rbt12-view');
+  if(inlineReference&&!S.pdfBusy){inlineReference.innerHTML=renderInlineRbt12(detailOptions());bindInlineRbt12();}
   bindAnalysisActions(status||document);
   const adjustment=$('#analysis-adjustment-source-action');
   if(adjustment){
@@ -1018,7 +1021,7 @@ function bindFiscal() {
     if(event.target.id==='analysis-rbt12'&&$('#analysis-rbt12-confirm'))$('#analysis-rbt12-confirm').checked=false;
   };
   $('#analysis-fiscal-form').onsubmit=event=>{event.preventDefault();void saveSector('fiscal',event.submitter?.value==='complete');};
-  bindFiscalDocumentActions();
+  bindFiscalDocumentActions();bindInlineRbt12();
   for(const [id,mode] of [['analysis-extrato-pdf','SIMPLES_SECTION_22'],['analysis-extrato-manual','MANUAL']])if($('#'+id))$('#'+id).onclick=()=>{
     try{captureAll();S.fiscalDraft.rbt12Source=mode;S.fiscalDraft.rbt12=null;S.fiscalDraft.rbt12ExtractionId=null;S.fiscalDraft.rbt12ManualConfirmed=false;if(mode==='MANUAL')S.fiscalDraft.rbt12DocumentId=null;S.reference=null;markDirty('fiscal');renderDetail();$('#analysis-rbt12')?.focus();}catch(error){showError(error);}
   };
@@ -1111,8 +1114,9 @@ async function addFiscalDocument(type,file,{retry=false}={}) {
     let resume=type==='SALES'?company?.sales:company?.purchase;
     if(resume&&['CANCELLED','INVALID'].includes(resume.status))resume=null;
     if(resume?.status==='COMPLETED'&&!state.pending)throw new Error('Este documento já foi adicionado. Use Conferir relatório para abri-lo.');
+    if(file&&isReadyToFinalize(resume)&&file.name!==resume.fileName)throw new Error('Já existe um arquivo enviado neste cartão. Use Retomar leitura para concluir esse documento.');
     const progress=message=>{state.progress=message;refreshDocumentUploads();};
-    if(!state.pending&&resume?.status!=='PROCESSING'){
+    if(!state.pending&&resume?.status!=='PROCESSING'&&!isReadyToFinalize(resume)){
       if(!resume&&!normalizeUf(S.documentIssuerUf))throw new Error('Selecione a UF da empresa e adicione o arquivo novamente.');
       state.review=await readFiscalDocument(file,{type,companyCode:S.analysis.company.code,issuerUf:S.documentIssuerUf,resume,onProgress:progress});
       state.file=file;state.fileName=file.name;state.repairs=state.review.repairs||[];
@@ -1186,7 +1190,16 @@ async function prepareImport({type='PURCHASES',reuse=false}={}) {
   finally{if(S.busy){setBusy(false);renderDetail();}}
 }
 
-function pdfProgress(message){S.pdfStatus=message;const host=$('#analysis-pdf-status');if(host)host.textContent=message;}
+function bindInlineRbt12() {
+  const input=$('#analysis-inline-rbt12-pdf'),button=$('#analysis-add-rbt12-document');
+  if(input){input.disabled=S.busy||S.pdfBusy||!writable();input.onchange=event=>{const file=event.target.files?.[0];event.target.value='';if(file)void readPdf(file);};}
+  if(button){button.disabled=S.busy||S.pdfBusy||!writable();button.onclick=()=>{if(!S.busy&&!S.pdfBusy&&writable())input?.click();};}
+  const options=$('#analysis-inline-rbt12-view');if(options)bindAnalysisActions(options);
+}
+function pdfProgress(message){
+  S.pdfStatus=message;
+  for(const id of ['analysis-pdf-status','analysis-inline-pdf-status']){const host=$('#'+id);if(host)host.textContent=message;}
+}
 function pdfContext(){return {clientId:S.analysis.clientId,cnpj:S.analysis.company.cnpj,documentId:S.fiscalDraft.rbt12DocumentId,onProgress:pdfProgress};}
 async function savePdfReference(reference) {
   S.reference=reference;S.fiscalDraft={...S.fiscalDraft,rbt12Source:'SIMPLES_SECTION_22',rbt12ExtractionId:reference.extractionId,

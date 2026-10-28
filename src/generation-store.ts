@@ -16,7 +16,7 @@ const PAGE_SIZE = 20;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const JOB_PROJECTION = {
   _id: 1, clientId: 1, mode: 1, generationId: 1, status: 1, fileName: 1,
-  expectedRows: 1, uploaded: 1, received: 1, summary: 1, purchaseInput: 1,
+  expectedRows: 1, uploaded: 1, received: 1, summary: 1, purchaseInput: 1, finalization: 1,
   resultSummary: 1, createdAt: 1, updatedAt: 1, completedAt: 1, nextPollMs: 1,
   calculationVersion: 1, reportPeriod: 1, difalVersion: 1, anticipationVersion: 1, operationVersion: 1, issuerUf: 1
 };

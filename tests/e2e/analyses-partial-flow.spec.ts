@@ -111,7 +111,11 @@ test('Botões da empresa abrem Contábil vazio diretamente e Fiscal nos document
   await expect(wizard).toHaveAttribute('data-wizard-kind','fiscal');await expect(wizard).toHaveAttribute('data-wizard-step','documents');
   expect(new URL(page.url()).searchParams.get('id')).toBe(id);
   await expect(page.locator('[data-analysis-document=PURCHASES]')).toBeVisible();await expect(page.locator('[data-analysis-document=SALES]')).toBeVisible();
-  await page.locator('.analysis-company-rbt12 [data-analysis-action=reference]').click();
+  const inlineRbt12=page.locator('.analysis-inline-rbt12');
+  await expect(inlineRbt12).toBeVisible();
+  await expect(inlineRbt12.getByRole('button',{name:'Adicionar RBT12 em PDF'})).toBeEnabled();
+  await expect(inlineRbt12.locator('#analysis-inline-rbt12-pdf')).toHaveAttribute('accept','application/pdf,.pdf');
+  await inlineRbt12.locator('[data-analysis-action=reference]').click();
   await expect(wizard).toHaveAttribute('data-wizard-step','rbt12');await expect(page.locator('#analysis-rbt12-pdf')).toBeVisible();
   const after=await api(page.request,baseURL!,'GET',`/api/v4/analyses?clientId=${company.clientId}&summary=1`);expect(after.items).toHaveLength(1);
   expect(after.items[0].revision).toBe(saved.revision);expect(errors).toEqual([]);

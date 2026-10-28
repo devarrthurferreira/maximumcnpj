@@ -31,7 +31,7 @@ for (const type of ['PURCHASES','SALES']) test(`${type} imports cp1252 columns, 
     if (url.pathname === `/api/v4/${endpoint}`) {
       if (method === 'GET') return route.fulfill({json:{items:job ? [job] : [],total:job ? 1 : 0,page:1}});
       expect(p.clientId).toBe(clientId); expect(p.type).toBe(type); expect(p.expectedRows).toBe(3); expect(p.issuerUf).toBe('MG');
-      job = {_id:p.importId,calculationVersion:'NET_V2',operationVersion:OPERATION_CATALOG_VERSION,issuerUf:p.issuerUf,...(sales?{difalVersion:DIFAL_VERSION}:{}),clientId,clientCode:'000',clientName:client.name,fileName:p.fileName,expectedRows:3,uploaded:0,status:'UPLOADING',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:1,invalid:1,duplicates:1}};
+      job = {_id:p.importId,mode:type+'_V1',calculationVersion:'NET_V2',operationVersion:OPERATION_CATALOG_VERSION,issuerUf:p.issuerUf,...(sales?{difalVersion:DIFAL_VERSION}:{}),clientId,clientCode:'000',clientName:client.name,fileName:p.fileName,expectedRows:3,uploaded:0,status:'UPLOADING',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:1,invalid:1,duplicates:1}};
       return route.fulfill({json:job});
     }
     if (url.pathname.endsWith('/rows')) { posted = p.rows; job.uploaded = 3; return route.fulfill({json:{uploaded:3}}); }
@@ -135,7 +135,7 @@ for (const type of ['PURCHASES','SALES']) test(`${type} resumes the original upl
  const sales=type==='SALES',report=sales?'vendas':'compras',endpoint=sales?'sales':'purchases';
  const generationId='00000000-0000-4000-8000-000000000070',jobId='00000000-0000-4000-8000-000000000071';
  let attached:any,rows:any,requestedHistory=false,attachPath='';
- const job:any={_id:jobId,generationId,clientId,clientCode:'000',clientName:client.name,fileName:'000-COMPRAS.csv',calculationVersion:'NET_V2',expectedRows:3,uploaded:2,status:'UPLOADING',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:1,invalid:1,duplicates:1}};
+ const job:any={_id:jobId,mode:type+'_V1',generationId,clientId,clientCode:'000',clientName:client.name,fileName:'000-COMPRAS.csv',calculationVersion:'NET_V2',expectedRows:3,uploaded:2,status:'UPLOADING',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:1,invalid:1,duplicates:1}};
  await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'test',role:'operator'}}}));await page.route('**/api/v4/clients',r=>r.fulfill({json:{items:[client]}}));
  await page.route(/\/api\/v4\/generations(?:[/?]|$)/,r=>{if(r.request().method()==='POST'){attached=r.request().postDataJSON();attachPath=new URL(r.request().url()).pathname;}return r.fulfill({json:{_id:generationId,companies:[{clientId}],generation:{_id:generationId},job}});});
  await page.route(new RegExp(`/api/v4/${endpoint}(?:[/?]|$)`),r=>{
