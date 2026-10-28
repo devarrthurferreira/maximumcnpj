@@ -261,6 +261,7 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
 
   // An unapplied paste is still pending work, even before an expense field becomes dirty.
   await switchSector(page,'fiscal','documents');
+  await page.locator('.analysis-document-options > summary').click();
   await page.locator('#analysis-start-import').click();
   await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('Contábil');
   expect(importRequests).toEqual([]);
@@ -297,6 +298,7 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
   expect(patches).toEqual([]);
   await expense(page,'2025-01','salariesCents').fill('1234.56');
   await switchSector(page,'fiscal','documents');
+  await page.locator('.analysis-document-options > summary').click();
   await page.locator('#analysis-start-import').click();
   await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('Contábil');
   expect(importRequests).toEqual([]);

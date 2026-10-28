@@ -1,5 +1,7 @@
 import {mountNavigation} from './navigation.js';
 import {analysisRequest} from './analyses-api.js';
+import {readFiscalDocument,uploadFiscalDocument} from './analysis-document-upload.js';
+import {normalizeUf} from './difal.js';
 import {defaultRegimeSelection,parseRegimeSelection,requiresSimplesReference,REGIME_SELECTION_VERSION} from './regime-selection.js';
 import {defaultDifalPolicy,parseDifalPolicy} from './simulator-engine.js';
 import {buildRbt12Schedule} from './simulator-rbt12.js';
@@ -20,7 +22,7 @@ const $=(selector,root=document)=>root.querySelector(selector);
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
 const clone=value=>structuredClone(value);
 const S={user:null,clients:null,analysis:null,sector:null,source:null,generation:null,generationError:'',reference:null,
-  documentStatus:null,pdfStatus:'',pdfBusy:false,busy:false,sequence:0,configDraft:null,fiscalDraft:null,accountingDraft:null,
+  documentUploads:{},documentIssuerUf:null,documentUfEdited:false,documentStatus:null,pdfStatus:'',pdfBusy:false,busy:false,sequence:0,configDraft:null,fiscalDraft:null,accountingDraft:null,
   evidenceState:'idle',evidenceError:'',evidenceKey:null,
   metadataState:'idle',metadataKey:null,generationUnavailable:false,
   configDirty:false,fiscalDirty:false,accountingDirty:false,versionsOpen:false,versionsData:null,versionsLoading:false,
@@ -35,7 +37,8 @@ let companyCheckController=null,evidenceTask=null,metadataTask=null,accountingSu
 let scheduleCache={reference:null,months:null,value:null};
 const writable=()=>['admin','operator'].includes(S.user?.role);
 const dirty=()=>S.configDirty||S.fiscalDirty||S.accountingDirty;
-const hasLocalWork=()=>dirty()||S.paste.pending;
+const hasPendingDocuments=()=>Object.values(S.documentUploads).some(upload=>upload.pending);
+const hasLocalWork=()=>dirty()||S.paste.pending||hasPendingDocuments();
 const apiPath=suffix=>'/api/v4/analyses'+(suffix||'');
 
 function feedback(message,kind='') {
@@ -757,6 +760,7 @@ async function openAnalysis(id) {
   S.paste={text:'',preview:null,error:'',replaceConfirmed:false,open:false,pending:false};S.detailOpen={};
   S.modalSteps={};S.modalReturn=null;
   S.generation=null;S.source=null;S.generationError='';S.reference=null;S.documentStatus=null;S.pdfStatus='';
+  S.documentUploads={};S.documentIssuerUf=null;S.documentUfEdited=false;
   S.evidenceState='idle';S.evidenceError='';S.evidenceKey=null;
   S.metadataState='idle';S.metadataKey=null;S.generationUnavailable=false;
   const query=new URLSearchParams(location.search),sector=query.get('sector');
@@ -766,6 +770,7 @@ async function openAnalysis(id) {
   S.modalOpen=!!S.modalKind;
   if(S.modalKind){const step=normalizeWizardStep(S.modalKind,query.get('step'));if(step)S.modalSteps[S.modalKind]=step;}
   clearError();renderDetail();
+  void loadDocumentUf().catch(()=>{});
   if(query.get('resumed')==='1')feedback('Esta empresa já tinha uma análise. Retomamos o trabalho e preservamos os regimes e dados já salvos.','info');
   if(S.versionsOpen){await loadVersions(1);$('#analysis-versions')?.scrollIntoView({block:'start',behavior:'instant'});}
   else if(query.get('view')==='review')$('#analysis-generation')?.scrollIntoView({block:'start',behavior:'instant'});
@@ -786,7 +791,7 @@ function detailOptions() {
     evidenceState:S.evidenceState,evidenceError:S.evidenceError,
     metadataState:S.metadataState,generationUnavailable:S.generationUnavailable,
     generationError:S.generationError,reference:S.reference,schedule:schedule(),documentStatus:S.documentStatus,
-    pdfStatus:S.pdfStatus,pdfBusy:S.pdfBusy,canWrite:writable(),configDirty:S.configDirty,
+    documentUploads:S.documentUploads,documentIssuerUf:S.documentIssuerUf,pdfStatus:S.pdfStatus,pdfBusy:S.pdfBusy,canWrite:writable(),configDirty:S.configDirty,
     fiscalDirty:S.fiscalDirty,accountingDirty:S.accountingDirty,pastePending:S.paste.pending,dirty:dirty(),versionsOpen:S.versionsOpen};
 }
 function bindAnalysisActions(root=document) {
@@ -1030,12 +1035,118 @@ function bindFiscal() {
   };
 }
 
+function refreshDocumentUploads() {
+  const reports=$('#analysis-fiscal-documents-view');if(!reports)return;
+  reports.innerHTML=renderFiscalReports(detailOptions());bindFiscalDocumentActions();
+}
+async function loadDocumentUf() {
+  const id=S.analysis?.id,sequence=S.sequence;if(!id||S.documentIssuerUf!==null)return;
+  const items=await clients();
+  if(currentContext(id,sequence)&&!S.documentUfEdited&&S.documentIssuerUf===null){
+    S.documentIssuerUf=normalizeUf(items.find(item=>item._id===S.analysis.clientId)?.uf);
+    refreshDocumentUploads();
+  }
+}
 function bindFiscalDocumentActions() {
-  const start=$('#analysis-start-import');if(start){start.onclick=()=>void prepareImport();start.disabled=S.busy||S.pdfBusy;}
+  const blocked=()=>S.busy||S.pdfBusy||S.deleting||!writable();
+  const start=$('#analysis-start-import');if(start){start.onclick=()=>void prepareImport();start.disabled=blocked()||hasPendingDocuments();}
+  const uf=$('[data-analysis-document-uf]');if(uf){
+    uf.disabled=blocked()||hasPendingDocuments();
+    uf.onchange=()=>{if(blocked()||hasPendingDocuments())return;S.documentIssuerUf=normalizeUf(uf.value);S.documentUfEdited=true;};
+  }
   document.querySelectorAll('[data-analysis-add-document]').forEach(button=>{
-    button.disabled=S.busy||S.pdfBusy;
-    button.onclick=()=>void prepareImport({type:button.dataset.analysisAddDocument,reuse:true});
+    const type=button.dataset.analysisAddDocument;
+    button.disabled=blocked();
+    // Open in the click's user activation; no network round trip before the chooser.
+    button.onclick=()=>{if(!blocked())$(`[data-analysis-document-file="${type}"]`)?.click();};
   });
+  document.querySelectorAll('[data-analysis-document-file]').forEach(input=>{
+    input.disabled=blocked();
+    input.onchange=()=>{const file=input.files?.[0];input.value='';if(file)void addFiscalDocument(input.dataset.analysisDocumentFile,file);};
+  });
+  document.querySelectorAll('[data-analysis-document-drop]').forEach(card=>{
+    card.ondragover=event=>{event.preventDefault();if(!blocked())card.classList.add('is-dragging');};
+    card.ondragleave=()=>card.classList.remove('is-dragging');
+    card.ondrop=event=>{
+      event.preventDefault();card.classList.remove('is-dragging');if(blocked())return;
+      const type=card.dataset.analysisDocumentDrop,files=event.dataTransfer?.files;
+      if(files?.length!==1){S.documentUploads[type]={error:'Adicione um arquivo por vez neste cartão.'};refreshDocumentUploads();return;}
+      void addFiscalDocument(type,files[0]);
+    };
+  });
+  document.querySelectorAll('[data-analysis-document-retry]').forEach(button=>{
+    button.disabled=blocked();button.onclick=()=>void addFiscalDocument(button.dataset.analysisDocumentRetry,null,{retry:true});
+  });
+}
+async function inlineDocumentGeneration(type,state) {
+  if(S.analysis.fiscal.data.generationId){
+    try { return await generationMetadata(S.analysis,{force:true}); }
+    catch(error){if(error.status!==404)throw error;}
+    if(!confirm('Os documentos anteriores estão indisponíveis. Preparar novos relatórios para esta análise? As versões salvas continuarão preservadas.'))return null;
+  }
+  if(S.fiscalDirty)await patchSector('fiscal',S.fiscalDraft,false);
+  const response=await analysisRequest(apiPath('/'+S.analysis.id+'/fiscal/import?summary=1'),{method:'POST',body:{expectedSectorRevision:S.analysis.fiscal.revision,expectedConfigRevision:S.analysis.config.revision}});
+  adoptAnalysis(response.analysis,{preserveDrafts:true});
+  if(!uuid(response.generationId)||S.analysis.fiscal.data.generationId!==response.generationId)throw new Error('Não foi possível confirmar os documentos preparados. Atualize a análise antes de continuar.');
+  S.documentUploads={[type]:state};
+  return generationMetadata(S.analysis,{force:true});
+}
+async function addFiscalDocument(type,file,{retry=false}={}) {
+  if(S.busy||S.pdfBusy||S.deleting||!writable()||!['PURCHASES','SALES'].includes(type))return;
+  const prior=S.documentUploads[type];
+  if(prior?.pending&&!retry)return;
+  const state=retry&&prior?prior:{fileName:file?.name||'',status:'reading',progress:'',error:'',pending:null};
+  S.documentUploads[type]=state;
+  try {
+    clearError();captureAll();
+    if(S.configDirty)throw new Error('Salve as escolhas de regimes e ano antes de adicionar os documentos.');
+    setBusy(true);state.error='';state.status='reading';refreshDocumentUploads();
+    await loadDocumentUf();
+    // The generation lookup is read-only. Validate the file before preparing the first import.
+    let generation;
+    if(S.analysis.fiscal.data.generationId){
+      try{generation=await generationMetadata(S.analysis,{force:true});}catch(error){if(error.status!==404)throw error;}
+    }
+    const company=generation?.companies.find(item=>item.clientId===S.analysis.clientId);
+    let resume=type==='SALES'?company?.sales:company?.purchase;
+    if(resume&&['CANCELLED','INVALID'].includes(resume.status))resume=null;
+    if(resume?.status==='COMPLETED'&&!state.pending)throw new Error('Este documento já foi adicionado. Use Conferir relatório para abri-lo.');
+    const progress=message=>{state.progress=message;refreshDocumentUploads();};
+    if(!state.pending&&resume?.status!=='PROCESSING'){
+      if(!resume&&!normalizeUf(S.documentIssuerUf))throw new Error('Selecione a UF da empresa e adicione o arquivo novamente.');
+      state.review=await readFiscalDocument(file,{type,companyCode:S.analysis.company.code,issuerUf:S.documentIssuerUf,resume,onProgress:progress});
+      state.file=file;state.fileName=file.name;state.repairs=state.review.repairs||[];
+    }
+    state.status='preparing';progress('Preparando o envio…');
+    if(!generation&&hasPendingDocuments())throw new Error('Os documentos deste envio não estão disponíveis. Atualize a análise para conferir o progresso salvo.');
+    if(!generation)generation=await inlineDocumentGeneration(type,state);
+    S.documentUploads[type]=state;
+    if(!generation){state.status='';state.progress='Envio não iniciado.';return;}
+    // Keep a pending attempt tied to its original source even if another tab changed the analysis.
+    if(state.pending&&state.pending.generationId!==generation._id)throw new Error('Os documentos vinculados mudaram. Atualize a análise antes de retomar o envio.');
+    if(S.fiscalDirty)await patchSector('fiscal',S.fiscalDraft,false);
+    if(S.analysis.fiscal.data.generationId!==generation._id)throw new Error('Os documentos da análise mudaram. Atualize antes de continuar.');
+    // The previous page checked this on navigation. Inline uploads must also
+    // reject a generation replaced by another tab before writing any document.
+    const latest=assertAnalysis((await analysisRequest(apiPath('/'+S.analysis.id+'?summary=1'))).analysis);
+    if(latest.id!==S.analysis.id||latest.clientId!==S.analysis.clientId||latest.fiscal.data.generationId!==generation._id||
+       latest.fiscal.revision!==S.analysis.fiscal.revision||latest.config.revision!==S.analysis.config.revision){
+      throw Object.assign(new Error('A análise foi atualizada em outra aba. Confira o trabalho salvo antes de enviar o documento.'),{status:409,code:'ANALYSIS_CONFLICT'});
+    }
+    cancelEvidence();S.source=null;S.evidenceState='idle';S.evidenceKey=null;S.evidenceError='';
+    state.status='uploading';
+    const job=await uploadFiscalDocument({file:state.file,review:state.review,type,generationId:generation._id,clientId:S.analysis.clientId,issuerUf:S.documentIssuerUf,resume,pending:state.pending,
+      onPending:pending=>{state.pending=pending;},onProgress:progress});
+    state.status='completed';state.fileName=job.fileName;state.file=null;state.review=null;
+    const freshCompany=generation.companies.find(item=>item.clientId===S.analysis.clientId),key=type==='SALES'?'sales':'purchase';
+    freshCompany[key]=job;freshCompany[key+'JobId']=job._id;S.generation=generation;
+    S.metadataState='ready';S.metadataKey=evidenceKey(S.analysis);
+    feedback(`${type==='SALES'?'Saídas':'Entradas'} adicionadas. Você pode continuar nesta tela.`,'success');
+  } catch(error){state.status='error';state.error=error.message||'Não foi possível enviar o documento. Tente novamente.';state.progress=state.pending?'Seu progresso foi salvo. Tente novamente para continuar o mesmo documento.':'';
+    if(error.code==='ANALYSIS_CONFLICT')showError(error);
+  } finally {
+    if(S.busy){setBusy(false);renderDetail();}else refreshDocumentUploads();
+  }
 }
 function documentImportUrl(generationId,type,company=null) {
   const job=type==='SALES'?company?.sales:company?.purchase;
@@ -1043,7 +1154,7 @@ function documentImportUrl(generationId,type,company=null) {
   return '/purchases.html?'+new URLSearchParams({generation:generationId,client:S.analysis.clientId,guided:'1',analysis:S.analysis.id,type,...(jobId?{job:jobId}:{})});
 }
 async function prepareImport({type='PURCHASES',reuse=false}={}) {
-  if(S.busy||S.pdfBusy||S.deleting||!writable())return;
+  if(S.busy||S.pdfBusy||S.deleting||!writable()||hasPendingDocuments())return;
   try {
     clearError();captureAll();
     validateDifalChoice('analysis',S.analysis.config.regimeSelection,S.fiscalDraft.difalPolicy);
@@ -1068,7 +1179,7 @@ async function prepareImport({type='PURCHASES',reuse=false}={}) {
     if(S.analysis.fiscal.data.generationId&&!confirm('Preparar novos relatórios de entradas e saídas? A análise passará a aguardar os novos arquivos; as versões e os relatórios anteriores continuarão preservados.'))return;
     if(S.fiscalDirty)await patchSector('fiscal',S.fiscalDraft,false);
     const response=await analysisRequest(apiPath('/'+S.analysis.id+'/fiscal/import?summary=1'),{method:'POST',body:{expectedSectorRevision:S.analysis.fiscal.revision,expectedConfigRevision:S.analysis.config.revision}});
-    adoptAnalysis(response.analysis);
+    adoptAnalysis(response.analysis);S.documentUploads={};
     if(!uuid(response.generationId)||S.analysis.fiscal.data.generationId!==response.generationId)throw new Error('Não foi possível confirmar os relatórios preparados. Atualize a análise antes de continuar.');
     setBusy(false);location.href=documentImportUrl(response.generationId,type);
   } catch(error){showError(error);}

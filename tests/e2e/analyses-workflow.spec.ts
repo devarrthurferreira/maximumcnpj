@@ -123,11 +123,14 @@ function report(name:string,kind:'purchases'|'sales'){
 }
 async function importInBrowser(page:Page,code:string){
   await openSector(page,'fiscal','documents');
-  await page.locator('#analysis-start-import').click();
+  const analysisUrl=page.url();
   for(const kind of ['purchases','sales'] as const){
-    await expect(page.locator('#purchase-file')).toBeEnabled();await expect(page.locator('#purchase-issuer-uf')).toHaveValue('MG');
-    await page.locator('#purchase-file').setInputFiles(report(`${code}-${kind}.csv`,kind));
-    await expect(page.locator('.purchase-guided-summary')).toBeVisible();await page.locator('[data-guided-continue]').click();
+    const type=kind==='sales'?'SALES':'PURCHASES';
+    await expect(page.locator('[data-analysis-document-uf]')).toHaveValue('MG');
+    await page.locator(`[data-analysis-document-file="${type}"]`).setInputFiles(report(`${code}-${kind}.csv`,kind));
+    await expect(page.locator(`[data-analysis-document="${type}"]`)).toContainText('Leitura concluída');
+    await expect(page.locator(`[data-analysis-document-error="${type}"]`)).toHaveCount(0);
+    await expect(page).toHaveURL(analysisUrl);
   }
   await openSector(page,'fiscal','rbt12');
 }
