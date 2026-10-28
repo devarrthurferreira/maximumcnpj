@@ -59,6 +59,18 @@ async function switchSector(page:Page,sector:'fiscal'|'accounting'){
   if(await dialog.isVisible())await dialog.locator('[data-analysis-sector="'+sector+'"]').click();
   else await page.locator('[data-analysis-sector="'+sector+'"]').first().click();
   await expect(dialog).toHaveAttribute('data-wizard-kind',sector);await expect(dialog).toBeVisible();
+  if(sector==='fiscal')await fiscalDocuments(page);
+}
+
+async function fiscalDocuments(page:Page){
+  const wizard=page.locator('#analysis-wizard'),steps=['regimes','difal','rbt12','documents'];
+  for(let attempt=0;attempt<steps.length;attempt++){
+    const current=await wizard.getAttribute('data-wizard-step');expect(steps).toContain(current);
+    if(current==='documents')return;
+    await page.locator('#analysis-wizard-next').click();
+    await expect(wizard).not.toHaveAttribute('data-wizard-step',current!);
+  }
+  await expect(wizard).toHaveAttribute('data-wizard-step','documents');
 }
 async function openDetails(page:Page,id:string){
   const detail=page.locator('#'+id);if(await detail.getAttribute('open')===null)await detail.locator(':scope > summary').click();
@@ -90,7 +102,7 @@ test('Evidência fiscal lenta permite preencher e trocar setores, deduplica a le
     // A conciliação de valores está bloqueada, mas o status dos dois arquivos deve aparecer imediatamente.
     await expect(page.locator('[data-analysis-document="PURCHASES"]')).toContainText('Leitura concluída');
     await expect(page.locator('[data-analysis-document="SALES"]')).toContainText('Leitura concluída');
-    if(await page.locator('#analysis-wizard').getAttribute('data-wizard-step')!=='tax')await page.locator('#analysis-wizard-next').click();
+    await fiscalDocuments(page);
     await openDetails(page,'analysis-fiscal-options');await page.locator('#analysis-sales-annex').selectOption('2');
     await switchSector(page,'accounting');await expect(salary(page)).toHaveValue('123.45');
     await page.locator('#analysis-wizard-close').click();await expect(page.locator('#analysis-wizard')).not.toBeVisible();
@@ -114,7 +126,7 @@ test('Documento indisponível mostra recuperação local sem bloquear Contábil 
   const counts=observe(page,analysis.id),errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   let unavailable=true;const pattern='**/api/v4/generations/'+analysis.fiscal.data.generationId;
   await page.route(pattern,route=>unavailable?route.fulfill({status:404,contentType:'application/json',body:JSON.stringify({error:'NOT_FOUND',message:'Documento indisponível'})}):route.continue());
-  await page.goto('/analyses.html?id='+analysis.id+'&sector=fiscal');
+  await page.goto('/analyses.html?id='+analysis.id+'&sector=fiscal');await fiscalDocuments(page);
   await expect(page.locator('#analysis-fiscal-evidence')).toContainText('não estão disponíveis');
   expect(counts.source).toBe(1);expect(counts.generation).toBe(1);
   let confirmation='';page.once('dialog',async dialog=>{confirmation=dialog.message();await dialog.dismiss();});
@@ -141,6 +153,8 @@ test('Digitação em nove competências conserva os nós, atualiza o resumo sob 
   const months=Array.from({length:9},(_,index)=>month('2025-0'+(index+1)));
   analysis=await patch(page.request,baseURL!,analysis,'accounting',{months});const counts=observe(page,analysis.id);
   await page.goto('/analyses.html?id='+analysis.id+'&sector=accounting');await expect(salary(page)).toBeVisible();
+  await page.locator('#analysis-accounting-summary-panel > summary').click();
+  await expect(page.locator('#analysis-accounting-summary-panel')).toHaveJSProperty('open',false);
   await salary(page).fill('1');
   await page.evaluate(()=>{
     const ids=['analysis-guidance','analysis-generation','analysis-accounting-summary','analysis-wizard-progress'];
@@ -188,7 +202,7 @@ test('Contábil identifica meses antes da conclusão Fiscal sem reconciliar font
       const textarea=document.getElementById('analysis-accounting-paste') as HTMLTextAreaElement;textarea.focus();textarea.setSelectionRange(4,7);
       (window as any).__editing={textarea,year:document.getElementById('analysis-new-source-year'),salary:document.querySelector('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]')};
     });
-    release();await expect(page.locator('#analysis-add-fiscal-months')).toHaveText('Adicionar 8 competência(s) da análise');
+    release();await expect(page.locator('#analysis-add-fiscal-months')).toHaveCount(0);await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
     await expect(page.locator('#analysis-accounting-source-months')).toContainText('Janeiro a setembro de 2025');
     await expect(page.locator('#analysis-accounting-source-months')).toContainText('9 competências');
     expect(await page.evaluate(()=>{
@@ -199,14 +213,13 @@ test('Contábil identifica meses antes da conclusão Fiscal sem reconciliar font
     await expect(page.locator('#analysis-accounting-paste')).toHaveValue(pasted);await expect(page.locator('#analysis-new-source-year')).toHaveValue('2025');
     await expect(page.locator('#analysis-new-source-year')).toHaveAttribute('readonly','');
     await expect(salary(page)).toHaveValue('321.09');expect(counts).toEqual({source:0,generation:1,patches:0});
-    await page.locator('#analysis-add-fiscal-months').click();
     await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
     await expect(page.locator('[data-accounting-month="2025-02"] [data-accounting-field="salariesCents"]')).toHaveValue('');
     await expect(salary(page)).toHaveValue('321.09');expect(counts).toEqual({source:0,generation:1,patches:0});
   }finally{release();await page.unroute(pattern,held);}
 });
 
-test('Cobertura fiscal parcial sugere nove meses com pendências; a fonte verificada mantém o Contábil em edição',async({page,baseURL,analysisAccount})=>{
+test('Cobertura fiscal parcial identifica meses excluídos; a fonte verificada mantém o Contábil em edição',async({page,baseURL,analysisAccount})=>{
   test.setTimeout(60_000);page.setDefaultTimeout(12_000);
   let analysis=await create(page.request,baseURL!,analysisAccount);
   analysis=await withDocuments(page.request,baseURL!,analysis,{complete:false,months:[month('2025-01')]});
@@ -223,17 +236,21 @@ test('Cobertura fiscal parcial sugere nove meses com pendências; a fonte verifi
   try{
     await page.goto('/analyses.html?id='+analysis.id+'&sector=accounting');await openDetails(page,'analysis-accounting-tools');
     await expect(page.locator('#analysis-accounting-source-months')).toContainText('Janeiro a setembro de 2025');
-    await expect(page.locator('#analysis-add-fiscal-months')).toHaveText('Adicionar 8 competência(s) da análise');
-    const warning=page.locator('#analysis-accounting-period .analysis-period-warning');
-    await expect(warning).toContainText('Abril / 2025');await expect(warning).toContainText('Setembro / 2025');
+    await expect(page.locator('#analysis-add-fiscal-months')).toHaveCount(0);await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
+    const period=page.locator('#analysis-accounting-period');
+    await expect(period).toContainText('3/9 meses cobertos');
+    await expect(period.locator('.analysis-period-months .is-missing')).toHaveCount(6);
+    await expect(period.locator('.analysis-period-months .is-missing').first()).toHaveAttribute('title',/Abril/);
+    await expect(period.locator('.analysis-period-months .is-missing').last()).toHaveAttribute('title',/Setembro/);
     await expect(page.locator('#analysis-generate')).toBeDisabled();expect(counts.source).toBe(0);
     await salary(page).fill('432.10');await switchSector(page,'fiscal');
     await expect(page.locator('#analysis-fiscal-evidence')).toContainText('Conferindo documentos fiscais');
     await switchSector(page,'accounting');await openDetails(page,'analysis-accounting-tools');
     await salary(page).focus();await page.evaluate(()=>{(window as any).__activeAccountingInput=document.activeElement;});
-    release();await expect(page.locator('#analysis-add-fiscal-months')).toHaveText('Adicionar 8 competência(s) da análise');
+    release();await expect(page.locator('#analysis-add-fiscal-months')).toHaveCount(0);await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
     await expect(page.locator('#analysis-accounting-source-months')).toContainText('Janeiro a setembro de 2025');
-    await expect(warning).toHaveCount(0);
+    await expect(period).toContainText('9/9 meses cobertos');
+    await expect(period.locator('.analysis-period-months .is-missing')).toHaveCount(0);
     await expect(salary(page)).toHaveValue('432.10');
     expect(await page.evaluate(()=>(window as any).__activeAccountingInput===document.activeElement&&document.activeElement?.isConnected)).toBe(true);
     expect(counts).toEqual({source:1,generation:1,patches:0});
@@ -256,6 +273,8 @@ test('Ano fiscal tardio bloqueia a prévia antiga e mantém acessível um valor 
     await openDetails(page,'analysis-accounting-tools');await openDetails(page,'analysis-accounting-paste-panel');
     const pasted='2026-02\t50\t0\t0\t0\t0';await page.locator('#analysis-accounting-paste').fill(pasted);
     await page.locator('#analysis-preview-accounting-paste').click();
+    await expect(page.locator('#analysis-paste-replace-confirm')).not.toBeChecked();
+    await page.locator('#analysis-paste-replace-confirm').check();
     await expect(page.locator('#analysis-apply-accounting-paste')).toBeEnabled();
     await expect(page.locator('#analysis-accounting-paste-preview')).toContainText('Fevereiro / 2026');
     release();await expect(page.locator('#analysis-new-source-year')).toHaveValue('2025');
@@ -263,7 +282,7 @@ test('Ano fiscal tardio bloqueia a prévia antiga e mantém acessível um valor 
     await page.locator('#analysis-apply-accounting-paste').click();
     await expect(page.locator('#analysis-accounting-paste-error')).toContainText('mesmo ano dos documentos');
     await expect(page.locator('#analysis-accounting-paste')).toHaveValue(pasted);
-    await expect(page.locator('[data-accounting-month="2026-02"]')).toHaveCount(0);
+    await expect(page.locator('[data-accounting-month="2026-02"] [data-accounting-field="salariesCents"]')).toHaveValue('');
     expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+analysis.id)).analysis.accounting.data.months).toEqual(savedMonths);
     expect(counts.patches).toBe(0);
     await page.locator('#analysis-clear-accounting-paste').click();
@@ -284,7 +303,7 @@ test('Ano fiscal tardio bloqueia a prévia antiga e mantém acessível um valor 
     await page.locator('#analysis-wizard button[value="save"]').click();
     const response=await saving;expect(response.ok(),await response.text()).toBe(true);
     const saved=(await response.json()).analysis;
-    expect(saved.accounting.data.months).toEqual([{...savedMonths[0],salariesCents:123456}]);
+    expect(saved.accounting.data.months.filter((row:any)=>row.salariesCents!==null)).toEqual([{...savedMonths[0],salariesCents:123456}]);
     expect(counts).toEqual({source:0,generation:2,patches:1});expect(errors).toEqual([]);
   }finally{release();await page.unroute(pattern,held);}
 });

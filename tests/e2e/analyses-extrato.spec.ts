@@ -12,7 +12,7 @@ async function post(request:APIRequestContext,baseURL:string,path:string,data:un
 async function get(request:APIRequestContext,path:string){
   const response=await request.get(path);expect(response.ok(),`${path}: ${await response.text()}`).toBe(true);return response.json();
 }
-async function fiscalStep(page:Page,step:'documents'|'tax'){
+async function fiscalStep(page:Page,step:'regimes'|'difal'|'rbt12'|'documents'){
   const wizard=page.locator('#analysis-wizard'),opener=page.locator('[data-analysis-sector="fiscal"]').first();
   await expect(opener).toBeAttached();
   if(await wizard.isVisible()){
@@ -25,7 +25,7 @@ async function fiscalStep(page:Page,step:'documents'|'tax'){
     await opener.click();
   }
   await expect(wizard).toBeVisible();await expect(wizard).toHaveAttribute('data-wizard-kind','fiscal');
-  const steps=['documents','tax'];
+  const steps=['regimes','difal','rbt12','documents'];
   for(let attempt=0;attempt<steps.length;attempt++){
     const current=await wizard.getAttribute('data-wizard-step');expect(steps).toContain(current);
     if(current===step)return;
@@ -35,7 +35,7 @@ async function fiscalStep(page:Page,step:'documents'|'tax'){
   await expect(wizard).toHaveAttribute('data-wizard-step',step);
 }
 async function completeFiscal(page:Page,id:string){
-  await fiscalStep(page,'tax');
+  await fiscalStep(page,'documents');
   const saved=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/fiscal`&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="complete"]').click();
   const response=await saved;expect(response.ok(),await response.text()).toBe(true);
@@ -146,7 +146,7 @@ test('Extrato da análise é salvo, retomado em nova sessão e desvinculado ao c
       });
     }
 
-    await mockPdfTransport(page);await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await fiscalStep(page,'tax');
+    await mockPdfTransport(page);await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await fiscalStep(page,'rbt12');
     await expect(page.locator('#analysis-rbt12-pdf')).toBeEnabled();
     const referenceSaved=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/fiscal`&&
       response.request().method()==='PATCH'&&response.request().postDataJSON().data.rbt12ExtractionId===extractionId);
@@ -156,17 +156,18 @@ test('Extrato da análise é salvo, retomado em nova sessão e desvinculado ao c
     await expect(page.locator('#analysis-wizard-close')).toBeDisabled();
     await page.keyboard.press('Escape');
     await expect(page.locator('#analysis-wizard')).toBeVisible();
-    await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','tax');
+    await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','rbt12');
     releaseRead();
     const saved=await referenceSaved;expect(saved.ok(),await saved.text()).toBe(true);
     await expect(page.locator('#analyses-app')).toHaveAttribute('aria-busy','false');
-    await expect(page.locator('#analysis-pdf-status')).toContainText('Leitura confirmada e salva no Fiscal');
+    await expect(page.locator('#analysis-pdf-status')).toContainText('Leitura confirmada');
     await expect(page.locator('.analysis-reference')).toContainText('PA 08/2026');
     await expect(page.locator('.analysis-reference > strong')).toHaveText('R$ 150.000,01');
     const linked=(await get(page.request,`/api/v4/analyses/${id}`)).analysis;
     expect(linked.fiscal).toMatchObject({status:'DRAFT',data:{rbt12Source:'SIMPLES_SECTION_22',rbt12:150000.01,
       rbt12DocumentId:documentId,rbt12ExtractionId:extractionId,rbt12ManualConfirmed:false}});
-    expect(linked.readiness.months).toEqual(Array.from({length:9},(_,index)=>'2025-0'+(index+1)));
+    expect(linked.readiness.months).toEqual([]); // No accounting month has been filled yet.
+    expect(linked.readiness.analysisPeriod.includedMonths).toEqual(Array.from({length:9},(_,index)=>'2025-0'+(index+1)));
     const confirmed=await completeFiscal(page,id);
     const storedDocument=await db.collection<any>('simplesDocuments').findOne(documentFilter);
     const storedExtraction=await db.collection<any>('simplesExtractions').findOne(extractionFilter);
@@ -177,7 +178,7 @@ test('Extrato da análise é salvo, retomado em nova sessão e desvinculado ao c
 
     fresh=await browser.newContext({baseURL});expect(await fresh.cookies()).toEqual([]);await signIn(fresh.request);
     const resumed=await fresh.newPage();resumed.on('pageerror',error=>errors.push(error.message));await mockPdfTransport(resumed);
-    await resumed.goto(`/analyses.html?id=${id}&sector=fiscal`);await fiscalStep(resumed,'tax');
+    await resumed.goto(`/analyses.html?id=${id}&sector=fiscal`);await fiscalStep(resumed,'rbt12');
     await expect(resumed.locator('.analysis-reference > strong')).toHaveText('R$ 150.000,01');
     await expect(resumed.getByRole('link',{name:'Ver original',exact:true})).toHaveAttribute('href',`/api/v4/simples-documents/${documentId}/file?kind=original`);
     await expect(resumed.getByRole('link',{name:'Ver PDF pesquisável',exact:true})).toHaveAttribute('href',`/api/v4/simples-documents/${documentId}/file?kind=searchable`);
@@ -194,7 +195,7 @@ test('Extrato da análise é salvo, retomado em nova sessão e desvinculado ao c
     expect((await get(resumed.request,`/api/v4/analyses/${id}`)).analysis.fiscal).toEqual(manual.fiscal);
     expect(await db.collection<any>('simplesDocuments').findOne(documentFilter)).toEqual(storedDocument);
     expect(await db.collection<any>('simplesExtractions').findOne(extractionFilter)).toEqual(storedExtraction);
-    await resumed.reload();await fiscalStep(resumed,'tax');await expect(resumed.locator('#analysis-rbt12')).toHaveValue('180000.25');
+    await resumed.reload();await fiscalStep(resumed,'rbt12');await expect(resumed.locator('#analysis-rbt12')).toHaveValue('180000.25');
     await expect(resumed.locator('#analysis-rbt12-confirm')).toBeChecked();
     await expect(resumed.locator('.analysis-reference,#analysis-rbt12-pdf')).toHaveCount(0);
     expect(counts).toEqual({tickets:1,uploads:1,reads:1,loads:1});expect(errors).toEqual([]);

@@ -39,7 +39,7 @@ async function signIn(request:APIRequestContext,baseURL:string,{email,password}:
 }
 type WizardKind='new'|'fiscal'|'accounting'|'config';
 const wizardSteps:Record<WizardKind,string[]>={
-  new:['setup'],fiscal:['documents','tax'],accounting:['values'],config:['choices']
+  new:['company','sector'],fiscal:['regimes','difal','rbt12','documents'],accounting:['values'],config:['choices']
 };
 async function wizardStep(page:Page,kind:WizardKind,step:string){
   const wizard=page.locator('#analysis-wizard'),steps=wizardSteps[kind];
@@ -88,7 +88,7 @@ async function company(request:APIRequestContext,baseURL:string){
   return {id:created.items[0].id,code};
 }
 async function saveSector(page:Page,id:string,sector:'fiscal'|'accounting',complete=true){
-  await openSector(page,sector,complete?(sector==='fiscal'?'tax':'values'):undefined);
+  await openSector(page,sector,complete?(sector==='fiscal'?'documents':'values'):undefined);
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/${sector}`&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="'+(complete?'complete':'save')+'"]').click();
   const response=await saving;expect(response.ok(),await response.text()).toBe(true);
@@ -129,7 +129,7 @@ async function importInBrowser(page:Page,code:string){
     await page.locator('#purchase-file').setInputFiles(report(`${code}-${kind}.csv`,kind));
     await expect(page.locator('.purchase-guided-summary')).toBeVisible();await page.locator('[data-guided-continue]').click();
   }
-  await openSector(page,'fiscal','tax');
+  await openSector(page,'fiscal','rbt12');
 }
 async function openDetails(page:Page,id:string){
   const detail=page.locator('#'+id);await expect(detail).toBeAttached();
@@ -144,7 +144,7 @@ async function addMonth(page:Page,month:string,values:(number|null)[]){
     if(await sourceYear.getAttribute('readonly')===null)await sourceYear.fill(month.slice(0,4));
     else await expect(sourceYear).toHaveValue(month.slice(0,4));
     await expect(page.locator('#analysis-add-month')).toHaveText('Preparar janeiro a setembro');
-    await page.locator('#analysis-add-month').click();
+    page.once('dialog',dialog=>dialog.accept());await page.locator('#analysis-add-month').click();
     await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
   }
   await expect(page.locator('[data-accounting-month="'+month+'"]')).toHaveCount(1);
@@ -160,12 +160,15 @@ test('Relatórios de doze meses geram Jan–Set, nove despesas e composição co
   await signIn(page.request,baseURL!,accounting);const client=await company(page.request,baseURL!);
   await page.goto('/analyses.html?view=new');await page.locator('#analysis-company-search').fill(client.code);
   await page.locator(`[data-analysis-client="${client.id}"]`).click();
-  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','setup');
+  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','sector');
   await page.locator('input[name="sector"][value="accounting"]').check();
-  await page.locator('#analysis-new-regime-pure').uncheck();await page.locator('#analysis-new-regime-hybrid').uncheck();
   await page.screenshot({path:info.outputPath('analysis-setup-desktop.png'),fullPage:true});
   await page.locator('#analysis-open-company').click();await openSector(page,'accounting','values');
   const id=new URL(page.url()).searchParams.get('id')!;expect(id).toBeTruthy();
+  await openConfig(page);
+  await page.locator('#analysis-config-form input[name="regime"][value="pure"]').uncheck();
+  await page.locator('#analysis-config-form input[name="regime"][value="hybrid"]').uncheck();
+  await saveConfig(page);await openSector(page,'accounting','values');
   await expect(page.locator('#analysis-generate')).toBeDisabled();
   await addMonth(page,'2025-01',[100,50,10,20,null]);
   await page.locator('#analysis-wizard button[value="complete"]').click();
@@ -193,7 +196,7 @@ test('Relatórios de doze meses geram Jan–Set, nove despesas e composição co
     await expect(fiscalPage.locator('#analysis-rbt12-pdf,#analysis-rbt12')).toHaveCount(0);
     await importInBrowser(fiscalPage,client.code);
     await expect(fiscalPage.locator('#analysis-rbt12-pdf,#analysis-rbt12')).toHaveCount(0);
-    await openSector(fiscalPage,'fiscal','tax');
+    await openSector(fiscalPage,'fiscal','documents');
     await fiscalPage.screenshot({path:info.outputPath('analysis-fiscal-desktop.png'),fullPage:true});
     analysis=await saveSector(fiscalPage,id,'fiscal');expect(analysis.readiness.ready).toBe(true);
     expect(analysis.accounting.updatedBy.id).toBe(accounting.id);expect(analysis.fiscal.updatedBy.id).toBe(fiscal.id);
@@ -285,10 +288,10 @@ test('Simples exige referência confirmada, trocar regimes retira o extrato e co
   let analysis=(await post(page.request,baseURL!,'/api/v4/analyses',{clientId:client.id,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid']}})).analysis;
   const id=analysis.id;await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await importInBrowser(page,client.code);
   await expect(page.locator('#analysis-rbt12-pdf')).toBeVisible();
-  await wizardStep(page,'fiscal','tax');
+  await wizardStep(page,'fiscal','documents');
   const incomplete=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/fiscal`&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="complete"]').click();expect((await incomplete).ok()).toBe(false);
-  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','tax');
+  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','rbt12');
   await expect(page.locator('#analysis-error')).toBeVisible();await page.locator('#analysis-extrato-manual').click();
   await page.locator('#analysis-rbt12').fill('100000');await page.locator('#analysis-rbt12-confirm').check();
   analysis=await saveSector(page,id,'fiscal');expect(analysis.fiscal.data).toMatchObject({rbt12Source:'MANUAL',rbt12:100000,rbt12ManualConfirmed:true,rbt12DocumentId:null});
@@ -296,7 +299,7 @@ test('Simples exige referência confirmada, trocar regimes retira o extrato e co
   await page.locator('#analysis-config-form input[name="regime"][value="pure"]').uncheck();
   await page.locator('#analysis-config-form input[name="regime"][value="hybrid"]').uncheck();
   await page.locator('#analysis-config-form input[name="regime"][value="actual"]').check();
-  await saveConfig(page);await openSector(page,'fiscal','tax');
+  await saveConfig(page);await openSector(page,'fiscal','documents');
   await expect(page.locator('#analysis-rbt12-pdf,#analysis-rbt12')).toHaveCount(0);
   analysis=await saveSector(page,id,'fiscal');expect(analysis.fiscal.data).toMatchObject({rbt12Source:'NOT_REQUIRED',rbt12:null,rbt12DocumentId:null,rbt12ExtractionId:null,rbt12ManualConfirmed:false});
 

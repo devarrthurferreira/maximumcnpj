@@ -43,43 +43,46 @@ async function createCompany(request:APIRequestContext,baseURL:string,prefix='Em
   const imported=await api(request,baseURL,'POST','/api/v4/clients/import',{rows:[{code,name,uf:'MG'}]});
   expect(imported.success).toBe(1);return {id:imported.items[0].id,code,name};
 }
-async function fiscalStep(page:Page,step:'documents'|'tax'){
-  const wizard=page.locator('#analysis-wizard');
+async function fiscalStep(page:Page,step:'regimes'|'difal'|'rbt12'|'documents'){
+  const wizard=page.locator('#analysis-wizard'),steps=['regimes','difal','rbt12','documents'];
   await expect(page.locator('[data-analysis-sector="fiscal"]').first()).toBeAttached();
   if(!await wizard.isVisible())await page.locator('[data-analysis-sector="fiscal"]').first().click();
   else if(await wizard.getAttribute('data-wizard-kind')!=='fiscal')await wizard.locator('[data-analysis-sector="fiscal"]').click();
   await expect(wizard).toHaveAttribute('data-wizard-kind','fiscal');
-  if(await wizard.getAttribute('data-wizard-step')!==step){
-    await page.locator(step==='documents'?'#analysis-wizard-back':'#analysis-wizard-next').click();
+  for(let attempt=0;attempt<steps.length;attempt++){
+    const current=await wizard.getAttribute('data-wizard-step');expect(steps).toContain(current);
+    if(current===step)return;
+    await page.locator(steps.indexOf(current!)>steps.indexOf(step)?'#analysis-wizard-back':'#analysis-wizard-next').click();
+    await expect(wizard).not.toHaveAttribute('data-wizard-step',current!);
   }
   await expect(wizard).toHaveAttribute('data-wizard-step',step);
 }
 async function openNew(page:Page,baseURL:string,company:Company,choice:'yes'|'no',checkRequired=false){
   await page.goto('/analyses.html?view=new');await page.locator('#analysis-company-search').fill(company.code);
   await page.locator('[data-analysis-client="'+company.id+'"]').click();
-  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','setup');
+  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','sector');
   await page.locator('input[name="sector"][value="fiscal"]').check();
-  await page.locator('#analysis-new-regime-presumed').uncheck();await page.locator('#analysis-new-regime-actual').uncheck();
-  await expect(page.locator('#new-difal-yes')).not.toBeChecked();await expect(page.locator('#new-difal-no')).not.toBeChecked();
+  const creating=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses'&&response.request().method()==='POST');
+  await page.locator('#analysis-open-company').click();expect((await creating).ok()).toBe(true);
+  await fiscalStep(page,'regimes');
+  await page.locator('#analysis-fiscal-regime-presumed').uncheck();await page.locator('#analysis-fiscal-regime-actual').uncheck();
+  await fiscalStep(page,'difal');
+  const id=new URL(page.url()).searchParams.get('id');expect(id).toBeTruthy();
+  await expect(page.locator('#analysis-difal-yes')).not.toBeChecked();await expect(page.locator('#analysis-difal-no')).not.toBeChecked();
   if(checkRequired){
     await page.screenshot({path:test.info().outputPath('analysis-new-difal-choice.png'),fullPage:true});
-    const posts:string[]=[];
-    const observe=(request:any)=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/v4/analyses')posts.push(request.url());};
-    page.on('request',observe);
-    try{
-      await expect(page.locator('#analysis-open-company')).toBeEnabled();await page.locator('#analysis-open-company').click();
-      await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('escolha Sim ou Não');
-      await expect(page.locator('#new-difal-yes')).toBeFocused();expect(posts).toEqual([]);
-      expect((await api(page.request,baseURL,'GET','/api/v4/analyses?clientId='+company.id)).items).toEqual([]);
-    }finally{page.off('request',observe);}
+    const before=(await api(page.request,baseURL,'GET','/api/v4/analyses/'+id)).analysis.fiscal;
+    await page.locator('#analysis-wizard-next').click();
+    await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('escolha Sim ou Não');
+    await expect(page.locator('#analysis-difal-yes')).toBeFocused();
+    expect((await api(page.request,baseURL,'GET','/api/v4/analyses/'+id)).analysis.fiscal).toEqual(before);
   }
-  await page.locator('#new-difal-'+choice).check();
-  if(choice==='yes')await expect(page.locator('#new-difal-details')).toHaveJSProperty('open',true);
-  else await expect(page.locator('#new-difal-details')).toBeHidden();
-  const saving=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses'&&response.request().method()==='POST');
-  await page.locator('#analysis-open-company').click();expect((await saving).ok()).toBe(true);
-  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-kind','fiscal');
-  const id=new URL(page.url()).searchParams.get('id');expect(id).toBeTruthy();
+  await page.locator('#analysis-difal-'+choice).check();
+  if(choice==='yes')await expect(page.locator('#analysis-difal-details')).toHaveJSProperty('open',true);
+  else await expect(page.locator('#analysis-difal-details')).toBeHidden();
+  const saving=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+id+'/fiscal'&&response.request().method()==='PATCH');
+  await page.locator('#analysis-wizard button[value="save"]').click();expect((await saving).ok()).toBe(true);
+  await expect(page.locator('#analyses-app')).toHaveAttribute('aria-busy','false');
   const analysis=(await api(page.request,baseURL,'GET','/api/v4/analyses/'+id)).analysis;
   expect(analysis.clientId).toBe(company.id);expect(analysis.config.regimeSelection).toEqual(selection);
   expect(analysis.fiscal.data.difalPolicy.enabled).toEqual({pure:choice==='yes',hybrid:choice==='yes',presumed:false,actual:false});
@@ -185,10 +188,10 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   const company=await createCompany(page.request,baseURL!);
   let analysis=await openNew(page,baseURL!,company,'yes',true);
   const id=analysis.id;
-  await fiscalStep(page,'documents');await expect(page.locator('#analysis-difal-yes')).toBeVisible();
+  await fiscalStep(page,'difal');await expect(page.locator('#analysis-difal-yes')).toBeVisible();
   await expect(page.locator('#analysis-difal-yes')).toBeChecked();
   await page.screenshot({path:info.outputPath('analysis-difal-fiscal-desktop.png'),fullPage:true});
-  await fiscalStep(page,'tax');await expect(page.locator('#analysis-difal-yes')).toBeVisible();
+  await fiscalStep(page,'difal');await expect(page.locator('#analysis-difal-yes')).toBeVisible();
   analysis=await prepareSources(page.request,baseURL!,analysis,company);
   await page.goto('/analyses.html?id='+id);
   const included=await generateInBrowser(page,baseURL!,id);expectDifal(included,true);
@@ -196,7 +199,7 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   expect(included.source.monthlyReports.map((row:any)=>row.difal.amountCents)).toEqual([10_000,20_000,...Array(7).fill(0)]);
   expect(included.source.monthlyReports.map((row:any)=>row.anticipation.amountCents)).toEqual([3_660,5_124,...Array(7).fill(0)]);
 
-  await page.goto('/analyses.html?id='+id+'&sector=fiscal');await fiscalStep(page,'documents');
+  await page.goto('/analyses.html?id='+id+'&sector=fiscal');await fiscalStep(page,'difal');
   const savedFiscal=(await api(page.request,baseURL!,'GET','/api/v4/analyses/'+id)).analysis.fiscal;
   const policyWrites:string[]=[];page.on('request',request=>{
     const path=new URL(request.url()).pathname;
@@ -216,12 +219,13 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   expect(policyWrites).toEqual([]);
   expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+id)).analysis.fiscal).toEqual(savedFiscal);
   await page.locator('#analysis-difal-no').check();await expect(page.locator('#analysis-difal-details')).toBeHidden();
-  await fiscalStep(page,'tax');await expect(page.locator('#analysis-difal-no')).toBeVisible();
+  await fiscalStep(page,'difal');await expect(page.locator('#analysis-difal-no')).toBeVisible();
   await expect(page.locator('#analysis-difal-no')).toBeChecked();
   await page.setViewportSize({width:390,height:844});await page.locator('#analysis-difal-no').scrollIntoViewIfNeeded();
   await page.screenshot({path:info.outputPath('analysis-difal-no-mobile.png'),fullPage:true});
   await page.setViewportSize({width:1280,height:720});
   expect(policyWrites).toEqual([]);
+  await fiscalStep(page,'documents');
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+id+'/fiscal'&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="complete"]').click();
   const response=await saving;expect(response.ok(),await response.text()).toBe(true);analysis=(await response.json()).analysis;
@@ -258,10 +262,10 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   try{
     await signIn(fresh.request,baseURL!,analysisWorkspace.operator);const reopened=await fresh.newPage();
     reopened.on('pageerror',error=>errors.push(error.message));
-    await reopened.goto('/analyses.html?id='+id+'&sector=fiscal');await fiscalStep(reopened,'documents');
+    await reopened.goto('/analyses.html?id='+id+'&sector=fiscal');await fiscalStep(reopened,'difal');
     await expect(reopened.locator('#analysis-difal-no')).toBeChecked();
     await expect(reopened.locator('#analysis-difal-details')).toBeHidden();
-    await fiscalStep(reopened,'tax');await expect(reopened.locator('#analysis-difal-no')).toBeChecked();
+    await fiscalStep(reopened,'difal');await expect(reopened.locator('#analysis-difal-no')).toBeChecked();
     await reopened.goto('/simulator.html?simulation='+excluded._id);await expect(reopened.locator('#simulation-snapshot')).toBeVisible();
     await expectZeroDre(reopened);
     expect(await api(fresh.request,baseURL!,'GET','/api/v4/simulations/'+excluded._id)).toEqual(excluded);
@@ -366,16 +370,14 @@ test('Excluir análise exige confirmação e permissão, preserva documentos e p
   // The existing company is still selectable; its deleted result must not be adopted again.
   await page.goto('/analyses.html?view=new');await page.locator('#analysis-company-search').fill(company.code);
   await page.locator('[data-analysis-client="'+company.id+'"]').click();
-  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','setup');
-  await page.locator('input[name="sector"][value="accounting"]').check();await page.locator('#analysis-new-year').selectOption('2028');
-  for(const regime of ['pure','hybrid','presumed'])await page.locator('#analysis-new-regime-'+regime).uncheck();
+  await page.locator('input[name="sector"][value="accounting"]').check();
   await expect(page.locator('#new-difal-yes')).not.toBeVisible();await expect(page.locator('#new-difal-no')).not.toBeVisible();
   await page.locator('#analysis-open-company').click();
   await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-kind','accounting');
   const newId=new URL(page.url()).searchParams.get('id');expect(newId).toBeTruthy();expect(newId).not.toBe(id);
   const restarted=(await api(page.request,baseURL!,'GET','/api/v4/analyses/'+newId)).analysis;
   expect(restarted.clientId).toBe(company.id);expect(restarted.currentSimulation).toBeNull();
-  expect(restarted.config.year).toBe(2028);expect(restarted.config.regimeSelection.selected).toEqual(['actual']);
+  expect(restarted.config.year).toBe(2027);expect(restarted.config.regimeSelection.selected).toEqual(['pure','hybrid','presumed','actual']);
   expect(restarted.fiscal.status).toBe('DRAFT');expect(restarted.fiscal.data.generationId).toBeNull();
   expect(restarted.accounting.status).toBe('DRAFT');expect(restarted.accounting.data.months).toEqual([]);
   expect(restarted.readiness.ready).toBe(false);
@@ -402,7 +404,7 @@ test('Excluir pelo Fiscal com documentos ausentes preserva o rascunho ao cancela
     if(['POST','PATCH','DELETE'].includes(request.method())&&new URL(request.url()).pathname.startsWith('/api/v4/analyses'))
       writes.push({method:request.method(),path:new URL(request.url()).pathname,body:request.postDataJSON()});
   });
-  await page.goto('/analyses.html?id='+id+'&sector=fiscal&resumed=1');
+  await page.goto('/analyses.html?id='+id+'&sector=fiscal&resumed=1');await fiscalStep(page,'documents');
   const wizard=page.locator('#analysis-wizard'),opener=page.locator('#analysis-delete-in-wizard'),dialog=page.locator('#analysis-delete-dialog');
   await expect(wizard).toHaveAttribute('data-wizard-step','documents');
   await expect(page.locator('#analysis-fiscal-evidence')).toContainText('não estão disponíveis');
@@ -416,13 +418,13 @@ test('Excluir pelo Fiscal com documentos ausentes preserva o rascunho ao cancela
   await page.locator('#analysis-delete-cancel').click();await expect(dialog).not.toBeVisible();
   await expect(wizard).toBeVisible();await expect(wizard).toHaveAttribute('data-wizard-step','documents');await expect(opener).toBeFocused();
 
-  await fiscalStep(page,'tax');await expect(opener).toBeVisible();
+  await fiscalStep(page,'rbt12');await expect(opener).toBeVisible();
   await page.locator('#analysis-extrato-manual').click();
   const rbt12=page.locator('#analysis-rbt12');await rbt12.fill('-1');
   const originalInput=await rbt12.elementHandle();expect(originalInput).toBeTruthy();
   await opener.click();await expect(dialog).toBeVisible();await page.keyboard.press('Escape');
   await expect(dialog).not.toBeVisible();await expect(opener).toBeFocused();
-  await expect(wizard).toHaveAttribute('data-wizard-step','tax');await expect(rbt12).toHaveValue('-1');
+  await expect(wizard).toHaveAttribute('data-wizard-step','rbt12');await expect(rbt12).toHaveValue('-1');
   expect(await originalInput!.evaluate(node=>node===document.querySelector('#analysis-rbt12'))).toBe(true);
   expect(writes).toEqual([]);
   expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+id+'?summary=1')).analysis.fiscal.data).toEqual(analysis.fiscal.data);
@@ -462,7 +464,7 @@ test('Excluir rascunho pela carteira identifica a empresa, exige revisão atual 
     }
     if(request.method()==='DELETE')removals.push({path:url.pathname,body:request.postDataJSON()});
   });
-  await page.goto('/analyses.html?'+new URLSearchParams({search:marker}));
+  await page.goto('/analyses.html?'+new URLSearchParams({view:'list',search:marker}));
   const trigger=(targetId:string)=>page.locator('[data-analysis-id="'+targetId+'"] [data-delete-analysis="'+targetId+'"]');
   const dialog=page.locator('#analysis-delete-dialog');
   await expect(trigger(id)).toHaveText('Excluir análise');await expect(trigger(preserved.id)).toBeVisible();

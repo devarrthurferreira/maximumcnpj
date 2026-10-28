@@ -76,7 +76,7 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   const lines = [];
   const textLine = cells => lines.push(cells.map(textCell).join(';'));
   const monthly = period === 'monthly',complete=period==='complete';
-  const fixed=presentation.analysisPeriod?.version==='JAN_SEP_V1',monthCount=fixed?9:12;
+  const fixed=presentation.analysisPeriod?.version==='JAN_SEP_V1',monthCount=fixed?(presentation.months?.length||0):12;
   const regimes = presentation.regimes;
   const regimeScope=regimes.length===4?'todos os regimes':regimes.length===1?'regime selecionado':'regimes selecionados';
   const rows = unifiedDreRows(presentation);
@@ -85,7 +85,7 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   textLine(['Empresa', company.name || '', 'Código', company.code || '', 'CNPJ', company.cnpj || '']);
   textLine(['Ano do cenário', year ?? presentation.year ?? presentation.calendarYear ?? '', 'Versão da apresentação', presentation.version || '']);
   textLine(['Unidades', 'Valores monetários em BRL (R$); percentuais em %.']);
-  textLine(['Critério',fixed?'Período fixo de janeiro a setembro: consolidado de nove competências confirmadas, sem projeção para doze meses. A RBT12 do Simples mantém sua referência própria de 12 meses.':presentation.method==='REPORT_MONTHS_V1'?'Valores por competência dos relatórios. Total anual é a soma dos meses importados; meses fora do período sem dados.':'Valores da simulação preservados. Projeção mensal, não lançamentos históricos.']);
+  textLine(['Critério',fixed?`Janela de janeiro a setembro: consolidado de ${monthCount} competências confirmadas, sem zerar ou projetar os meses ausentes. A RBT12 do Simples mantém sua referência própria de 12 meses.`:presentation.method==='REPORT_MONTHS_V1'?'Valores por competência dos relatórios. Total anual é a soma dos meses importados; meses fora do período sem dados.':'Valores da simulação preservados. Projeção mensal, não lançamentos históricos.']);
   textLine(['Arredondamento', `Exibição com duas casas decimais; a soma dos meses exibidos pode diferir por centavos do ${fixed?'consolidado Jan–Set':'total anual'} preservado.`]);
   const coverage=dreReportCoverage(presentation);
   textLine(['Cobertura dos relatórios',coverage.label,coverage.detail]);

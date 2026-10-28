@@ -125,3 +125,28 @@ test('Histórico diferencia competências, projeção legada e revisão sem alte
  await page.setViewportSize({width:320,height:800});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
  expect(methods.every(method=>method==='GET')).toBe(true);await expect(page.locator('[data-delete-simulation]')).toHaveCount(0);
 });
+
+
+test('Versões parciais mostram meses efetivos e limpar filtros remove também o vínculo da empresa',async({page})=>{
+ await session(page,{_id:'viewer',role:'viewer',name:'Leitura'});
+ const clientId='cccccccc-cccc-4ccc-8ccc-cccccccccccc',queries:URLSearchParams[]=[];
+ await page.route('**/api/v4/simulations?*',route=>{
+  queries.push(new URL(route.request().url()).searchParams);
+  return route.fulfill({json:{items:[{...item,clientId,calculationMethod:'REPORT_MONTHS_V1',reportMonths:3,bestAnnualProfit:-1234.56,analysisPeriod:{includedMonths:['2025-01','2025-03','2025-09']}}],total:1,page:1,pageSize:20}});
+ });
+ await page.goto(`/simulations.html?clientId=${clientId}&search=936&year=2028`);
+ await expect(page.locator('.history-coverage')).toContainText('Jan/2025');
+ await expect(page.locator('.history-coverage')).toContainText('Mar/2025');
+ await expect(page.locator('.history-coverage')).toContainText('Set/2025');
+ await expect(page.locator('.history-coverage')).not.toContainText('Fev/2025');
+ await expect(page.locator('.history-coverage')).toContainText('3 de até 9 competências');
+ await expect(page.locator('.history-summary')).toContainText('Empresas nesta página');
+ await expect(page.locator('.history-financials .negative')).toContainText('1.234,56');
+ await page.getByRole('button',{name:'Limpar',exact:true}).click();
+ await expect(page.getByLabel('Buscar simulações')).toHaveValue('');
+ await expect(page.getByLabel('Ano do cenário')).toHaveValue('');
+ await expect(page.locator('.history-context')).toHaveCount(0);
+ await expect.poll(()=>Object.fromEntries(queries.at(-1)!)).toEqual({page:'1'});
+ await page.setViewportSize({width:320,height:700});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+});

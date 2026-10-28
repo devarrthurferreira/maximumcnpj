@@ -13,6 +13,7 @@ import {rebuildSimulationSource} from '../src/simulation-reprocessing-source.ts'
 import {planReprocessing} from '../src/simulation-reprocessing.ts';
 import {baselineMonth,MONTHLY_MODEL_VERSION} from '../public/simulator-monthly.js';
 import {JAN_SEP_POLICY,JAN_SEP_MODEL_VERSION,analysisMonthsForYear} from '../public/analysis-period.js';
+import {section22} from './fixtures/section22.ts';
 import {ACCOUNTING_FIELDS} from '../src/analysis-contract.ts';
 
 test('MongoDB Jan–Set: recorte auditável, fontes diferentes, faltas explícitas, revisões e reprodução histórica',
@@ -80,24 +81,56 @@ test('MongoDB Jan–Set: recorte auditável, fontes diferentes, faltas explícit
       assert.equal((await createSimulation(actor,input(source,true))).result.annualRevenue,3000);
     });
 
-    await t.test('ausência em apenas um arquivo deixa mês pendente e impede concluir ou gerar',async()=>{
+    await t.test('ausência em um arquivo é excluída; Contábil incompleto reduz a DRE aos meses preenchidos',async()=>{
       const ids=await fixture('99283',[['2026-02',10000],['2026-09',20000]],
         [['2026-01',100000],['2026-09',200000],['2026-12',900000]]);
       const source=await generationSimulator(ids.generationId,ids.clientId,options);
-      assert.equal(source.analysisPeriod!.complete,false);assert.deepEqual(source.analysisPeriod!.missingMonths,['2026-01']);
-      assert.equal(source.monthlyReports.length,8);assert.ok(source.monthlyReports.every(row=>row.sourceMonth!=='2026-01'));
-      await assert.rejects(createSimulation(actor,input(source,true)),code('ANALYSIS_PERIOD_INCOMPLETE'));
+      assert.equal(source.analysisPeriod!.complete,true);assert.deepEqual(source.analysisPeriod!.missingMonths,['2026-01']);
+      assert.equal(source.reportMonths,8);assert.equal(source.monthlyReports.length,8);
+      assert.ok(source.monthlyReports.every(row=>row.sourceMonth!=='2026-01'));
+      const standalone=await createSimulation(actor,input(source,true));assert.equal(standalone.reportMonths,8);
       let analysis=(await openAnalysis(actor,{clientId:ids.clientId,year:2027,regimeSelection})).analysis;
-      const data={...analysis.fiscal.data,generationId:ids.generationId};
-      await assert.rejects(updateAnalysisSector(actor,analysis.id,'fiscal',{expectedSectorRevision:analysis.fiscal.revision,
-        expectedConfigRevision:analysis.config.revision,complete:true,data}),code('ANALYSIS_PERIOD_INCOMPLETE'));
       analysis=(await updateAnalysisSector(actor,analysis.id,'fiscal',{expectedSectorRevision:analysis.fiscal.revision,
-        expectedConfigRevision:analysis.config.revision,complete:false,data})).analysis;
+        expectedConfigRevision:analysis.config.revision,complete:true,data:{...analysis.fiscal.data,generationId:ids.generationId}})).analysis;
+      const months=analysisMonthsForYear(2026).map(sourceMonth=>({sourceMonth,
+        ...Object.fromEntries(ACCOUNTING_FIELDS.map(field=>[field,['2026-02','2026-09'].includes(sourceMonth)?100:null]))}));
+      analysis=(await updateAnalysisSector(actor,analysis.id,'accounting',{expectedSectorRevision:analysis.accounting.revision,
+        expectedConfigRevision:analysis.config.revision,complete:true,data:{months}})).analysis;
+      assert.equal(analysis.readiness.ready,true);assert.deepEqual(analysis.readiness.months,['2026-02','2026-09']);
+      const saved=(await generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:analysis.revision})).simulation;
+      assert.equal(saved.reportMonths,2);assert.equal(saved.monthlyInputs.length,2);assert.equal(saved.result.annualRevenue,2000);
+      assert.deepEqual(saved.analysisPeriod.includedMonths,['2026-02','2026-09']);
+      assert.equal(saved.monthlyDre.months.length,2);assert.equal(saved.result.regimes[0].dre.salaries,-2);
+      const rebuilt=await rebuildSimulationSource(saved);assert.deepEqual(rebuilt.analysisPeriod,saved.analysisPeriod);
+      assert.equal(planReprocessing(saved,rebuilt,scope().workspaceId).alreadyCurrent,true);
       const viewed=await getAnalysis(analysis.id,{includeSource:true});
-      assert.equal(viewed.sourceError,null);assert.equal(viewed.source!.analysisPeriod!.complete,false);
-      assert.deepEqual(viewed.analysis.readiness.months,analysisMonthsForYear(2026));
-      await assert.rejects(generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:analysis.revision}),code('ANALYSIS_NOT_READY'));
-      assert.equal(await(await collection('simulations')).countDocuments(scope({clientId:ids.clientId})),0);
+      assert.deepEqual(viewed.analysis.readiness.months,['2026-02','2026-09']);
+      assert.equal(viewed.analysis.accounting.data.months.length,9,'Campos vazios continuam disponíveis para editar.');
+    });
+
+    await t.test('OCR 2.2 parcial calcula apenas a competência com doze receitas históricas confirmadas',async()=>{
+      const ids=await fixture('99285',[['2026-01',10000],['2026-08',30000],['2026-09',10000]],
+        [['2026-01',100000],['2026-08',500000],['2026-09',200000]]);
+      const extraction=section22(),extractionId=randomUUID();
+      await(await collection('simplesExtractions')).insertOne({...scope(),_id:extractionId,clientId:ids.clientId,
+        parserVersion:extraction.parserVersion,fileName:'extrato-sintetico.pdf',fileSha256:'synthetic',result:extraction});
+      let analysis=(await openAnalysis(actor,{clientId:ids.clientId,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure']}})).analysis;
+      analysis=(await updateAnalysisSector(actor,analysis.id,'fiscal',{expectedSectorRevision:analysis.fiscal.revision,
+        expectedConfigRevision:analysis.config.revision,complete:true,data:{...analysis.fiscal.data,generationId:ids.generationId,
+          rbt12Source:'SIMPLES_SECTION_22',rbt12ExtractionId:extractionId,rbt12:extraction.rbt12Cents/100}})).analysis;
+      assert.deepEqual(analysis.fiscal.confirmation!.months,['2026-08']);
+      const months=analysisMonthsForYear(2026).map(sourceMonth=>({sourceMonth,...Object.fromEntries(ACCOUNTING_FIELDS.map(field=>[field,sourceMonth==='2026-08'?0:null]))}));
+      analysis=(await updateAnalysisSector(actor,analysis.id,'accounting',{expectedSectorRevision:analysis.accounting.revision,
+        expectedConfigRevision:analysis.config.revision,complete:true,data:{months}})).analysis;
+      assert.equal(analysis.readiness.ready,true);
+      const saved=(await generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:analysis.revision})).simulation;
+      assert.equal(saved.reportMonths,1);assert.equal(saved.result.annualRevenue,5000);
+      assert.deepEqual(saved.analysisPeriod.includedMonths,['2026-08']);
+      assert.equal(saved.rbt12Schedule.rows.length,1);assert.equal(saved.rbt12Schedule.rows[0].window.length,12);
+      assert.equal(saved.rbt12Schedule.rows[0].rbt12Cents,extraction.rbt12Cents);
+      assert.match(saved.source.warnings.join(' '),/sem RBT12 mensal confirmada/);
+      const rebuilt=await rebuildSimulationSource(saved);assert.deepEqual(rebuilt.analysisPeriod,saved.analysisPeriod);
+      assert.equal(planReprocessing(saved,rebuilt,scope().workspaceId).alreadyCurrent,true);
     });
 
     await t.test('conclusão ignora despesas e ajustes Q4 preservados; revisões geram apenas nove competências',async()=>{

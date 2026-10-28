@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildAnalysisPeriod} from '../public/analysis-period.js';
+import {buildAnalysisPeriod,selectAnalysisPeriod} from '../public/analysis-period.js';
 import {baselineMonth,calculateMonthlySimulation} from '../public/simulator-monthly.js';
 import {defaultDifalPolicy} from '../public/simulator-engine.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
@@ -8,6 +8,10 @@ import {buildDrePresentation,dreReportCoverage,unifiedDreRows} from '../public/s
 import {buildDreExecutiveSummary,buildDreEvolution} from '../public/simulator-dre-summary.js';
 import {renderAnnualDre,renderCompleteMonthlyDre,renderDreCompleteDetails,renderDrePrintDocument} from '../public/simulator-dre-view.js';
 import {buildDreCsv} from '../public/simulator-dre-export.js';
+import {buildDifalApplicationView} from '../public/simulator-source-view.js';
+import {renderProjectionCard} from '../public/simulator-projection-view.js';
+import {selectAvailableRbt12Months} from '../public/simulator-period-selection.js';
+import {section22} from './fixtures/section22.ts';
 
 const near=(actual,expected)=>assert(Math.abs(actual-expected)<1e-7,`${actual} != ${expected}`);
 const sum=values=>values.reduce((total,value)=>total+value,0);
@@ -26,10 +30,10 @@ function commercial(reports){
     purchases:{totalCents:purchasesCents,percentDenominatorCents:purchasesCents,
       byTaxStatus:[['OPTANTE',.25],['NAO_OPTANTE',.625],['CPF',.125],['NAO_CONFIRMADO',0],['OUTROS',0]].map(([key,share])=>({key,totalCents:purchasesCents*share,percent:share*100}))}};
 }
-function fixture({rbt12=3300000,rent=100,adjustment=0,legacy=false}={}){
-  const imported={startMonth:'2026-01',endMonth:'2026-12',months:12},analysisPeriod=buildAnalysisPeriod(imported,imported);
-  const reports=Array.from({length:9},(_,index)=>{
-    const month=index+1,gross=1000000+month*10000,services=200000,returns=50000+month*100;
+function fixture({rbt12=3300000,rent=100,adjustment=0,legacy=false,selectedMonths=null}={}){
+  const imported={startMonth:'2026-01',endMonth:'2026-12',months:12},originalPeriod=buildAnalysisPeriod(imported,imported),analysisPeriod=selectedMonths?selectAnalysisPeriod(originalPeriod,selectedMonths):originalPeriod;
+  const reports=analysisPeriod.includedMonths.map(sourceMonth=>{
+    const month=Number(sourceMonth.slice(5)),gross=1000000+month*10000,services=200000,returns=50000+month*100;
     return {sourceMonth:`2026-${String(month).padStart(2,'0')}`,month,operationVersion:'NATURE_OPERATIONS_2026_10_V1',
       operationAudit:{grossSalesCents:gross,serviceSalesCents:services,salesReturnsCents:returns},
       fields:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:gross-returns,serviceRevenueCents:services,purchasesOptantCents:100000,purchasesNonOptantCents:300000},
@@ -45,8 +49,8 @@ function fixture({rbt12=3300000,rent=100,adjustment=0,legacy=false}={}){
     fields:Object.fromEntries(Object.keys(reports[0].fields).map(key=>[key,sum(reports.map(report=>report.fields[key]))])),
     operationAudit:Object.fromEntries(['grossSalesCents','serviceSalesCents','salesReturnsCents'].map(key=>[key,sum(reports.map(report=>report.operationAudit[key]))])),
     commercialComposition:commercial(reports),...(legacy?{}:{analysisPeriod})};
-  const calendar=buildMonthlyDre(calculation.result,2027,{source:'MANUAL',confirmed:true,rbt12Cents:rbt12*100},{startMonth:'2026-01',endMonth:'2026-09',months:9});
-  const presentation=buildDrePresentation({...calculation,source,calendar,reportMonths:9});
+  const calendar=buildMonthlyDre(calculation.result,2027,{source:'MANUAL',confirmed:true,rbt12Cents:rbt12*100},{startMonth:analysisPeriod.startMonth,endMonth:analysisPeriod.endMonth,months:reports.length});
+  const presentation=buildDrePresentation({...calculation,source,calendar,reportMonths:reports.length});
   return {...calculation,source,calendar,presentation,year:2027};
 }
 
@@ -126,4 +130,67 @@ test('histórico sem contrato Jan–Set conserva calendário de doze meses e DRE
   const html=renderAnnualDre(input);assert.match(html,/DRE anual/);assert.match(html,/data-dre-row="revenue"/);assert.doesNotMatch(html,/data-simulation-lazy="dre"/);
   const header=buildDreCsv({...input,period:'monthly'}).split('\r\n').find(line=>line.startsWith('"Regime";"Escopo";'));
   assert.match(header,/Dezembro/);assert.equal(header.split(';').length,21);
+});
+
+
+test('competências parciais e não consecutivas preservam número, valor, DIFAL e cobertura na tela e exportação',()=>{
+  const input=fixture({selectedMonths:['2026-03','2026-05','2026-09']}),before=structuredClone(input);freeze(input);
+  assert.deepEqual(input.calendar.months.map(item=>item.number),[3,5,9]);
+  assert.deepEqual(input.calendar.months.map(item=>item.label),['Março','Maio','Setembro']);
+  assert.equal(input.calendar.months.length,3);assert.equal(input.presentation.months.length,3);
+  const coverage=dreReportCoverage(input.presentation);assert.equal(coverage.count,3);assert.equal(coverage.completePeriod,true);assert.equal(coverage.fullCoverage,false);
+  assert.deepEqual(coverage.omittedMonths,['2026-01','2026-02','2026-04','2026-06','2026-07','2026-08']);
+  for(const regime of input.result.regimes){
+    const calendar=input.calendar.regimes.find(item=>item.id===regime.id);
+    for(const item of calendar.rows){assert.equal(item.months.length,3);near(sum(item.months),item.annual);}
+    for(let month=0;month<3;month++){
+      const captured=input.result.monthlyResults[month].result.regimes.find(item=>item.id===regime.id);
+      const summary=buildDreExecutiveSummary(input.presentation,{id:regime.id,mode:'month',month});
+      assert.equal(summary.reconciled,true);near(summary.result,captured.dre.netProfit);
+      near(row(input.presentation,'revenueSourceGross').monthlyValues[regime.id][month],input.source.monthlyReports[month].commercialComposition.revenue.grossCents/100);
+    }
+  }
+  const html=renderCompleteMonthlyDre({...input,month:1,regimeId:'pure'});
+  const options=html.match(/<select id="dre-month">([\s\S]*?)<\/select>/)?.[1];
+  assert.equal((options.match(/<option /g)||[]).length,3);assert.match(options,/Maio/);assert.doesNotMatch(options,/Janeiro|Fevereiro|Abril/);
+  const annual=renderAnnualDre(input);assert.match(annual,/Jan–Set · 3 meses/);assert.match(annual,/Fora do cálculo por falta de dados/);
+  const csv=buildDreCsv({...input,period:'complete'});
+  const header=csv.split('\r\n').find(line=>line.startsWith('"Regime";"Escopo";'));
+  assert.equal(header.split(';').length,12);assert.match(header,/Março.*Maio.*Setembro/);assert.doesNotMatch(header,/Janeiro|Fevereiro|Abril|Outubro/);
+  assert.match(csv,/consolidado de 3 competências confirmadas/);
+  const print=renderDrePrintDocument({...input,period:'complete'});assert.match(print,/consolidado das 3 competências com dados/);assert.doesNotMatch(print,/nove meses|nove competências/);
+  const evolution=buildDreEvolution(input.presentation,input.calendar,'actual',1);
+  assert.equal(evolution.current.sourceMonth,'2026-05');assert.equal(evolution.previous.sourceMonth,'2026-03');
+  assert.equal(evolution.metrics[0].change,null);assert.match(evolution.reason,/não são consecutivas/);
+  const snapshot={result:input.result,monthlyDre:input.calendar};
+  const difal=buildDifalApplicationView({direction:'entry',snapshot,monthIndex:1});
+  assert.equal(difal.currentMonth,'2026-05');near(difal.values.find(item=>item.id==='pure').current,-input.result.monthlyResults[1].result.regimes.find(item=>item.id==='pure').dre.icmsAnticipation);
+  const projection=renderProjectionCard({projection:input.projection});assert.match(projection,/3 competências disponíveis/);assert.doesNotMatch(projection,/complete janeiro a setembro|impedem a geração/);
+  assert.deepEqual(input,before);
+});
+
+test('uma única competência em setembro mantém total igual ao mês, sem nove colunas artificiais',()=>{
+  const input=fixture({selectedMonths:['2026-09']});
+  assert.equal(input.calendar.months.length,1);assert.equal(input.calendar.months[0].number,9);
+  for(const regime of input.result.regimes){
+    near(row(input.presentation,'netProfit').monthlyValues[regime.id][0],row(input.presentation,'netProfit').values[regime.id]);
+  }
+  const html=renderAnnualDre(input);assert.match(html,/Jan–Set · 1 mês/);
+  const header=buildDreCsv({...input,period:'monthly'}).split('\r\n').find(line=>line.startsWith('"Regime";"Escopo";'));
+  assert.equal(header.split(';').length,10);assert.match(header,/Setembro/);assert.doesNotMatch(header,/Janeiro|Agosto|Outubro/);
+});
+
+
+test('simulador avulso usa somente competências cobertas pela seção 2.2 e conserva os dados editáveis',()=>{
+  const input=fixture(),source={...input.source,period:{startMonth:'2026-01',endMonth:'2026-09',months:9},reportMonths:9,purchases:{jobId:'p',selectedTotalCents:3600000},sales:{jobId:'s',selectedTotalCents:999999999}},
+    monthlyInputs=source.monthlyReports.map(report=>baselineMonth(report,{salaries:300,rent:100})),before=structuredClone({source,monthlyInputs});
+  const selected=selectAvailableRbt12Months(source,monthlyInputs,section22());
+  assert.deepEqual(selected.source.analysisPeriod.includedMonths,['2026-08']);
+  assert.equal(selected.source.reportMonths,1);assert.equal(selected.schedule.complete,true);
+  assert.deepEqual(selected.monthlyInputs.map(row=>row.sourceMonth),['2026-08']);assert.equal(selected.omittedMonths.length,8);
+  assert.equal(selected.source.sales.selectedTotalCents,source.monthlyReports[7].fields.salesCpfCents+source.monthlyReports[7].fields.serviceRevenueCents);
+  assert.equal(selected.source.commercialComposition,undefined);assert.equal(selected.source.operationAudit,undefined);
+  assert.deepEqual({source,monthlyInputs},before);
+  const legacy={...source,analysisPeriod:undefined};assert.throws(()=>selectAvailableRbt12Months(legacy,monthlyInputs,section22()),/janela RBT12 completa/);
+  const one=fixture({selectedMonths:['2026-01']}).source;assert.throws(()=>selectAvailableRbt12Months(one,monthlyInputs.slice(0,1),section22()),/janela RBT12 completa/);
 });

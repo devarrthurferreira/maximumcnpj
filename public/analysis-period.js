@@ -1,5 +1,5 @@
 export const JAN_SEP_POLICY='JAN_SEP_V1';
-export const JAN_SEP_MODEL_VERSION='1.11.0-jan-sep';
+export const JAN_SEP_MODEL_VERSION='1.12.0-available-months';
 
 const check=(condition,message)=>{if(!condition)throw new TypeError(message);};
 export function analysisMonthsForYear(sourceYear){
@@ -29,21 +29,38 @@ export function buildAnalysisPeriod(purchasesPeriod,salesPeriod){
   const sourceYear=completeYears[0]??years[0],expectedMonths=analysisMonthsForYear(sourceYear),expected=new Set(expectedMonths);
   const includedMonths=expectedMonths.filter(month=>purchased.has(month)&&sold.has(month));
   const missingMonths=expectedMonths.filter(month=>!purchased.has(month)||!sold.has(month));
-  return {version:JAN_SEP_POLICY,sourceYear,startMonth:expectedMonths[0],endMonth:expectedMonths[8],months:9,
-    expectedMonths,includedMonths,excludedMonths:all.filter(month=>!expected.has(month)),missingMonths,complete:missingMonths.length===0};
+  return {version:JAN_SEP_POLICY,sourceYear,startMonth:includedMonths[0]||expectedMonths[0],endMonth:includedMonths.at(-1)||expectedMonths[8],months:includedMonths.length,
+    expectedMonths,includedMonths,excludedMonths:all.filter(month=>!expected.has(month)),missingMonths,complete:includedMonths.length>0};
+}
+/** Restrict the calculation to explicitly usable months, retaining source coverage for audit. */
+export function selectAnalysisPeriod(period,sourceMonths){
+  assertCompleteAnalysisPeriod(period);
+  check(Array.isArray(sourceMonths)&&sourceMonths.length>=1&&sourceMonths.length<=9&&
+    new Set(sourceMonths).size===sourceMonths.length&&sourceMonths.every(month=>period.includedMonths.includes(month)),
+    'Selecione somente competências disponíveis entre janeiro e setembro.');
+  const includedMonths=[...sourceMonths].sort();
+  if(JSON.stringify(includedMonths)===JSON.stringify(period.includedMonths))return structuredClone(period);
+  return {...structuredClone(period),availableMonths:[...(period.availableMonths||period.includedMonths)],includedMonths,
+    startMonth:includedMonths[0],endMonth:includedMonths.at(-1),months:includedMonths.length,
+    missingMonths:period.expectedMonths.filter(month=>!includedMonths.includes(month)),complete:true};
 }
 export function assertCompleteAnalysisPeriod(period,reports){
-  check(period?.version===JAN_SEP_POLICY,'A análise precisa identificar o período fixo de janeiro a setembro.');
-  const expected=analysisMonthsForYear(period.sourceYear);
-  check(period.months===9&&period.startMonth===expected[0]&&period.endMonth===expected[8]&&
-    JSON.stringify(period.expectedMonths)===JSON.stringify(expected),'O período fixo da análise é inválido.');
-  check(period.complete===true&&Array.isArray(period.missingMonths)&&period.missingMonths.length===0&&
-    JSON.stringify(period.includedMonths)===JSON.stringify(expected),
-    `Complete a cobertura de entradas e saídas de janeiro a setembro. Faltam: ${(period.missingMonths||expected).join(', ')}.`);
+  check(period?.version===JAN_SEP_POLICY,'A análise precisa identificar a janela de janeiro a setembro.');
+  const expected=analysisMonthsForYear(period.sourceYear),included=period.includedMonths;
+  check(JSON.stringify(period.expectedMonths)===JSON.stringify(expected),'A janela da análise é inválida.');
+  check(Array.isArray(included)&&included.length>=1&&included.length<=9&&new Set(included).size===included.length&&
+    included.every((month,index)=>expected.includes(month)&&(!index||month>included[index-1]))&&
+    period.months===included.length&&period.startMonth===included[0]&&period.endMonth===included.at(-1)&&period.complete===true,
+    'A análise precisa de pelo menos uma competência confirmada entre janeiro a setembro.');
+  check(JSON.stringify(period.missingMonths)===JSON.stringify(expected.filter(month=>!included.includes(month))),
+    'A lista de competências não incluídas diverge do período da análise.');
+  check(period.availableMonths===undefined||(Array.isArray(period.availableMonths)&&new Set(period.availableMonths).size===period.availableMonths.length&&
+    period.availableMonths.every((month,index)=>expected.includes(month)&&(!index||month>period.availableMonths[index-1]))&&included.every(month=>period.availableMonths.includes(month))),
+    'A cobertura original da análise é inválida.');
   check(Array.isArray(period.excludedMonths)&&new Set(period.excludedMonths).size===period.excludedMonths.length&&
     period.excludedMonths.every(month=>/^20\d{2}-(0[1-9]|1[0-2])$/.test(month)&&!expected.includes(month)),
     'As competências excluídas da análise são inválidas.');
-  if(reports!==undefined)check(Array.isArray(reports)&&JSON.stringify(reports.map(row=>row.sourceMonth))===JSON.stringify(expected),
-    'O cálculo deve conter exatamente janeiro a setembro do ano de origem.');
+  if(reports!==undefined)check(Array.isArray(reports)&&JSON.stringify(reports.map(row=>row.sourceMonth))===JSON.stringify(included),
+    'O cálculo deve conter exatamente as competências incluídas entre janeiro a setembro do ano de origem.');
   return period;
 }

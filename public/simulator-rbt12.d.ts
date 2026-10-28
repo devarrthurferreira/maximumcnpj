@@ -7,3 +7,4 @@ export type Section22Reconciliation={priorRevenues:Section22Revenue[];rbt12Windo
 export function section22RevenueHistory(extraction:any):Section22Revenue[];
 export function reconcileSection22Extraction(extraction:any):Section22Reconciliation;
 export function buildRbt12Schedule(extraction:any,sourceMonths:string[]):Rbt12Schedule;
+export function buildJanSepRbt12Schedule(extraction:any,sourceYear:number):Rbt12Schedule;

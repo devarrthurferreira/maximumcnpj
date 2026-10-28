@@ -8,7 +8,7 @@ type Workspace={db:Db;workspaceId:string;account:Account};
 type Method='GET'|'POST'|'PATCH';
 type WizardKind='new'|'fiscal'|'accounting';
 const wizardSteps:Record<WizardKind,string[]>={
-  new:['setup'],fiscal:['documents','tax'],accounting:['values']
+  new:['company','sector'],fiscal:['regimes','difal','rbt12','documents'],accounting:['values']
 };
 const test=base.extend<{analysisWorkspace:Workspace}>({
   analysisWorkspace:async({},use)=>{
@@ -72,7 +72,7 @@ async function closeWizard(page:Page){
   }
 }
 async function saveSector(page:Page,id:string,sector:'fiscal'|'accounting',complete=false){
-  await switchSector(page,sector,complete?(sector==='fiscal'?'tax':'values'):undefined);
+  await switchSector(page,sector,complete?(sector==='fiscal'?'documents':'values'):undefined);
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+id+'/'+sector&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="'+(complete?'complete':'save')+'"]').click();
   const response=await saving;expect(response.ok(),await response.text()).toBe(true);
@@ -102,7 +102,7 @@ async function switchSector(page:Page,sector:'fiscal'|'accounting',step?:string)
     await opener.click();
   }
   await expect(wizard).toBeVisible();await expect(wizard).toHaveAttribute('data-wizard-kind',sector);
-  await wizardStep(page,sector,step||(sector==='fiscal'?'tax':'values'));
+  await wizardStep(page,sector,step||(sector==='fiscal'?'documents':'values'));
   await expect(page.locator('#analysis-'+sector+'-form')).toBeVisible();
   await expect(page).toHaveURL(new RegExp('sector='+sector));
 }
@@ -149,21 +149,21 @@ test('Retomar uma empresa mostra as escolhas salvas e conserva regimes, valores 
   await page.goto('/analyses.html?view=new');
   await page.locator('#analysis-company-search').fill(created.code);
   await page.locator('[data-analysis-client="'+created.clientId+'"]').click();
-  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','setup');
+  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','sector');
   await expect(page.locator('#analysis-wizard-review')).toBeVisible();
   await expect(page.locator('#analysis-wizard-review')).toContainText('Lucro Real');
   await expect(page.locator('#analysis-wizard-review')).toContainText('2028');
 
   // Changing the search cannot leave an invisible, previously selected company active.
-  await wizardStep(page,'new','setup');
+  await wizardStep(page,'new','company');
   await page.locator('#analysis-company-search').fill('empresa inexistente '+randomUUID());
   await expect(page.locator('#analysis-new-client')).toHaveValue('');
   await page.locator('#analysis-company-search').fill(created.code);
   await page.locator('[data-analysis-client="'+created.clientId+'"]').click();
-  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','setup');
+  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','sector');
   await expect(page.locator('#analysis-wizard-review')).toContainText('Lucro Real');
   await page.locator('input[name="sector"][value="accounting"]').check();
-  await expect(page.locator('#analysis-wizard-progress')).toBeHidden();
+  await expect(page.locator('#analysis-wizard-progress')).toBeVisible();
   await expect(page.locator('input[name="sector"][value="accounting"]')).toBeChecked();
   await expect(page.locator('#analysis-open-company')).toContainText('Continuar');
   expect(patches).toEqual([]);
@@ -236,7 +236,8 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
   await expect(page.locator('#analysis-paste-replace-confirm')).not.toBeChecked();
   await expect(page.locator('#analysis-apply-accounting-paste')).toBeDisabled();
   await expect(expense(page,'2025-01','salariesCents')).toHaveValue('111.00');
-  await expect(page.locator('[data-accounting-month="2025-02"]')).toHaveCount(0);
+  await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
+  await expect(expense(page,'2025-02','salariesCents')).toHaveValue('');
   expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+id)).analysis.accounting.data.months).toEqual(originalMonths);
   expect(patches).toEqual([]);
   await page.locator('#analysis-wizard button[value="complete"]').click();
@@ -284,9 +285,9 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
   await expect(page.locator('#analysis-month-2025-01')).toHaveJSProperty('open',true);
   await expect(page.locator('#analysis-month-2025-02')).toHaveJSProperty('open',false);
   await openDetails(page,'analysis-month-2025-02');
-  await expect(page.locator('#analysis-month-2025-01')).toHaveJSProperty('open',false);
-  await openDetails(page,'analysis-month-2025-01');
-  await expect(page.locator('#analysis-month-2025-02')).toHaveJSProperty('open',false);
+  // Months can stay open side by side for month-by-month checking.
+  await expect(page.locator('#analysis-month-2025-01')).toHaveJSProperty('open',true);
+  await expect(page.locator('#analysis-month-2025-02')).toHaveJSProperty('open',true);
   // Closing a step does not validate, coerce or discard an unfinished numeric edit.
   await expense(page,'2025-01','salariesCents').fill('1234.567');
   expect(await expense(page,'2025-01','salariesCents').evaluate(element=>(element as HTMLInputElement).validity.valid)).toBe(false);
@@ -299,7 +300,7 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
   await page.locator('#analysis-start-import').click();
   await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('Contábil');
   expect(importRequests).toEqual([]);
-  await wizardStep(page,'fiscal','tax');
+  await wizardStep(page,'fiscal','documents');
   await openDetails(page,'analysis-fiscal-options');
   await page.locator('#analysis-sales-annex').selectOption('2');
   await switchSector(page,'accounting');
@@ -325,11 +326,12 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
     {sourceMonth:'2025-01',salariesCents:123456,rentCents:25000,cardExpensesCents:null,benefitsCents:0,adminExpensesCents:1050},
     {sourceMonth:'2025-02',salariesCents:200000,rentCents:30000,cardExpensesCents:1234,benefitsCents:500,adminExpensesCents:0}
   ];
-  expect(analysis.accounting.data.months).toEqual(expectedMonths);
+  expect(analysis.accounting.data.months.filter((row:any)=>row.salariesCents!==null)).toEqual(expectedMonths);
+  expect(analysis.accounting.data.months).toHaveLength(9);
   expect(analysis.accounting.status).toBe('DRAFT');expect(analysis.readiness.ready).toBe(false);
   await expect(page.locator('#analysis-generate')).toBeDisabled();
   await page.locator('#analysis-wizard button[value="complete"]').click();
-  await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('Adicione as competências que faltam');
+  await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('Use zero somente');
   await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','values');
   expect(patches).toEqual(['/api/v4/analyses/'+id+'/fiscal','/api/v4/analyses/'+id+'/accounting']);
   await expect(expense(page,'2025-01','cardExpensesCents')).toHaveValue('');
@@ -340,22 +342,13 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
   expect(patches).toEqual(['/api/v4/analyses/'+id+'/fiscal','/api/v4/analyses/'+id+'/accounting']);
   const beforeExplicitCompletion=(await api(page.request,baseURL!,'GET','/api/v4/analyses/'+id)).analysis;
   expect(beforeExplicitCompletion.accounting.status).toBe('DRAFT');
-  expect(beforeExplicitCompletion.accounting.data.months).toEqual(expectedMonths);
-  // Preparing the fixed period adds seven empty months and preserves the two edited ones.
-  await openDetails(page,'analysis-accounting-tools');await expect(page.locator('#analysis-new-source-year')).toHaveValue('2025');
-  await page.locator('#analysis-add-month').click();await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
-  await page.locator('#analysis-wizard button[value="complete"]').click();
-  await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('Use zero somente');
-  expect(patches).toEqual(['/api/v4/analyses/'+id+'/fiscal','/api/v4/analyses/'+id+'/accounting']);
-  const remainingMonths=Array.from({length:7},(_,index)=>({sourceMonth:'2025-0'+(index+3),salariesCents:0,rentCents:0,cardExpensesCents:0,benefitsCents:0,adminExpensesCents:0}));
-  for(const month of remainingMonths){
-    await openDetails(page,'analysis-month-'+month.sourceMonth);
-    for(const field of ['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents']){
-      await expect(expense(page,month.sourceMonth,field)).toHaveValue('');await expense(page,month.sourceMonth,field).fill('0');
-    }
-  }
+  expect(beforeExplicitCompletion.accounting.data.months.filter((row:any)=>row.salariesCents!==null)).toEqual(expectedMonths);
+  // Seven untouched months stay blank and are excluded from the single consolidated report.
+  await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
+  for(let month=3;month<=9;month++)await expect(expense(page,'2025-0'+month,'salariesCents')).toHaveValue('');
   analysis=await saveSector(page,id,'accounting',true);
-  expect(analysis.accounting.data.months).toEqual([{...expectedMonths[0],cardExpensesCents:0},expectedMonths[1],...remainingMonths]);
+  expect(analysis.accounting.data.months.filter((row:any)=>row.salariesCents!==null)).toEqual([{...expectedMonths[0],cardExpensesCents:0},expectedMonths[1]]);
+  expect(analysis.accounting.data.months.filter((row:any)=>row.salariesCents===null)).toHaveLength(7);
   expect(analysis.readiness.ready).toBe(true);
   await expect(page.locator('#analysis-generate')).toBeEnabled();
   await switchSector(page,'accounting','values');await openDetails(page,'analysis-accounting-summary-panel');
@@ -366,15 +359,16 @@ test('Colagem tem prévia e substituição explícita; trocar setores preserva r
   await expect(page.locator('#simulation-snapshot')).toBeVisible();
   const simulationId=new URL(page.url()).searchParams.get('simulation');expect(simulationId).toBeTruthy();
   const snapshot=await api(page.request,baseURL!,'GET','/api/v4/simulations/'+simulationId);
+  expect(snapshot.reportMonths).toBe(2);
+  expect(snapshot.source.analysisPeriod.includedMonths).toEqual(['2025-01','2025-02']);
   expect(snapshot.analysisId).toBe(id);expect(snapshot.draft.salesAnnex).toBe(2);
   expect(snapshot.rbt12Source).toBe('NOT_REQUIRED');expect(snapshot.result.regimes.map((row:any)=>row.id)).toEqual(['actual']);
   expect(snapshot.monthlyInputs.map((row:any)=>({sourceMonth:row.sourceMonth,values:row.values}))).toEqual([
     {sourceMonth:'2025-01',values:{serviceRevenue:0,salaries:1234.56,rent:250,cardExpenses:0,benefits:0,adminExpenses:10.5}},
-    {sourceMonth:'2025-02',values:{serviceRevenue:0,salaries:2000,rent:300,cardExpenses:12.34,benefits:5,adminExpenses:0}},
-    ...remainingMonths.map(({sourceMonth})=>({sourceMonth,values:{serviceRevenue:0,salaries:0,rent:0,cardExpenses:0,benefits:0,adminExpenses:0}}))
+    {sourceMonth:'2025-02',values:{serviceRevenue:0,salaries:2000,rent:300,cardExpenses:12.34,benefits:5,adminExpenses:0}}
   ]);
   expect((await analysisWorkspace.db.collection<any>('analyses').findOne({_id:id,workspaceId:analysisWorkspace.workspaceId}))?.currentSimulation.id).toBe(simulationId);
-  await page.goto('/analyses.html?search='+created.code);
+  await page.goto('/analyses.html?view=list&search='+created.code);
   await expect(page.locator('[data-analysis-id="'+id+'"]')).toHaveAttribute('data-analysis-state','current');
   const card=page.locator('[data-analysis-id="'+id+'"]');
   await expect(card.locator('.analysis-company-status')).toHaveText('Resultado salvo');

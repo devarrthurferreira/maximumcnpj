@@ -55,3 +55,17 @@ test('centavos seguros, competências válidas e dedução zero confirmada reque
   for(const values of [[],[{sourceMonth:'2026-13',grossSalesCents:1,serviceSalesCents:0,salesReturnsCents:0}],
     [{sourceMonth:'2026-08',grossSalesCents:Number.MAX_SAFE_INTEGER,serviceSalesCents:1,salesReturnsCents:0}]])assert.throws(()=>reconcileRevenueMonths(values));
 });
+
+
+test('competências não contíguas exigem seleção Jan–Set explícita e mantêm apenas seus valores',async()=>{
+  const {buildAnalysisPeriod,selectAnalysisPeriod}=await import('../public/analysis-period.js');
+  const input=source();input.monthlyReports[0].sourceMonth='2026-03';
+  assert.equal(buildRevenueReconciliation({source:input}).available,false);
+  input.analysisPeriod=selectAnalysisPeriod(buildAnalysisPeriod({startMonth:'2026-01',endMonth:'2026-09',months:9},{startMonth:'2026-01',endMonth:'2026-09',months:9}),['2026-03','2026-09']);
+  const result=buildRevenueReconciliation({source:input});assert.equal(result.available,true);
+  assert.equal(result.revenueAfterReturnsCents,180000);assert.equal(result.monthly.length,2);
+  assert.equal(buildRevenueReconciliation({source:result}).available,true);
+  assert.equal(buildRevenueReconciliation({source:input,sourceMonth:'2026-03'}).revenueAfterReturnsCents,105000);
+  input.analysisPeriod.includedMonths=['2026-03','2026-08'];
+  assert.equal(buildRevenueReconciliation({source:input}).available,false);
+});

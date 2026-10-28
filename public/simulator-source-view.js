@@ -20,7 +20,7 @@ export function buildDifalApplicationView({direction,policy,reports=[],row=null,
     if(!Array.isArray(saved?.regimes))return null;
     const capturedSelection=saved.regimeSelection!==undefined?saved.regimeSelection:snapshot.draft?.regimeSelection!==undefined?snapshot.draft.regimeSelection:snapshot.engineInput?.regimeSelection;
     const selectedIds=capturedSelection===undefined?null:resolveRegimeSelection(capturedSelection).selected;
-    const monthly=saved.method==='REPORT_MONTHS_V1',selected=monthly?saved.monthlyResults?.find(item=>item.month===monthIndex+1):null;
+    const monthly=saved.method==='REPORT_MONTHS_V1',number=saved.analysisPeriod?.version==='JAN_SEP_V1'?Number(saved.analysisPeriod.includedMonths?.[monthIndex]?.slice(5)):monthIndex+1,selected=monthly?saved.monthlyResults?.find(item=>item.month===number):null;
     if(selectedIds&&!selectedIds.some(id=>id==='pure'||id==='hybrid'))return {direction,caption,values:[],historical:true,notApplicable:true,currentMonth:selected?.sourceMonth||row?.sourceMonth||null};
     if(!saved.regimes.some(regime=>Number.isFinite(regime.dre?.[field])))return null;
     const currentPolicy=snapshot.draft?.difalPolicy||saved.difalPolicy;

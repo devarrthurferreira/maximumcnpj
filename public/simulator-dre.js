@@ -46,10 +46,11 @@ export function dreReportCoverage(presentation) {
   if(period?.version==='JAN_SEP_V1'){
     const expected=Array.isArray(period.expectedMonths)?period.expectedMonths:[];
     const included=sourceMonths.filter(month=>expected.includes(month)),count=included.length;
-    const complete=count===9&&expected.length===9&&period.complete===true;
-    return {actual:true,sourceMonths:included,count,completeYear:false,completePeriod:complete,
-      label:complete?'Janeiro a setembro · 9 de 9 competências':`Janeiro a setembro · ${count} de 9 competências`,
-      detail:`Período fixo: ${period.startMonth} a ${period.endMonth}. ${complete?'O consolidado soma os nove meses confirmados.':'Cobertura pendente: não há um consolidado completo de janeiro a setembro.'} Outubro a dezembro ficam fora da análise. A RBT12 do Simples mantém sua referência própria de 12 meses.`};
+    const complete=count>0&&count<=9&&expected.length===9&&period.complete===true;
+    const fullCoverage=complete&&count===9,omitted=expected.filter(month=>!included.includes(month));
+    return {actual:true,sourceMonths:included,count,completeYear:false,completePeriod:complete,fullCoverage,omittedMonths:omitted,
+      label:`Janeiro a setembro · ${count} de 9 competências`,
+      detail:complete?`O consolidado soma somente ${count} ${count===1?'competência confirmada':'competências confirmadas'}: ${included.join(', ')}. ${omitted.length?'Fora do cálculo por falta de dados: '+omitted.join(', ')+'. ':''}Não há preenchimento com zero nem projeção dos meses ausentes. Outubro a dezembro ficam fora da análise. A RBT12 do Simples mantém sua referência própria de 12 meses.`:'Nenhuma competência com dados suficientes entre janeiro e setembro. Não há consolidado disponível.'};
   }
   const count=sourceMonths.length,years=new Set(sourceMonths.map(value=>value.slice(0,4))),completeYear=count===12&&years.size===1;
   const label=completeYear?'Ano de origem completo · 12 de 12 competências':count===12?'12 competências em mais de um ano de origem':`Período parcial · ${count} de 12 competências`;
@@ -120,17 +121,17 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   const analysisPeriod=actual&&result.analysisPeriod?.version==='JAN_SEP_V1'?structuredClone(result.analysisPeriod):null;
   const hasCalendar = calendar != null;
   const validCalendar = Array.isArray(calendar?.months) && (analysisPeriod?
-    calendar.version==='DRE_CALENDAR_V4'&&calendar.analysisPeriod?.version==='JAN_SEP_V1'&&calendar.months.length===9:
+    calendar.version==='DRE_CALENDAR_V4'&&calendar.analysisPeriod?.version==='JAN_SEP_V1'&&calendar.months.length===analysisPeriod.includedMonths?.length&&calendar.months.every((month,index)=>month.sourceMonth===analysisPeriod.includedMonths[index]&&month.number===Number(month.sourceMonth.slice(5))):
     ['DRE_CALENDAR_V1','DRE_CALENDAR_V2','DRE_CALENDAR_V3'].includes(calendar?.version)&&calendar.months.length===12);
   const calendarYear = calendar?.year ?? engineInput?.year ?? null;
-  const months = validCalendar ? calendar.months.map(month=>({...month})) : MONTH_NAMES.slice(0,analysisPeriod?9:12).map((label,index)=>({number:index+1,label,period:calendarYear?`${calendarYear}-${String(index+1).padStart(2,'0')}`:null}));
+  const months = validCalendar ? calendar.months.map(month=>({...month})) : (analysisPeriod?analysisPeriod.includedMonths.map(sourceMonth=>({sourceMonth,number:Number(sourceMonth.slice(5))})):MONTH_NAMES.map((_,index)=>({number:index+1}))).map(month=>({...month,label:MONTH_NAMES[month.number-1],period:calendarYear?`${calendarYear}-${String(month.number).padStart(2,'0')}`:null}));
   const memory = (id,frame=null) => {
     const entry=unique(frame?.monthResult?.memory||result?.memory,'id',id);
     return entry?.unit==='currency' && finite(entry.value) && entry.value>=0 ? entry.value : null;
   };
   function frame(regime,kind,index=null) {
     const saved=validCalendar?unique(calendar.regimes,'id',regime.id):null;
-    const monthlyEntry=actual&&kind==='month'?result.monthlyResults?.find(row=>row.month===index+1):null;
+    const monthlyEntry=actual&&kind==='month'?result.monthlyResults?.find(row=>row.month===months[index]?.number):null;
     const monthlyRegime=monthlyEntry?.result?.regimes?.find(row=>row.id===regime.id);
     const effective=monthlyRegime||regime;
     const available=actual&&kind==='month'?

@@ -6,7 +6,7 @@ import {monthlyProjection, monthlyDifal, MONTHLY_FIELDS} from '../public/simulat
 import {monthlyReportSource, aggregateOperationAudit, type OperationMonthlyReport} from './simulation-monthly-source.ts';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.ts';
 import { sameReportCompetences } from './report-competence.ts';
-import {JAN_SEP_POLICY,buildAnalysisPeriod} from '../public/analysis-period.js';
+import {JAN_SEP_POLICY,buildAnalysisPeriod,selectAnalysisPeriod} from '../public/analysis-period.js';
 import {aggregateCommercialComposition} from './simulation-commercial-composition.ts';
 
 type FinancialSummary = Awaited<ReturnType<typeof purchaseSummary>>;
@@ -66,9 +66,9 @@ export async function generationSimulator(id: string, clientId: string, options:
   };
   let period:ReportPeriod|null = null, reportMonths:number|null = null, periodBasis = 'MANUAL';
   if(analysisPeriod){
-    period={startDate:`${analysisPeriod.startMonth}-01`,endDate:`${analysisPeriod.endMonth}-30`,startMonth:analysisPeriod.startMonth,endMonth:analysisPeriod.endMonth,
-      months:9,observedMonths:analysisPeriod.includedMonths.length,missingMonths:[...analysisPeriod.missingMonths]};
-    reportMonths=9;periodBasis='COLUMN_H';
+    period={startDate:`${analysisPeriod.startMonth}-01`,endDate:new Date(Date.UTC(Number(analysisPeriod.endMonth.slice(0,4)),Number(analysisPeriod.endMonth.slice(5)),0)).toISOString().slice(0,10),startMonth:analysisPeriod.startMonth,endMonth:analysisPeriod.endMonth,
+      months:analysisPeriod.months,observedMonths:analysisPeriod.includedMonths.length,missingMonths:[...analysisPeriod.missingMonths]};
+    reportMonths=analysisPeriod.months;periodBasis='COLUMN_H';
   } else if (purchases.period && sales.period) {
     // Compare independent reports by competence; exact snapshot/date reconciliation remains in purchaseSummary.
     need(sameReportCompetences(purchases.period, sales.period),
@@ -76,7 +76,7 @@ export async function generationSimulator(id: string, clientId: string, options:
     period = purchases.period; reportMonths = period.months; periodBasis = 'COLUMN_H';
   }
   const warnings = [
-    analysisPeriod?`Período fixo: janeiro a setembro de ${analysisPeriod.sourceYear}. Cobertura comum das entradas e saídas: ${analysisPeriod.includedMonths.length}/9 competências. ${analysisPeriod.complete?'Os valores são a soma efetiva dos nove meses.':`A geração aguarda: ${analysisPeriod.missingMonths.join(', ')}.`}`:
+    analysisPeriod?`Período fixo: janeiro a setembro de ${analysisPeriod.sourceYear}. Cobertura comum das entradas e saídas: ${analysisPeriod.includedMonths.length}/9 competências. ${analysisPeriod.complete?'Os valores são a soma das competências disponíveis, sem preencher meses ausentes.':'Nenhuma competência comum disponível.'} Meses não incluídos: ${analysisPeriod.missingMonths.join(', ')||'nenhum'}.`:
       period ? `Período identificado automaticamente pela coluna H: ${period.startMonth} a ${period.endMonth} (${period.months} ${period.months === 1 ? 'mês' : 'meses'}). Compras e vendas têm as mesmas competências; dias sem movimento não alteram o período mensal.` :
       'Histórico anterior sem período fiscal persistido: confirme manualmente quantos meses os dois arquivos representam.',
     'O enquadramento é o observado na consulta, sem comprovação retroativa para a data de cada nota. Não confirmados permanecem identificados na fonte.'
@@ -110,4 +110,22 @@ export async function generationSimulator(id: string, clientId: string, options:
     purchases: {...sourceMetadata(purchases),selectedTotalCents:selectedPurchasesTotalCents},
     sales: {...sourceMetadata(sales),selectedTotalCents:selectedSalesTotalCents,difal:difal?{...monthlyReports[0].difal,amountCents:difal.sourceAmountCents,baseCents:difal.sourceBaseCents,eligibleLines:difal.eligibleLines,pendingLines:difal.pendingLines}:null},
     fields, classification, warnings};
+}
+
+/** Narrow all financial evidence together; no missing accounting month becomes zero. */
+export function selectAnalysisSourceMonths(source:Awaited<ReturnType<typeof generationSimulator>>,months:string[]){
+  need(source.analysisPeriod,'A origem não identifica a janela de janeiro a setembro.',422,'ANALYSIS_PERIOD_INCOMPLETE');
+  const analysisPeriod=selectAnalysisPeriod(source.analysisPeriod,months);
+  const monthlyReports=source.monthlyReports.filter(row=>analysisPeriod.includedMonths.includes(row.sourceMonth));
+  const projection=monthlyProjection(monthlyReports);projection.analysisPeriod=analysisPeriod;
+  const fields=projection.annualGroupsCents as OperationMonthlyReport['fields'];
+  const difal=monthlyDifal(monthlyReports,source.sales.jobId);
+  const period={startDate:`${analysisPeriod.startMonth}-01`,endDate:new Date(Date.UTC(Number(analysisPeriod.endMonth.slice(0,4)),Number(analysisPeriod.endMonth.slice(5)),0)).toISOString().slice(0,10),startMonth:analysisPeriod.startMonth,
+    endMonth:analysisPeriod.endMonth,months:analysisPeriod.months,observedMonths:analysisPeriod.months,missingMonths:[...analysisPeriod.missingMonths]};
+  return {...source,analysisPeriod,monthlyReports,projection,fields,period,reportMonths:analysisPeriod.months,
+    operationAudit:aggregateOperationAudit(monthlyReports),commercialComposition:aggregateCommercialComposition(monthlyReports.map(row=>row.commercialComposition!)),
+    purchases:{...source.purchases,selectedTotalCents:exactCents(fields.purchasesOptantCents+fields.purchasesNonOptantCents)},
+    sales:{...source.sales,selectedTotalCents:exactCents(fields.salesOptantCents+fields.salesNonOptantCents+fields.salesCpfCents+fields.serviceRevenueCents),
+      difal:difal?{...monthlyReports[0].difal,amountCents:difal.sourceAmountCents,baseCents:difal.sourceBaseCents,eligibleLines:difal.eligibleLines,pendingLines:difal.pendingLines}:null},
+    warnings:[...source.warnings,`Consolidado de ${months.length} competências: ${analysisPeriod.includedMonths.join(', ')}. Não incluídas: ${analysisPeriod.missingMonths.join(', ')||'nenhuma'}. Nenhum mês ausente foi preenchido com zero.`]};
 }

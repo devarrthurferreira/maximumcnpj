@@ -2,15 +2,15 @@
 const freezeSteps = steps => Object.freeze(steps.map(([id,label]) => Object.freeze({id,label})));
 
 export const WIZARD_STEPS = Object.freeze({
-  new:freezeSteps([['setup','Empresa e configuração']]),
-  fiscal:freezeSteps([['documents','Documentos'],['tax','Opções fiscais']]),
+  new:freezeSteps([['company','Empresa'],['sector','Setor']]),
+  fiscal:freezeSteps([['regimes','Regimes'],['difal','DIFAL'],['rbt12','RBT12'],['documents','Entradas e saídas']]),
   accounting:freezeSteps([['values','Despesas']]),
   config:freezeSteps([['choices','Regimes e ano']])
 });
 
 const LEGACY_STEPS = Object.freeze({
-  new:Object.freeze({company:'setup',sector:'setup',regimes:'setup',review:'setup'}),
-  fiscal:Object.freeze({review:'tax'}),
+  new:Object.freeze({setup:'company',regimes:'sector',review:'sector'}),
+  fiscal:Object.freeze({tax:'rbt12',review:'documents'}),
   accounting:Object.freeze({months:'values',review:'values'}),
   config:Object.freeze({review:'choices'})
 });
@@ -46,7 +46,7 @@ export function wizardStep(kind,stepOrIndex=0,{resume=false}={}) {
 
 /** Existing documents choose the Fiscal entry point; accounting always has one screen. */
 export function initialWizardStep(kind,{resume=false,hasDocuments=false,hasMonths=false,preferredStep=null}={}) {
-  const initial={new:'setup',fiscal:hasDocuments === true ? 'tax' : 'documents',
+  const initial={new:'company',fiscal:'regimes',
     accounting:'values',config:'choices'};
   return wizardStep(kind,preferredStep === null ? initial[kind] : preferredStep,{resume});
 }

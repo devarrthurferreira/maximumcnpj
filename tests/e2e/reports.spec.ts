@@ -1,7 +1,7 @@
 import {test,expect} from '@playwright/test';
 const jobId='00000000-0000-4000-8000-000000000001',clientId='00000000-0000-4000-8000-000000000002';
 const job={_id:jobId,clientId,clientCode:'000',clientName:'EMPRESA TESTE',fileName:'fixture.csv',completedAt:'2026-09-28T12:00:00Z',summary:{lines:1005,unique:1001,duplicates:3,invalid:1}};
-test('Relatórios por empresa: grupos, partes, busca e download',async({page})=>{
+test('Relatórios por empresa: grupos, partes, busca e download',async({page},info)=>{
  await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'test',role:'viewer'}}}));
  await page.route('**/api/v4/clients',r=>r.fulfill({json:{items:[{_id:clientId,code:'000',name:'EMPRESA TESTE',active:true}]}}));
  await page.route('**/api/reports',async route=>{
@@ -19,7 +19,8 @@ test('Relatórios por empresa: grupos, partes, busca e download',async({page})=>
  await expect(page.locator('#group-title')).toContainText('Não optante');
  const dl=page.waitForEvent('download');await page.getByRole('button',{name:'Baixar resumo PDF'}).click();expect((await dl).suggestedFilename()).toBe('relatorio-fixture.pdf');
  await expect(page.locator('.report-tabs button')).toHaveCount(3);await expect(page.getByRole('button',{name:/Não confirmados/})).toHaveCount(0);await expect(page.locator('#rows-view')).toContainText('Não optante');await expect(page.locator('#rows-view')).toContainText('Origem: não confirmado');
- await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+ const desktop=info.outputPath('relatorios-desktop.png');await page.screenshot({path:desktop,fullPage:true});await info.attach('Relatórios desktop',{path:desktop,contentType:'image/png'});
+ await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);const mobile=info.outputPath('relatorios-mobile.png');await page.screenshot({path:mobile,fullPage:true});await info.attach('Relatórios mobile',{path:mobile,contentType:'image/png'});
 });
 test('Relatórios não abrem para visitante sem sessão',async({page})=>{
  await page.route('**/api/auth/session',r=>r.fulfill({json:{user:null}}));

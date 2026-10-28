@@ -55,7 +55,7 @@ const monthOrdinal = value => /^\d{4}-(0[1-9]|1[0-2])$/.test(value || '')
 
 /** Compare saved cells only. Missing months and legacy averages never become a trend. */
 export function buildDreEvolution(presentation,calendar,regimeId,selectedMonth=0) {
-  const actual=presentation?.method==='REPORT_MONTHS_V1'&&((calendar?.version==='DRE_CALENDAR_V3'&&calendar?.months?.length===12)||(calendar?.version==='DRE_CALENDAR_V4'&&presentation.analysisPeriod?.version==='JAN_SEP_V1'&&calendar?.months?.length===9));
+  const actual=presentation?.method==='REPORT_MONTHS_V1'&&((calendar?.version==='DRE_CALENDAR_V3'&&calendar?.months?.length===12)||(calendar?.version==='DRE_CALENDAR_V4'&&presentation.analysisPeriod?.version==='JAN_SEP_V1'&&calendar?.months?.length>0&&calendar.months.length===presentation.analysisPeriod.includedMonths?.length));
   if(!actual)return {available:false,reason:'Esta simulação usa a projeção mensal salva. A evolução exige valores individuais por competência.',months:[],metrics:[]};
   const rows=unifiedDreRows(presentation),regime=presentation.regimes.find(item=>item.id===regimeId);
   const months=calendar.months.map((month,index)=>{
