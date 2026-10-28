@@ -1,4 +1,15 @@
-# Maximum CNPJ · v0.45.2
+# Maximum CNPJ · v0.45.3
+
+
+## Envio de arquivos na própria análise — v0.45.3
+
+Em **Fiscal → Documentos**, os cartões de **Entradas** e **Saídas** abrem o seletor de arquivo diretamente. Também é possível arrastar um arquivo para cada cartão. Ao escolher CSV, XLSX ou XLS, a leitura, o envio e as consultas começam automaticamente, com nome do arquivo, progresso e resultado na mesma tela. A primeira importação é preparada somente depois de validar o documento; o segundo arquivo usa a mesma geração e preserva o primeiro relatório.
+
+A UF do cadastro vem preenchida quando disponível e pode ser conferida antes do envio. Se estiver ausente, deve ser informada para um novo documento; retomadas preservam a UF histórica, inclusive pendências de cálculo. Arquivos inválidos exibem o motivo no próprio cartão. Falhas de conexão oferecem **Tentar novamente**, conservando a identidade e as partes já enviadas, inclusive quando uma resposta se perde depois da gravação. Leituras incompletas podem ser retomadas com o mesmo arquivo.
+
+Preparação e substituição explícitas ficam em **Outras opções dos documentos**. Relatórios concluídos continuam disponíveis em **Conferir relatório**. O envio não navega para outra página e preserva os rascunhos do Contábil; controles de escrita continuam restritos aos perfis autorizados. Os formatos, validações fiscais, cálculo, competências disponíveis de janeiro a setembro e versões salvas mantêm seus contratos. Motor `1.12.0-available-months`; sem migração.
+
+Verificação: tipos, build e versões conferidos; 382 testes de regras, 9 de gerações, 22 de compras/DIFAL/antecipação, 36 de análises e 172 Python/PDF/OCR aprovados com dados sintéticos. Os 18 cenários direcionados de navegador incluem envio nas duas ordens, arrastar arquivo, retorno perdido após gravação, retomada histórica sem UF, rascunhos, acesso somente de consulta, geração excluída e alteração concorrente do vínculo. Desktop e celular foram inspecionados.
 
 ## Adicionar documentos diretamente no Fiscal — v0.45.2
 

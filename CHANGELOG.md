@@ -1,5 +1,12 @@
 # Histórico de alterações
 
+## [0.45.3] — 2026-10-28
+
+- Seleção ou arrastar de arquivos diretamente nos cartões de Entradas e Saídas, com leitura, envio e progresso na própria análise.
+- Preparação automática após validar o primeiro documento; segundo arquivo preserva a geração e o relatório já enviado.
+- Retomada idempotente de falhas de conexão, com o mesmo identificador e sem duplicar linhas.
+- UF compartilhada, erros junto do arquivo e opções de substituição recolhidas; preserva rascunhos e controles de acesso.
+
 ## [0.45.2] — 2026-10-28
 
 - Entradas e Saídas passam a oferecer Adicionar documento desde a primeira abertura do Fiscal, preparando a importação quando necessário e abrindo o tipo correto.
