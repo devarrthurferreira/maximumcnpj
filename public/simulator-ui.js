@@ -9,6 +9,7 @@ import {renderRevenueReconciliationEditor} from './simulator-revenue-view.js';
 import {buildDrePresentation,dreReportMemory} from './simulator-dre.js';
 import {renderAnnualDre,renderDreCompleteDetails,renderDrePrintCalendar,renderDrePrintDocument} from './simulator-dre-view.js';
 import {buildDreCsv,buildDreExportPayload} from './simulator-dre-export.js';
+import {buildDrePdfRequest,fetchDrePdf} from './simulator-dre-download.js';
 import {mountNavigation} from './navigation.js';
 import {renderSimulationCharts} from './simulation-charts.js';
 import {createEmptyDraft, calculateSimulation, defaultDifalPolicy, parseDifalPolicy, upgradeDifalPolicy, resolveDifalApplication, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES} from './simulator-engine.js';
@@ -31,6 +32,7 @@ const LEGACY_DIFAL_REGIMES=[...DIFAL_REGIMES,['presumed','Lucro Presumido'],['ac
 const DIFAL_OPERATIONS=[['entry','DIFAL de entrada','Compras · antecipação de ICMS'],['exit','DIFAL de saída','Vendas']];
 const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',dreReportPeriod:'complete',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,rbt12DocumentConfirmed:false,rbt12DocumentRetryable:false,rbt12Sequence:0,pdfOperation:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales',guided:false,guidedStage:false,guidedResume:false,rbt12Mode:'PDF',serviceMigration:null,draftMigrationNotice:null,dreShowPercent:false,dreMonthView:true,dreMonth:0,dreContext:null,detailStates:new Map(),monthlyInputs:[],entry:0};
 let dreContextCache=null;
+const drePdf={operation:null,status:'',error:false,snapshot:null,optionsKey:null};
 const localTaxesOutside = () => S.readonly ? S.snapshot?.draft?.icmsOutside===true : $('#icms-outside')?.value==='outside';
 const hasImportedServices = () => S.source?.revenueSplit?.version === 'SALES_SERVICES_V1' && Number.isSafeInteger(S.source.fields?.serviceRevenueCents);
 const isImportedField = key => IMPORTED.includes(key) || (key === 'serviceRevenue' && hasImportedServices());
@@ -191,6 +193,7 @@ function fixedPeriodNotice(){
   return `<section class="card sim-fixed-period${period.complete?'':' is-pending'}" aria-label="Período fixo da análise"><div><span class="eyebrow">JANELA · JANEIRO A SETEMBRO</span><h2>Janeiro a setembro de ${esc(period.sourceYear)}</h2><p>${count} de 9 competências confirmadas em entradas e saídas. Outubro a dezembro ficam fora desta análise.</p></div><strong>${period.complete?`${count} ${count===1?'mês incluído':'meses incluídos'}`:'Documentos pendentes'}</strong><select id="period-months" hidden disabled aria-label="Meses do período fixo"><option value="${count}">${count} ${count===1?'mês':'meses'}</option></select><input id="period-confirm" type="checkbox" hidden disabled ${period.complete?'checked':''}><p id="period-explanation" class="sim-help">${period.complete?`O resultado soma somente ${count} ${count===1?'mês':'meses'}, sem projeção. ${period.missingMonths.length?'Fora do cálculo: '+period.missingMonths.map(competenceLabel).map(esc).join(', ')+'.':''}`:'Importe ao menos uma competência em comum nas entradas e saídas.'}</p></section>`;
 }
 function display(prefill=null) {
+  cancelDrePdf();
   S.readonly=false; S.result=null; S.snapshot=null; S.pending=null; S.rbt12Mode='PDF'; S.serviceMigration=servicesMigration(prefill)?{previousServices:Number(prefill.draft.values.serviceRevenue)||0}:null;S.draftMigrationNotice=null;clearRbt12();
   S.dreContext=null;dreContextCache=null;
   S.entry=0;S.monthlyInputs=[];
@@ -338,6 +341,7 @@ function updateRevenue() {
   updateMonthWorkspace(); updateProjection(); updateDifalSource(); updateAnticipationSource(); updateDifalOptions();
 }
 function invalidate() {
+  cancelDrePdf();
   const hadResult=!!S.result;
   S.result=null; S.snapshot=null; S.pending=null;
   S.dreContext=null;dreContextCache=null;
@@ -700,6 +704,60 @@ function printDre(){
   try{window.print();}catch(error){clearDrePrint();fail(error);}
 }
 
+function drePdfOptions(){
+  if(!S.result||!S.snapshot||S.pending||S.saving||S.snapshot.result!==S.result.result)return null;
+  try{return buildDrePdfRequest({simulationId:S.snapshot._id,period:S.dreReportPeriod,regimeId:S.calendarRegime,showPercent:S.dreShowPercent});}
+  catch{return null;}
+}
+function currentDrePdf(operation){
+  const options=drePdfOptions();
+  return drePdf.operation===operation&&S.snapshot===operation.snapshot&&S.result===operation.result&&options&&JSON.stringify(options)===operation.optionsKey;
+}
+function cancelDrePdf(message=''){
+  const operation=drePdf.operation;drePdf.operation=null;
+  operation?.controller.abort();drePdf.status=message;drePdf.error=false;
+}
+function renderDrePdfStatus(){
+  const button=$('#download-dre-pdf'),status=$('#dre-pdf-status');
+  if(!button||!status)return;
+  const options=drePdfOptions(),key=options?JSON.stringify(options):null;
+  if(drePdf.operation&&!currentDrePdf(drePdf.operation))cancelDrePdf('As opções ou os dados mudaram. Gere o PDF novamente.');
+  else if(drePdf.snapshot!==S.snapshot||drePdf.optionsKey!==key){drePdf.status='';drePdf.error=false;}
+  drePdf.snapshot=S.snapshot;drePdf.optionsKey=key;
+  button.disabled=!!drePdf.operation||!options;
+  button.setAttribute('aria-busy',String(!!drePdf.operation));
+  const label=button.querySelector('[data-dre-pdf-label]');
+  if(label)label.textContent=drePdf.operation?'Gerando PDF…':S.dreReportPeriod==='complete'?'Baixar PDF completo':S.dreReportPeriod==='monthly'?'Baixar PDF mensal':'Baixar PDF consolidado';
+  status.dataset.state=drePdf.error?'error':drePdf.operation?'loading':'ready';
+  status.textContent=drePdf.operation?'Gerando PDF com gráficos, comparativos e memória de cálculo…':
+    S.saving?'Aguarde o salvamento da simulação para baixar o PDF.':
+    !options?(S.pending?'Confirme o salvamento da simulação acima para baixar o PDF.':'Abra uma versão salva no histórico para baixar o PDF completo.'):
+    drePdf.status||'PDF único com gráficos, comparativos e memória de cálculo da versão salva.';
+}
+async function downloadDrePdf(){
+  const options=drePdfOptions();
+  if(!options||drePdf.operation)return;
+  const operation={controller:new AbortController(),snapshot:S.snapshot,result:S.result,optionsKey:JSON.stringify(options),timedOut:false};
+  drePdf.operation=operation;drePdf.status='';drePdf.error=false;renderDrePdfStatus();
+  const timer=setTimeout(()=>{operation.timedOut=true;operation.controller.abort();},55000);
+  try{
+    const {blob,filename}=await fetchDrePdf(options,{signal:operation.controller.signal});
+    // A later edit, save or report choice must never download the previous response.
+    if(!currentDrePdf(operation))return;
+    const url=URL.createObjectURL(blob),anchor=document.createElement('a');
+    anchor.href=url;anchor.download=filename;document.body.append(anchor);anchor.click();anchor.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),5000);
+    drePdf.status=`PDF baixado: ${filename}`;
+  }catch(error){
+    if(!currentDrePdf(operation))return;
+    drePdf.error=true;drePdf.status=operation.timedOut?'A geração do PDF demorou a responder. Clique novamente para tentar baixar.':error.message||'Não foi possível gerar o PDF. Clique novamente para tentar baixar.';
+  }finally{
+    clearTimeout(timer);
+    if(drePdf.operation===operation){drePdf.operation=null;renderDrePdfStatus();}
+  }
+}
+window.addEventListener('pagehide',()=>cancelDrePdf());
+
 function classificationDetails() {
   if(!S.source.classification)return '';
   const c=S.source.classification;
@@ -756,6 +814,7 @@ function setSaving(value) {
   S.saving=value;
   const fieldset=$('#simulation-fields'); if(fieldset)fieldset.disabled=value;
   const button=$('#generate-simulation'); if(button)button.textContent=value?'Salvando simulação…':'Gerar simulação';
+  renderDrePdfStatus();
 }
 async function simulate() {
   if(S.saving||S.readingPdf)return;
@@ -844,14 +903,16 @@ function renderResult() {
   bindResultDetails();
   $('#export-simulation').onclick=exportSimulation;
   $('#export-dre-csv').onclick=exportDre;
+  $('#download-dre-pdf').onclick=()=>void downloadDrePdf();
   $('#print-dre').onclick=printDre;
-  const reportPeriod=$('#dre-report-period');if(reportPeriod)reportPeriod.onchange=()=>{S.dreReportPeriod=reportPeriod.value;};
+  const reportPeriod=$('#dre-report-period');if(reportPeriod)reportPeriod.onchange=()=>{S.dreReportPeriod=reportPeriod.value;renderDrePdfStatus();};
   $('#dre-show-percent').onchange=event=>{S.dreShowPercent=event.target.checked;renderResult();$('#dre-show-percent').focus({preventScroll:true});};
   bindDreDetailControls();
   const monthSelect=$('#dre-month');if(monthSelect)monthSelect.onchange=()=>{S.dreMonth=Number(monthSelect.value);renderResult();if(S.readonly){updateDifalSource();updateAnticipationSource();updateDifalOptions();}$('#dre-month').focus({preventScroll:true});};
   document.querySelectorAll('[data-period]').forEach(button=>button.onclick=()=>{S.viewPeriod=button.dataset.period;renderResult();document.querySelector(`[data-period="${S.viewPeriod}"]`)?.focus({preventScroll:true});});
   const regimeSelect=$('#dre-regime');if(regimeSelect)regimeSelect.onchange=()=>{S.calendarRegime=regimeSelect.value;renderResult();$('#dre-regime').focus({preventScroll:true});};
   renderSaveStatus();
+  renderDrePdfStatus();
 }
 function formatMemory(row) {
   if(typeof row.value!=='number')return esc(row.value);
@@ -927,6 +988,7 @@ function capturedFields(snapshot) {
 }
 function fieldLabel(key) { return {serviceRevenue:'Vendas de serviços',serviceRevenueCents:'Vendas de serviços',salesOptantCents:'Vendas Optantes SN',salesNonOptantCents:'Vendas Não Optantes SN',salesCpfCents:'Vendas de CPFs',purchasesOptantCents:'Compras do Simples',purchasesNonOptantCents:'Compras fora do Simples'}[key]||key; }
 function showSnapshot(snapshot) {
+  cancelDrePdf();
   if(snapshot.result?.method==='REPORT_MONTHS_V1'){S.entry=0;S.viewPeriod='annual';S.dreMonth=snapshot.result.analysisPeriod?.version===JAN_SEP_POLICY?0:snapshot.source.monthlyReports[0].month-1;}
   S.snapshot=snapshot;S.source=snapshot.source;S.months=snapshot.reportMonths;S.edited=snapshot.manuallyAdjusted;S.readonly=true;S.pending=null;S.result={input:snapshot.draft,result:snapshot.result,monthlyGroups:snapshot.monthlyGroups,projection:snapshot.projection,difalProjection:snapshot.difalProjection,rbt12Schedule:snapshot.rbt12Schedule||snapshot.result?.rbt12Schedule||null,anticipationProjection:snapshot.anticipationProjection||null};
   $('#simulator-app').innerHTML=`<div id="simulator-intro">${hero(true)}</div><div id="simulation-result"></div>${capturedFields(snapshot)}<h2 class="sim-evidence-title">Conferência dos relatórios de origem</h2>${difalOptions(snapshot)}<div id="simulator-projection"></div><div id="simulator-revenue-reconciliation"></div><div id="simulator-difal"></div><div id="simulator-anticipation"></div>${renderSection22(snapshot.rbt12Extraction)}<div id="rbt12-schedule">${renderRbt12Schedule(snapshot.rbt12Schedule||snapshot.result?.rbt12Schedule)}</div>${sourceCard()}<div id="simulation-notices"></div>`;

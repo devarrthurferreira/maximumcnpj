@@ -47,7 +47,18 @@ class handler(BaseHTTPRequestHandler):
             db = database()
             actor = authenticate(db, self.headers, workspace)
             action = options['action']
-            rate_limit(db, actor['_id'], workspace, action in ('pdf', 'csv', 'generation-pdf'))
+            rate_limit(db, actor['_id'], workspace, action in ('pdf', 'csv', 'generation-pdf', 'dre-pdf'))
+            if action == 'dre-pdf':
+                from reporting.dre_data import dre_metadata
+                from reporting.dre_pdf import render_dre_pdf
+                meta = dre_metadata(db, options['simulationId'], workspace, options)
+                content = render_dre_pdf(meta)
+                require(len(content) <= MAX_RESPONSE_BYTES, 413, 'REPORT_TOO_LARGE',
+                        'O PDF da DRE excedeu o limite de resposta. Tente novamente ou informe o código da requisição.')
+                code = ''.join(c for c in str(meta['snapshot']['company'].get('code') or 'empresa')
+                               if c.isascii() and c.isalnum())[:20] or 'empresa'
+                filename = f'dre-{code}-{options["simulationId"]}-{options["period"]}.pdf'
+                return self.send(200, content, 'application/pdf', filename)
             if action == 'generation-pdf':
                 from reporting.generations import generation_metadata, render_generation_pdf
                 generation_meta = generation_metadata(db, options['generationId'], workspace, options['part'])

@@ -1,4 +1,16 @@
-# Maximum CNPJ · v0.47.0
+# Maximum CNPJ · v0.48.0
+
+## DRE completa em PDF Python, com timbrado Luna — v0.48.0
+
+A DRE passa a oferecer **Baixar PDF completo**, gerado em Python/ReportLab a partir da **versão salva** da simulação. O arquivo único usa o timbrado Luna fornecido, paleta verde-petróleo e coral, fontes incorporadas, gráficos vetoriais, paginação e marcadores para navegar entre as seções. A impressão do navegador, o CSV e o JSON continuam disponíveis.
+
+O relatório inclui visão executiva, comparação de resultados e tributos entre os regimes selecionados, DRE detalhada com análise vertical opcional, gráfico de formação do resultado, despesas operacionais, evolução mensal com variação de receita, apuração de CBS/IBS/ICMS e conciliação de créditos. Acrescenta composição documental de receitas e compras quando registrada, DRE mensal de todos os regimes, premissas, fontes e memória de cálculo com rastreabilidade. As opções de conteúdo **Completo**, **Consolidado** e **Mensal** controlam os demonstrativos incluídos no mesmo arquivo.
+
+A base dos documentos e o ano do cenário tributário aparecem separadamente. Meses ausentes, percentuais sem denominador positivo e regimes indisponíveis são identificados sem converter ausência em zero. A evolução interrompe as linhas nos meses sem dados e compara somente competências consecutivas. Projeções históricas permanecem identificadas como projeções, e versões sem calendário apresentam essa limitação explicitamente. Créditos e devoluções já aplicados não são deduzidos novamente.
+
+O endpoint autenticado `POST /api/reports` aceita apenas a referência `simulationId` e opções de apresentação para `action: dre-pdf`; rejeita resultados financeiros enviados pelo navegador. A leitura exige sessão ativa, origem permitida, workspace e versão visível, respeita exclusões e publicação da análise, confere os valores salvos e aplica limite de downloads e tamanho. Nenhum relatório é salvo no banco, e o gerador não executa novamente o motor fiscal. O botão acompanha o salvamento, exibe progresso e erro recuperável e cancela respostas de versões ou opções que mudaram durante a geração.
+
+Os testes usam dados sintéticos calculados pelo motor real: conciliação numérica com a DRE JavaScript, cenários parciais, prejuízo, receita zero, indisponibilidade, versões históricas, permissões e exclusões. O teste de navegador baixa o PDF real pela API Python com MongoDB descartável e verifica imutabilidade dos dados, conteúdo, vetores, timbrado, repetição após falha e cancelamento. A revisão visual cobre as páginas de análise, demonstrativos mensais e memória de cálculo.
 
 ## Contábil: valores por mês e repetição — v0.47.0
 
