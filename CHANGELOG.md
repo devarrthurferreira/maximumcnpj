@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.49.0] — 2026-10-28
+
+- Moderniza capa, cartões, hierarquia de seções e gráficos vetoriais do PDF com o timbrado Luna preservado.
+- Acrescenta leitura executiva, cobertura visual de competências, diferença entre resultados, carga sobre receita, maior despesa e destaques da evolução.
+- Adiciona sumário com páginas e links internos reais, retorno no rodapé e identificação do regime nas continuações mensais.
+- Compacta demonstrativos mensais e análise vertical sem omitir contas, valores, subtotais ou anexos; melhora contraste de prejuízos e tratamento de cifras extensas.
+- Preserva snapshots, histórico, períodos incompletos, projeções, empates, disponibilidade e os controles de autenticação; não altera o cálculo tributário.
+- Inclui verificações de precisão dos gráficos, indicadores, navegação, paginação e casos de cobertura/denominadores extremos.
+
 ## [0.48.0] — 2026-10-28
 
 - Download da DRE em PDF único gerado em Python/ReportLab com o timbrado Luna, paleta verde-petróleo/coral, gráficos vetoriais, fontes incorporadas e navegação entre seções.

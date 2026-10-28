@@ -1,4 +1,14 @@
-# Maximum CNPJ · v0.48.0
+# Maximum CNPJ · v0.49.0
+
+## PDF com leitura executiva e navegação — v0.49.0
+
+O PDF da DRE ganha uma capa com resultado e margem em destaque, cartões de análise e gráficos vetoriais redesenhados com a paleta verde-petróleo/coral do timbrado Luna. O sumário mostra as páginas efetivas e permite abrir cada seção; o rodapé oferece retorno ao sumário. Cabeçalhos internos identificam a seção e, nos demonstrativos mensais, o regime e as competências.
+
+A nova **Leitura executiva** apresenta cobertura documental, diferença do regime em destaque para o maior resultado registrado, carga de tributos e encargos sobre a receita e maior despesa operacional. A faixa de competências distingue meses incluídos e lacunas. A evolução apresenta maior/menor resultado mensal, quantidade de meses com prejuízo e variação entre os extremos observados, com datas e denominadores explícitos. Valores indisponíveis, receita zero, empates e prejuízos continuam identificados; projeções históricas não recebem indicadores de evolução realizada.
+
+Os quadros mensais compactam a análise vertical com o rótulo **AV**, repetem o regime nas continuações e explicam que a coluna total consolida todos os meses da versão. Todas as contas, subtotais, valores e anexos são preservados; nenhum valor financeiro é substituído por abreviação nas tabelas. O destaque de prejuízo usa contraste próprio, e cifras/percentuais extensos se ajustam ao espaço disponível.
+
+O gerador continua lendo exclusivamente a versão salva e não recalcula o motor fiscal. Mantém os modos Completo, Consolidado e Mensal, as taxas históricas, os meses parciais, autenticação, isolamento e exportações existentes. Os novos indicadores são explicações dos dados capturados; a diferença entre regimes não é apresentada como economia garantida.
 
 ## DRE completa em PDF Python, com timbrado Luna — v0.48.0
 

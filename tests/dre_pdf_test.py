@@ -139,10 +139,49 @@ class DrePdfTests(unittest.TestCase):
             self.assertNotIn('Fev/2025', annex)
             for entry in saved['result']['monthlyResults']:
                 regime = next(row for row in entry['result']['regimes'] if row['id'] == 'actual')
-                expected = f"{regime['dre']['salaries'] / regime['dre']['revenue'] * 100:.1f}".replace('.', ',') + '% da receita'
+                expected = 'AV ' + f"{regime['dre']['salaries'] / regime['dre']['revenue'] * 100:.1f}".replace('.', ',') + '%'
                 self.assertIn(expected, annex)
                 self.assertIn(amount(regime['dre']['salaries']), annex)
                 self.assertIn(amount(regime['dre']['netProfit']), annex)
+
+    def test_contents_links_resolve_to_actual_section_pages_in_every_mode(self):
+        for period in ('complete', 'annual', 'monthly'):
+            with self.subTest(period=period), pymupdf.open(stream=rendered('complete', period), filetype='pdf') as document:
+                sections = {title: page - 1 for _, title, page in document.get_toc()}
+                guide = sections['Guia do relatório']
+                self.assertIn('Leitura executiva', sections)
+                links = document[guide].get_links()
+                self.assertEqual(len(links), len(sections) - 1)
+                self.assertEqual({link['page'] for link in links},
+                                 {page for title, page in sections.items() if title != 'Guia do relatório'})
+                for link in links:
+                    self.assertEqual(link['kind'], pymupdf.LINK_GOTO)
+                    self.assertTrue(document[guide].rect.contains(link['from']))
+                for page in document[guide + 1:]:
+                    back = page.get_links()
+                    self.assertEqual(len(back), 1)
+                    self.assertEqual((back[0]['kind'], back[0]['page']), (pymupdf.LINK_GOTO, guide))
+                self.assertEqual('DRE mensal por regime' in sections, period != 'annual')
+                self.assertEqual('DRE comparativa detalhada' in sections, period != 'monthly')
+
+    def test_monthly_annex_has_complete_statements_without_note_only_pages(self):
+        saved = fixture()
+        with pymupdf.open(stream=rendered('complete', 'complete', True), filetype='pdf') as document:
+            sections = {title: page - 1 for _, title, page in document.get_toc()}
+            pages = document[sections['DRE mensal por regime']:sections['Premissas, cobertura e conferências']]
+            content = []
+            for page in pages:
+                extracted = normalized(page.get_text())
+                self.assertIn('Conta', extracted)
+                self.assertIn('Receita de serviços', extracted)
+                self.assertIn('Resultado líquido', extracted)
+                self.assertIn('Total do período', extracted)
+                content.append(extracted)
+            annex = ' '.join(content)
+            for month in saved['result']['monthlyResults']:
+                for regime in month['result']['regimes']:
+                    for key in ('revenue', 'netRevenue', 'cmv', 'grossProfit', 'personnel', 'preTax', 'netProfit'):
+                        self.assertIn(amount(regime['dre'][key]), annex)
 
     def test_unavailable_regimes_and_legacy_projection_remain_explicit(self):
         unavailable = rendered('unavailable', 'complete')
