@@ -1,4 +1,14 @@
-# Maximum CNPJ · v0.45.1
+# Maximum CNPJ · v0.45.2
+
+## Adicionar documentos diretamente no Fiscal — v0.45.2
+
+Os cartões **Entradas** e **Saídas** oferecem **Adicionar documento** mesmo quando a análise ainda não possui uma importação preparada. O botão prepara a primeira importação ao clicar e abre o envio do tipo selecionado, para a empresa da análise. Compras e vendas usam a mesma geração; adicionar o segundo documento conserva o primeiro.
+
+Gerações existentes são conferidas antes da navegação. Relatórios já concluídos continuam acessíveis para conferência, leituras incompletas podem ser retomadas e a substituição de documentos indisponíveis mantém a confirmação explícita. Usuários com acesso somente de consulta não recebem controles de envio. Rascunhos e revisões concorrentes conservam as proteções existentes.
+
+A tela de envio aceita CSV, XLSX e XLS nos formatos fiscais já suportados. Nenhuma migração ou mudança de cálculo é necessária.
+
+Verificação: tipos, build e versões, 382 testes de regras, 9 integrações de gerações, 172 Python/PDF/OCR e 13 cenários de navegador aprovados. Os quatro novos cenários verificam o primeiro acesso pela empresa, envio real de CSV nas duas ordens, preservação do primeiro relatório, metadados atrasados e acesso somente de consulta. Os controles foram conferidos em desktop e celular. As verificações de navegação conferem o caminho e os parâmetros do envio, respeitando a normalização da ordem da URL pela tela fiscal.
 
 ## Recuperação de geração indisponível — v0.45.1
 

@@ -659,7 +659,7 @@ function refreshEvidence() {
   const replace=$('#analysis-replace-missing-documents');if(replace)replace.onclick=()=>void prepareImport();
   const reports=$('#analysis-fiscal-documents-view');if(reports)reports.innerHTML=renderFiscalReports(detailOptions());
   const composition=$('#analysis-commercial-composition');if(composition)composition.innerHTML=renderFiscalComposition(detailOptions());
-  if($('#analysis-start-import'))$('#analysis-start-import').onclick=()=>void prepareImport();
+  bindFiscalDocumentActions();
   const reference=$('#analysis-fiscal-reference');
   if(reference)reference.innerHTML=renderFiscalReference({...detailOptions(),draft:S.fiscalDraft});
   const searchable=$('#analysis-searchable-pdf');if(searchable)searchable.hidden=!(S.reference&&S.reference.searchableStored!==false);
@@ -1013,7 +1013,7 @@ function bindFiscal() {
     if(event.target.id==='analysis-rbt12'&&$('#analysis-rbt12-confirm'))$('#analysis-rbt12-confirm').checked=false;
   };
   $('#analysis-fiscal-form').onsubmit=event=>{event.preventDefault();void saveSector('fiscal',event.submitter?.value==='complete');};
-  if($('#analysis-start-import'))$('#analysis-start-import').onclick=()=>void prepareImport();
+  bindFiscalDocumentActions();
   for(const [id,mode] of [['analysis-extrato-pdf','SIMPLES_SECTION_22'],['analysis-extrato-manual','MANUAL']])if($('#'+id))$('#'+id).onclick=()=>{
     try{captureAll();S.fiscalDraft.rbt12Source=mode;S.fiscalDraft.rbt12=null;S.fiscalDraft.rbt12ExtractionId=null;S.fiscalDraft.rbt12ManualConfirmed=false;if(mode==='MANUAL')S.fiscalDraft.rbt12DocumentId=null;S.reference=null;markDirty('fiscal');renderDetail();$('#analysis-rbt12')?.focus();}catch(error){showError(error);}
   };
@@ -1030,21 +1030,47 @@ function bindFiscal() {
   };
 }
 
-async function prepareImport() {
-  if(S.busy||!writable())return;
+function bindFiscalDocumentActions() {
+  const start=$('#analysis-start-import');if(start){start.onclick=()=>void prepareImport();start.disabled=S.busy||S.pdfBusy;}
+  document.querySelectorAll('[data-analysis-add-document]').forEach(button=>{
+    button.disabled=S.busy||S.pdfBusy;
+    button.onclick=()=>void prepareImport({type:button.dataset.analysisAddDocument,reuse:true});
+  });
+}
+function documentImportUrl(generationId,type,company=null) {
+  const job=type==='SALES'?company?.sales:company?.purchase;
+  const jobId=(type==='SALES'?company?.salesJobId:company?.purchaseJobId)||job?._id;
+  return '/purchases.html?'+new URLSearchParams({generation:generationId,client:S.analysis.clientId,guided:'1',analysis:S.analysis.id,type,...(jobId?{job:jobId}:{})});
+}
+async function prepareImport({type='PURCHASES',reuse=false}={}) {
+  if(S.busy||S.pdfBusy||S.deleting||!writable())return;
   try {
     clearError();captureAll();
     validateDifalChoice('analysis',S.analysis.config.regimeSelection,S.fiscalDraft.difalPolicy);
     if(S.paste.pending)throw new Error('Há uma colagem do Contábil ainda não aplicada. Confira e aplique os dados ou use Limpar colagem antes de abrir a importação fiscal.');
     if(S.accountingDirty)throw new Error('Salve o trabalho Contábil antes de abrir a importação fiscal. As despesas ainda não salvas continuam nesta tela.');
     if(S.configDirty)throw new Error('Salve as escolhas da análise antes de preparar os documentos fiscais.');
+    if(!['PURCHASES','SALES'].includes(type))throw new Error('Escolha o documento de entradas ou de saídas.');
+    setBusy(true,'Preparando o envio do documento desta empresa…');
+    // A card action resumes the current import. Only a confirmed missing source
+    // may fall through to explicit replacement; network failures never create one.
+    if(reuse&&S.analysis.fiscal.data.generationId){
+      let generation;
+      try{generation=await generationMetadata(S.analysis,{force:true});}
+      catch(error){if(error.status!==404)throw error;}
+      if(generation){
+        const company=generation.companies.find(item=>item.clientId===S.analysis.clientId);
+        if(S.fiscalDirty)await patchSector('fiscal',S.fiscalDraft,false);
+        if(S.analysis.fiscal.data.generationId!==generation._id)throw new Error('Os documentos da análise mudaram. Atualize antes de continuar.');
+        setBusy(false);location.href=documentImportUrl(generation._id,type,company);return;
+      }
+    }
     if(S.analysis.fiscal.data.generationId&&!confirm('Preparar novos relatórios de entradas e saídas? A análise passará a aguardar os novos arquivos; as versões e os relatórios anteriores continuarão preservados.'))return;
-    setBusy(true,'Preparando os documentos fiscais desta empresa…');
     if(S.fiscalDirty)await patchSector('fiscal',S.fiscalDraft,false);
     const response=await analysisRequest(apiPath('/'+S.analysis.id+'/fiscal/import?summary=1'),{method:'POST',body:{expectedSectorRevision:S.analysis.fiscal.revision,expectedConfigRevision:S.analysis.config.revision}});
     adoptAnalysis(response.analysis);
     if(!uuid(response.generationId)||S.analysis.fiscal.data.generationId!==response.generationId)throw new Error('Não foi possível confirmar os relatórios preparados. Atualize a análise antes de continuar.');
-    setBusy(false);location.href='/purchases.html?'+new URLSearchParams({generation:response.generationId,client:S.analysis.clientId,guided:'1',analysis:S.analysis.id});
+    setBusy(false);location.href=documentImportUrl(response.generationId,type);
   } catch(error){showError(error);}
   finally{if(S.busy){setBusy(false);renderDetail();}}
 }
