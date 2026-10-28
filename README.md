@@ -10,6 +10,8 @@ Os quadros mensais compactam a análise vertical com o rótulo **AV**, repetem o
 
 O gerador continua lendo exclusivamente a versão salva e não recalcula o motor fiscal. Mantém os modos Completo, Consolidado e Mensal, as taxas históricas, os meses parciais, autenticação, isolamento e exportações existentes. Os novos indicadores são explicações dos dados capturados; a diferença entre regimes não é apresentada como economia garantida.
 
+O fluxo de validação prepara o build e os módulos gerados antes dos testes Python: as fixtures da DRE usam o motor JavaScript real e dependem desses arquivos também em um checkout limpo. Todas as verificações anteriores permanecem obrigatórias.
+
 ## DRE completa em PDF Python, com timbrado Luna — v0.48.0
 
 A DRE passa a oferecer **Baixar PDF completo**, gerado em Python/ReportLab a partir da **versão salva** da simulação. O arquivo único usa o timbrado Luna fornecido, paleta verde-petróleo e coral, fontes incorporadas, gráficos vetoriais, paginação e marcadores para navegar entre as seções. A impressão do navegador, o CSV e o JSON continuam disponíveis.

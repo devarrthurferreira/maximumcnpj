@@ -8,6 +8,7 @@
 - Compacta demonstrativos mensais e análise vertical sem omitir contas, valores, subtotais ou anexos; melhora contraste de prejuízos e tratamento de cifras extensas.
 - Preserva snapshots, histórico, períodos incompletos, projeções, empates, disponibilidade e os controles de autenticação; não altera o cálculo tributário.
 - Inclui verificações de precisão dos gráficos, indicadores, navegação, paginação e casos de cobertura/denominadores extremos.
+- Prepara os módulos gerados pelo build antes da suíte Python no CI, permitindo executar as fixtures do motor real em uma cópia limpa do projeto.
 
 ## [0.48.0] — 2026-10-28
 
