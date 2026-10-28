@@ -1,5 +1,11 @@
 # Histórico de alterações
 
+## [0.45.2] — 2026-10-28
+
+- Entradas e Saídas passam a oferecer Adicionar documento desde a primeira abertura do Fiscal, preparando a importação quando necessário e abrindo o tipo correto.
+- Reutiliza a geração válida para adicionar o documento faltante, preservando o relatório já enviado; substituições continuam explícitas.
+- Mantém autorização, vínculo da empresa, proteção de rascunhos e recuperação de documentos indisponíveis.
+
 ## [0.45.1] — 2026-10-28
 
 - Corrige “Geração não encontrada” ao salvar rascunhos do Fiscal quando a análise conserva um vínculo com relatórios indisponíveis; DIFAL e RBT12 podem ser salvos antes da nova importação.
