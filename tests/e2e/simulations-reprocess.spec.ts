@@ -36,6 +36,8 @@ for (const role of ['admin','operator']) test(`Histórico ${role} retoma lote au
   await page.goto('/simulations.html?search=936&year=2027');
   const panel=page.locator('#history-reprocess');
   await expect(panel.getByRole('heading',{name:'Atualização encerrada com pendências'})).toBeVisible();
+  await expect(panel).toContainText('Esta revisão adota CBS de 11,3% como premissa.');
+  await expect(panel).toContainText('Os originais conservam os valores e as alíquotas capturados.');
   expect(methods).toEqual(['GET','POST','POST']);expect(bodies).toEqual([{},{}]);
   await expect(panel.locator('[data-reprocess-count="ok"] dd')).toHaveText('2');
   await expect(panel.locator('[data-reprocess-count="pending"] dd')).toHaveText('1');

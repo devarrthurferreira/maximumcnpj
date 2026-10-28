@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {baselineMonth,calculateMonthlySimulation,monthlyProjection,monthlyDifal,monthlyAnticipation} from '../public/simulator-monthly.js';
+import {baselineMonth,calculateMonthlySimulation,monthlyProjection,monthlyDifal,monthlyAnticipation,MONTHLY_MODEL_VERSION} from '../public/simulator-monthly.js';
+import {buildAnalysisPeriod,selectAnalysisPeriod,JAN_SEP_MODEL_VERSION} from '../public/analysis-period.js';
 import {calculateSimulation,defaultDifalPolicy} from '../public/simulator-engine.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import {buildDrePresentation,unifiedDreRows} from '../public/simulator-dre.js';
@@ -12,6 +13,29 @@ const make=(month,sales,purchases,services,difal)=>({sourceMonth:`2025-${String(
  difal:{version:'DIFAL_ESTIMATE_V2',ratePercent:10,issuerUf:'MG',amountCents:difal,baseCents:difal*10,eligibleLines:sales?1:0,pendingLines:0}});
 const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:500000,values:{serviceRevenue:0,salesRevenue:0,simplePurchases:0,regularPurchases:0,salaries:0,benefits:0,adminExpenses:0,rent:0,cardExpenses:0}};
 const reports=[make(1,100001,50000,10003,10000),make(2,0,0,0,0),make(3,400009,100000,30007,40001)];
+test('CBS de 11,3% fica capturada em cada competência e soma apenas os meses Jan–Set selecionados',()=>{
+ const rows=[1,4,9].map(month=>make(month,1000000,300000,0,0));
+ const range={startMonth:'2025-01',endMonth:'2025-09',months:9};
+ const period=selectAnalysisPeriod(buildAnalysisPeriod(range,range),rows.map(row=>row.sourceMonth));
+ const out=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales',null,period);
+ assert.equal(out.result.version,'1.13.0-cbs-113-available-months');
+ assert.equal(out.result.version,JAN_SEP_MODEL_VERSION);assert.notEqual(JAN_SEP_MODEL_VERSION,MONTHLY_MODEL_VERSION);
+ assert.deepEqual(out.engineInput.months.map(row=>row.sourceMonth),['2025-01','2025-04','2025-09']);
+ for(const month of out.engineInput.months){
+  assert.equal(month.input.rates.cbs,.113);assert.equal(month.input.credits.regular.cbsRate,.113);
+  assert.equal(month.input.credits.simpleRegular.cbsRate,.113);assert.equal(month.input.credits.simple.cbsRate,.015);
+ }
+ for(const month of out.result.monthlyResults){
+  close(month.result.credits.cbs.debit,1130);close(month.result.credits.cbs.used,339);close(month.result.credits.cbs.due,791);
+ }
+ close(out.result.annualRevenue,30000);close(out.result.credits.cbs.debit,3390);
+ close(out.result.credits.cbs.used,1017);close(out.result.credits.cbs.due,2373);
+ for(const regime of out.result.regimes){
+  close(regime.dre.cbsDebit,regime.id==='pure'?0:-3390);close(regime.dre.cbsUsed,regime.id==='pure'?0:1017);
+ }
+ const calendar=buildMonthlyDre(out.result,2027);
+ assert.deepEqual(calendar.months.filter(row=>row.sourceMonth).map(row=>row.sourceMonth),['2025-01','2025-04','2025-09']);
+});
 test('competências distintas, mês sem movimento e período parcial: nenhuma média nem extrapolação',()=>{
  const p=monthlyProjection(reports);assert.equal(p.version,'REPORT_MONTHS_V1');assert.equal(p.totals.sales.annualCents,540020);assert(!Object.hasOwn(p.totals.sales,'monthlyCents'));
  const inputs=reports.map(row=>baselineMonth(row));inputs[2].values.rent=20;
@@ -100,7 +124,7 @@ test('opções DIFAL persistem por competência e anual soma somente deduções 
  const policy=defaultDifalPolicy();policy.enabled.hybrid=false;policy.enabled.actual=false;
  const selected={...draft,difalPolicy:policy},inputs=rows.map(row=>baselineMonth(row)),before=structuredClone({selected,rows,inputs});
  const out=calculateMonthlySimulation(selected,rows,inputs,'sales');
- assert.equal(out.result.version,'1.10.0-regime-selection');assert.deepEqual(out.result.difalPolicy,policy);
+ assert.equal(out.result.version,MONTHLY_MODEL_VERSION);assert.deepEqual(out.result.difalPolicy,policy);
  for(const entry of out.engineInput.months)assert.deepEqual(entry.input.difalPolicy,policy);
  for(const id of ['hybrid','actual']){
   const regime=out.result.regimes.find(row=>row.id===id);assert.equal(regime.dre.difal,0);assert.equal(regime.dre.icmsAnticipation,0);
@@ -172,8 +196,10 @@ test('R$ 3,3 milhões com sazonalidade mantém Simples e soma mensal sem criar e
  assert(result.regimes.every(regime=>regime.available));
  assert(result.monthlyResults.every(month=>month.result.regimes[0].available));
  close(result.regimes[0].dre.das,-384600);close(result.regimes[0].dre.netProfit,2915400);
- close(result.regimes[1].dre.das,-324987);close(result.regimes[1].dre.netProfit,2671083);
- close(result.regimes[2].dre.irpj,-42000);close(result.regimes[2].dre.csll,-35640);close(result.regimes[2].dre.netProfit,2324430);
+ // With no purchases, CBS is R$3,300,000 × 11.3%=R$372,900 and IBS is R$3,300.
+ close(result.regimes[1].dre.das,-324987);close(result.regimes[1].dre.netProfit,3300000-324987-372900-3300);
+ close(result.regimes[2].dre.irpj,-42000);close(result.regimes[2].dre.csll,-35640);
+ close(result.regimes[2].dre.netProfit,3300000-372900-3300-594000-42000-35640);
  const d=result.simplesDiagnostic;assert.equal(d.statusCode,'READY');assert.equal(d.available,true);
  assert.equal(d.revenueReference,3300000);assert.equal(d.revenueBasis,'ACTUAL_REPORT_MONTHS');assert.equal(d.completeYear,true);
  assert.equal(d.coveredMonths,12);assert.equal(d.eligibilityVerified,false);assert.equal(d.months.length,12);
@@ -224,7 +250,8 @@ test('sexta faixa usa escolha local explícita e conserva motivo de cada compet�
  const outside=calculateMonthlySimulation({...draft,rbt12:4800000,icmsOutside:true},full,full.map(row=>baselineMonth(row)),'sales');
  assert(outside.result.regimes[0].available);close(outside.result.regimes[0].dre.das,-363825);
  close(outside.result.regimes[0].dre.icmsNet,-594000);close(outside.result.regimes[0].dre.netProfit,2342175);
- close(outside.result.regimes[1].dre.das,-240051.735);close(outside.result.regimes[1].dre.netProfit,2162018.265);
+ close(outside.result.regimes[1].dre.das,-240051.735);
+ close(outside.result.regimes[1].dre.netProfit,3300000-240051.735-372900-3300-594000);
  assert.equal(outside.result.memory.find(item=>item.id==='outside').value,'Sim');assert.equal(outside.engineInput.icmsOutside,true);
  assert(outside.result.monthlyResults.every(month=>month.result.simplesDiagnostic.icmsOutside===true));
 });
@@ -238,7 +265,8 @@ test('excedente gerencial do Presumido acima de R$ 5 milhões é rateado uma vez
   const value=id=>result.memory.find(item=>item.id===`presumed.${id}`).value;
   close(value('excessRevenue'),1000000);close(value('irIncrease'),mixed?12000:8000);close(value('csIncrease'),mixed?15333.333333333334:12000);
   close(result.regimes[2].dre.irpj,mixed?-159000:-98000);close(result.regimes[2].dre.csll,mixed?-84180:-65880);
-  close(result.regimes[2].dre.netProfit,mixed?4254220:4203520);
+  // CBS=R$6,000,000×11.3%, IBS=R$6,000; mixed has R$1m services (ISS) and R$5m goods (ICMS).
+  close(result.regimes[2].dre.netProfit,mixed?6000000-678000-6000-900000-50000-159000-84180:6000000-678000-6000-1080000-98000-65880);
   assert(result.warnings.some(item=>item.code==='presumption-increase'&&/não substitui a apuração/.test(item.detail)));
  }
 });

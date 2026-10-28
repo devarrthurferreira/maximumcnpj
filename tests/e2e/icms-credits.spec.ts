@@ -3,6 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {MongoClient,type Db} from 'mongodb';
 import {csvParse} from '../../src/domain.ts';
 import {hashPassword} from '../../src/security.ts';
+import {JAN_SEP_MODEL_VERSION} from '../../public/analysis-period.js';
 
 // Real browser, authenticated API and disposable MongoDB. No routes are mocked;
 // CPF-only source documents cannot trigger an external CNPJ lookup.
@@ -166,10 +167,15 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
 
   // Independent arithmetic: 1,000×18% + 2,000×12% = 420; eligible purchases
   // 300×18% + 500×12% = 114; returns 100×18% + 200×12% = 42; due = 264.
-  expect(saved.modelVersion).toBe('1.12.0-available-months');
+  expect(saved.modelVersion).toBe(JAN_SEP_MODEL_VERSION);
   expect(saved.analysisPeriod).toMatchObject({version:'JAN_SEP_V1',months:9,complete:true});
   expect(saved.monthlyDre.version).toBe('DRE_CALENDAR_V4');
   expect(saved.result.method).toBe('REPORT_MONTHS_V1');expect(saved.result.annualRevenue).toBe(2700);
+  expect(saved.engineInput.months.every((month:any)=>month.input.rates.cbs===.113&&month.input.credits.regular.cbsRate===.113&&month.input.credits.simple.cbsRate===.015)).toBe(true);
+  // CBS uses the requested scenario rate independently of the unchanged ICMS rules above.
+  expect(saved.result.credits.cbs.debit).toBeCloseTo(305.1,8); // 2.700 × 11,3%
+  expect(saved.result.credits.cbs.used).toBeCloseTo(158.2,8); // 1.400 × 11,3%
+  expect(saved.result.credits.cbs.due).toBeCloseTo(146.9,8);
   expect(saved.source.monthlyReports).toHaveLength(9);expect(saved.result.monthlyResults).toHaveLength(9);
   expect(saved.source.fields).toMatchObject({salesCpfCents:270_000,salesOptantCents:0,salesNonOptantCents:0,purchasesOptantCents:0,purchasesNonOptantCents:140_000,serviceRevenueCents:0});
   expect(saved.source.operationAudit).toMatchObject({grossSalesCents:300_000,salesReturnsCents:30_000,purchaseGoodsCents:80_000,purchaseServicesCents:60_000});

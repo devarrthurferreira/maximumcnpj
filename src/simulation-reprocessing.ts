@@ -217,13 +217,76 @@ async function status(page = 1, retryAfterMs = 0) {
 export async function simulationReprocessingStatus(page = 1) { return status(page); }
 
 async function inventory(batch: Doc) {
-  const records = await (await collection('simulations')).find(scope({deletedAt:{$exists:false},reprocessing:{$exists:false},analysisPublication:{$ne:'PENDING'},
-    createdAt:{$lte:batch.startedAt},...(batch.cursor ? {_id:{$gt:batch.cursor}} : {})})).project({_id:1,title:1,company:1}).sort({_id:1}).limit(500).toArray();
-  if (records.length) await (await collection('simulationReprocessItems')).bulkWrite(records.map(record=>({updateOne:{
-    filter:scope({_id:itemId(record._id)}),update:{$setOnInsert:{...scope(),_id:itemId(record._id),batchId:key(),originalId:record._id,
+  const simulations=await collection('simulations');
+  const projection={_id:1,title:1,company:1,clientId:1,generationId:1,createdAt:1,parentSimulationId:1,reprocessing:1};
+  const live={deletedAt:{$exists:false},analysisPublication:{$ne:'PENDING'},createdAt:{$lte:batch.startedAt}};
+  const automatic=(record:Doc)=>typeof record.reprocessing?.version==='string'&&UUID.test(record.parentSimulationId||'')&&
+    record.parentSimulationId===record.reprocessing.originalId&&record.parentSimulationId!==record._id;
+  const sameSource=(a:Doc,b:Doc)=>a.clientId===b.clientId&&a.generationId===b.generationId;
+  const records=await simulations.find(scope({...live,'reprocessing.version':{$ne:REPROCESS_VERSION},
+    ...(batch.cursor?{_id:{$gt:batch.cursor}}:{})})).project<Doc>(projection).sort({_id:1}).limit(500).toArray();
+  // Walk metadata in batches. Manual versions are independent roots, while
+  // automatic siblings/descendants form a single family even after a root is deleted.
+  const nodes=new Map(records.map(record=>[record._id,record])),missing=new Set<string>();
+  let pendingParents=records;
+  while(pendingParents.length){
+    const ids=[...new Set(pendingParents.filter(automatic).map(record=>record.parentSimulationId as string))].filter(id=>!nodes.has(id)&&!missing.has(id));
+    pendingParents=[];
+    for(let offset=0;offset<ids.length;offset+=500){
+      const part=ids.slice(offset,offset+500),parents=await simulations.find(scope({...live,_id:{$in:part}})).project<Doc>(projection).toArray();
+      for(const parent of parents){nodes.set(parent._id,parent);pendingParents.push(parent);}
+      for(const id of part)if(!nodes.has(id))missing.add(id);
+    }
+  }
+  const families=new Map<string,{root:string;clientId:string;generationId:string;members:Map<string,Doc>}>();
+  for(const record of records){
+    let node=record,root=record._id;const seen=new Set<string>();
+    while(automatic(node)&&!seen.has(node._id)){
+      seen.add(node._id);const parent=nodes.get(node.parentSimulationId);
+      if(parent&&!sameSource(record,parent))break;
+      root=node.parentSimulationId;if(!parent)break;node=parent;
+    }
+    // Corrupt cycles must not merge unrelated snapshots into a guessed family.
+    if(seen.has(root)&&automatic(node))root=record._id;
+    const familyId=digest(JSON.stringify([record.clientId,record.generationId,root]));
+    if(!families.has(familyId))families.set(familyId,{root,clientId:record.clientId,generationId:record.generationId,members:new Map()});
+    const family=families.get(familyId)!;family.members.set(record._id,record);
+    const rootNode=nodes.get(root);if(rootNode&&sameSource(record,rootNode))family.members.set(root,rootNode);
+  }
+  let frontier=[...families].map(([familyId,family])=>({familyId,id:family.root}));
+  const visited=new Set<string>();
+  while(frontier.length){
+    const current=frontier.filter(({familyId,id})=>!visited.has(familyId+':'+id));frontier=[];
+    for(const item of current)visited.add(item.familyId+':'+item.id);
+    for(let offset=0;offset<current.length;offset+=500){
+      const part=current.slice(offset,offset+500),byParent=new Map(part.map(item=>{const family=families.get(item.familyId)!;return [JSON.stringify([family.clientId,family.generationId,item.id]),item.familyId];}));
+      const children=await simulations.find(scope({...live,parentSimulationId:{$in:part.map(item=>item.id)},
+        'reprocessing.version':{$type:'string'},$expr:{$eq:['$parentSimulationId','$reprocessing.originalId']}})).project<Doc>(projection).toArray();
+      for(const child of children){
+        const familyId=byParent.get(JSON.stringify([child.clientId,child.generationId,child.parentSimulationId])),family=familyId?families.get(familyId):null;
+        if(!family||!automatic(child)||child.clientId!==family.clientId||child.generationId!==family.generationId)continue;
+        family.members.set(child._id,child);frontier.push({familyId:familyId!,id:child._id});
+      }
+    }
+  }
+  const memberIds=[...new Set([...families.values()].flatMap(family=>[...family.members.keys()]))],currentIds=new Set<string>();
+  for(let offset=0;offset<memberIds.length;offset+=500){
+    const analyses=await(await collection('analyses')).find(scope({deletionStartedAt:{$exists:false},
+      'currentSimulation.id':{$in:memberIds.slice(offset,offset+500)}})).project({clientId:1,'currentSimulation.id':1}).toArray();
+    for(const analysis of analyses){
+      const id=analysis.currentSimulation.id;
+      if([...families.values()].some(family=>family.clientId===analysis.clientId&&family.members.has(id)))currentIds.add(id);
+    }
+  }
+  const selected=[...families].map(([familyId,family])=>({familyId,record:[...family.members.values()]
+    .filter(record=>record.reprocessing?.version!==REPROCESS_VERSION)
+    .sort((a,b)=>Number(currentIds.has(b._id))-Number(currentIds.has(a._id))||new Date(b.createdAt).getTime()-new Date(a.createdAt).getTime()||b._id.localeCompare(a._id))[0]}))
+    .filter((entry):entry is {familyId:string;record:Doc}=>!!entry.record);
+  if(selected.length)await(await collection('simulationReprocessItems')).bulkWrite(selected.map(({familyId,record})=>({updateOne:{
+    filter:scope({_id:itemId('family:'+familyId)}),update:{$setOnInsert:{...scope(),_id:itemId('family:'+familyId),familyId,batchId:key(),originalId:record._id,
       childId:null,status:'QUEUED',code:'QUEUED',message:'Aguardando recálculo.',title:record.title,company:record.company,updatedAt:new Date()}},upsert:true}})),{ordered:false});
-  if(records.length) {
-    const ids=records.map(record=>record._id);
+  if(selected.length) {
+    const ids=selected.map(({record})=>record._id);
     const live=await (await collection('simulations')).find(scope({_id:{$in:ids},deletedAt:{$exists:false}})).project({_id:1}).toArray();
     const liveIds=new Set(live.map(record=>record._id)),removed=ids.filter(id=>!liveIds.has(id));
     // Deletion may win between inventory read and upsert. Do not retain its copied
@@ -263,7 +326,7 @@ async function reprocessItem(actor: LookupActor, item: Doc) {
   const child = await createReprocessedSimulation(actor, plan.input, plan.context);
   await promoteReprocessedAnalysis(actor,original._id,child);
   const migration = plan.context.serviceRevenueMigration;
-  return {childId:child._id,status:'OK',code:'UPDATED',message:'Simulação refeita com DIFAL de entrada e saída somente no Simples puro e híbrido, conforme as escolhas. Original preservado.' +
+  return {childId:child._id,status:'OK',code:'UPDATED',message:'Nova versão com a premissa de CBS de 11,3% e DIFAL de entrada e saída somente no Simples puro e híbrido, conforme as escolhas. Original preservado.' +
     (migration && migration.priorMonthlyServiceCents > 0 ? ' ' + migration.warning : '')};
 }
 

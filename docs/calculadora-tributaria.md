@@ -1,8 +1,8 @@
-# Simulador integrado · v0.11.0
+# Simulador integrado · v0.46.0
 
 ## Origem e escopo
 
-Motor portado da calculadora Maximum, repositório `devarrthurferreira/calculadora`, commit `d60e8bc3b2edcc2ebd4ff11cf584689f01d0d381`. Arquivos de referência: `src/lib/tax/{constants,engine,schema}.ts` e `src/lib/simulation.ts`. Fórmulas e premissas originais preservadas. O adaptador troca somente a descrição da referência anual: receita mensal × 12 é estimativa, não RBT12 real consultada.
+Motor portado da calculadora Maximum, repositório `devarrthurferreira/calculadora`, commit `d60e8bc3b2edcc2ebd4ff11cf584689f01d0d381`. Arquivos de referência: `src/lib/tax/{constants,engine,schema}.ts` e `src/lib/simulation.ts`. O modelo foi estendido nas versões posteriores; as mudanças de premissas são versionadas e conservam os snapshots anteriores. O adaptador troca somente a descrição da referência anual: receita mensal × 12 é estimativa, não RBT12 real consultada.
 
 O cálculo gerencial compara Simples Puro, Simples Híbrido, Lucro Presumido e Lucro Real para 2027/2028. A homologação fiscal é independente desta integração. Não há alteração de declarações, notas, consultas ou dados financeiros originais.
 
@@ -32,13 +32,13 @@ Valores monetários em reais, não negativos e com duas casas; ano 2027/2028; ve
 
 `calculateSimulation(draft)` recebe `{year,salesAnnex,serviceAnnex,values}` e retorna regimes, DRE anual, créditos, avisos e memória. O cadastro do cliente vem da geração, sem pedir novo cadastro. Grupos de compradores apenas discriminam as receitas; não alteram as alíquotas do motor original.
 
-Premissas mantidas: CBS 9,11%, IBS 0,10%, ICMS 18%, ISS 5%, encargos 27,8%, créditos SN 1,5%+0,02%; vendas comércio/indústria, serviços III/IV/V; base presumida vendas 8%/12% e serviços 32%, acréscimo relativo de 10% nos coeficientes sobre parcela anual acima de R$5 milhões. ICMS/ISS fora do DAS e encargos extras permanecem conforme o wizard original; cenários que exigem ajustes expõem os alertas/indisponibilidade originais.
+Premissas atuais para novas versões: CBS 11,3%, IBS 0,10%, ICMS 18%, ISS 5%, encargos 27,8%, créditos SN 1,5%+0,02%; vendas comércio/indústria, serviços III/IV/V; base presumida vendas 8%/12% e serviços 32%, acréscimo relativo de 10% nos coeficientes sobre parcela anual acima de R$5 milhões. ICMS/ISS fora do DAS e encargos extras permanecem conforme o wizard original; cenários que exigem ajustes expõem os alertas/indisponibilidade originais.
 
 Essas taxas/bases são hipóteses do simulador. Classificar um fornecedor como fora do Simples, inclusive CPF ou não confirmado, não comprova crédito fiscal; o modelo mantém sua premissa de crédito, com aviso visível para conferência nas notas. IBS/CBS efetivos, enquadramento da atividade, fator R, benefícios, sublimite e peculiaridades setoriais exigem validação própria.
 
 ## Referências e validação
 
-Fontes normativas originais em `TAX_SOURCES`: LC214/2025 consolidada (anexos XVIII–XXII e arts.47/344/347), LC123/2006, LC87/1996, Lei9.249/1995, LC224/2025 e Lei9.718/1998. Conferência limitada em 30/09/2026 confirmou as tabelas 2027/28 e a regra de acréscimo de presunção; CBS9,11% e crédito SN1,5%+0,02% continuam premissas, sem homologação como taxas oficiais universais.
+Fontes normativas originais em `TAX_SOURCES`: LC214/2025 consolidada (anexos XVIII–XXII e arts.47/344/347), LC123/2006, LC87/1996, Lei9.249/1995, LC224/2025 e Lei9.718/1998. A integração inicial usava CBS de 9,11%. Desde a v0.46.0, novas simulações usam exatamente 11,3% como premissa solicitada, conforme referência calculada pelo TCU em 28/10/2026, ainda sujeita à fixação pelo Senado. Esse cenário não aplica automaticamente o redutor transitório de 0,1 ponto percentual de 2027/2028. As taxas, inclusive o crédito SN de 1,5%+0,02%, permanecem premissas do modelo, sem homologação como taxas oficiais universais. A memória e os avisos identificam as taxas efetivas de cada cálculo; snapshots antigos preservam seus parâmetros.
 
 32 regressões do motor cobrem fixtures do original, faixas/limites, créditos, ISS, IRPJ, entrada inválida, determinismo e estimativa anual. Integrações conferem cinco totais, fonte, documentos repetidos, isolamento, snapshots divergentes e bloqueio de versão antiga. Navegador confere autofill, zero versus campo vazio, período, edição, restauração, exportação e DRE responsiva.
 

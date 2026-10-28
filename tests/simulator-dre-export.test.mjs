@@ -131,8 +131,10 @@ test('relatório completo inclui anual antes dos meses de todos os regimes e pre
   assert.equal((complete.match(/data-report-part="monthly"/g)||[]).length,2);
   assert.equal((complete.match(/data-report-memory="rbt12"/g)||[]).length,1);
   for(const phrase of ['2 de 12 competências','2025-01 a 2025-02','Origem: 2025-01','Cenário 2027','RBT12 não registrada','Informe a RBT12','CBS de 9,11%','Fonte oficial capturada','4.800.000,00','3.600.000,00'])assert(complete.includes(phrase),phrase);
+  assert(!complete.includes('CBS de 11,3'),'A impressão preserva a premissa histórica capturada.');
   assert(!complete.includes('NaN'));assert(!complete.includes('undefined'));
   const csv=readCsv(buildDreCsv({presentation:data,period:'complete',year:2027}));
+  assert.equal(csv.find(row=>row[0]==='Premissa / aviso'&&row[1]==='Cenário de 2027/2028')[2],data.report.warnings[0].detail);
   assert.equal(csv.filter(row=>row[0]==='Escopo').length,1);assert.equal(csv.filter(row=>row[0]==='Regime').length,1);
   assert(csv.findIndex(row=>row[0]==='Escopo')<csv.findIndex(row=>row[0]==='Regime'));
   assert.equal(csv.filter(row=>row[0]==='DRE'&&row[2]==='DAS').length,1);

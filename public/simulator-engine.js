@@ -5,14 +5,14 @@ import {REGIME_IDS,REGIME_LABELS,parseRegimeSelection,resolveRegimeSelection,req
  * Maximum simulator: faithful JavaScript port of the existing calculadora model.
  * Source: devarrthurferreira/calculadora@d60e8bc3b2edcc2ebd4ff11cf584689f01d0d381
  * Files: src/lib/tax/{constants,engine,schema}.ts and src/lib/simulation.ts.
- * Numerical defaults are retained; monthly revenue context and explicit local-tax
- * treatment extend the original projection. Schema validation has no dependencies.
+ * Monthly revenue context, explicit local-tax treatment and versioned scenario
+ * defaults extend the original projection. Schema validation has no dependencies.
  * Forecast assumptions only; this port does not establish fiscal eligibility.
  */
 export const CALCULATOR_SOURCE_COMMIT = 'd60e8bc3b2edcc2ebd4ff11cf584689f01d0d381';
 
 export const DEFAULT_RATES = {
-    cbs: 0.0911,
+    cbs: 0.113,
     ibs: 0.001,
     icms: 0.18,
     iss: 0.05,
@@ -22,7 +22,7 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
-export const MODEL_VERSION = '1.10.0-regime-selection';
+export const MODEL_VERSION = '1.13.0-cbs-113';
 export const SIMPLES_DIAGNOSTIC_VERSION = 'SIMPLES_DIAGNOSTIC_V1';
 export const REVENUE_CONTEXT_VERSION = 'SIMPLES_REVENUE_CONTEXT_V1';
 export const ICMS_ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_DRE_V1';
@@ -258,6 +258,14 @@ export const TAX_BANDS = {
 };
 export const TAX_SOURCES = [
     {
+        label: 'CBS para 2027 — referência de 11,3% proposta pelo TCU em 28/10/2026',
+        url: 'https://sites.tcu.gov.br/reforma-tributaria/visao-cbs-2027.html'
+    },
+    {
+        label: 'Fixação da alíquota da CBS pelo Senado Federal',
+        url: 'https://www12.senado.leg.br/noticias/audios/2026/10/reforma-tributaria-aliquota-da-cbs-sera-definida-pelo-senado'
+    },
+    {
         label: 'Partilhas do Simples para 2027/2028 — LC 214/2025 consolidada',
         url: 'https://www2.camara.leg.br/legin/fed/leicom/2025/leicomplementar-214-16-janeiro-2025-796905-normaatualizada-pl.html'
     },
@@ -318,13 +326,13 @@ export const EXAMPLE_INPUT = {
         },
         simpleRegular: {
             base: 0,
-            cbsRate: .0911,
-            ibsRate: .001
+            cbsRate: DEFAULT_RATES.cbs,
+            ibsRate: DEFAULT_RATES.ibs
         },
         regular: {
             base: 10_400,
-            cbsRate: .0911,
-            ibsRate: .001
+            cbsRate: DEFAULT_RATES.cbs,
+            ibsRate: DEFAULT_RATES.ibs
         }
     }
 };
@@ -1080,7 +1088,7 @@ export function calculateTax(rawInput) {
     const ranked = revenue > 0 ? regimes.filter((item)=>item.available).sort((a, b)=>b.annualProfit - a.annualProfit) : [];
     const bestRegimeId = ranked[0]?.id ?? null;
     const difference = ranked.length > 1 ? ranked[0].annualProfit - ranked[ranked.length - 1].annualProfit : 0;
-    warn('model-period', 'info', 'Cenário de 2027/2028', `O ano selecionado é ${input.year}. As partilhas pertencem a 2027/2028. CBS de 9,11% e IBS de 0,10% são premissas deste modelo, não alíquotas oficiais definitivas.`);
+    warn('model-period', 'info', 'Cenário de 2027/2028', `O ano selecionado é ${input.year}. As partilhas pertencem a 2027/2028. CBS de ${percent(input.rates.cbs)} e IBS de ${percent(input.rates.ibs)} são premissas deste cenário.${input.rates.cbs===DEFAULT_RATES.cbs?' A CBS padrão de 11,3% acompanha a referência proposta pelo TCU em 28/10/2026, ainda sujeita à fixação pelo Senado Federal.':' Os percentuais informados foram preservados no cálculo.'} As premissas do cenário não confirmam alíquotas oficiais definitivas ou enquadramento fiscal.`);
     warn('icms-assumption', 'info',icmsProjection?'ICMS por natureza e UF':'Utilização da alíquota padrão de ICMS',icmsProjection?'Premissa gerencial: 18% nas operações internas e 12% nas interestaduais com UFs confirmadas. O crédito potencial soma compras elegíveis e devoluções de venda; serviços 8000 não geram crédito. A devolução usa a mesma premissa das vendas e não é abatida duas vezes. A alíquota e a base efetivas da nota, inclusive nas devoluções, precisam de conferência; 12% não é alíquota universal.':`O padrão da simulação é 18% nas vendas e nas compras/CMV de não optantes; o cenário usa ${percent(input.rates.icms)}. A mesma taxa gera débito e crédito potencial somente com ICMS fora do DAS. Não representa alíquota única nacional. Créditos dependem das operações e documentos fiscais.`);
     if(icmsProjection?.salesAdjustmentCents)warn('icms-sales-adjustment','info','Ajuste de receita com a composição de UFs da origem','O ajuste manual altera a base bruta de vendas pela proporção das bases internas e interestaduais importadas, com arredondamento no total da competência. Sem ajuste, conserva o arredondamento por linha. Devoluções e créditos dos documentos permanecem preservados.');
     if(icmsProjection?.purchaseAdjustmentCents)warn('icms-purchase-adjustment','info','Crédito de ICMS vinculado aos documentos','O ajuste manual de compras modifica o custo, mas não cria ou exclui crédito fiscal das operações importadas. Para alterar naturezas, UFs ou crédito de origem, revise e reimporte os documentos.');
@@ -1150,7 +1158,7 @@ export function createEmptyDraft() {
   return { year: 2027, salesAnnex: 1, serviceAnnex: 3, values: Object.fromEntries(SIMULATION_VALUE_FIELDS.map(key => [key, null])) };
 }
 
-/** Same assumptions and default credit bases as calculadora/src/lib/simulation.ts. */
+/** Original credit-base rules with the current versioned scenario rates. */
 export function draftToInput(draft, difalProjection = null, anticipationProjection = null, revenueContext = null, icmsOperations = null) {
   try {
     const explicitRbt12 = Object.hasOwn(draft, 'rbt12');

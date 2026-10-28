@@ -4,7 +4,7 @@ import {parseIcmsOperations} from './simulator-icms.js';
 import {resolveRegimeSelection,requiresSimplesReference} from './regime-selection.js';
 import {JAN_SEP_MODEL_VERSION,assertCompleteAnalysisPeriod} from './analysis-period.js';
 
-export const MONTHLY_MODEL_VERSION='1.10.0-regime-selection';
+export const MONTHLY_MODEL_VERSION='1.13.0-cbs-113';
 export const MONTHLY_VERSION='REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS=Object.freeze([...REPORT_GROUPS,'serviceRevenueCents']);
 const sum=values=>values.reduce((a,b)=>a+b,0);
