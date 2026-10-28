@@ -150,9 +150,9 @@ test('MongoDB desempenho das análises: navegação sem reconciliar arquivos e g
       });
       assert.deepEqual(financial(observed.calls),[]);
       const checked=await route('GET',`/analyses/${analysis.id}?includeSource=1`);
-      assert.equal(checked.source,null);assert.equal(checked.sourceError.code,'NOT_FOUND');assert.equal(checked.analysis.readiness.ready,false);
-      assert.ok(checked.analysis.readiness.issues.some((issue:any)=>issue.code==='NOT_FOUND'));
-      await assert.rejects(saveFiscal(),code('NOT_FOUND'));
+      assert.equal(checked.source,null);assert.equal(checked.sourceError.code,'ANALYSIS_GENERATION_UNAVAILABLE');assert.equal(checked.analysis.readiness.ready,false);
+      assert.ok(checked.analysis.readiness.issues.some((issue:any)=>issue.code==='ANALYSIS_GENERATION_UNAVAILABLE'));
+      await assert.rejects(saveFiscal(),code('ANALYSIS_GENERATION_UNAVAILABLE'));
       await assert.rejects(route('POST',`/analyses/${analysis.id}/generate?summary=1`,{
         requestId:randomUUID(),expectedRevision:analysis.revision}),code('ANALYSIS_NOT_READY'));
       assert.equal(await(await collection('simulations')).countDocuments(scope({analysisId:analysis.id})),1);

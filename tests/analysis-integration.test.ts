@@ -5,7 +5,7 @@ import {Collection} from 'mongodb';
 import {collection,scope,database,closeDatabase} from '../src/store.ts';
 import {resetLookupIndexes} from '../src/lookup-db.ts';
 import {importCatalog} from '../src/lookup-catalog.ts';
-import {createGeneration,getGeneration,attachGenerationPurchase,attachGenerationSale} from '../src/generation-store.ts';
+import {createGeneration,getGeneration,attachGenerationPurchase,attachGenerationSale,deleteGeneration} from '../src/generation-store.ts';
 import {uploadLookup,finalizeLookup,processLookup} from '../src/lookup-jobs.ts';
 import {generationSimulator} from '../src/simulator-store.ts';
 import {createSimulation,createReprocessedSimulation,getSimulation,deleteSimulation,simulationHistory} from '../src/simulation-history.ts';
@@ -471,6 +471,57 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
         await assert.rejects(getSimulation(historical._id),code('NOT_FOUND'));
         assert.equal(await(await collection('analyses')).countDocuments(scope({clientId:raceClient})),1);
       }finally{release();await slow.catch(()=>{});delayed.mock.restore();}
+    });
+    for(const deleted of [true,false])await t.test(`Fiscal recupera geração ${deleted?'excluída':'ausente'} sem perder RBT12, Contábil ou versões`,async()=>{
+      const imported=await importCatalog(administrator,[{code:deleted?'99101':'99102',name:'Recuperação sintética de relatórios',uf:'MG'}]);
+      assert.equal(imported.failed,0);const recoveryClient=imported.items[0].id!;
+      let current=(await openAnalysis(actor,{clientId:recoveryClient,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure']},difalPolicy:noDifal()})).analysis;
+      const patch=(data:any,complete=false,expected=current.fiscal.revision,user=actor)=>updateAnalysisSector(user,current.id,'fiscal',{
+        expectedSectorRevision:expected,expectedConfigRevision:current.config.revision,complete,data},{summary:true});
+      const firstImport=await importAnalysisGeneration(actor,current.id,{expectedSectorRevision:current.fiscal.revision,expectedConfigRevision:current.config.revision});
+      current=firstImport.analysis;await reports(firstImport.generationId,recoveryClient);
+      current=(await patch({...current.fiscal.data,rbt12Source:'MANUAL',rbt12:100000,rbt12ManualConfirmed:true},true)).analysis;
+      current=(await updateAnalysisSector(accountant,current.id,'accounting',{expectedSectorRevision:current.accounting.revision,
+        expectedConfigRevision:current.config.revision,complete:true,data:{months:accountingRows()}})).analysis;
+      const published=await generateAnalysis(actor,current.id,{requestId:randomUUID(),expectedRevision:current.revision});
+      current=published.analysis;const snapshot=structuredClone(published.simulation),accounting=structuredClone(current.accounting);
+      if(deleted)await deleteGeneration(administrator,firstImport.generationId);
+      else await(await collection('generations')).deleteOne(scope({_id:firstImport.generationId}));
+      await assert.rejects(getGeneration(firstImport.generationId),code('NOT_FOUND'));
+      const unavailable=await getAnalysis(current.id,{includeSource:true});
+      assert.equal(unavailable.source,null);assert.equal(unavailable.sourceError?.code,'ANALYSIS_GENERATION_UNAVAILABLE');
+      assert.match(unavailable.sourceError!.message,/Prepare novos relatórios/);assert.equal(unavailable.analysis.readiness.ready,false);
+      assert.equal(unavailable.analysis.currentSimulation!.stale,true);
+
+      const revision=current.fiscal.revision;
+      current=(await patch({...current.fiscal.data,rbt12:120000,serviceAnnex:4})).analysis;
+      assert.equal(current.fiscal.data.generationId,firstImport.generationId);
+      assert.equal(current.fiscal.data.rbt12,120000);assert.equal(current.fiscal.data.serviceAnnex,4);
+      assert.equal(current.fiscal.revision,revision+1);assert.equal(current.fiscal.status,'DRAFT');assert.equal(current.fiscal.confirmation,null);
+      assert.deepEqual(current.accounting,accounting);assert.deepEqual(await getSimulation(snapshot._id),snapshot);
+      const revisionSaved=await(await collection('analysisRevisions')).findOne(scope({analysisId:current.id,revision:current.revision}));
+      assert.equal(revisionSaved!.data.data.rbt12,120000);
+      await assert.rejects(patch(current.fiscal.data,true),code('ANALYSIS_GENERATION_UNAVAILABLE'));
+      await assert.rejects(patch(current.fiscal.data,false,revision),code('ANALYSIS_CONFLICT'));
+      await assert.rejects(patch(current.fiscal.data,false,current.fiscal.revision,viewer),code('FORBIDDEN'));
+      await assert.rejects(generateAnalysis(actor,current.id,{requestId:randomUUID(),expectedRevision:current.revision}),
+        (error:any)=>error.code==='ANALYSIS_NOT_READY'&&/Prepare novos relatórios/.test(error.message));
+      await assert.rejects(patch({...current.fiscal.data,generationId:randomUUID()}),code('NOT_FOUND'));
+      const foreign=await createGeneration(actor,{generationId:randomUUID(),clientIds:[outsideId]});
+      await assert.rejects(patch({...current.fiscal.data,generationId:foreign._id}),code('GENERATION_CLIENT'));
+      const foreignWorkspace=await(await collection('generations')).findOne(scope({_id:foreign._id})),foreignId=randomUUID();
+      await(await collection('generations')).insertOne({...foreignWorkspace!,_id:foreignId,workspaceId:'another-workspace'});
+      await assert.rejects(patch({...current.fiscal.data,generationId:foreignId}),code('NOT_FOUND'));
+
+      const replacement=await importAnalysisGeneration(actor,current.id,{expectedSectorRevision:current.fiscal.revision,expectedConfigRevision:current.config.revision});
+      current=replacement.analysis;assert.notEqual(replacement.generationId,firstImport.generationId);
+      assert.equal(current.fiscal.data.rbt12,120000);assert.equal(current.fiscal.data.serviceAnnex,4);assert.deepEqual(current.accounting,accounting);
+      assert.equal(current.fiscal.data.monthlyOverrides,null);assert.equal(current.currentSimulation!.id,snapshot._id);
+      await reports(replacement.generationId,recoveryClient);current=(await patch(current.fiscal.data,true)).analysis;
+      const regenerated=await generateAnalysis(actor,current.id,{requestId:randomUUID(),expectedRevision:current.revision});
+      assert.equal(regenerated.simulation.parentSimulationId,snapshot._id);assert.equal(regenerated.simulation.generationId,replacement.generationId);
+      assert.deepEqual(await getSimulation(snapshot._id),snapshot);
+      if(deleted)await assert.rejects(createGeneration(actor,{generationId:firstImport.generationId,clientIds:[recoveryClient]}),code('GENERATION_DELETED'));
     });
   }finally{
     await(await database()).dropDatabase();await closeDatabase();resetLookupIndexes();

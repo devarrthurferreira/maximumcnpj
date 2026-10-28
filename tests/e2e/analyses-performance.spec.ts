@@ -20,7 +20,7 @@ const test=base.extend<{analysisAccount:Account}>({
     }
   }
 });
-async function api(request:APIRequestContext,baseURL:string,method:'GET'|'POST'|'PATCH',path:string,data?:unknown){
+async function api(request:APIRequestContext,baseURL:string,method:'GET'|'POST'|'PATCH'|'DELETE',path:string,data?:unknown){
   const response=await request.fetch(path,{method,...(data===undefined?{}:{data}),headers:{Origin:new URL(baseURL).origin}});
   expect(response.ok(),path+': '+await response.text()).toBe(true);return response.json();
 }
@@ -144,6 +144,43 @@ test('Documento indisponível mostra recuperação local sem bloquear Contábil 
   await page.locator('#analysis-wizard button[value="save"]').click();expect((await saving).ok()).toBe(true);
   const saved=(await api(page.request,baseURL!,'GET','/api/v4/analyses/'+analysis.id)).analysis;
   expect(saved.accounting.data.months[0].salariesCents).toBe(23_745);expect(saved.fiscal).toEqual(analysis.fiscal);expect(counts.patches).toBe(1);
+  expect(errors).toEqual([]);
+});
+
+test('Geração realmente excluída permite salvar RBT12 e recuperar importação sem perder o Contábil',async({page,baseURL,analysisAccount})=>{
+  test.setTimeout(90_000);page.setDefaultTimeout(12_000);
+  let analysis=await create(page.request,baseURL!,analysisAccount);
+  analysis=(await api(page.request,baseURL!,'PATCH','/api/v4/analyses/'+analysis.id+'/config',{
+    expectedConfigRevision:analysis.config.revision,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure']}})).analysis;
+  analysis=await withDocuments(page.request,baseURL!,analysis,{complete:false});
+  analysis=await patch(page.request,baseURL!,analysis,'fiscal',{...analysis.fiscal.data,rbt12Source:'MANUAL',rbt12:1_500_000,rbt12ManualConfirmed:true});
+  const removedId=analysis.fiscal.data.generationId,accounting=structuredClone(analysis.accounting),errors:string[]=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  await api(page.request,baseURL!,'DELETE','/api/v4/generations/'+removedId,{});
+  await page.goto('/analyses.html?id='+analysis.id+'&sector=fiscal&step=rbt12');
+  await expect(page.locator('#analysis-rbt12')).toHaveValue('1500000.00');
+  await page.locator('#analysis-rbt12').fill('2700000.45');await page.locator('#analysis-rbt12-confirm').check();
+  const saved=page.waitForResponse(response=>response.request().method()==='PATCH'&&new URL(response.url()).pathname.endsWith('/fiscal'));
+  await page.locator('#analysis-wizard button[value="save"]').click();expect((await saved).ok()).toBe(true);
+  await expect(page.locator('#analysis-rbt12')).toHaveValue('2700000.45');
+  await page.locator('#analysis-wizard-next').click();
+  await expect(page.locator('#analysis-fiscal-evidence')).toContainText('nova importação');
+  await expect(page.locator('#analysis-fiscal-documents-view a')).toHaveCount(0);
+  const rejected=page.waitForResponse(response=>response.request().method()==='PATCH'&&new URL(response.url()).pathname.endsWith('/fiscal'));
+  await page.locator('#analysis-wizard button[value="complete"]').click();
+  const failure=await rejected;expect(failure.status()).toBe(409);expect((await failure.json()).error).toBe('ANALYSIS_GENERATION_UNAVAILABLE');
+  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','documents');
+  await expect(page.locator('#analysis-replace-missing-documents')).toBeVisible();
+  await openDetails(page,'analysis-fiscal-options');await page.locator('#analysis-sales-annex').selectOption('2');
+  page.once('dialog',dialog=>dialog.accept());
+  await page.locator('#analysis-replace-missing-documents').click();
+  await expect(page).toHaveURL(/\/purchases\.html\?generation=/);
+  const current=(await api(page.request,baseURL!,'GET','/api/v4/analyses/'+analysis.id+'?summary=1')).analysis;
+  expect(current.fiscal.data.generationId).not.toBe(removedId);expect(current.fiscal.data.rbt12).toBe(2_700_000.45);
+  expect(current.fiscal.data.salesAnnex).toBe(2);expect(current.accounting).toEqual(accounting);
+  await api(page.request,baseURL!,'GET','/api/v4/generations/'+current.fiscal.data.generationId);
+  expect((await page.request.get('/api/v4/generations/'+removedId)).status()).toBe(404);
+  await expect(page.locator('#purchase-unavailable')).toHaveCount(0);await expect(page.locator('#purchase-error')).toBeEmpty();
   expect(errors).toEqual([]);
 });
 

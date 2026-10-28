@@ -1,4 +1,14 @@
-# Maximum CNPJ · v0.45.0
+# Maximum CNPJ · v0.45.1
+
+## Recuperação de geração indisponível — v0.45.1
+
+Uma análise pode continuar existindo depois que os relatórios vinculados foram excluídos. Esse vínculo antigo não impede mais salvar rascunhos do Fiscal, escolhas de DIFAL ou a referência RBT12. A interface identifica a indisponibilidade e oferece preparar novos relatórios de entradas e saídas para a mesma empresa.
+
+A recuperação mantém o Contábil, a referência do extrato, a configuração e as versões salvas. A nova importação substitui somente o vínculo dos documentos e limpa os ajustes fiscais dependentes da fonte anterior, após a ação explícita do usuário. Nenhum relatório excluído é recriado nem recebe valores estimados. Concluir Fiscal ou gerar uma nova versão continua exigindo documentos válidos da mesma empresa e workspace; links novos inexistentes ou de outra empresa continuam bloqueados.
+
+Não há migração nem alteração automática de dados existentes. O motor de cálculo permanece em `1.12.0-available-months` e a regra de competências disponíveis de janeiro a setembro continua vigente.
+
+Verificação: tipos, build e versões conferidos; 382 testes de regras, 36 de análises, 9 de gerações, 51 de simulações/reprocessamento, 172 Python/PDF/OCR e 26 cenários de navegador aprovados com dados sintéticos. As regressões exercitam exclusão real, ausência do registro, salvamento da RBT12, recuperação até uma nova versão, links antigos, permissões e preservação dos valores históricos.
 
 ## Dashboard, setores e competências disponíveis — v0.45.0
 

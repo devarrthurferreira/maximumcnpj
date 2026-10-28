@@ -59,6 +59,9 @@ test('a orientação mantém o bloqueio do servidor e encaminha pendências conc
   assert.equal(analysisGuidance(analysis,{sector:'accounting'}).primaryAction.action,'accounting-months');
   analysis.fiscal.data.generationId='generation';analysis.readiness.issues=[{code:'SIMULATOR_INCOMPLETE',sector:'fiscal',message:'Conclua as leituras.'}];
   assert.equal(analysisGuidance(analysis).primaryAction.label,'Retomar documentos fiscais');
+  analysis.readiness.issues=[{code:'ANALYSIS_GENERATION_UNAVAILABLE',sector:'fiscal',message:'Prepare uma nova importação.'}];
+  assert.equal(analysisGuidance(analysis).primaryAction.action,'import');
+  assert.equal(analysisGuidance(analysis).primaryAction.label,'Preparar nova importação');
   analysis.readiness.issues=[{code:'RBT12_MONTHS_MISSING',sector:'fiscal',message:'O extrato não cobre agosto.'}];
   assert.equal(analysisGuidance(analysis).primaryAction.action,'reference');
   analysis.fiscal.status='COMPLETE';analysis.readiness.issues=[];

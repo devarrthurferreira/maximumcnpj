@@ -42,7 +42,8 @@ async function api(url, method = 'GET', data) {
     try { d = await r.json(); } catch { throw new Error('Resposta inesperada do servidor. Confira a implantação e tente novamente.'); }
     if (!r.ok) {
       if (r.status === 401) throw new Error('Sua sessão expirou. Entre novamente pelo painel.');
-      throw new Error(d.message || 'Não foi possível concluir a operação.');
+      const failure=new Error(d.message || 'Não foi possível concluir a operação.');
+      failure.status=r.status;failure.code=d.error;failure.resource=url;throw failure;
     }
     return d;
   } catch (e) {
@@ -710,7 +711,12 @@ async function boot() {
       const currentJob = jobId || (guided ? sales ? linkedCompany?.salesJobId : linkedCompany?.purchaseJobId : null);
       if (currentJob && /^[a-f0-9-]{36}$/i.test(currentJob)) await openJob(currentJob, writable() && (guided || query.get('auto') === '1'), loadedJob);
     }
-  } catch (e) { error(e); }
+  } catch (e) {
+    error(e);
+    if(e.status===404&&/^\/api\/v4\/(?:generations|purchases|sales)\//.test(e.resource||'')){
+      $('#purchase-app').innerHTML=`<section class="card stack" id="purchase-unavailable"><h2>Relatórios indisponíveis</h2><p>Este link aponta para uma geração ou um relatório que não está disponível. ${S.analysis?'Volte ao Fiscal desta empresa para preparar uma nova importação de entradas e saídas.':'Abra o histórico para escolher um relatório disponível.'}</p>${S.analysis?`<a class="report-links primary" href="/analyses.html?${new URLSearchParams({id:S.analysis.id,sector:'fiscal',step:'documents'})}">Voltar ao Fiscal da empresa</a>`:''}<a class="report-links" href="/generations.html?view=history">Abrir histórico de relatórios</a></section>`;
+    }
+  }
 }
 // Expand financial details while printing, preserving the separate source audit.
 const printDetails=[];

@@ -407,7 +407,7 @@ test('Excluir pelo Fiscal com documentos ausentes preserva o rascunho ao cancela
   await page.goto('/analyses.html?id='+id+'&sector=fiscal&resumed=1');await fiscalStep(page,'documents');
   const wizard=page.locator('#analysis-wizard'),opener=page.locator('#analysis-delete-in-wizard'),dialog=page.locator('#analysis-delete-dialog');
   await expect(wizard).toHaveAttribute('data-wizard-step','documents');
-  await expect(page.locator('#analysis-fiscal-evidence')).toContainText('não estão disponíveis');
+  await expect(page.locator('#analysis-fiscal-evidence')).toContainText('não estão mais disponíveis');
   await expect(page.locator('[data-analysis-document="PURCHASES"]')).toContainText('Documento indisponível');
   await expect(page.locator('[data-analysis-document="SALES"]')).toContainText('Documento indisponível');
   await expect(opener).toHaveText('Excluir análise');await expect(opener).toBeEnabled();

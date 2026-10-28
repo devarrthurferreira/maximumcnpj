@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.45.1] — 2026-10-28
+
+- Corrige “Geração não encontrada” ao salvar rascunhos do Fiscal quando a análise conserva um vínculo com relatórios indisponíveis; DIFAL e RBT12 podem ser salvos antes da nova importação.
+- Apresenta recuperação explícita para preparar novos relatórios na mesma análise, preservando Contábil, extrato, configuração e versões anteriores.
+- Links antigos de geração, entradas e saídas apresentam retorno ao Fiscal ou ao histórico; falhas temporárias continuam exibindo o erro real, sem recriar documentos automaticamente.
+- Mantém validação estrita da fonte na conclusão e geração, proteção contra vínculos novos inexistentes ou de outra empresa/workspace e controle de revisões concorrentes.
+- Acrescenta regressões com geração realmente excluída ou ausente, incluindo salvamento, substituição da fonte e preservação do histórico.
+
 ## [0.45.0] — 2026-10-28
 
 - Adiciona dashboard com consultas dos últimos sete dias, uso MongoDB e saldo quando o orçamento do banco estiver configurado, empresas recentes e histórico completo paginado e filtrável.
