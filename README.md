@@ -1,4 +1,14 @@
-# Maximum CNPJ · v0.46.0
+# Maximum CNPJ · v0.47.0
+
+## Contábil: valores por mês e repetição — v0.47.0
+
+A aba **Contábil** oferece três opções: **Preencher mês a mês**, **Copiar para outro mês** e **Repetir em todos os meses**. O usuário escolhe uma competência de origem com as cinco contas preenchidas e copia seus valores para outra competência ou para todas as competências exibidas. Cada mês continua editável individualmente.
+
+A prévia informa os destinos e a substituição de valores existentes. A cópia preenche o rascunho; o trabalho é persistido ao usar **Salvar rascunho** ou **Salvar e concluir**. É possível desfazer a última cópia antes de novas edições ou salvamento. Zero é um valor válido, e uma origem incompleta precisa ser preenchida antes da cópia.
+
+A repetição respeita o período contábil exibido, inclusive janeiro a setembro nas análises atuais. Competências armazenadas fora desse período são preservadas. A DRE continua usando somente a interseção entre meses contábeis completos e competências fiscais disponíveis. Os valores de cada mês são salvos explicitamente, com os mesmos controles de permissão, revisões concorrentes e histórico.
+
+Validação local com Node 22 e dados sintéticos: tipos, build e versões conferidos; 408 testes de regras, 36 de integração das análises, 172 Python/PDF/OCR e 13 cenários de navegador aprovados. A cobertura verifica cópia, desfazer, ajustes individuais, salvamento e reabertura, valores zero, origem incompleta, acesso de consulta, rascunhos e colagem. A DRE com cobertura fiscal de três meses continua usando somente esses três meses após repetir os valores contábeis até setembro. Conferência visual em desktop e celular de 390 px.
 
 ## CBS de 11,3% nas novas simulações — v0.46.0
 
