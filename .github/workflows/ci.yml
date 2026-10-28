@@ -41,15 +41,16 @@ jobs:
       - name: Conferir runtime OCR headless
         run: |
           uv run --no-sync python -c "import cv2; from rapidocr import RapidOCR; print(cv2.__version__); RapidOCR()"
+      - name: Versão e documentação
+        run: npm run check:release
+      - name: Tipos e build
+        # The Python DRE fixtures use the real JS engine and its generated assets.
+        run: npm run check && npm run build
       - name: Python, PDF e MongoDB descartável
         run: npm run test:reports
         env:
           REPORT_TEST_MONGO: '1'
           SIMPLES_TEST_OCR: '1'
-      - name: Versão e documentação
-        run: npm run check:release
-      - name: Tipos e build
-        run: npm run check && npm run build
       - name: Regras e HTTP
         run: npm test
       - name: Integração legada com MongoDB

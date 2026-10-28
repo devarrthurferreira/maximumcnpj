@@ -27,7 +27,9 @@ from .core import VERSION, display_date
 from .dre_model import (DreModel, SUBTOTALS, DERIVED, GROUP_LABELS, finite, close,
                         total, money, percentage, decimal_text, month_label)
 from .dre_charts import (Bars, Trend, Waterfall, Donut, draw_text, TEAL, DEEP, CORAL,
-                         MINT, INK, MUTED, LINE, PALE, COLORS, FONT, BOLD)
+                         MINT, INK, MUTED, LINE, PALE, COLORS, FONT, BOLD, CoverageStrip)
+from .dre_insights import executive_insights, monthly_insights
+from .dre_layout import Panel, Navigation, draw_navigation_links, running_label
 
 PAGE_W, PAGE_H = A4
 MARGIN = 38
@@ -65,6 +67,7 @@ def styles():
         'tiny': ParagraphStyle('LunaTiny', **{**base, 'fontSize': 6.8, 'leading': 9.4, 'spaceAfter': 0}),
         'cell': ParagraphStyle('LunaCell', **{**base, 'fontSize': 7.5, 'leading': 10.1, 'spaceAfter': 0}),
         'number': ParagraphStyle('LunaNumber', **{**base, 'fontSize': 7.4, 'leading': 10, 'alignment': TA_RIGHT, 'spaceAfter': 0}),
+        'monthly_number': ParagraphStyle('LunaMonthlyNumber', **{**base, 'fontSize': 7.1, 'leading': 8.5, 'alignment': TA_RIGHT, 'spaceAfter': 0}),
         'head': ParagraphStyle('LunaHead', **{**base, 'fontName': BOLD, 'fontSize': 7.5, 'leading': 10.3,
                               'textColor': colors.white, 'spaceAfter': 0}),
         'eyebrow': ParagraphStyle('LunaEyebrow', **{**base, 'fontName': BOLD, 'fontSize': 8, 'leading': 11,
@@ -79,6 +82,14 @@ def styles():
                                     'textColor': colors.HexColor(TEAL), 'spaceAfter': 6}),
         'kpi_value': ParagraphStyle('LunaKpiValue', **{**base, 'fontName': BOLD, 'fontSize': 15, 'leading': 22,
                                     'textColor': colors.HexColor(DEEP), 'spaceAfter': 5}),
+        'hero_label': ParagraphStyle('LunaHeroLabel', **{**base, 'fontName': BOLD, 'fontSize': 8, 'leading': 12,
+                                      'textColor': colors.HexColor('#C9E0DC'), 'spaceAfter': 6}),
+        'hero_value': ParagraphStyle('LunaHeroValue', **{**base, 'fontName': BOLD, 'fontSize': 27, 'leading': 32,
+                                      'textColor': colors.white, 'spaceAfter': 4}),
+        'hero_detail': ParagraphStyle('LunaHeroDetail', **{**base, 'fontSize': 7.1, 'leading': 10,
+                                       'textColor': colors.HexColor('#D5E7E4'), 'spaceAfter': 0}),
+        'chapter_number': ParagraphStyle('LunaChapterNumber', **{**base, 'fontName': BOLD, 'fontSize': 31, 'leading': 36,
+                                          'textColor': colors.HexColor(MINT), 'alignment': TA_RIGHT, 'spaceAfter': 0}),
     }
 
 
@@ -87,6 +98,8 @@ class NumberedCanvas(canvas.Canvas):
         super().__init__(*args, **kwargs)
         self.states = []
         self.section_entries = []
+        self.navigation_panels = []
+        self.running_entries = []
 
     def showPage(self):
         self.states.append(dict(self.__dict__))
@@ -95,6 +108,10 @@ class NumberedCanvas(canvas.Canvas):
     def save(self):
         pages = len(self.states)
         entries = list(self.section_entries)
+        panels = list(self.navigation_panels)
+        running = list(self.running_entries)
+        guide = next(((page, f'dre-section-{index}') for index, (page, label) in enumerate(entries)
+                      if label == 'Guia do relatório'), None)
         for state in self.states:
             self.__dict__.update(state)
             for index, (page_number, label) in enumerate(entries):
@@ -102,6 +119,15 @@ class NumberedCanvas(canvas.Canvas):
                     key = f'dre-section-{index}'
                     self.bookmarkPage(key)
                     self.addOutlineEntry(label, key, level=0, closed=False)
+            draw_navigation_links(self, panels, entries)
+            if self._pageNumber > 1:
+                active = next((label for page, label in reversed(running) if page <= self._pageNumber), '')
+                running_label(self, active, PAGE_W - MARGIN, PAGE_H - 76, WIDTH * .73, align='right')
+            if guide and self._pageNumber > guide[0]:
+                draw_text(self, 'SUMÁRIO', PAGE_W - MARGIN - 72, 25, 6.6, TEAL, align='right')
+                self.linkAbsolute('Voltar ao sumário', guide[1],
+                                  (PAGE_W - MARGIN - 125, 19, PAGE_W - MARGIN - 65, 35), thickness=0,
+                                  name=f'dre-back-{self._pageNumber}')
             draw_text(self, f'{self._pageNumber:02d} / {pages:02d}', PAGE_W - MARGIN, 25, 7.5, TEAL, bold=True, align='right')
             super().showPage()
         super().save()
@@ -112,6 +138,10 @@ class ReportDocument(BaseDocTemplate):
         section = getattr(flowable, '_luna_section', None)
         if section:
             self.canv.section_entries.append((self.page, section))
+            self.canv.running_entries.append((self.page, section))
+        running = getattr(flowable, '_luna_running', None)
+        if running:
+            self.canv.running_entries.append((self.page, running))
 
 
 class Report:
@@ -132,9 +162,18 @@ class Report:
         if new_page and self.story:
             self.add(PageBreak())
         self.chapter += 1
-        heading = self.p(title, 'h1')
+        heading = Table([[[self.p('RELATÓRIO GERENCIAL', 'eyebrow'), self.p(title, 'h1')],
+                          self.p(f'{self.chapter:02d}', 'chapter_number')]], colWidths=[WIDTH - 65, 65])
+        heading.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (0, 0), 12),
+            ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+            ('LINEBELOW', (0, 0), (-1, -1), .7, colors.HexColor(LINE)),
+        ]))
         heading._luna_section = title
-        self.add(self.p(f'{self.chapter:02d} / RELATÓRIO GERENCIAL', 'eyebrow'), heading)
+        heading.keepWithNext = True
+        self.add(heading, Spacer(1, 8))
         if description:
             self.add(self.p(description, 'small'))
         self.add(Spacer(1, 7))
@@ -149,43 +188,52 @@ class Report:
         ]))
         return table
 
-    def table(self, headers, rows, widths=None, *, highlights=(), groups=(), spans=(), small=False):
+    def table(self, headers, rows, widths=None, *, highlights=(), groups=(), spans=(), small=False, compact=False, repeat_context=None):
         widths = widths or [WIDTH / len(headers)] * len(headers)
         content = [[self.p(value, 'head') for value in headers]]
+        if repeat_context:
+            content.insert(0, [self.p(repeat_context, 'head')] + [''] * (len(headers) - 1))
+        offset = 2 if repeat_context else 1
         for row in rows:
             content.append([value if isinstance(value, Paragraph) else self.p(value, 'tiny' if small else 'cell') for value in row])
-        table = LongTable(content, colWidths=widths, repeatRows=1, hAlign='LEFT',
+        table = LongTable(content, colWidths=widths, repeatRows=offset, hAlign='LEFT',
                           spaceBefore=4, spaceAfter=10, splitByRow=1)
         commands = [
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(TEAL)),
+            ('BACKGROUND', (0, 0), (-1, offset - 1), colors.HexColor(TEAL)),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('LEFTPADDING', (0, 0), (-1, -1), 8), ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-            ('TOPPADDING', (0, 0), (-1, -1), 6 if not small else 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6 if not small else 4),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F7FAFA')]),
+            ('TOPPADDING', (0, 0), (-1, -1), 1 if compact == 'monthly' else 2.6 if compact else 6 if not small else 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1 if compact == 'monthly' else 2.6 if compact else 6 if not small else 4),
+            ('ROWBACKGROUNDS', (0, offset), (-1, -1), [colors.white, colors.HexColor('#F7FAFA')]),
             ('LINEBELOW', (0, 0), (-1, 0), .5, colors.HexColor(TEAL)),
             ('LINEBELOW', (0, -1), (-1, -1), .6, colors.HexColor(LINE)),
         ]
+        if repeat_context:
+            commands += [('SPAN', (0, 0), (-1, 0)), ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(DEEP)),
+                         ('TOPPADDING', (0, 0), (-1, offset - 1), 5), ('BOTTOMPADDING', (0, 0), (-1, offset - 1), 5)]
         for index in highlights:
-            commands += [('BACKGROUND', (0, index + 1), (-1, index + 1), colors.HexColor('#DFEDEA')),
-                         ('LINEABOVE', (0, index + 1), (-1, index + 1), .5, colors.HexColor(MINT))]
+            commands += [('BACKGROUND', (0, index + offset), (-1, index + offset), colors.HexColor('#DFEDEA')),
+                         ('LINEABOVE', (0, index + offset), (-1, index + offset), .5, colors.HexColor(MINT))]
         for index in groups:
-            commands += [('BACKGROUND', (0, index + 1), (-1, index + 1), colors.HexColor('#EAF2F1')),
-                         ('SPAN', (0, index + 1), (-1, index + 1))]
+            commands += [('BACKGROUND', (0, index + offset), (-1, index + offset), colors.HexColor('#EAF2F1')),
+                         ('SPAN', (0, index + offset), (-1, index + offset))]
             if index + 1 < len(rows):
-                commands.append(('NOSPLIT', (0, index + 1), (-1, index + 2)))
+                commands.append(('NOSPLIT', (0, index + offset), (-1, index + offset + 1)))
         for index in spans:
-            commands.append(('SPAN', (0, index + 1), (-1, index + 1)))
+            commands.append(('SPAN', (0, index + offset), (-1, index + offset)))
         table.setStyle(TableStyle(commands))
         return table
 
-    def number(self, value, *, ratio=None, bold=False, symbol=False):
+    def number(self, value, *, ratio=None, bold=False, symbol=False, compact=False, result=False):
         value_text = text(money(value, symbol))
+        if result and finite(value) and value < 0:
+            value_text = f'<font color="#B24538">{value_text}</font>'
         if bold:
             value_text = '<b>' + value_text + '</b>'
         if ratio is not None:
-            value_text += f'<br/><font color="{MUTED}" size="6.5">{text(percentage(ratio))} da receita</font>'
-        return self.p(value_text, 'number', True)
+            label = 'AV ' + percentage(ratio) if compact else percentage(ratio) + ' da receita'
+            value_text += f'<br/><font color="{MUTED}" size="6.5">{text(label)}</font>'
+        return self.p(value_text, 'monthly_number' if compact else 'number', True)
 
     def kpis(self, items):
         gap = 10
@@ -207,12 +255,79 @@ class Report:
         table.setStyle(TableStyle(commands))
         return table
 
+    def insight_cards(self, items):
+        gap = 12
+        width = (WIDTH - gap) / 2
+        for start in range(0, len(items), 2):
+            cards = []
+            for item in items[start:start + 2]:
+                cards.append(Panel(width, [self.p(item['label'].upper(), 'kpi_label'),
+                                          self.p(item['value'], 'kpi_value'),
+                                          self.p(item['detail'], 'small')],
+                                   accent=CORAL if item['tone'] == 'warning' else TEAL, min_height=132))
+            heights = [card.wrap(width, 10000)[1] for card in cards]
+            for card in cards:
+                card.min_height = max(heights)
+            row = [cards[0], '', cards[1] if len(cards) > 1 else '']
+            table = Table([row], colWidths=[width, gap, width])
+            table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
+            self.add(table, Spacer(1, gap))
+
+    def guide(self):
+        sections = [('Visão geral', 'Os principais números do cenário em destaque.'),
+                    ('Leitura executiva', 'Comparação, cobertura e indicadores de gestão.'),
+                    ('Comparação entre regimes', 'Resultado, margem e carga de tributos e encargos.')]
+        if self.model.period != 'monthly':
+            sections += [('DRE comparativa detalhada', 'Contas, deduções e subtotais de cada cenário.'),
+                         ('Como o resultado se forma', 'Da receita ao resultado, com a composição das despesas.')]
+        if self.model.period != 'annual':
+            sections += [('Evolução mês a mês', 'Série por competência, variação e margens.')]
+        sections += [('Tributos, encargos e créditos', 'Valores capturados e detalhamento do IRPJ.'),
+                     ('Conferência dos créditos', 'Débitos, créditos utilizados e saldos potenciais.'),
+                     ('Receitas e compras na origem', 'Composição documental e conciliação com a DRE.')]
+        if self.model.period != 'annual':
+            sections += [('DRE mensal por regime', 'Anexo de contas por competência e cenário.')]
+        sections += [('Premissas, cobertura e conferências', 'Condições, RBT12, DIFAL e referências da versão.'),
+                     ('Memória de cálculo', 'Fórmulas, valores e identificação das fontes.')]
+        self.title('Guia do relatório', 'Clique em uma seção para navegar. O link SUMÁRIO no rodapé permite voltar a esta página.')
+        self.add(Navigation(WIDTH, sections), Spacer(1, 16),
+                 self.note('Leitura sugerida: visão geral e leitura executiva para entender os resultados; '
+                           'comparativos e DRE para analisar; anexos e memória para conferir os valores.'))
+
+    def executive(self):
+        m = self.model
+        self.title('Leitura executiva', m.focus['name'] + ' em destaque. Indicadores do período ' + m.period_label + '.')
+        self.insight_cards(executive_insights(m))
+        self.add(self.p('Competências que compõem o consolidado', 'h2'))
+        if m.actual and m.months:
+            if m.analysis_period.get('version') == 'JAN_SEP_V1':
+                months = [f'{m.months[0][:4]}-{index:02d}' for index in range(1, 10)]
+                caption = 'Janela de janeiro a setembro'
+            else:
+                first = int(m.months[0][:4]) * 12 + int(m.months[0][5:]) - 1
+                last = int(m.months[-1][:4]) * 12 + int(m.months[-1][5:]) - 1
+                # A historical snapshot need not use the current Jan-Sep window.
+                # Keep long, sparse historical ranges bounded without inventing
+                # availability for an arbitrarily large calendar.
+                months = [f'{value // 12}-{value % 12 + 1:02d}' for value in range(first, last + 1)] if last - first < 24 else list(m.months)
+                caption = 'Competências no intervalo' if last - first < 24 else 'Competências registradas'
+            self.add(CoverageStrip(WIDTH, [month_label(month, True) for month in months],
+                                   [month in m.months for month in months], caption=caption))
+        self.add(self.p(m.coverage_note, 'small'))
+        self.add(self.p('Como interpretar os indicadores', 'h2'), self.note(
+            'Resultado positivo indica lucro; resultado negativo indica prejuízo. A margem relaciona o resultado '
+            'à receita do próprio cenário. A diferença entre regimes compara os valores salvos e depende das '
+            'premissas e da disponibilidade dos cenários; não representa economia garantida.'),
+            Spacer(1, 8), self.p('Os próximos capítulos detalham as contas que explicam esses indicadores.', 'small'))
+
     def cover(self):
         m = self.model
         captions = {'complete': 'RELATÓRIO COMPLETO', 'annual': 'RELATÓRIO CONSOLIDADO', 'monthly': 'RELATÓRIO MENSAL'}
         heading = self.p('Demonstração<br/>do resultado', 'title', True)
         heading._luna_section = 'Visão geral'
-        self.add(Spacer(1, 11), self.p(captions[m.period] + ' / DEMONSTRAÇÃO DO RESULTADO', 'eyebrow'),
+        self.add(Spacer(1, 3), self.p(captions[m.period] + ' / DEMONSTRAÇÃO DO RESULTADO', 'eyebrow'),
                  heading,
                  self.p(m.company.get('name', 'Empresa'), 'h2'))
         self.add(self.p('Código ' + str(m.company.get('code') or 'não informado') +
@@ -220,13 +335,30 @@ class Report:
         self.add(self.table(['BASE DOS DOCUMENTOS', 'CENÁRIO TRIBUTÁRIO', 'COBERTURA'],
                             [[m.period_label, str(m.year), m.coverage]], [WIDTH * .43, WIDTH * .27, WIDTH * .30]))
         focus = m.focus
-        self.add(self.p('Leitura em destaque: ' + focus['name'], 'small'))
+        net = m.value(focus, 'netProfit')
+        amount = money(net)
+        hero_size = min(27, 260 / max(pdfmetrics.stringWidth(amount, BOLD, 1), 1))
+        margin = percentage(m.ratio(focus, 'netProfit'))
+        margin_width = (WIDTH - 32) * .35 - 24
+        margin_size = min(27, margin_width / max(pdfmetrics.stringWidth(margin, BOLD, 1), 1))
+        hero = Table([[[self.p('RESULTADO LÍQUIDO / ' + focus['name'].upper(), 'hero_label'),
+                       self.p(f'<font size="{hero_size:.2f}">{text(amount)}</font>', 'hero_value', True),
+                       self.p('Resultado indisponível nesta versão' if not finite(net) else
+                              'Prejuízo no período' if net < 0 else 'Resultado do período analisado', 'hero_detail')],
+                      [self.p('MARGEM LÍQUIDA', 'hero_label'),
+                       self.p(f'<font size="{margin_size:.2f}">{text(margin)}</font>', 'hero_value', True),
+                       self.p('Resultado / receita do cenário', 'hero_detail')]]],
+                     colWidths=[(WIDTH - 32) * .65, (WIDTH - 32) * .35])
+        hero.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+            ('TOPPADDING', (0, 0), (-1, -1), 2), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+            ('LINEBEFORE', (1, 0), (1, 0), .6, colors.HexColor(TEAL)), ('LEFTPADDING', (1, 0), (1, 0), 14)]))
+        self.add(Panel(WIDTH, [hero], background=DEEP, accent=CORAL, padding=16), Spacer(1, 8))
         self.add(self.kpis([
-            ('RECEITA UTILIZADA', money(m.value(focus, 'revenue')), 'Base do mesmo período e regime.'),
-            ('RESULTADO LÍQUIDO', money(m.value(focus, 'netProfit')), 'Lucro ou prejuízo após as deduções capturadas.'),
-            ('MARGEM LÍQUIDA', percentage(m.ratio(focus, 'netProfit')), 'Resultado líquido / receita utilizada.'),
+            ('RECEITA UTILIZADA', money(m.value(focus, 'revenue')), 'Base do período e regime em destaque.'),
+            ('TRIBUTOS E ENCARGOS', money(m.value(focus, 'totalTaxes')), 'Total líquido dos créditos utilizados.'),
         ]))
-        self.add(self.p('Comparativo de resultados', 'h2'), Bars(WIDTH, [
+        self.add(self.p('Resultado em cada cenário', 'h2'), Bars(WIDTH, [
             (regime['name'], m.value(regime, 'netProfit'), COLORS[i]) for i, regime in enumerate(m.regimes)]))
         if m.best:
             same = [row for row in m.available if close(m.value(row, 'netProfit'), m.value(m.best, 'netProfit'))]
@@ -234,7 +366,7 @@ class Report:
                        'A comparação usa as mesmas competências e as premissas desta versão; não confirma enquadramento fiscal.')
         else:
             insight = 'Esta versão não registra um regime vencedor. Consulte a disponibilidade e as condições dos cenários nas próximas páginas.'
-        self.add(self.note(insight), Spacer(1, 12), self.p(m.coverage_note, 'small'))
+        self.add(self.note(insight), Spacer(1, 8))
         self.add(self.p('Emitido em ' + display_date(m.emitted_at) + ' (horário de Brasília). '
                         'Versão salva em ' + display_date(m.snapshot.get('createdAt')) + '.', 'small'))
 
@@ -246,7 +378,7 @@ class Report:
                        ('grossProfit', 'Lucro bruto', False), ('totalTaxes', 'Tributos e encargos', False),
                        ('netProfit', 'Resultado líquido', False), ('netProfit', 'Margem líquida', True),
                        ('totalTaxes', 'Carga de tributos e encargos', True)]
-        rows = [[label] + [self.p(percentage(m.ratio(regime, key)), 'number') if ratio else self.number(m.value(regime, key), bold=key == 'netProfit')
+        rows = [[label] + [self.p(percentage(m.ratio(regime, key)), 'number') if ratio else self.number(m.value(regime, key), bold=key == 'netProfit', result=key == 'netProfit')
                            for regime in m.regimes] for key, label, ratio in definitions]
         self.add(self.table(headers, rows, [157] + [(WIDTH - 157) / len(m.regimes)] * len(m.regimes), highlights=[4]))
         self.add(self.p('Tributos e encargos por cenário', 'h2'),
@@ -275,7 +407,7 @@ class Report:
                 if key in SUBTOTALS:
                     highlights.append(len(rows))
                 rows.append([self.p(('<b>' + text(label) + '</b>') if key in SUBTOTALS else text(label), 'cell', True)] + [
-                    self.number(m.value(regime, key), ratio=m.ratio(regime, key) if m.show_percent else None, bold=key in SUBTOTALS)
+                    self.number(m.value(regime, key), ratio=m.ratio(regime, key) if m.show_percent else None, bold=key in SUBTOTALS, result=key == 'netProfit')
                     for regime in m.regimes])
         self.add(self.table(['Conta / subtotal'] + [row['name'] for row in m.regimes], rows,
                             [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes), highlights=highlights, groups=groups))
@@ -292,14 +424,14 @@ class Report:
         self.add(Waterfall(WIDTH, [(label, m.value(regime, key)) for key, label in keys]))
         self.add(self.table(['Etapa', 'Impacto no resultado', '% da receita'], [
             [label.replace('\n', ' '), self.number(m.value(regime, key), bold=key == 'netProfit'),
-             self.p(percentage(m.ratio(regime, key)), 'number')] for key, label in keys], [WIDTH * .48, WIDTH * .29, WIDTH * .23], highlights=[5]))
-        self.add(self.p('Composição das despesas operacionais', 'h2'))
+             self.p(percentage(m.ratio(regime, key)), 'number')] for key, label in keys], [WIDTH * .48, WIDTH * .29, WIDTH * .23], highlights=[5], small=True))
         expenses = [('Pessoal e encargos', 'personnel'), ('Outras despesas', 'administrative'),
                     ('Aluguéis', 'rent'), ('Taxas de cartão', 'cards')]
-        self.add(Donut(WIDTH, [(label, -value if finite(value) else None) for label, key in expenses
-                              for value in [m.value(regime, key)]], 'Despesas'))
-        self.add(self.p('Participações calculadas sobre o total de despesas operacionais confirmado. '
-                        'Pessoal e encargos agrega salários, benefícios e encargos adicionais.', 'small'))
+        self.add(KeepTogether([self.p('Composição das despesas operacionais', 'h2'),
+                 self.p('Participações calculadas sobre o total de despesas operacionais confirmado. '
+                        'Pessoal e encargos agrega salários, benefícios e encargos adicionais.', 'small'),
+                 Donut(WIDTH, [(label, -value if finite(value) else None) for label, key in expenses
+                              for value in [m.value(regime, key)]], 'Despesas')]))
 
     def evolution(self):
         m = self.model
@@ -316,25 +448,21 @@ class Report:
         for key, label, color in [('revenue', 'Receita utilizada', TEAL), ('netProfit', 'Resultado líquido', CORAL), ('totalTaxes', 'Tributos e encargos', '#8AAEAE')]:
             values = [m.value(m.focus, key, m.months.index(month)) if month in m.months else None for month in year_months]
             series.append((label, values, color))
-        self.add(Trend(WIDTH, [month_label(month, True) for month in year_months], series), Spacer(1, 10))
+        self.add(Trend(WIDTH, [month_label(month, True) for month in year_months], series, height=200), Spacer(1, 8))
         rows = []
         for index, month in enumerate(m.months):
             revenue, _, change = m.movement('revenue', index)
             rows.append([month_label(month, True), self.number(revenue), self.p(percentage(change), 'number'),
-                         self.number(m.value(m.focus, 'totalTaxes', index)), self.number(m.value(m.focus, 'netProfit', index)),
+                         self.number(m.value(m.focus, 'totalTaxes', index)), self.number(m.value(m.focus, 'netProfit', index), result=True),
                          self.p(percentage(m.ratio(m.focus, 'netProfit', index)), 'number')])
         self.add(self.table(['Competência', 'Receita', 'Var. receita', 'Tributos', 'Resultado', 'Margem'], rows,
-                            [77, 94, 70, 94, 104, WIDTH - 439]))
+                            [77, 94, 70, 94, 104, WIDTH - 439], small=True, compact=True))
         self.add(self.note('Variação da receita = (mês atual - mês anterior) / mês anterior. '
                           'O percentual só é apresentado para competências consecutivas, disponíveis e com base anterior positiva. '
                           'A margem usa a receita do próprio mês. Lacunas no gráfico representam dados ausentes, e não valor zero.'))
-        known = [(i, m.value(m.focus, 'netProfit', i)) for i in range(len(m.months)) if finite(m.value(m.focus, 'netProfit', i))]
-        if known:
-            highest, lowest = max(known, key=lambda row: row[1]), min(known, key=lambda row: row[1])
-            self.add(self.p('Leitura do período', 'h2'), self.p(
-                f'Maior resultado mensal: {month_label(m.months[highest[0]])}, {money(highest[1])}. '
-                f'Menor resultado mensal: {month_label(m.months[lowest[0]])}, {money(lowest[1])}. '
-                f'Competências com prejuízo: {sum(value < 0 for _, value in known)} de {len(known)} com resultado disponível.', 'body'))
+        self.add(self.p('Leitura do período', 'h2'), self.table(['Indicador', 'Valor', 'Leitura'],
+            [[item['label'], self.p(item['value'], 'number'), item['detail']] for item in monthly_insights(m)],
+            [122, 100, WIDTH - 222], small=True, compact=True))
 
     def taxes(self):
         m = self.model
@@ -415,14 +543,13 @@ class Report:
 
     def monthly_statements(self):
         m = self.model
-        self.title('DRE mensal por regime', 'Valores em R$. Os meses seguem a origem dos documentos; o total corresponde ao período salvo.')
+        self.title('DRE mensal por regime', 'Valores em R$. A coluna total consolida todos os meses da versão, inclusive os apresentados nos outros quadros do regime.')
         if not m.months:
             self.add(self.note('O calendário mensal não está capturado nesta versão. O demonstrativo consolidado permanece disponível. '
                               'Nenhum valor mensal foi estimado para este arquivo.'))
             return
-        self.add(self.p(m.coverage_note, 'small'))
         if m.show_percent:
-            self.add(self.p('Análise vertical: cada percentual usa a receita da mesma competência e do mesmo regime. A coluna total usa a receita consolidada.', 'small'))
+            self.add(self.p('AV = análise vertical: cada percentual usa a receita da mesma competência e do mesmo regime. A coluna total usa a receita consolidada.', 'small'))
         import math
         chunks = math.ceil(len(m.months) / 4)
         chunk_size = math.ceil(len(m.months) / chunks)
@@ -431,11 +558,10 @@ class Report:
                 indices = list(range(start, min(start + chunk_size, len(m.months))))
                 if regime_index or start:
                     self.add(PageBreak())
-                heading = self.p(regime['name'] + ' / ' + ', '.join(month_label(m.months[index], True) for index in indices), 'h2')
-                # A long monthly table must start in the current frame and split
-                # normally, instead of moving its entire heading/table bundle.
-                heading.keepWithNext = False
-                self.add(heading)
+                context = regime['name'] + ' / ' + ', '.join(month_label(m.months[index], True) for index in indices)
+                marker = Spacer(1, 1)
+                marker._luna_running = 'DRE mensal / ' + context
+                self.add(marker)
                 rows, highlights = [], []
                 # Account rows remain continuous; the derived group subtotals are
                 # shown in the consolidated chapter and do not consume repeats.
@@ -447,13 +573,12 @@ class Report:
                             highlights.append(len(rows))
                         rows.append([self.p(('<b>' + text(label) + '</b>') if key in SUBTOTALS else text(label), 'tiny', True)] +
                                     [self.number(m.value(regime, key, index), ratio=m.ratio(regime, key, index) if m.show_percent else None,
-                                                 bold=key == 'netProfit') for index in indices] +
-                                    [self.number(m.value(regime, key), ratio=m.ratio(regime, key) if m.show_percent else None, bold=key == 'netProfit')])
+                                                 bold=key == 'netProfit', compact=True, result=key == 'netProfit') for index in indices] +
+                                    [self.number(m.value(regime, key), ratio=m.ratio(regime, key) if m.show_percent else None, bold=key == 'netProfit', compact=True, result=key == 'netProfit')])
                 columns = len(indices) + 1
                 self.add(self.table(['Conta'] + [month_label(m.months[index], True) for index in indices] + ['Total do período'], rows,
-                                    [165] + [(WIDTH - 165) / columns] * columns, highlights=highlights, small=True))
-                self.add(self.p('Margens líquidas: ' + ' | '.join(month_label(m.months[index], True) + ' ' +
-                                percentage(m.ratio(regime, 'netProfit', index)) for index in indices) + '.', 'small'))
+                                    [165] + [(WIDTH - 165) / columns] * columns, highlights=highlights,
+                                    small=True, compact='monthly', repeat_context=context))
                 if not regime['available']:
                     self.add(self.p('Consolidado indisponível: ' + str(regime.get('status') or 'Há competências pendentes.') +
                                     ' Meses individualmente disponíveis permanecem apresentados.', 'small'))
@@ -535,6 +660,8 @@ class Report:
         draw_text(c, 'DRE | ANÁLISE GERENCIAL', PAGE_W - MARGIN, PAGE_H - 30, 8.5, '#FFFFFF', bold=True, align='right')
         draw_text(c, 'Cenário ' + str(self.model.year) + ' / ' + self.model.period_label,
                   PAGE_W - MARGIN, PAGE_H - 44, 7, '#E1F0EF', align='right', max_width=330)
+        if doc.page > 1:
+            running_label(c, 'Código ' + str(self.model.company.get('code') or 'não informado'), MARGIN, PAGE_H - 76, WIDTH * .25)
         c.setStrokeColor(colors.HexColor(LINE))
         c.setLineWidth(.6)
         c.line(MARGIN, 42, PAGE_W - MARGIN, 42)
@@ -543,6 +670,8 @@ class Report:
 
     def render(self):
         self.cover()
+        self.guide()
+        self.executive()
         self.overview()
         if self.model.period != 'monthly':
             self.statement()
