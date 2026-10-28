@@ -3,7 +3,7 @@ import {parseRegimeSelection, requiresSimplesReference} from '../public/regime-s
 import type {RegimeSelection} from '../public/regime-selection.js';
 import {parseDifalPolicy, upgradeDifalPolicy} from '../public/simulator-engine.js';
 import type {DifalPolicy} from '../public/simulator-engine.js';
-import {JAN_SEP_POLICY,isAnalysisMonth,analysisMonthsForYear} from '../public/analysis-period.js';
+import {JAN_SEP_POLICY,isAnalysisMonth} from '../public/analysis-period.js';
 
 export const ANALYSIS_VERSION = 'ANALYSIS_SECTORS_V1';
 export const ANALYSIS_GROUPS = ['salesOptantCents','salesNonOptantCents','salesCpfCents','purchasesOptantCents','purchasesNonOptantCents'] as const;
@@ -65,16 +65,11 @@ export function parseAccountingData(value:unknown,complete=false,options:{period
     analysisObject(row,['sourceMonth',...ACCOUNTING_FIELDS]);
     return {sourceMonth:month(row.sourceMonth),...Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,cents(row[key])]))} as AccountingMonth;
   }));
-  const selected=options.periodPolicy===JAN_SEP_POLICY?months.filter(row=>isAnalysisMonth(row.sourceMonth,options.sourceYear)):months;
+  const selected=options.periodPolicy===JAN_SEP_POLICY?months.filter(row=>isAnalysisMonth(row.sourceMonth,options.sourceYear)&&ACCOUNTING_FIELDS.some(key=>row[key]!==null)):months;
   need(!complete||options.periodPolicy!==JAN_SEP_POLICY||options.sourceYear!==undefined||new Set(selected.map(row=>row.sourceMonth.slice(0,4))).size<=1,
     'Prepare janeiro a setembro de um único ano para concluir o Contábil.',422,'ANALYSIS_ACCOUNTING_INCOMPLETE');
   need(!complete || (selected.length>0 && selected.every(row=>ACCOUNTING_FIELDS.every(key=>row[key]!==null))),
     'Preencha todas as despesas de cada competência. Informe 0 explicitamente quando não houver valor.',422,'ANALYSIS_ACCOUNTING_INCOMPLETE');
-  if(complete&&options.periodPolicy===JAN_SEP_POLICY){
-    const expected=analysisMonthsForYear(options.sourceYear??Number(selected[0].sourceMonth.slice(0,4)));
-    need(JSON.stringify(selected.map(row=>row.sourceMonth))===JSON.stringify(expected),
-      'Conclua as despesas de janeiro a setembro do mesmo ano. Salve como rascunho para continuar o preenchimento depois.',422,'ANALYSIS_ACCOUNTING_INCOMPLETE');
-  }
   return {months};
 }
 export function defaultFiscalData(selection:RegimeSelection):FiscalData {

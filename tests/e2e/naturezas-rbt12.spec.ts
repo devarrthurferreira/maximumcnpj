@@ -191,6 +191,6 @@ test('compras e vendas CPF e CNPJ geram DIFAL no relatório, CSV, DRE mensal e h
   await page.locator('#rbt12-use-pdf').click();
   await statement(page,clientId,randomUUID(),{...result,priorRevenues:result.rbt12Window});await page.locator('#rbt12-read').click();
   await expect(page.locator('#rbt12-schedule')).toContainText('Histórico incompleto');await expect(page.locator('#rbt12-schedule')).toContainText('Faltam:');
-  await page.locator('#generate-simulation').click();await expect(page.locator('#simulator-error')).toContainText('não cobre todas as janelas de RBT12');expect(missingHistoryWrites).toBe(0);
+  await page.locator('#generate-simulation').click();await expect(page.locator('#simulator-error')).toContainText('não contém uma janela RBT12 completa');expect(missingHistoryWrites).toBe(0);
   expect(errors).toEqual([]);
 });

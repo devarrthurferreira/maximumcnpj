@@ -76,20 +76,21 @@ test('subtotal preenchido preserva centavos e distingue campos vazios de zero in
   assert.deepEqual(input,before);
 });
 
-test('competência do Fiscal ausente acrescenta pendências sem inventar despesas zeradas',()=>{
+test('competência ausente é descartada sem inventar despesa zero nem bloquear mês preenchido',()=>{
   const summary=accountingSummary([month('2026-08',[0,0,0,0,0])],['2026-08','2026-09']);
-  assert.equal(summary.enteredCents,0);assert.equal(summary.totalCents,null);assert.equal(summary.complete,false);
-  assert.equal(summary.completeMonths,1);assert.equal(summary.monthCount,2);assert.equal(summary.missingFields,5);
+  assert.equal(summary.enteredCents,0);assert.equal(summary.totalCents,0);assert.equal(summary.complete,true);
+  assert.equal(summary.completeMonths,1);assert.equal(summary.monthCount,2);assert.equal(summary.missingFields,0);
+  assert.deepEqual(summary.excludedMonths,['2026-09']);assert.deepEqual(summary.includedMonths,['2026-08']);
   assert.deepEqual(summary.missingMonths,['2026-09']);
   assert.equal(summary.rows[1].present,false);assert.equal(summary.rows[1].enteredCents,null);assert.equal(summary.rows[1].filledFields,0);
-  assert.deepEqual(summary.categories[0].missingMonths,['2026-09']);assert.equal(summary.categories[0].totalCents,null);
+  assert.deepEqual(summary.categories[0].missingMonths,[]);assert.equal(summary.categories[0].totalCents,0);
 });
 
 test('nenhuma competência ou nenhum valor não é apresentado como um total zero confirmado',()=>{
   const empty=accountingSummary([]);
   assert.equal(empty.complete,false);assert.equal(empty.enteredCents,null);assert.equal(empty.totalCents,null);assert.equal(empty.monthCount,0);
   const blank=accountingSummary([month('2026-08',[null,null,null,null,null])]);
-  assert.equal(blank.enteredCents,null);assert.equal(blank.filledFields,0);assert.equal(blank.missingFields,5);
+  assert.equal(blank.enteredCents,null);assert.equal(blank.filledFields,0);assert.equal(blank.missingFields,0);assert.deepEqual(blank.excludedMonths,['2026-08']);assert.equal(blank.complete,false);
   assert.equal(blank.categories.every(category=>category.enteredCents===null),true);
 });
 
@@ -120,12 +121,12 @@ test('períodos originais diferentes podem orientar os mesmos nove meses sem con
   assert.equal(analysisGuidance(analysis).canGenerate,false);assert.deepEqual(analysis,before);
 });
 
-test('cobertura parcial sugere nove competências e mantém as pendências fiscais explícitas',()=>{
+test('cobertura parcial sugere nove campos mas confirma apenas os meses disponíveis',()=>{
   const analysis=fixedAnalysis(),metadata=fiscalMetadata('2026-09','2026-03');
   const period=analysisPeriodFor(analysis,null,metadata);
-  assert.equal(period.complete,false);assert.equal(period.includedMonths.length,3);assert.equal(period.missingMonths.length,6);
+  assert.equal(period.complete,true);assert.equal(period.includedMonths.length,3);assert.equal(period.missingMonths.length,6);
   assert.deepEqual(accountingSourceMonths(analysis,null,metadata),analysisMonthsForYear(2026));
-  assert.equal(accountingSummary([],accountingSourceMonths(analysis,null,metadata)).missingFields,45);
+  assert.equal(accountingSummary([],accountingSourceMonths(analysis,null,metadata)).missingFields,0);
 });
 
 test('metadados de outra empresa ou leitura incompleta não definem o período',()=>{
@@ -159,4 +160,16 @@ test('ano preparado no rascunho prevalece sobre despesas antigas quando o Fiscal
   assert.deepEqual(accountingSourceMonths(analysis,null,null,draft),analysisMonthsForYear(2026));
   assert.deepEqual(accountingSourceMonths(analysis,null,null,[]),[]);
   assert.deepEqual(accountingSourceMonths(analysis,null,null),analysisMonthsForYear(2025));
+});
+
+
+test('meses vazios da grade não bloqueiam o relatório de meses completos e zeros contam como preenchimento',()=>{
+  const rows=analysisMonthsForYear(2026).map(id=>month(id,[null,null,null,null,null]));
+  rows[1]=month('2026-02',[10001,0,20,0,0]);rows[7]=month('2026-08',[0,0,0,0,0]);
+  const result=accountingSummary(rows,analysisMonthsForYear(2026));
+  assert.equal(result.complete,true);assert.equal(result.totalCents,10021);assert.equal(result.completeMonths,2);
+  assert.equal(result.excludedMonths.length,7);assert.deepEqual(result.includedMonths,['2026-02','2026-08']);
+  rows[4]=month('2026-05',[10,null,null,null,null]);
+  const partial=accountingSummary(rows,analysisMonthsForYear(2026));
+  assert.equal(partial.complete,false);assert.equal(partial.missingFields,4);assert.equal(partial.totalCents,null);
 });

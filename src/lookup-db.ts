@@ -9,6 +9,7 @@ export function ensureLookupIndexes() {
     await Promise.all([
       (await collection('clients')).createIndex({workspaceId:1,code:1},{unique:true,partialFilterExpression:{code:{$type:'string'}}}),
       (await collection('lookupJobs')).createIndex({workspaceId:1,clientId:1,createdAt:-1}),
+      (await collection('audit')).createIndex({workspaceId:1,action:1,target:1}),
       (await collection('lookupStage')).createIndex({workspaceId:1,jobId:1,index:1},{unique:true}),
       (await collection('lookupStage')).createIndex({expiresAt:1},{expireAfterSeconds:0}),
       (await collection('purchaseLines')).createIndex({workspaceId:1,jobId:1,index:1},{unique:true}),
@@ -16,6 +17,7 @@ export function ensureLookupIndexes() {
       (await collection('lookupItems')).createIndex({workspaceId:1,jobId:1,cnpj:1},{unique:true}),
       (await collection('lookupItems')).createIndex({workspaceId:1,jobId:1,state:1,nextAt:1}),
       (await collection('lookupItems')).createIndex({workspaceId:1,cnpj:1,checkedAt:-1}),
+      (await collection('lookupItems')).createIndex({workspaceId:1,state:1,checkedAt:-1,clientId:1}),
       (await collection('cnpjEntities')).createIndex({workspaceId:1,cnpj:1},{unique:true}),
       (await collection('cnpjStates')).createIndex({workspaceId:1,cnpj:1,fingerprint:1},{unique:true})
     ]);

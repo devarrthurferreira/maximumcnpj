@@ -1,4 +1,38 @@
-# Maximum CNPJ · v0.44.1
+# Maximum CNPJ · v0.45.0
+
+## Dashboard, setores e competências disponíveis — v0.45.0
+
+A visão geral reúne consultas realizadas nos últimos sete dias (incluindo hoje, no horário de Brasília), atividade diária, empresas recentes, análises, versões e acesso ao histórico completo paginado. O histórico pode ser filtrado por empresa, tipo ou busca e reúne consultas, entradas, saídas, revisões dos setores e versões salvas, mantendo o isolamento por workspace.
+
+O cartão MongoDB usa `dbStats` para medir dados e índices alocados no banco. O saldo depende de `MONGODB_STORAGE_LIMIT_BYTES`, um orçamento em bytes confirmado para esse banco. Sem limite configurado, mostra o uso conhecido e informa que o saldo ainda não pode ser calculado; sem permissão de estatísticas, informa indisponibilidade. Não presume plano Atlas ou disco livre do cluster como cota. A medição abrange o banco e não muda com o filtro de empresa.
+
+### Empresas e abertura da análise
+
+Cada empresa oferece **FISCAL | CONTÁBIL | HISTÓRICO**. A busca aceita código, nome e CNPJ formatado; a paginação mantém toda a carteira acessível. Pela lista de empresas, Fiscal abre diretamente os documentos de entradas/saídas, com atalho para a etapa RBT12. Contábil abre imediatamente os nove meses de janeiro a setembro para preenchimento das contas existentes, inclusive quando o trabalho ainda não foi iniciado. Abrir um setor retoma a análise existente sem substituir suas escolhas; somente operadores/administradores podem iniciar uma análise. Histórico abre os registros da empresa escolhida.
+
+Análises inicia na busca da empresa; a segunda etapa é escolher o setor. No Fiscal, os quatro regimes podem ser selecionados para a DRE. O DIFAL tem uma etapa própria e, para cada Simples selecionado, três controles independentes: **Incluir DIFAL neste regime**, **ENTRADA - antecipação das compras** e **SAÍDAS - vendas**. A etapa RBT12 contém somente a referência do Simples, com leitura do extrato pela seção 2.2; entradas e saídas ficam na etapa seguinte.
+
+### Regra comum de janeiro a setembro
+
+- O máximo são nove competências do mesmo ano, de janeiro a setembro; podem ser usadas de uma a nove competências disponíveis, inclusive não consecutivas.
+- A fonte Fiscal usa apenas a interseção comprovada das entradas e saídas. Os Simples também precisam de RBT12 confirmada para cada competência incluída. Meses sem cobertura não recebem receita ou compra zero por falta de documento.
+- No Contábil, meses inteiramente vazios ficam fora do cálculo. Um mês iniciado exige as contas completas; zero significa ausência de despesa explicitamente informada. Rascunhos continuam permitidos.
+- O relatório único usa os meses com fonte Fiscal e Contábil completo. A quantidade, a lista de meses incluídos e as exclusões acompanham a análise, o calendário e as exportações. O consolidado soma os meses efetivos, sem extrapolar para nove ou doze meses.
+- RBT12 conserva o significado de receita dos **12 meses anteriores** a cada competência, lida na seção 2.2 do PGDAS-D. Reduzir o número de meses simulados não reduz a janela histórica da RBT12.
+
+O motor mensal passa a `1.12.0-available-months`; a política mantém `JAN_SEP_V1` e captura `includedMonths` exatos em cada nova versão. Versões históricas preservam os valores e o calendário que já tinham; nenhuma migração recalcula snapshots antigos. Relatórios e versões salvas recebem cabeçalhos, filtros, estados vazios e ações mais claros.
+
+### Operação e reversão
+
+Nenhuma migração destrutiva é necessária. Índices de leitura são criados pela inicialização existente; documentos originais e históricos permanecem preservados. Para reverter a interface e novas gerações, publique o commit anterior, mantendo os dados. Versões de competências parciais exigem o leitor desta versão ou posterior para reprodução e exportação completas; não devem ser recalculadas em um motor anterior que exigia nove meses.
+
+### Verificação desta entrega
+
+Tipos, build e versões conferidos. Com Node 22.16, MongoDB 7 descartável e Python 3.12, passaram 382 testes de regras, 148 verificações de integração/projeção/competências e 172 testes Python/PDF/OCR. Os 196 cenários de navegador foram verificados: 194 na regressão completa e suas repetições direcionadas, mais dois novos casos de acesso direto por empresa. Cinco expectativas antigas de apresentação/versão foram adaptadas, preservando as verificações independentes de valores. A cobertura inclui empresa → setor, leitura/persistência do extrato, DIFAL por regime, competências não consecutivas, DRE única, histórico, permissões e visualização em 320/390 px. Dados sintéticos são usados na verificação; nenhuma conta ou documento real é alterado pelos testes.
+
+## Registro das entregas anteriores
+
+As descrições abaixo documentam o comportamento das versões anteriores. A regra vigente de competências disponíveis e o novo fluxo estão descritos acima.
 
 **Fluxo de abertura mais rápido (refinamento de 27/10/2026):** escolha da empresa, setor e regimes agora aparece numa única etapa; o setor Fiscal vem pré-selecionado e pode ser trocado. No Contábil, uma ação opcional permite preencher com R$ 0,00 somente os campos vazios das competências visíveis, após confirmação explícita; não altera valores lançados, dados de outros anos ou salva automaticamente.
 

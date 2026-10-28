@@ -16,7 +16,7 @@ export function buildMonthlyDre(result, year, reference=null, reportPeriod=null)
   const regimes=selection?result.regimes.filter(regime=>selection.selected.includes(regime.id)):result.regimes;
   const actual=result.method==='REPORT_MONTHS_V1';
   const analysisPeriod=actual&&result.analysisPeriod?.version==='JAN_SEP_V1'?structuredClone(assertCompleteAnalysisPeriod(result.analysisPeriod,result.monthlyResults)):null;
-  const months=MONTH_NAMES.slice(0,analysisPeriod?9:12).map((label,i)=>({number:i+1,label,period:`${year}-${String(i+1).padStart(2,'0')}`}));
+  const months=(analysisPeriod?analysisPeriod.includedMonths.map(sourceMonth=>Number(sourceMonth.slice(5))):MONTH_NAMES.map((_,index)=>index+1)).map(number=>({number,label:MONTH_NAMES[number-1],period:`${year}-${String(number).padStart(2,'0')}`}));
   let rbt12Schedule=null;
   if (hasSimples && actual && result.rbt12Schedule!=null) {
     const schedule=result.rbt12Schedule;

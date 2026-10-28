@@ -32,7 +32,11 @@ test('Dashboard and lookup history expose two groups while preserving source fai
   if(url.pathname.endsWith('/results')){selected=url.searchParams.get('status')||'';return r.fulfill({json:{items:[{cnpj:'11222333000181',submittedName:'EMPRESA FICTÍCIA',status:'NAO_CONFIRMADO',reportingStatus:'NAO_OPTANTE',reason:'Fonte sem resposta',occurrences:1}],total:1,page:1}});}
   return r.fulfill({json:{_id:jobId,clientCode:'1234',clientName:'EMPRESA DEMONSTRAÇÃO',fileName:'fixture.csv',status:'COMPLETED',createdAt:'2026-09-29T12:00:00Z',summary:{lines:3,unique:3,duplicates:0,invalid:0},resultSummary:{total:3,optants:1,nonOptants:1,unknown:1,optantsPercent:33.33,nonOptantsPercent:33.33,unknownPercent:33.33,reportingNonOptants:2,reportingNonOptantsPercent:66.67}}});
  });
- await page.goto('/');await expect(page.locator('.metric-label')).toHaveText(['CNPJs únicos','Simples','Não optante','Empresas ativas']);await expect(page.locator('.metric').nth(2)).toContainText('66,67%');
+ await page.goto('/');await expect(page.locator('.metric-label')).toHaveText(['Consultas nos últimos 7 dias','Empresas ativas','Análises','Versões salvas']);
+ await page.locator('.dashboard-enquadramento > summary').click();
+ await expect(page.locator('.dashboard-classification > div').nth(1)).toContainText('Não optante');
+ await expect(page.locator('.dashboard-classification > div').nth(1)).toContainText('66,67%');
+ await expect(page.locator('.dashboard-classification > div').nth(2)).toContainText('Não confirmados na fonte');
  await page.goto('/#job/'+jobId);await expect(page.locator('#result-status option')).toHaveText(['Todos os enquadramentos','Simples','Não optante']);await page.locator('#result-status').selectOption('NAO_OPTANTE');await page.locator('#result-filter').click();
  await expect.poll(()=>selected).toBe('NAO_OPTANTE');await expect(page.locator('#result-table')).toContainText('Não optante');await expect(page.locator('#result-table')).toContainText('Origem: não confirmado');await expect(page.locator('#result-table')).toContainText('Fonte sem resposta');
 });

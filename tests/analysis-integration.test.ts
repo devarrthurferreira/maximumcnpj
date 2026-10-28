@@ -71,7 +71,7 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       analysis=(await updateAnalysisSector(accountant,analysis.id,'accounting',{expectedSectorRevision:0,expectedConfigRevision:0,complete:false,data:{months:[blank]}})).analysis;
       assert.equal(analysis.accounting.data.months[0].salariesCents,null);
       await assert.rejects(updateAnalysisSector(accountant,analysis.id,'accounting',{expectedSectorRevision:1,expectedConfigRevision:0,complete:true,data:{months:[blank]}}),code('ANALYSIS_ACCOUNTING_INCOMPLETE'));
-      await assert.rejects(saveAccounting(accountingRows(['2026-01'])),code('ANALYSIS_ACCOUNTING_INCOMPLETE'));
+      await saveAccounting(accountingRows(['2026-01']));assert.equal(analysis.accounting.status,'COMPLETE');
       await saveAccounting(accountingRows(['2026-01']),false);assert.equal(analysis.accounting.status,'DRAFT');assert.equal(analysis.readiness.ready,false);
       await assert.rejects(updateAnalysisSector(accountant,analysis.id,'accounting',{expectedSectorRevision:0,expectedConfigRevision:0,complete:true,data:{months:accountingRows()}}),code('ANALYSIS_CONFLICT'));
       const fiscalRevision=analysis.fiscal.revision,accountingRevision=analysis.accounting.revision;
@@ -83,7 +83,7 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       assert.equal(analysis.fiscal.revision,fiscalRevision+1);assert.equal(analysis.accounting.revision,accountingRevision+1);
     });
 
-    await t.test('Fiscal liga fontes reais da empresa e a cobertura Contábil precisa ser exata',async()=>{
+    await t.test('Fiscal liga fontes reais da empresa e o Contábil confirma somente os meses preenchidos',async()=>{
       const imported=await importAnalysisGeneration(actor,analysis.id,{expectedSectorRevision:analysis.fiscal.revision,expectedConfigRevision:analysis.config.revision});
       analysis=imported.analysis;assert.equal(analysis.fiscal.data.generationId,imported.generationId);
       const captured=(await getGeneration(imported.generationId)).companies[0].difalPolicy!;
@@ -94,7 +94,7 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       await assert.rejects(saveFiscal(),code('SIMULATOR_INCOMPLETE'));
       await reports(imported.generationId,clientId);await saveFiscal();
       assert.equal(analysis.fiscal.status,'COMPLETE');assert.equal(analysis.fiscal.confirmation.generationId,imported.generationId);
-      assert.equal(analysis.readiness.ready,false);assert.ok(analysis.readiness.issues.some((issue:any)=>issue.code==='ACCOUNTING_MONTHS_MISMATCH'));
+      assert.equal(analysis.readiness.ready,false);assert.ok(analysis.readiness.issues.some((issue:any)=>issue.code==='ACCOUNTING_NOT_CONFIRMED'));
       await assert.rejects(generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:analysis.revision}),code('ANALYSIS_NOT_READY'));
       await saveAccounting();assert.equal(analysis.readiness.ready,true);assert.deepEqual(analysis.readiness.months,analysisMonthsForYear(2026));
       assert.equal(await(await collection('simplesExtractions')).countDocuments(scope()),0,'Sem Simples, não há extrato fabricado.');

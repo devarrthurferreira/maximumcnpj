@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {JAN_SEP_POLICY,JAN_SEP_MODEL_VERSION,analysisMonthsForYear,buildAnalysisPeriod,assertCompleteAnalysisPeriod,isAnalysisMonth} from '../public/analysis-period.js';
+import {JAN_SEP_POLICY,JAN_SEP_MODEL_VERSION,analysisMonthsForYear,buildAnalysisPeriod,assertCompleteAnalysisPeriod,selectAnalysisPeriod,isAnalysisMonth} from '../public/analysis-period.js';
 import {calculateMonthlySimulation,baselineMonth,MONTHLY_MODEL_VERSION} from '../public/simulator-monthly.js';
 import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
 import {selectOperationMonths,aggregateOperationAudit} from '../src/simulation-monthly-source.ts';
@@ -28,9 +28,9 @@ test('jan–set aceita fontes de 9 ou 12 meses sem prorratear e registra o trime
 
 test('cobertura exige os dois relatórios e nunca transforma ausência externa em zero confirmado',()=>{
   const selected=buildAnalysisPeriod(period('2026-02','2026-12'),nine);
-  assert.equal(selected.complete,false);assert.deepEqual(selected.missingMonths,['2026-01']);
+  assert.equal(selected.complete,true);assert.equal(selected.months,8);assert.deepEqual(selected.missingMonths,['2026-01']);
   assert.equal(selected.includedMonths.length,8);assert.ok(!selected.includedMonths.includes('2026-01'));
-  assert.throws(()=>assertCompleteAnalysisPeriod(selected),/2026-01/);
+  assert.doesNotThrow(()=>assertCompleteAnalysisPeriod(selected));
   const onlyQuarter=buildAnalysisPeriod(period('2026-10','2026-12'),period('2026-10','2026-12'));
   assert.deepEqual(onlyQuarter.includedMonths,[]);assert.deepEqual(onlyQuarter.missingMonths,analysisMonthsForYear(2026));
 });
@@ -79,7 +79,7 @@ test('cálculo Jan–Set preserva mensalidade, RBT12 de doze meses e limites int
   assert.equal(computed.result.memory.find((entry:any)=>entry.id==='sublimit').value,3600000);
   assert.equal(schedule.rows.length,9);assert.ok(schedule.rows.every(row=>row.window.length===12&&row.rbt12Cents===330000000));
   assert.deepEqual(computed.engineInput.months.map((entry:any)=>entry.input.rbt12),Array(9).fill(3300000));
-  assert.throws(()=>calculateMonthlySimulation(draft,imported,imported.map(row=>baselineMonth(row)),'sales',null,selected),/exatamente janeiro a setembro/);
+  assert.throws(()=>calculateMonthlySimulation(draft,imported,imported.map(row=>baselineMonth(row)),'sales',null,selected),/exatamente as competências incluídas/);
   const legacy=calculateMonthlySimulation(draft,imported,imported.map(row=>baselineMonth(row)),'sales');
   assert.equal(legacy.result.version,MONTHLY_MODEL_VERSION);assert.equal(legacy.result.annualRevenue,78000);
   assert.equal(Object.hasOwn(legacy.result,'analysisPeriod'),false);assert.deepEqual({reports,inputs,selected,schedule},before);
@@ -95,13 +95,37 @@ test('despesas fora de Jan–Set permanecem salvas sem bloquear conclusão e dup
   assert.throws(()=>parseAccountingData({months:[rows[9]]},true,{periodPolicy:JAN_SEP_POLICY,sourceYear:2026}),/despesas/);
 });
 
-test('conclusão Contábil nova exige os nove meses mesmo antes do Fiscal, com rascunho parcial permitido',()=>{
+test('conclusão Contábil aceita menos meses completos antes do Fiscal e exclui linhas inteiramente vazias',()=>{
   const months=analysisMonthsForYear(2026).map(sourceMonth=>({sourceMonth,...Object.fromEntries(ACCOUNTING_FIELDS.map(field=>[field,0]))}));
   for(const count of [1,8]){
     const data={months:months.slice(0,count)};
     assert.deepEqual(parseAccountingData(data,false,{periodPolicy:JAN_SEP_POLICY}),data);
-    assert.throws(()=>parseAccountingData(data,true,{periodPolicy:JAN_SEP_POLICY}),(error:any)=>error.code==='ANALYSIS_ACCOUNTING_INCOMPLETE');
+    assert.deepEqual(parseAccountingData(data,true,{periodPolicy:JAN_SEP_POLICY}),data);
     assert.deepEqual(parseAccountingData(data,true),data,'Contrato legado sem flag permanece compatível.');
   }
   assert.deepEqual(parseAccountingData({months},true,{periodPolicy:JAN_SEP_POLICY}),{months});
+});
+
+
+test('seleção não contígua conserva cobertura e soma somente meses escolhidos, sem fabricar zeros',()=>{
+  const selected=selectAnalysisPeriod(buildAnalysisPeriod(nine,nine),['2026-01','2026-03']);
+  assert.equal(selected.months,2);assert.deepEqual(selected.includedMonths,['2026-01','2026-03']);
+  assert.deepEqual(selected.availableMonths,analysisMonthsForYear(2026));
+  assert.equal(selected.missingMonths.length,7);assert.doesNotThrow(()=>assertCompleteAnalysisPeriod(selected));
+  const reports=selected.includedMonths.map(sourceMonth=>({sourceMonth,month:Number(sourceMonth.slice(5)),
+    fields:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:100000,purchasesOptantCents:0,purchasesNonOptantCents:10000,serviceRevenueCents:0},salesLines:1,purchaseLines:1,difal:null}));
+  const computed=calculateMonthlySimulation(draft,reports,reports.map(row=>baselineMonth(row,{salaries:100})),'sales',null,selected);
+  assert.equal(computed.result.annualRevenue,2000);assert.equal(computed.result.monthlyResults.length,2);
+  assert.equal(computed.result.regimes[0].dre.salaries,-200);
+  assert.throws(()=>selectAnalysisPeriod(selected,['2026-02']),/disponíveis/);
+  assert.throws(()=>assertCompleteAnalysisPeriod({...selected,months:9}),/competência confirmada/);
+});
+
+test('linhas contábeis vazias são opcionais mas uma linha parcialmente preenchida não vira zero',()=>{
+  const blank=(sourceMonth:string)=>({sourceMonth,...Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,null]))});
+  const filled={...blank('2026-01'),...Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,0]))};
+  const data={months:[filled,blank('2026-02')]};
+  assert.deepEqual(parseAccountingData(data,true,{periodPolicy:JAN_SEP_POLICY,sourceYear:2026}),data);
+  assert.throws(()=>parseAccountingData({months:[filled,{...blank('2026-02'),rentCents:100}]},true,{periodPolicy:JAN_SEP_POLICY}),/Preencha todas/);
+  assert.throws(()=>parseAccountingData({months:[blank('2026-01')]},true,{periodPolicy:JAN_SEP_POLICY}),/Preencha todas/);
 });

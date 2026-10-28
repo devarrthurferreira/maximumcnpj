@@ -77,25 +77,28 @@ export function accountingSummary(months=[],expectedMonths=[]) {
   const keys=[...new Set([...monthsById.keys(),...expected])].sort();
   const rows=keys.map(sourceMonth=>{
     const row=monthsById.get(sourceMonth),values=ACCOUNTING_FIELDS.map(([key])=>row?.[key]);
-    const filled=values.filter(validCents),missingFields=ACCOUNTING_FIELDS.filter(([key])=>!validCents(row?.[key])).map(([key])=>key);
-    const enteredCents=sum(filled),complete=missingFields.length===0&&enteredCents!==null;
+    const filled=values.filter(validCents),excluded=filled.length===0;
+    const missingFields=excluded?[]:ACCOUNTING_FIELDS.filter(([key])=>!validCents(row?.[key])).map(([key])=>key);
+    const enteredCents=sum(filled),complete=!excluded&&missingFields.length===0&&enteredCents!==null;
     return {sourceMonth,present:!!row,expected:expected.includes(sourceMonth),filledFields:filled.length,missingFields,
-      enteredCents,totalCents:complete?enteredCents:null,complete};
+      enteredCents,totalCents:complete?enteredCents:null,complete,excluded};
   });
+  const included=rows.filter(row=>!row.excluded),includedIds=included.map(row=>row.sourceMonth);
   const categories=ACCOUNTING_FIELDS.map(([key,label])=>{
-    const values=keys.map(month=>monthsById.get(month)?.[key]),filled=values.filter(validCents),enteredCents=sum(filled);
-    const missingMonths=keys.filter(month=>!validCents(monthsById.get(month)?.[key]));
-    const complete=keys.length>0&&missingMonths.length===0&&enteredCents!==null;
+    const values=includedIds.map(month=>monthsById.get(month)?.[key]),filled=values.filter(validCents),enteredCents=sum(filled);
+    const missingMonths=includedIds.filter(month=>!validCents(monthsById.get(month)?.[key]));
+    const complete=includedIds.length>0&&missingMonths.length===0&&enteredCents!==null;
     return {key,label,filledMonths:filled.length,missingMonths,enteredCents,totalCents:complete?enteredCents:null,complete};
   });
-  const filledFields=rows.reduce((total,row)=>total+row.filledFields,0);
-  const enteredCents=sum(rows.map(row=>row.enteredCents).filter(value=>value!==null));
+  const filledFields=included.reduce((total,row)=>total+row.filledFields,0);
+  const enteredCents=sum(included.map(row=>row.enteredCents).filter(value=>value!==null));
   const missingMonths=expected.filter(month=>!monthsById.has(month));
-  const extraMonths=expected.length?entries.map(row=>row.sourceMonth).filter(month=>!expected.includes(month)):[];
-  const complete=rows.length>0&&rows.every(row=>row.complete)&&extraMonths.length===0&&enteredCents!==null;
-  return {rows,categories,monthCount:rows.length,enteredMonths:entries.length,expectedMonths:expected,
-    completeMonths:rows.filter(row=>row.complete).length,filledFields,missingFields:rows.length*ACCOUNTING_FIELDS.length-filledFields,
-    missingMonths,extraMonths,enteredCents,totalCents:complete?enteredCents:null,complete};
+  const extraMonths=expected.length?includedIds.filter(month=>!expected.includes(month)):[];
+  const complete=included.length>0&&included.every(row=>row.complete)&&extraMonths.length===0&&enteredCents!==null;
+  return {rows,categories,monthCount:rows.length,enteredMonths:included.length,expectedMonths:expected,
+    completeMonths:rows.filter(row=>row.complete).length,filledFields,missingFields:included.length*ACCOUNTING_FIELDS.length-filledFields,
+    missingMonths,extraMonths,includedMonths:rows.filter(row=>row.complete).map(row=>row.sourceMonth),
+    excludedMonths:rows.filter(row=>row.excluded).map(row=>row.sourceMonth),enteredCents,totalCents:complete?enteredCents:null,complete};
 }
 
 function issueAction(issue,analysis) {

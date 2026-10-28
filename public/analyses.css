@@ -746,3 +746,18 @@ body:has(#analysis-delete-dialog[open]){overflow:hidden}
 .analysis-accounting-quickbar p{font-size:12px;line-height:1.6;color:var(--analysis-muted);margin:0}
 .analysis-accounting-quickbar button{flex:none;font-size:12px}
 @media(max-width:650px){.analysis-accounting-quickbar{align-items:stretch;flex-direction:column}.analysis-accounting-quickbar button{width:100%;white-space:normal}}
+
+/* Each fiscal stage has its own content; the nine accounting rows remain easy to scan. */
+#analysis-fiscal-form .analysis-config-year{display:grid;gap:6px;max-width:220px;margin-top:20px}
+#analysis-fiscal-form .analysis-config-year select{min-height:44px}
+#analysis-new-form [data-wizard-step=company] .analysis-company-results{max-height:46vh}
+#analysis-new-form [data-wizard-step=sector] .analysis-new-sector label{min-height:86px}
+#analysis-new-form [data-wizard-step=sector] .analysis-new-sector strong{font-size:17px}
+.analysis-expense-month-total strong{white-space:normal;text-align:right}
+@media(max-width:600px){
+ .analysis-wizard[data-wizard-kind=fiscal] .analysis-wizard-steps{grid-template-columns:repeat(4,minmax(0,1fr))}
+ .analysis-wizard[data-wizard-kind=fiscal] .analysis-wizard-steps button{flex-direction:column;gap:3px;text-align:center;padding:5px 2px}
+ .analysis-wizard[data-wizard-kind=fiscal] .analysis-wizard-steps strong{font-size:10px;overflow-wrap:anywhere}
+ .analysis-wizard[data-wizard-kind=fiscal] .analysis-wizard-counter{display:none}
+ #analysis-new-form [data-wizard-step=sector] .analysis-new-sector label{min-height:76px}
+}

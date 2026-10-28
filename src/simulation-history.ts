@@ -9,7 +9,7 @@ import {JAN_SEP_POLICY,assertCompleteAnalysisPeriod} from '../public/analysis-pe
 import {readRbt12Reference, rbt12InputSource} from './simulation-extrato.ts';
 import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
-import { generationSimulator } from './simulator-store.ts';
+import { generationSimulator,selectAnalysisSourceMonths } from './simulator-store.ts';
 import { assertGenerationNotDeleted, assertLookupNotDeleted } from './generation-deletion.ts';
 import { CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
   SIMULATION_VALUE_FIELDS, parseDifalPolicy, upgradeDifalPolicy } from '../public/simulator-engine.js';
@@ -61,7 +61,7 @@ export function validateSimulationRequest(input: unknown) {
   need(typeof input.reportMonths === 'number' && Number.isInteger(input.reportMonths) && input.reportMonths >= 1 && input.reportMonths <= 12,
     'Informe de 1 a 12 meses nos relatórios.');
   need(input.periodPolicy===undefined||input.periodPolicy===JAN_SEP_POLICY,'Política de período desconhecida.');
-  need(input.periodPolicy!==JAN_SEP_POLICY||input.reportMonths===9,'A análise fixa deve conter janeiro a setembro, totalizando nove meses.');
+  need(input.periodPolicy!==JAN_SEP_POLICY||input.reportMonths<=9,'A análise deve conter de uma a nove competências disponíveis entre janeiro e setembro.');
   need(input.periodConfirmed === true, 'Confirme que os relatórios correspondem ao mesmo período.');
   const title = input.title === undefined ? null : text(input.title, 160);
   object(input.monthlyGroups, GROUPS);
@@ -226,8 +226,12 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
     need(parent.clientId === clientId && (analysis || parent.generationId === generationId),
       'A simulação original precisa pertencer à mesma empresa e geração.', 409, 'SIMULATION_PARENT');
   }
-  const source = analysis?.source || reprocessing?.source || await generationSimulator(generationId, clientId,
+  let source = analysis?.source || reprocessing?.source || await generationSimulator(generationId, clientId,
     validated.periodPolicy?{periodPolicy:validated.periodPolicy}:{});
+  if(source.analysisPeriod&&Array.isArray(validated.monthlyInputs)&&validated.monthlyInputs.length<source.monthlyReports.length){
+    try{source=selectAnalysisSourceMonths(source,validated.monthlyInputs.map((row:any)=>row?.sourceMonth));}
+    catch(error){throw new AppError(400,'SIMULATION_MONTHS',error instanceof Error?error.message:'As competências selecionadas são inválidas.');}
+  }
   if(validated.periodPolicy===JAN_SEP_POLICY||source.analysisPeriod){
     try{assertCompleteAnalysisPeriod(source.analysisPeriod,source.monthlyReports);}
     catch(error){throw new AppError(422,'ANALYSIS_PERIOD_INCOMPLETE',error instanceof Error?error.message:'Complete janeiro a setembro nos dois relatórios.');}

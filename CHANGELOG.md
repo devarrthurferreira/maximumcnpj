@@ -1,9 +1,19 @@
 # Histórico de alterações
 
-- Abertura da análise em uma única etapa (empresa, setor e regimes); links legados para a etapa antiga continuam válidos.
-- Contábil oferece preenchimento opcional dos campos vazios com R$ 0,00 mediante confirmação, sem alterar valores já informados nem salvar automaticamente.
+## [0.45.0] — 2026-10-28
+
+- Adiciona dashboard com consultas dos últimos sete dias, uso MongoDB e saldo quando o orçamento do banco estiver configurado, empresas recentes e histórico completo paginado e filtrável.
+- Empresas ganha acessos FISCAL, CONTÁBIL e HISTÓRICO, busca por CNPJ formatado e paginação sem truncar a carteira em 200 registros. Fiscal abre documentos e atalho RBT12; Contábil abre imediatamente os nove meses, criando ou retomando o trabalho da empresa com autorização.
+- Análises abre pela empresa, seguida do setor; Fiscal separa regimes, DIFAL por Simples, RBT12/OCR seção 2.2 e entradas/saídas.
+- Aceita uma a nove competências disponíveis entre janeiro e setembro; meses contábeis vazios são excluídos e meses iniciados exigem contas completas. O relatório único usa a interseção validada, sem extrapolação.
+- Captura os meses efetivos no resultado e ajusta DRE, DIFAL, calendário, CSV e PDF para competências parciais ou não consecutivas, preservando snapshots históricos e a janela própria de 12 meses da RBT12.
+- Melhora apresentação, filtros e estados de Relatórios e Versões salvas.
+- Atualiza motor mensal para `1.12.0-available-months` e alinha versões Node/Python; inclui a declaração TypeScript RBT12 ausente na entrega anterior.
 
 ## [0.44.1] — 2026-10-27
+
+- Abertura da análise em uma única etapa (empresa, setor e regimes); links legados para a etapa antiga continuam válidos.
+- Contábil oferece preenchimento opcional dos campos vazios com R$ 0,00 mediante confirmação, sem alterar valores já informados nem salvar automaticamente.
 
 - RBT12 mensal da análise limitada a janeiro–setembro (9 competências) com base móvel de 12 meses anteriores obtidos da seção 2.2, preservando as receitas históricas requeridas.
 - Mensagem de falha discrimina os meses históricos faltantes, evitando tratar falta de RBT12 como erro dos documentos de entradas e saídas já lidos.

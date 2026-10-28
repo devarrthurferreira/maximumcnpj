@@ -4,8 +4,8 @@ import {WIZARD_STEPS,wizardSteps,wizardStep,initialWizardStep,normalizeWizardSte
 
 const ids=steps=>steps.map(step=>step.id);
 
-test('abertura e configurações em tela única, Fiscal em duas etapas',()=>{
-  const expected={new:['setup'],fiscal:['documents','tax'],accounting:['values'],config:['choices']};
+test('abertura Empresa → Setor e Fiscal com regimes, DIFAL, RBT12 e documentos',()=>{
+  const expected={new:['company','sector'],fiscal:['regimes','difal','rbt12','documents'],accounting:['values'],config:['choices']};
   assert.deepEqual(Object.keys(WIZARD_STEPS),Object.keys(expected));
   for(const [kind,steps] of Object.entries(expected)){
     assert.deepEqual(ids(wizardSteps(kind)),steps);
@@ -15,14 +15,14 @@ test('abertura e configurações em tela única, Fiscal em duas etapas',()=>{
 });
 
 test('retomada e consulta conservam as mesmas etapas, sem decidir permissões ou exigência de extrato',()=>{
-  assert.deepEqual(ids(wizardSteps('new',{resume:true})),['company','setup']);
-  assert.deepEqual(ids(wizardSteps('new',{resume:false})),['company','setup']);
+  assert.deepEqual(ids(wizardSteps('new',{resume:true})),['company','sector']);
+  assert.deepEqual(ids(wizardSteps('new',{resume:false})),['company','sector']);
   for(const kind of Object.keys(WIZARD_STEPS)){
     assert.deepEqual(wizardSteps(kind,{resume:true}),wizardSteps(kind));
     assert.deepEqual(wizardSteps(kind,{resume:true,canWrite:false}),wizardSteps(kind));
   }
   // A seleção dos regimes não remove a etapa de opções fiscais.
-  assert.deepEqual(ids(wizardSteps('fiscal',{regimeSelection:{selected:['presumed','actual']}})),['documents','tax']);
+  assert.deepEqual(ids(wizardSteps('fiscal',{regimeSelection:{selected:['presumed','actual']}})),['regimes','difal','rbt12','documents']);
 });
 
 test('descritores conciliam IDs, índices, numeração e extremos de cada fluxo',()=>{
@@ -36,9 +36,9 @@ test('descritores conciliam IDs, índices, numeração e extremos de cada fluxo'
         isFirst:index===0,isLast:index===steps.length-1,steps});
     });
   }
-  assert.equal(wizardStep('new').id,'setup');
-  assert.equal(wizardStep('new','setup',{resume:true}).next,null);
-  assert.equal(wizardStep('new','setup',{resume:true}).previous,null);
+  assert.equal(wizardStep('new').id,'company');
+  assert.equal(wizardStep('new','sector',{resume:true}).next,null);
+  assert.equal(wizardStep('new','sector',{resume:true}).previous,'company');
   for(const kind of ['accounting','config']){
     const descriptor=wizardStep(kind);
     assert.equal(descriptor.total,1);assert.equal(descriptor.isFirst,true);assert.equal(descriptor.isLast,true);
@@ -64,23 +64,23 @@ test('fluxos, IDs e índices desconhecidos são rejeitados sem coerção ou limi
 });
 
 test('entrada inicial considera documentos no Fiscal e abre sempre os campos únicos nos outros setores',()=>{
-  assert.equal(initialWizardStep('new').id,'setup');
-  assert.equal(initialWizardStep('new',{resume:true,hasDocuments:true,hasMonths:true}).id,'setup');
+  assert.equal(initialWizardStep('new').id,'company');
+  assert.equal(initialWizardStep('new',{resume:true,hasDocuments:true,hasMonths:true}).id,'company');
   assert.equal(initialWizardStep('config',{hasDocuments:true,hasMonths:true}).id,'choices');
-  assert.equal(initialWizardStep('fiscal').id,'documents');
-  assert.equal(initialWizardStep('fiscal',{hasDocuments:true}).id,'tax');
+  assert.equal(initialWizardStep('fiscal').id,'regimes');
+  assert.equal(initialWizardStep('fiscal',{hasDocuments:true}).id,'regimes');
   assert.equal(initialWizardStep('accounting').id,'values');
   assert.equal(initialWizardStep('accounting',{hasMonths:false}).id,'values');
   assert.equal(initialWizardStep('accounting',{hasMonths:true}).id,'values');
 });
 
 test('atalho explícito tem prioridade, incluindo índice zero, e permanece estrito na retomada',()=>{
-  assert.equal(initialWizardStep('fiscal',{hasDocuments:true,preferredStep:0}).id,'documents');
-  assert.equal(initialWizardStep('fiscal',{preferredStep:'tax'}).id,'tax');
+  assert.equal(initialWizardStep('fiscal',{hasDocuments:true,preferredStep:0}).id,'regimes');
+  assert.equal(initialWizardStep('fiscal',{preferredStep:'rbt12'}).id,'rbt12');
   assert.equal(initialWizardStep('accounting',{preferredStep:'values'}).id,'values');
-  assert.equal(initialWizardStep('new',{resume:true,preferredStep:'setup'}).id,'setup');
-  assert.equal(initialWizardStep('new',{resume:true,preferredStep:0}).id,'setup');
-  for(const step of ['sector','regimes','review',1,2,'1','',false]){
+  assert.equal(initialWizardStep('new',{resume:true,preferredStep:'sector'}).id,'sector');
+  assert.equal(initialWizardStep('new',{resume:true,preferredStep:0}).id,'company');
+  for(const step of ['setup','regimes','review',2,'1','',false]){
     assert.throws(()=>initialWizardStep('new',{resume:true,preferredStep:step}),Error);
   }
   assert.throws(()=>initialWizardStep('accounting',{preferredStep:'months'}),Error);
@@ -106,14 +106,14 @@ test('definições são profundamente imutáveis e descritores não compartilham
 test('voltar no Fiscal não exige dados nem altera um rascunho',()=>{
   const draft=Object.freeze({rbt12:null,months:Object.freeze([])});
   const options=Object.freeze({resume:false,draft});
-  const tax=wizardStep('fiscal','tax',options);
-  assert.equal(wizardStep('new','setup',options).previous,null);
-  assert.equal(wizardStep('fiscal',tax.previous,options).id,'documents');
+  const tax=wizardStep('fiscal','rbt12',options);
+  assert.equal(wizardStep('new','company',options).previous,null);
+  assert.equal(wizardStep('fiscal',tax.previous,options).id,'difal');
   assert.deepEqual(draft,{rbt12:null,months:[]});
 });
 
 test('normalização aceita IDs atuais e converte somente os aliases legados do respectivo fluxo',()=>{
-  const aliases={new:{company:'setup',sector:'setup',regimes:'setup',review:'setup'},fiscal:{review:'tax'},
+  const aliases={new:{setup:'company',regimes:'sector',review:'sector'},fiscal:{tax:'rbt12',review:'documents'},
     accounting:{months:'values',review:'values'},config:{review:'choices'}};
   for(const [kind,legacy] of Object.entries(aliases)){
     for(const {id} of wizardSteps(kind))assert.equal(normalizeWizardStep(kind,id),id);

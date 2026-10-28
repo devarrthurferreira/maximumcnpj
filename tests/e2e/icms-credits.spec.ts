@@ -60,8 +60,8 @@ async function openCompleteDre(page:Page){
 }
 async function assertAnnual(page:Page){
   await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');
-  await page.locator('#dre-regime').selectOption('presumed');
   await openCompleteDre(page);
+  await page.locator('#dre-regime').selectOption('presumed');
   const main=page.locator('#dre-demonstrativo [data-simulation-lazy="dre"] > .dre-table-wrap');
   const footer=page.locator('#dre-demonstrativo [data-icms-reconciliation="dre"]');
   await expect(footer).toHaveCount(1);
@@ -166,7 +166,7 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
 
   // Independent arithmetic: 1,000×18% + 2,000×12% = 420; eligible purchases
   // 300×18% + 500×12% = 114; returns 100×18% + 200×12% = 42; due = 264.
-  expect(saved.modelVersion).toBe('1.11.0-jan-sep');
+  expect(saved.modelVersion).toBe('1.12.0-available-months');
   expect(saved.analysisPeriod).toMatchObject({version:'JAN_SEP_V1',months:9,complete:true});
   expect(saved.monthlyDre.version).toBe('DRE_CALENDAR_V4');
   expect(saved.result.method).toBe('REPORT_MONTHS_V1');expect(saved.result.annualRevenue).toBe(2700);

@@ -1,4 +1,5 @@
 import { collection, scope } from './store.ts';
+import {dashboardDetails, activityHistory} from './dashboard.ts';
 import { need, integer, escapeRegex } from './security.ts';
 import { normalizeCnpj, reportingStatus } from './domain.ts';
 import { routePurchases } from './purchase-http.ts';
@@ -30,7 +31,7 @@ async function dashboard(clientId:string){
   const values=await (await collection('lookupItems')).aggregate([{$match:{...q,state:'DONE'}},{$lookup:{from:'lookupJobs',localField:'jobId',foreignField:'_id',as:'job'}},{$match:{'job.status':'COMPLETED'}},{$sort:{cnpj:1,checkedAt:-1,jobId:-1}},{$group:{_id:'$cnpj',status:{$first:'$status'}}},{$group:{_id:'$status',count:{$sum:1}}}],{allowDiskUse:true,maxTimeMS:20000}).toArray();
   const get=(s:string)=>values.find(v=>v._id===s)?.count||0;const optants=get('OPTANTE'),nonOptants=get('NAO_OPTANTE'),unknown=get('NAO_CONFIRMADO'),reportingNonOptants=nonOptants+unknown,total=optants+nonOptants+unknown;
   const p=(v:number)=>total?Math.round(v/total*10000)/100:0;
-  return {metrics:{total,optants,nonOptants,unknown,optantsPercent:p(optants),nonOptantsPercent:p(nonOptants),unknownPercent:p(unknown),coverage:p(optants+nonOptants),reportingNonOptants,reportingNonOptantsPercent:total?(10000-Math.round(p(optants)*100))/100:0,unknownIncludedInNonOptants:true},recent:(await history(clientId,1,'')).items.slice(0,8),entities:await (await collection('cnpjEntities')).countDocuments(scope()),clientCount:await (await collection('clients')).countDocuments(scope({active:true})),source:'Minha Receita',sourceReferenceDate:null};
+  return {...await dashboardDetails(clientId),metrics:{total,optants,nonOptants,unknown,optantsPercent:p(optants),nonOptantsPercent:p(nonOptants),unknownPercent:p(unknown),coverage:p(optants+nonOptants),reportingNonOptants,reportingNonOptantsPercent:total?(10000-Math.round(p(optants)*100))/100:0,unknownIncludedInNonOptants:true},recent:(await history(clientId,1,'')).items.slice(0,8),entities:await (await collection('cnpjEntities')).countDocuments(scope()),clientCount:await (await collection('clients')).countDocuments(scope({active:true})),source:'Minha Receita',sourceReferenceDate:null};
 }
 export async function routeV4(actor:LookupActor,method:string,url:URL,input:any){
   await ensureLookupIndexes();
@@ -43,6 +44,7 @@ export async function routeV4(actor:LookupActor,method:string,url:URL,input:any)
   if(path==='/clients'&&method==='GET')return listCatalog();
   if(path==='/clients/import'&&method==='POST')return importCatalog(actor,input.rows);
   if(path==='/dashboard'&&method==='GET')return dashboard(client);
+  if(path==='/activity'&&method==='GET')return activityHistory({clientId:client,page:p,search:url.searchParams.get('search')||'',kind:url.searchParams.get('kind')||''});
   if(path==='/history'&&method==='GET')return history(client,p,url.searchParams.get('cnpj')||'');
   if(path==='/lookups'&&method==='POST')return createLookup(actor,input);
   const match=path.match(/^\/lookups\/([a-f0-9-]{36})(?:\/(rows|finalize|process|cancel|repeat|results|progress|recheck))?$/);

@@ -9,7 +9,7 @@ import {monthlyProjection, monthlyDifal, MONTHLY_FIELDS} from '../public/simulat
 import {monthlyReportSource, aggregateOperationAudit, type OperationMonthlyReport} from './simulation-monthly-source.ts';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.ts';
 import type {generationSimulator} from './simulator-store.ts';
-import {JAN_SEP_POLICY,buildAnalysisPeriod,assertCompleteAnalysisPeriod} from '../public/analysis-period.js';
+import {JAN_SEP_POLICY,buildAnalysisPeriod,selectAnalysisPeriod,assertCompleteAnalysisPeriod} from '../public/analysis-period.js';
 import {aggregateCommercialComposition} from './simulation-commercial-composition.ts';
 
 type Source = Awaited<ReturnType<typeof generationSimulator>>;
@@ -41,7 +41,8 @@ async function originalSource(snapshot: Doc, purchases: Summary, sales: Summary)
   }
   if(source.analysisPeriod){
     let period;
-    try{period=buildAnalysisPeriod(purchases.period,sales.period);assertCompleteAnalysisPeriod(period);}
+    try{period=buildAnalysisPeriod(purchases.period,sales.period);assertCompleteAnalysisPeriod(period);
+      if(source.analysisPeriod.availableMonths)period=selectAnalysisPeriod(period,source.analysisPeriod.includedMonths);}
     catch(error){check(false,error instanceof Error?error.message:'O período de janeiro a setembro não concilia com as fontes.');}
     check(isDeepStrictEqual(source.analysisPeriod,period)&&isDeepStrictEqual(snapshot.analysisPeriod,period),
       'O período fixo congelado diverge da cobertura dos relatórios originais.');
@@ -96,9 +97,9 @@ async function originalSource(snapshot: Doc, purchases: Summary, sales: Summary)
     }
   }
   if (source.periodBasis === 'COLUMN_H') {
-    if(source.analysisPeriod)check(source.reportMonths===9&&snapshot.reportMonths===9&&isDeepStrictEqual(source.period,
-      {startDate:`${source.analysisPeriod.startMonth}-01`,endDate:`${source.analysisPeriod.endMonth}-30`,startMonth:source.analysisPeriod.startMonth,
-        endMonth:source.analysisPeriod.endMonth,months:9,observedMonths:source.analysisPeriod.includedMonths.length,missingMonths:[]}),
+    if(source.analysisPeriod)check(source.reportMonths===source.analysisPeriod.months&&snapshot.reportMonths===source.analysisPeriod.months&&isDeepStrictEqual(source.period,
+      {startDate:`${source.analysisPeriod.startMonth}-01`,endDate:new Date(Date.UTC(Number(source.analysisPeriod.endMonth.slice(0,4)),Number(source.analysisPeriod.endMonth.slice(5)),0)).toISOString().slice(0,10),startMonth:source.analysisPeriod.startMonth,
+        endMonth:source.analysisPeriod.endMonth,months:source.analysisPeriod.months,observedMonths:source.analysisPeriod.includedMonths.length,missingMonths:source.analysisPeriod.missingMonths}),
     'As competências selecionadas divergem do período fixo congelado.');
     else check(source.period && source.reportMonths === snapshot.reportMonths && source.period.months === snapshot.reportMonths &&
       isDeepStrictEqual(source.period, purchases.period) && sales.period &&
