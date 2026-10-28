@@ -10,7 +10,7 @@ from http.cookies import SimpleCookie, CookieError
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-VERSION = '0.47.0'
+VERSION = '0.48.0'
 STATUSES = {'ALL': 'Todos os CNPJs', 'OPTANTE': 'Optantes pelo Simples',
             'NAO_OPTANTE': 'Não optantes', 'NAO_CONFIRMADO': 'Não confirmados'}
 REPORTING_STATUSES = {'ALL': 'Todos os CNPJs', 'OPTANTE': 'Simples', 'NAO_OPTANTE': 'Não optante'}
@@ -131,7 +131,24 @@ def session_hash(headers, env=None):
 def validate(payload):
     require(isinstance(payload, dict))
     action = payload.get('action', 'summary')
-    require(action in ('jobs', 'summary', 'rows', 'pdf', 'csv', 'generation-pdf'))
+    require(isinstance(action, str) and action in ('jobs', 'summary', 'rows', 'pdf', 'csv', 'generation-pdf', 'dre-pdf'))
+    if action == 'dre-pdf':
+        # A download identifies a frozen server snapshot; financial values are never
+        # accepted from a browser, including an apparently complete presentation.
+        require(set(payload) <= {'action', 'simulationId', 'period', 'regimeId', 'showPercent'},
+                message='Envie somente a versão salva e as opções do PDF da DRE.')
+        simulation = payload.get('simulationId')
+        require(isinstance(simulation, str) and re.fullmatch(
+            r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', simulation),
+            message='Selecione uma versão salva para baixar a DRE.')
+        period = payload.get('period', 'complete')
+        regime = payload.get('regimeId')
+        show_percent = payload.get('showPercent', True)
+        require(isinstance(period, str) and period in ('complete', 'annual', 'monthly'))
+        require(regime is None or isinstance(regime, str) and regime in ('pure', 'hybrid', 'presumed', 'actual'))
+        require(type(show_percent) is bool)
+        return dict(action=action, simulationId=simulation, period=period,
+                    regimeId=regime, showPercent=show_percent)
     if action == 'generation-pdf':
         generation = payload.get('generationId')
         part = payload.get('part', 1)

@@ -68,6 +68,10 @@
 .dre-export-actions svg { width:17px; height:17px; flex:none; }
 .dre-visual .dre-export-actions .dre-export-primary { background:#750207; border-color:#750207; color:#fff; }
 .dre-visual .dre-export-actions .dre-export-primary:hover { background:#600206; }
+.dre-export-options .dre-pdf-status { flex-basis:100%; margin:0; font-size:12px; line-height:1.6; color:#667085; overflow-wrap:anywhere; }
+.dre-export-options .dre-pdf-status[data-state=error] { color:#922e45; }
+.dre-visual .dre-export-actions button[aria-busy=true] { cursor:wait; }
+.dre-visual .dre-export-actions button:disabled { opacity:.65; }
 .dre-quick-nav { display:flex; gap:6px; flex-wrap:wrap; margin:18px 0 0; padding:0; }
 .dre-quick-nav button { min-height:44px; padding:8px 13px; border-radius:8px; border:1px solid #e5e7ec; background:#f6f7f9; color:#344054; font-size:12px; font-weight:600; }
 .dre-quick-nav button:last-child { color:#1b6553; background:#f0f7f3; border-color:#cbded5; }

@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.48.0] — 2026-10-28
+
+- Download da DRE em PDF único gerado em Python/ReportLab com o timbrado Luna, paleta verde-petróleo/coral, gráficos vetoriais, fontes incorporadas e navegação entre seções.
+- Visão executiva, comparativos de regimes, DRE completa, análise vertical, evolução mensal, formação do resultado, composição das despesas, tributos e conciliação de créditos.
+- Composição documental, demonstrativos mensais, premissas, referências e memória de cálculo preservada com paginação automática.
+- Exportação baseada exclusivamente na versão salva, com autenticação, isolamento, proteção de análises excluídas e conferência dos valores; nenhum recálculo de tributos.
+- Interface com progresso, nova tentativa e cancelamento de respostas antigas; mantém impressão, CSV e JSON.
+- Testes financeiros contra a apresentação existente, cobertura HTTP/Mongo e download real no navegador, incluindo dados incompletos, zero, prejuízo e histórico.
+
 ## [0.47.0] — 2026-10-28
 
 - Contábil oferece preenchimento individual, cópia de uma competência para outra e repetição dos valores em todos os meses exibidos.
