@@ -70,7 +70,7 @@ export function planReprocessing(original: any, source: any, workspaceId: string
     Object.fromEntries(REPORT_GROUPS.map(field=>[field,original.projection.monthlyGroupsCents[field]/100])));
   pending(frozen && original.monthlyGroupsUnit === 'BRL' && original.monthlyGroups && original.draft?.values,
     'REPROCESS_BASELINE', 'O histórico não conserva a base mensal necessária para preservar os ajustes manuais.');
-  pending(moneyCents(original.draft.values.salesRevenue) === REPORT_GROUPS.slice(0,3).reduce((sum,field)=>sum+moneyCents(original.monthlyGroups[field],true),0) &&
+  pending(moneyCents(original.draft.values.salesRevenue,true) === REPORT_GROUPS.slice(0,3).reduce((sum,field)=>sum+moneyCents(original.monthlyGroups[field],true),0) &&
     moneyCents(original.draft.values.simplePurchases) === moneyCents(original.monthlyGroups.purchasesOptantCents) &&
     moneyCents(original.draft.values.regularPurchases) === moneyCents(original.monthlyGroups.purchasesNonOptantCents),
     'REPROCESS_INPUT_TOTAL','As receitas ou compras do cenário antigo não correspondem aos grupos mensais congelados.');
@@ -118,8 +118,8 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   draft.values.salesRevenue = REPORT_GROUPS.slice(0,3).reduce((sum, field) => sum + moneyCents(monthlyGroups[field], true), 0) / 100;
   draft.values.simplePurchases = monthlyGroups.purchasesOptantCents;
   draft.values.regularPurchases = monthlyGroups.purchasesNonOptantCents;
-  pending(original.result?.method==='REPORT_MONTHS_V1'||(draft.values.salesRevenue >= 0 && draft.values.serviceRevenue >= 0), 'REPROCESS_ADJUSTMENT',
-    'Os ajustes antigos produziriam receita negativa após separar mercadorias e serviços.');
+  pending(draft.values.serviceRevenue >= 0, 'REPROCESS_ADJUSTMENT',
+    'O ajuste antigo produziria um valor de serviços inválido após separar mercadorias e serviços.');
   const needsReference=requiresSimplesReference(draft.regimeSelection);
   if(needsReference){
     pending(draft.rbt12 !== undefined, 'RBT12_REQUIRED', 'O histórico não conserva uma RBT12 efetiva. A receita mensal projetada em doze meses não substitui essa informação.');

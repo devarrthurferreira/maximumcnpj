@@ -8,7 +8,7 @@ import {normalizeNatureCode, normalizeUf, salesOperation} from './difal.ts';
 import {monthlyProjection, monthlyDifal, MONTHLY_FIELDS} from '../public/simulator-monthly.js';
 import {monthlyReportSource, aggregateOperationAudit, type OperationMonthlyReport} from './simulation-monthly-source.ts';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.ts';
-import type {generationSimulator} from './simulator-store.ts';
+import {financialSourceWarnings, type generationSimulator} from './simulator-store.ts';
 import {JAN_SEP_POLICY,buildAnalysisPeriod,selectAnalysisPeriod,assertCompleteAnalysisPeriod} from '../public/analysis-period.js';
 import {aggregateCommercialComposition} from './simulation-commercial-composition.ts';
 
@@ -151,14 +151,14 @@ export async function rebuildSimulationSource(snapshot: Doc): Promise<Source & {
   const difal=difalMonths?{...monthlyReports![0].difal,amountCents:difalMonths.sourceAmountCents,baseCents:difalMonths.sourceBaseCents,
     eligibleLines:difalMonths.eligibleLines,pendingLines:difalMonths.pendingLines}:null;
   const goodsCents=exactSignedCents(fields.salesOptantCents+fields.salesNonOptantCents+fields.salesCpfCents);
-  check(goodsCents>=0,'As devoluções de venda do relatório de compras superam as vendas de mercadorias reconstruídas.');
-  const recalculatedSalesTotalCents=exactCents(goodsCents+fields.serviceRevenueCents);
+  const recalculatedSalesTotalCents=exactSignedCents(goodsCents+fields.serviceRevenueCents);
   const selectedPurchasesTotalCents=exactCents(fields.purchasesOptantCents+fields.purchasesNonOptantCents);
   const salesBalanceChangeCents=exactSignedCents(recalculatedSalesTotalCents-(original.analysisPeriod?original.sales.selectedTotalCents:sales.totals.totalCents));
   const warnings=[
     'Recálculo sobre as linhas originais: natureza, valores e enquadramento da consulta foram preservados. Nenhum CNPJ foi consultado novamente.',
     'Receita inclui somente operações de venda e serviços 9000, menos devoluções de venda do relatório de compras. Compras incluem somente operações de compra e serviços 8000. Os quatro primeiros dígitos da natureza da coluna L dos relatórios são classificados pela coluna D (OPERAÇÃO) do catálogo; valores seguem Q - Y + AA - AB.',
-    'Totais originais dos relatórios e bases selecionadas do cenário estão separados na conferência por natureza.'
+    'Totais originais dos relatórios e bases selecionadas do cenário estão separados na conferência por natureza.',
+    ...financialSourceWarnings(monthlyReports!)
   ];
   if(salesBalanceChangeCents)warnings.push('A seleção atual das naturezas alterou a base de receita do cenário. A diferença está identificada na origem do recálculo; não é um ajuste manual.');
   const unknown=operationAudit.unknownSalesLines+operationAudit.unknownPurchaseLines;

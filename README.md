@@ -1,4 +1,18 @@
-# Maximum CNPJ · v0.50.0
+# Maximum CNPJ · v0.51.0
+
+## Alertas financeiros sem bloqueio — v0.51.0
+
+Devoluções superiores às vendas, compras acima da receita e custos/despesas maiores que a receita passam a ser **alertas para conferência**. O Fiscal identifica as competências afetadas, e o simulador mostra os avisos sem exigir confirmação adicional. É possível concluir os setores, gerar o resultado, salvar, reabrir e exportar a DRE com esses valores.
+
+O saldo de vendas após devoluções e a receita total podem ficar negativos. Os valores originais, os ajustes por competência e o prejuízo permanecem na DRE, no CSV e no PDF. Não há substituição da receita por zero nem abatimento duplicado das devoluções. As bases tributáveis de vendas respeitam mínimo zero, sem criar imposto negativo, restituição ou compensação automática entre meses; a memória identifica as bases utilizadas. Créditos e saldos de ICMS continuam separados, conforme as evidências e premissas do modelo. Margem, carga sobre receita e ranking ficam indisponíveis quando a receita considerada não é positiva.
+
+O motor recebe a versão `1.14.0-financial-alerts`, inclusive no cálculo mensal e no recorte disponível de janeiro a setembro. Reprocessamentos preservam os ajustes de vendas negativos e criam uma versão vinculada, sem modificar os snapshots anteriores. Conferência das somas, identidade de empresa/geração, integridade dos documentos, dados fiscais obrigatórios, autenticação e isolamento continuam exigidos.
+
+O build da Vercel e o CI usam `npm ci --include=dev`, com instalação reproduzível pelo lockfile e TypeScript disponível em produção. As correções de `undici` e do `zod` transitivo de `@vercel/cli-config` eliminam os cinco avisos de severidade alta observados no build. A versão direta de `@vercel/blob` permanece em `2.8.0`, e o CI verifica vulnerabilidades de severidade alta ou crítica.
+
+O exemplo de produção usa `APP_ORIGIN=https://maximumcnpj.vercel.app`, sem barra final, e mantém `ADMIN_EMAIL=programacao@maximumcontabil.com.br`. A senha e a URI privada do MongoDB devem ser configuradas somente no ambiente da plataforma. Os scripts de verificação pública de autenticação e relatórios usam esse domínio; `SMOKE_ORIGIN` permite conferir outra implantação sem alterar os arquivos. Esses exemplos não modificam as variáveis já cadastradas na Vercel.
+
+As regressões cobrem valores negativos, excesso de compras e despesas, meses positivos e negativos na mesma análise, salvamento/reabertura, reprocessamento, alertas visíveis e exportações. Validação local: **435 testes de regras/HTTP**, **oito suítes de integração**, **228 testes Python/PDF/Mongo/OCR** e **sete cenários de navegador** aprovados, com MongoDB descartável e dados sintéticos. Uma comparação independente de 120 cenários positivos/zero manteve os valores do motor anterior. Nenhuma credencial ou documento real integra o repositório.
 
 ## DIFAL após a leitura dos documentos — v0.50.0
 

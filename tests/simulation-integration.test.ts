@@ -86,6 +86,9 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       for (const bad of [null, '', '0', NaN, Infinity, .001, 1_000_000_000_001]) {
         await assert.rejects(createSimulation(actor, {...input, monthlyGroups: {...monthlyGroups, salesCpfCents: bad}}), code('VALIDATION'));
       }
+      for (const bad of [null, '', '0', NaN, Infinity, -.001, -1_000_000_000_001]) {
+        await assert.rejects(createSimulation(actor, {...input, draft: {...draft, values: {...draft.values, salesRevenue: bad}}}), code('VALIDATION'));
+      }
       await assert.rejects(createSimulation(actor, {...input, draft: {...draft, year: '2027'}}), code('VALIDATION'));
       await assert.rejects(createSimulation(actor, {...input, draft: {...draft, year: 2029}}), code('VALIDATION'));
       await assert.rejects(createSimulation(actor, {...input, draft: {...draft, salesAnnex: 3}}), code('VALIDATION'));
@@ -472,6 +475,44 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.deepEqual(zero.result,expected({...draft,rbt12:0},input.monthlyInputs,null).result,'Zero explícito conserva avisos e restrições do motor.');
       assert.equal(providerCalls,4,'A entrada manual não dispara consultas externas.');
       assert.deepEqual(await getSimulation(saved._id),saved,'O histórico OCR anterior permanece imutável.');
+    });
+
+    await t.test('receita negativa e compras maiores geram alertas, salvam e reabrem sem alterar fontes nem versões anteriores', async () => {
+      const negativeGroups={salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:-2000,purchasesOptantCents:0,purchasesNonOptantCents:3500};
+      const negativeDraft={...draft,values:{...draft.values,serviceRevenue:0,salesRevenue:-2000,simplePurchases:0,regularPurchases:3500,rent:6000}};
+      const entries=monthlySource.monthlyReports!.map((row,index)=>{
+        const entry=baselineMonth(row,negativeDraft.values);
+        if(index===0)entry.groups={...negativeGroups};
+        return entry;
+      });
+      const request={...input,simulationId:randomUUID(),parentSimulationId:saved._id,title:'Devoluções acima das vendas',
+        monthlyGroups:negativeGroups,draft:negativeDraft,monthlyInputs:entries};
+      const signed=await routeV4(actor,'POST',new URL('https://test/api/v4/simulations'),request) as any;
+      assert.equal(signed.draft.values.salesRevenue,-2000);
+      assert.equal(signed.monthlyInputs[0].groups.salesCpfCents,-2000);
+      assert.equal(Math.round(signed.result.annualRevenue*100),-149998);
+      assert.equal(signed.projection.scenario.annual.revenueCents,-149998);
+      assert.equal(signed.result.bestRegimeId,null);assert.equal(signed.bestRegimeName,null);assert.equal(signed.bestAnnualProfit,null);
+      for(const regime of signed.result.regimes){
+        assert.equal(regime.available,true);assert.equal(regime.margin,null);assert.equal(regime.taxBurden,null);
+        assert.equal(Math.round(regime.dre.revenue*100),-149998);assert(regime.annualProfit<0);
+        for(const value of Object.values(regime.dre))assert(Number.isFinite(value));
+      }
+      for(const warning of ['negative-sales','negative-revenue','purchases-above-revenue','costs-above-revenue'])assert(signed.result.warnings.some((row:any)=>row.code===warning));
+      const negativeMonth=signed.result.monthlyResults[0].result;
+      assert.equal(negativeMonth.annualRevenue,-2000);assert.equal(negativeMonth.credits.cbs.debit,0);
+      assert.equal(negativeMonth.credits.cbs.used,0);assert.equal(negativeMonth.credits.cbs.due,0);
+      assert.equal(signed.result.credits.cbs.debit,signed.result.monthlyResults.slice(1).reduce((sum:number,row:any)=>sum+row.result.credits.cbs.debit,0));
+      for(const regime of signed.monthlyDre.regimes){
+        const revenue=regime.rows.find((row:any)=>row.key==='revenue');
+        assert.equal(revenue.months[5],-2000);assert.equal(Math.round(revenue.annual*100),-149998);
+      }
+      assert.deepEqual(signed.source,monthlySource);
+      assert.deepEqual(await routeV4(viewer,'GET',new URL(`https://test/api/v4/simulations/${signed._id}`),{}),signed);
+      assert.deepEqual(await createSimulation(actor,request),signed,'Retentativa preserva o snapshot assinado e seus alertas.');
+      assert.deepEqual(await getSimulation(saved._id),saved);
+      assert.deepEqual(await generationSimulator(generationId,clientId),monthlySource);
+      assert.equal(providerCalls,4);
     });
 
     await t.test('situação do ICMS/ISS é validada, salva e revisada sem inventar receita anual nem alterar históricos', async () => {

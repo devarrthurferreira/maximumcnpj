@@ -162,11 +162,11 @@ function simplesDiagnostic(presentation,sourceMonth=null){
 }
 
 function executiveCards(presentation,columns,summaries){
-  const ranked=summaries.filter(summary=>summary.reconciled&&summary.result!==null).map(summary=>summary.result);
+  const ranked=summaries.filter(summary=>summary.reconciled&&summary.revenue>0&&summary.result!==null).map(summary=>summary.result);
   const highest=ranked.length?Math.max(...ranked):null;
   return `<div class="dre-regime-results" style="--dre-regime-count:${Math.max(1,columns.length)}" aria-label="Impostos e lucro por regime">${columns.map((column,index)=>{
     const regime=presentation.regimes.find(item=>item.id===column.id),summary=summaries[index],negative=summary.result!==null&&summary.result<0;
-    const best=ranked.length>1&&summary.reconciled&&summary.result===highest;
+    const best=ranked.length>1&&summary.reconciled&&summary.revenue>0&&summary.result===highest;
     const available=summary.result!==null,formattedProfit=money(summary.result);
     return `<article class="dre-regime-result${negative?' is-loss':''}${available?'':' is-unavailable'}${best?' is-best':''}${formattedProfit.length>18?' has-long-amount':''}" data-dre-regime-result="${esc(column.id)}" style="--dre-profit-characters:${Math.max(8,formattedProfit.length)}"><header><h3>${esc(regime.name)}</h3>${best?'<span>Maior resultado disponível</span>':''}</header><span class="dre-result-caption">${!available?'Resultado indisponível':negative?'Prejuízo estimado':summary.result===0?'Resultado em equilíbrio':'Lucro estimado'}</span><strong data-dre-regime-profit>${formattedProfit}</strong><dl><div><dt>Impostos e encargos</dt><dd data-dre-regime-taxes>${money(summary.taxes)}</dd></div></dl>${!available?`<p>${esc(column.mode==='month'?regime.monthlyStatuses?.[column.month]||regime.status:regime.status)}</p>`:!summary.reconciled?'<p>A composição exige conferência na DRE completa.</p>':''}</article>`;
   }).join('')}</div>`;

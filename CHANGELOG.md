@@ -1,5 +1,17 @@
 # Histórico de alterações
 
+## [0.51.0] — 2026-10-29
+
+- Aceita saldos de vendas e receita negativos quando devoluções ou ajustes superam as saídas, preservando os valores por competência e no consolidado.
+- Exibe alertas financeiros no Fiscal e no resultado para devoluções, compras e custos/despesas superiores à receita, sem exigir aceite ou impedir a conclusão da análise.
+- Permite calcular, salvar, reabrir, reprocessar e exportar DRE/CSV/PDF com esses saldos, sem alterar versões anteriores ou consultar CNPJs novamente.
+- Aplica mínimo zero às bases tributáveis de vendas e registra a premissa; mantém créditos/saldos de ICMS e não inventa imposto negativo ou compensação entre meses. Receita não positiva não recebe margem, carga percentual ou ranking.
+- Atualiza o motor para `1.14.0-financial-alerts` e mantém os controles de identidade, conciliação, integridade, acesso e dados fiscais necessários.
+- Corrige as dependências transitivas `undici` e `zod` com lockfile e override restrito, mantendo `@vercel/blob@2.8.0`; auditoria local sem vulnerabilidades.
+- Usa `npm ci --include=dev` na Vercel e no CI e inclui auditoria de severidade alta/crítica no CI.
+- Alinha o exemplo de `APP_ORIGIN` e as verificações públicas ao domínio `maximumcnpj.vercel.app`; permite configurar `SMOKE_ORIGIN` para outra implantação.
+- Adiciona regressões com dados sintéticos para cálculos, MongoDB, histórico, PDF autenticado e navegador.
+
 ## [0.50.0] — 2026-10-28
 
 - Mostra a estimativa do DIFAL diretamente nos cartões de Entradas e Saídas após concluir cada leitura, com valor em reais e identificação da antecipação de ICMS na entrada.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-const base='https://maximum-cnpj.vercel.app';
+const base=(process.env.SMOKE_ORIGIN||'https://maximumcnpj.vercel.app').replace(/\/+$/,'');
 const expectedVersion=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).version;
 assert.match(expectedVersion,/^\d+\.\d+\.\d+$/,'Versão do projeto inválida.');
 const request=(path,options={})=>fetch(base+path,{...options,signal:AbortSignal.timeout(10000)});

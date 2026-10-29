@@ -14,7 +14,7 @@ function composition(reports){
   const returnsCents=sum(reports.map(row=>row.operationAudit.salesReturnsCents)),totalCents=grossCents-returnsCents;
   const revenue=(keys,weights)=>{
     const gross=split(grossCents,weights),returns=split(returnsCents,weights);
-    return keys.map((key,index)=>({key,grossCents:gross[index],returnsCents:returns[index],totalCents:gross[index]-returns[index],percent:totalCents?(gross[index]-returns[index])/totalCents*100:null}));
+    return keys.map((key,index)=>({key,grossCents:gross[index],returnsCents:returns[index],totalCents:gross[index]-returns[index],percent:totalCents>0?(gross[index]-returns[index])/totalCents*100:null}));
   };
   const purchasesCents=sum(reports.map(row=>row.fields.purchasesOptantCents+row.fields.purchasesNonOptantCents));
   const purchaseSimple=sum(reports.map(row=>row.fields.purchasesOptantCents));
@@ -35,10 +35,11 @@ export function drePdfFixture({variant='complete',simulationId=ids.simulation,cl
     const month=Number(sourceMonth.slice(5));
     const gross=variant==='zero'?0:seasonal[month-1]*100;
     const service=variant==='zero'?0:(18000+month*2500)*100;
-    const returns=variant==='zero'?0:Math.round(gross*.015),net=gross-returns;
+    const returns=variant==='zero'?0:variant==='negative-revenue'?gross+service+25000*100:Math.round(gross*.015),net=gross-returns;
     const [optant,nonOptant,cpf]=split(net,[.25,.4,.35]);
-    const purchaseSimple=variant==='zero'?0:(16000+month*800)*100;
-    const purchaseRegular=variant==='zero'?0:(46000+month*2500)*100;
+    const purchaseFactor=variant==='purchases-above-revenue'?4:1;
+    const purchaseSimple=variant==='zero'?0:(16000+month*800)*100*purchaseFactor;
+    const purchaseRegular=variant==='zero'?0:(46000+month*2500)*100*purchaseFactor;
     const line=(natureCode,totalCents,recipientUf='MG',creditGroup='NAO_OPTANTE')=>({natureCode,totalCents,recipientUf,creditGroup});
     const internal=Math.round(gross*.6),regularInternal=Math.round(purchaseRegular*.55);
     const icmsOperations=summarizeIcmsOperations({sourceMonth,issuerUf:'MG',

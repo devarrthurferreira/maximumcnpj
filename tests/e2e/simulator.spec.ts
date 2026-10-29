@@ -72,9 +72,11 @@ test('Dashboard shows five charts, scales every monetary view and expands every 
   await page.locator('.sim-charts-details summary').focus();await page.keyboard.press('Enter');await expect(page.locator('.sim-charts')).toBeVisible();
   await expect(page.locator('.sim-chart-card')).toHaveCount(5);await expect(page.locator('.sim-chart-profit .is-negative')).toHaveCount(4);
   await expect(page.locator('#simulation-notices details')).toHaveCount(1);await expect(page.locator('#simulation-notices details')).not.toHaveAttribute('open','');
+  await expect(page.locator('[data-financial-alert-code="costs-above-revenue"]')).toBeVisible();
   await page.locator('#simulation-notices summary').click();
   await expect(page.locator('.sim-notices-content')).toContainText('RBT12 informada');await expect(page.locator('.sim-notices-content')).toContainText('Não confirmados incluídos');
-  await expect(page.locator('.sim-notices-content article')).toHaveCount(9);
+  await expect(page.locator('.sim-notices-content')).toContainText('Custos e despesas superiores à receita');
+  await expect(page.locator('.sim-notices-content article')).toHaveCount(10);
   const annual=await page.locator('.sim-chart-profit .sim-chart-row-head strong').allTextContents();
   await page.getByRole('button',{name:'Mensal',exact:true}).click();await expect(page.locator('.sim-dre h2')).toHaveText('DRE mensal');
   await expect(page.getByRole('button',{name:'Mensal',exact:true})).toBeFocused();

@@ -181,11 +181,28 @@ test('contrato de serviços parcial ou desconhecido não é tratado como receita
  const {original,source}=fixture();original.baselineServiceRevenue=null;original.draft.values.serviceRevenue=25;
  assert.equal(planReprocessing(original,source,'ws').input.draft.values.serviceRevenue,75,'Base de serviços nula equivale à ausência no contrato legado.');
 });
-test('totais/baseline divergentes, ajustes negativos, período trocado e DIFAL parcial não recebem OK',()=>{
+test('recálculo conserva ajustes de vendas negativos, admite devoluções superiores e emite alertas',()=>{
+ for(const priorSales of [0,-25]){
+  const {original,source}=fixture();
+  original.monthlyGroups.salesCpfCents=priorSales;original.draft.values.salesRevenue=priorSales;
+  const before=structuredClone(original),planned=planReprocessing(original,source,'ws');
+  assert.equal(planned.input.draft.values.salesRevenue,priorSales-50);
+  assert.equal(planned.input.draft.values.serviceRevenue,50);
+  const calculated=calculateMonthlySimulation(planned.input.draft,source.monthlyReports,planned.input.monthlyInputs,source.sales.jobId);
+  assert.equal(calculated.result.annualRevenue,priorSales);
+  assert(calculated.result.warnings.some(warning=>warning.code==='negative-sales'));
+  assert(calculated.result.warnings.some(warning=>warning.code==='purchases-above-revenue'));
+  assert.equal(calculated.result.warnings.some(warning=>warning.code==='negative-revenue'),priorSales<0);
+  assert(calculated.result.regimes.filter(regime=>regime.available).every(regime=>regime.dre.revenue===priorSales&&regime.margin===null));
+  assert.deepEqual(original,before);
+ }
+});
+
+test('totais/baseline divergentes, compras negativas, período trocado e DIFAL parcial não recebem OK',()=>{
  for(const [code,change]of[
   ['REPROCESS_INPUT_TOTAL',(o:any,s:any)=>o.draft.values.salesRevenue=159],
   ['REPROCESS_BASELINE',(o:any,s:any)=>o.baselineMonthlyGroups.salesCpfCents=149],
-  ['REPROCESS_ADJUSTMENT',(o:any,s:any)=>{o.monthlyGroups.salesCpfCents=0;o.draft.values.salesRevenue=0;}],
+  ['REPROCESS_ADJUSTMENT',(o:any,s:any)=>{o.monthlyGroups.purchasesNonOptantCents=0;o.draft.values.regularPurchases=0;s.fields.purchasesNonOptantCents=500;}],
   ['REPROCESS_PERIOD',(o:any,s:any)=>{o.reportPeriod={startMonth:'2026-01',endMonth:'2026-01',months:1};s.period={startMonth:'2026-02',endMonth:'2026-02',months:1};}],
   ['DIFAL_UF_PENDING',(o:any,s:any)=>s.sales.difal.pendingLines=1],
   ['DIFAL_SOURCE_MISSING',(o:any,s:any)=>delete s.sales.difal],

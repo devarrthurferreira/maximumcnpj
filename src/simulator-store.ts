@@ -10,6 +10,23 @@ import {JAN_SEP_POLICY,buildAnalysisPeriod,selectAnalysisPeriod} from '../public
 import {aggregateCommercialComposition} from './simulation-commercial-composition.ts';
 
 type FinancialSummary = Awaited<ReturnType<typeof purchaseSummary>>;
+const FINANCIAL_WARNING_PREFIX='Conferência financeira · ';
+const formatCents=(value:number)=>(value/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+/** Financial inequalities are review notes, never a reason to discard a reconciled source. */
+export function financialSourceWarnings(reports:readonly OperationMonthlyReport[]):string[]{
+  return reports.flatMap(row=>{
+    const fields=row.fields,groups=[fields.salesOptantCents,fields.salesNonOptantCents,fields.salesCpfCents];
+    const sales=exactSignedCents(groups.reduce((sum,value)=>sum+value,0));
+    const revenue=exactSignedCents(sales+fields.serviceRevenueCents);
+    const purchases=exactCents(fields.purchasesOptantCents+fields.purchasesNonOptantCents);
+    const notes:string[]=[];
+    if(sales<0)notes.push(`As devoluções superam as vendas de mercadorias; saldo de ${formatCents(sales)} preservado.`);
+    else if(groups.some(value=>value<0))notes.push('Há grupo de clientes com saldo negativo após devoluções; os valores foram preservados.');
+    if(revenue<0)notes.push(`A receita total após devoluções é ${formatCents(revenue)}; o saldo negativo permanece na DRE.`);
+    if(purchases>0&&purchases>revenue)notes.push(`Compras de ${formatCents(purchases)} superam a receita após devoluções de ${formatCents(revenue)}.`);
+    return notes.length?[`${FINANCIAL_WARNING_PREFIX}${row.sourceMonth}: ${notes.join(' ')} São alertas para conferência e não impedem continuar a análise.`]:[];
+  });
+}
 
 function sourceMetadata(summary: FinancialSummary) {
   return {jobId: summary.job._id, fileName: summary.job.fileName, totalCents: summary.totals.totalCents,
@@ -54,8 +71,6 @@ export async function generationSimulator(id: string, clientId: string, options:
   const fields = (projection?.annualGroupsCents||Object.fromEntries(MONTHLY_FIELDS.map(key=>[key,0]))) as OperationMonthlyReport['fields'];
   const operationAudit = aggregateOperationAudit(monthlyReports);
   const salesNetCents = exactSignedCents(fields.salesOptantCents + fields.salesNonOptantCents + fields.salesCpfCents);
-  need(salesNetCents >= 0,
-    'As devoluções de venda do relatório de compras superam as vendas de mercadorias no período. Revise os relatórios antes de simular.',409,'SIMULATOR_NEGATIVE_SALES');
   const purchaseOther = purchases.reportingGroups.find(group => group.status === 'NAO_OPTANTE')!;
   const saleOther = sales.reportingGroups.find(group => group.status === 'NAO_OPTANTE')!;
   const classification = {
@@ -79,7 +94,8 @@ export async function generationSimulator(id: string, clientId: string, options:
     analysisPeriod?`Período fixo: janeiro a setembro de ${analysisPeriod.sourceYear}. Cobertura comum das entradas e saídas: ${analysisPeriod.includedMonths.length}/9 competências. ${analysisPeriod.complete?'Os valores são a soma das competências disponíveis, sem preencher meses ausentes.':'Nenhuma competência comum disponível.'} Meses não incluídos: ${analysisPeriod.missingMonths.join(', ')||'nenhum'}.`:
       period ? `Período identificado automaticamente pela coluna H: ${period.startMonth} a ${period.endMonth} (${period.months} ${period.months === 1 ? 'mês' : 'meses'}). Compras e vendas têm as mesmas competências; dias sem movimento não alteram o período mensal.` :
       'Histórico anterior sem período fiscal persistido: confirme manualmente quantos meses os dois arquivos representam.',
-    'O enquadramento é o observado na consulta, sem comprovação retroativa para a data de cada nota. Não confirmados permanecem identificados na fonte.'
+    'O enquadramento é o observado na consulta, sem comprovação retroativa para a data de cada nota. Não confirmados permanecem identificados na fonte.',
+    ...financialSourceWarnings(monthlyReports)
   ];
   if(analysisPeriod?.excludedMonths.length)warnings.push(`Competências fora do período, preservadas nos relatórios originais e excluídas do cálculo: ${analysisPeriod.excludedMonths.join(', ')}.`);
   if ((purchases.period && !sales.period) || (!purchases.period && sales.period)) warnings.push('Somente um dos relatórios possui período automático. Para preservar compatibilidade histórica, confirme o período manualmente.');
@@ -99,7 +115,7 @@ export async function generationSimulator(id: string, clientId: string, options:
   if(icmsPending)warnings.push(`${icmsPending} operações elegíveis de ICMS dependem de UF confirmada. Os cenários com ICMS fora do DAS aguardam essa conferência.`);
   if (fields.serviceRevenueCents > 0) warnings.push('Vendas de serviços foram separadas das mercadorias e preenchem a receita de serviços pela competência de cada linha, sem duplicar o faturamento. Naturezas iniciadas por 9000 são serviços, independentemente do sufixo.');
   const difal = monthlyReports.length?monthlyDifal(monthlyReports, sales.job._id):null;
-  const selectedSalesTotalCents=exactCents(salesNetCents+fields.serviceRevenueCents);
+  const selectedSalesTotalCents=exactSignedCents(salesNetCents+fields.serviceRevenueCents);
   const selectedPurchasesTotalCents=exactCents(fields.purchasesOptantCents+fields.purchasesNonOptantCents);
   return {projection, monthlyReports, operationVersion:OPERATION_CATALOG_VERSION, operationAudit, revenueSplit: {version: 'SALES_SERVICES_V1'}, generationId: id, clientId, company: {name: company.name, code: company.code}, periodBasis, reportMonths, period,
     ...(analysisPeriod?{analysisPeriod,periodPolicy:JAN_SEP_POLICY,importedOperationAudit,
@@ -125,7 +141,7 @@ export function selectAnalysisSourceMonths(source:Awaited<ReturnType<typeof gene
   return {...source,analysisPeriod,monthlyReports,projection,fields,period,reportMonths:analysisPeriod.months,
     operationAudit:aggregateOperationAudit(monthlyReports),commercialComposition:aggregateCommercialComposition(monthlyReports.map(row=>row.commercialComposition!)),
     purchases:{...source.purchases,selectedTotalCents:exactCents(fields.purchasesOptantCents+fields.purchasesNonOptantCents)},
-    sales:{...source.sales,selectedTotalCents:exactCents(fields.salesOptantCents+fields.salesNonOptantCents+fields.salesCpfCents+fields.serviceRevenueCents),
+    sales:{...source.sales,selectedTotalCents:exactSignedCents(fields.salesOptantCents+fields.salesNonOptantCents+fields.salesCpfCents+fields.serviceRevenueCents),
       difal:difal?{...monthlyReports[0].difal,amountCents:difal.sourceAmountCents,baseCents:difal.sourceBaseCents,eligibleLines:difal.eligibleLines,pendingLines:difal.pendingLines}:null},
-    warnings:[...source.warnings,`Consolidado de ${months.length} competências: ${analysisPeriod.includedMonths.join(', ')}. Não incluídas: ${analysisPeriod.missingMonths.join(', ')||'nenhuma'}. Nenhum mês ausente foi preenchido com zero.`]};
+    warnings:[...source.warnings.filter(warning=>!warning.startsWith(FINANCIAL_WARNING_PREFIX)),...financialSourceWarnings(monthlyReports),`Consolidado de ${months.length} competências: ${analysisPeriod.includedMonths.join(', ')}. Não incluídas: ${analysisPeriod.missingMonths.join(', ')||'nenhuma'}. Nenhum mês ausente foi preenchido com zero.`]};
 }

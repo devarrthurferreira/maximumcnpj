@@ -6,6 +6,33 @@ import {defaultDifalPolicy} from '../public/simulator-engine.js';
 import {renderSection22} from '../public/simulator-extrato-view.js';
 import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
 import {section22Year2025} from './fixtures/section22.ts';
+import {renderFinancialAlerts} from '../public/financial-alerts-view.js';
+
+test('alertas financeiros dos documentos ficam visíveis sem confirmação ou trava',()=>{
+  const source={warnings:['Uma premissa geral','Conferência financeira · 2025-01: Devoluções superam vendas <sintéticas>.']},before=structuredClone(source);
+  const html=renderFinancialAlerts({source});
+  assert.match(html,/data-financial-alerts/);assert.match(html,/role="status"/);
+  assert.match(html,/Você pode continuar a análise/);assert.match(html,/2025-01/);
+  assert.match(html,/&lt;sintéticas&gt;/);assert.doesNotMatch(html,/<sintéticas>|Uma premissa geral|<details|<input|<button|disabled|required/);
+  assert.deepEqual(source,before);
+  assert.equal(renderFinancialAlerts(), '');
+  assert.equal(renderFinancialAlerts({source:{warnings:['Outra premissa']}}), '');
+});
+
+test('alertas do resultado usam o cenário salvo e incluem despesas superiores à receita',()=>{
+  const source={warnings:['Conferência financeira · 2025-01: Saldo negativo nos documentos.']};
+  const costs={code:'costs-above-revenue',title:'Custos acima da receita',detail:'2025-01: As despesas superam a receita.'};
+  const result={warnings:[costs,costs,{code:'negative-revenue',title:'Receita negativa aceita',detail:'2025-02: Receita negativa.'},
+    {code:'icms-sales-base-floor',title:'Base de débito limitada a zero',detail:'Ajuste manual preservado.'},
+    {code:'other',title:'Premissa geral',detail:'Fora dos alertas financeiros.'}]},before=structuredClone(result);
+  const html=renderFinancialAlerts({source,result});
+  assert.match(html,/data-financial-alert-code="costs-above-revenue"/);
+  assert.equal((html.match(/2025-01/g)||[]).length,1);assert.match(html,/2025-02/);
+  assert.match(html,/data-financial-alert-code="icms-sales-base-floor"/);
+  assert.doesNotMatch(html,/Saldo negativo nos documentos|Fora dos alertas financeiros/);
+  assert.equal(renderFinancialAlerts({source,result:{warnings:[]}}),'','Um ajuste que corrige o cenário não reutiliza um alerta antigo da fonte.');
+  assert.deepEqual(result,before);
+});
 import {renderRevenueReconciliationEditor} from '../public/simulator-revenue-view.js';
 
 function editorRevenueSource(){

@@ -93,7 +93,9 @@ def _regimes(result):
     selection = result.get('regimeSelection')
     if selection is not None:
         _valid(isinstance(selection, dict) and selection.get('selected') == ids)
-    _valid(_finite(result.get('annualRevenue')) and result['annualRevenue'] >= 0)
+    # Returns can legitimately exceed the period's sales. Preserve the signed
+    # saved revenue; the reconciliation equations below still reject corruption.
+    _valid(_finite(result.get('annualRevenue')))
     credits = result.get('credits', {})
     _valid(isinstance(credits, dict))
     for tax, credit in credits.items():
@@ -135,7 +137,7 @@ def _regimes(result):
                        _close(dre[tax + 'Debit'], 0 if regime['id'] == 'pure' else -credits[tax]['debit']))
         for key, numerator in (('margin', dre['netProfit']), ('taxBurden', regime['totalTaxes'])):
             value = regime.get(key)
-            _valid(value is None if dre['revenue'] == 0 else
+            _valid(value is None if dre['revenue'] <= 0 else
                    _finite(value) and math.isclose(value, numerator / dre['revenue'], rel_tol=1e-12, abs_tol=1e-12))
     memory = result.get('memory', [])
     _valid(isinstance(memory, list) and all(isinstance(row, dict) for row in memory))

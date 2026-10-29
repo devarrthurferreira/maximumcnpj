@@ -99,11 +99,14 @@ export function parseIcmsOperations(value){
 /** A manual revenue delta uses the captured gross-sales mix; credits remain tied to invoices. */
 export function projectIcmsOperations(value,{salesRevenueCents,regularPurchasesCents}){
   const source=parseIcmsOperations(value);
-  check(cents(salesRevenueCents)&&cents(regularPurchasesCents),'Valores do cenário de ICMS inválidos.');
-  const grossSalesCents=add(salesRevenueCents,source.salesReturns.totalBaseCents);
+  check(Number.isSafeInteger(salesRevenueCents)&&cents(regularPurchasesCents),'Valores do cenário de ICMS inválidos.');
+  const unflooredGrossSalesCents=salesRevenueCents+source.salesReturns.totalBaseCents;
+  check(Number.isSafeInteger(unflooredGrossSalesCents),'Base ajustada de ICMS acima do limite seguro.');
+  const grossSalesFloorApplied=unflooredGrossSalesCents<0,grossSalesCents=Math.max(0,unflooredGrossSalesCents);
   const sourceNetSalesCents=source.sales.totalBaseCents-source.salesReturns.totalBaseCents;
   const salesAdjustmentCents=salesRevenueCents-sourceNetSalesCents;
   const purchaseAdjustmentCents=regularPurchasesCents-source.sourceRegularPurchasesCents;
+  check(Number.isSafeInteger(salesAdjustmentCents)&&Number.isSafeInteger(purchaseAdjustmentCents),'Ajuste de ICMS acima do limite seguro.');
   const pendingLines=GROUPS.reduce((total,key)=>total+source[key].pendingLines,0);
   const missingSalesMix=grossSalesCents>0&&source.sales.totalBaseCents===0;
   const available=!pendingLines&&!missingSalesMix;
@@ -121,6 +124,6 @@ export function projectIcmsOperations(value,{salesRevenueCents,regularPurchasesC
   const usedCents=Math.min(debitCents,potentialCents),dueCents=debitCents-usedCents,balanceCents=potentialCents-usedCents;
   const status=pendingLines?`ICMS pendente: ${pendingLines} operação(ões) elegível(is) sem UF confirmada. Revise as UFs nos relatórios de origem.`:
     missingSalesMix?'ICMS pendente: o ajuste de receita não possui vendas de origem com composição de UFs para determinar a alíquota.':'ICMS calculado por natureza e UF nas operações importadas.';
-  return {source,available,status,pendingLines,missingSalesMix,grossSalesCents,sourceNetSalesCents,salesAdjustmentCents,purchaseAdjustmentCents,
+  return {source,available,status,pendingLines,missingSalesMix,grossSalesCents,unflooredGrossSalesCents,grossSalesFloorApplied,sourceNetSalesCents,salesAdjustmentCents,purchaseAdjustmentCents,
     debitCents,purchaseCreditCents,salesReturnCreditCents,potentialCents,usedCents,dueCents,balanceCents};
 }

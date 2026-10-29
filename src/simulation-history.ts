@@ -89,7 +89,7 @@ export function validateSimulationRequest(input: unknown) {
     // Keep omission and the normalized request hash unchanged for historical retries.
     ...(difalPolicy ? {difalPolicy} : {}),
     ...(regimeSelection ? {regimeSelection} : {}),
-    values: Object.fromEntries(SIMULATION_VALUE_FIELDS.map(key => [key, money(input.draft.values[key])])) as SimulationDraft['values']};
+    values: Object.fromEntries(SIMULATION_VALUE_FIELDS.map(key => [key, key==='salesRevenue'?signedSalesMoney(input.draft.values[key]):money(input.draft.values[key])])) as SimulationDraft['values']};
   need(!rbt12ExtractionId || draft.rbt12 != null, 'A extração de RBT12 precisa acompanhar o valor usado na simulação.');
   const rbt12Source = rbt12InputSource(input.rbt12Source, input.rbt12ManualConfirmed, rbt12ExtractionId, draft.rbt12,draft.regimeSelection);
   need(Math.round(draft.values.salesRevenue * 100) === GROUPS.slice(0, 3).reduce((sum, key) => sum + Math.round(monthlyGroups[key] * 100), 0) &&

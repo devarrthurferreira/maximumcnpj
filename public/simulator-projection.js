@@ -55,14 +55,12 @@ export function annualizeReports(fields, reportMonths) {
   const sides = [income, SIDES[1]], keysInReport = split ? [...REPORT_GROUPS, 'serviceRevenueCents'] : REPORT_GROUPS;
   const divisor = BigInt(reportMonths), monthlyGroupsCents = {}, annualGroupsCents = {};
   for (const [sideIndex, keys] of sides.entries()) {
-    const signed = sideIndex === 0, values = keys.map(key => cents(fields[key], signed)), total = BigInt(sum(values, signed));
-    if (signed && total < 0n) throw new RangeError('O saldo líquido total de vendas não pode ser negativo após as devoluções.');
+    const signed = sideIndex === 0, values = keys.map(key => cents(fields[key], signed));
     let parts;
     if (signed && split) {
       const goods = sum(values.slice(0, 3), true);
-      if (goods < 0) throw new RangeError('O saldo líquido de mercadorias não pode ser negativo após separar os serviços.');
-      // Allocate the income total to its two nonnegative activities first. Otherwise a
-      // service rounding cent could leave offsetting goods/return groups below zero.
+      // Reconcile activities before the signed goods groups so service cents are
+      // never moved into a goods/returns balance by independent rounding.
       const activities = allocate([goods, values[3]], divisor);
       parts = [...allocate(values.slice(0, 3), divisor, activities[0]), activities[1]];
     } else parts = allocate(values, divisor);
@@ -107,12 +105,11 @@ export function projectScenario(monthlyGroups, values) {
   if (!monthlyGroups || !values) throw new TypeError('Valores mensais ausentes.');
   const monthlyGroupsCents = Object.fromEntries(REPORT_GROUPS.map((key, index) => [key, brl(monthlyGroups[key], index < 3)]));
   const salesCents = sum(SIDES[0].map(key => monthlyGroupsCents[key]), true);
-  if (salesCents < 0) throw new RangeError('O saldo líquido mensal de vendas não pode ser negativo após as devoluções.');
   const purchasesCents = sum(SIDES[1].map(key => monthlyGroupsCents[key]));
   const servicesCents = brl(values.serviceRevenue);
   const expensesCents = sum(['salaries', 'benefits', 'adminExpenses', 'rent', 'cardExpenses'].map(key => brl(values[key])));
-  const monthly = {salesCents, servicesCents, revenueCents: sum([salesCents, servicesCents]), purchasesCents, expensesCents};
+  const monthly = {salesCents, servicesCents, revenueCents: sum([salesCents, servicesCents],true), purchasesCents, expensesCents};
   return {unit: 'CENTS', projectionMonths: PROJECTION_MONTHS, monthlyGroupsCents,
     annualGroupsCents: Object.fromEntries(REPORT_GROUPS.map((key, index) => [key, annual(monthlyGroupsCents[key], index < 3)])),
-    monthly, annual: Object.fromEntries(Object.entries(monthly).map(([key, value]) => [key, annual(value)]))};
+    monthly, annual: Object.fromEntries(Object.entries(monthly).map(([key, value]) => [key, annual(value,key==='salesCents'||key==='revenueCents')]))};
 }

@@ -18,7 +18,7 @@ test('CBS de 11,3% fica capturada em cada competência e soma apenas os meses Ja
  const range={startMonth:'2025-01',endMonth:'2025-09',months:9};
  const period=selectAnalysisPeriod(buildAnalysisPeriod(range,range),rows.map(row=>row.sourceMonth));
  const out=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales',null,period);
- assert.equal(out.result.version,'1.13.0-cbs-113-available-months');
+ assert.equal(out.result.version,'1.14.0-financial-alerts-available-months');
  assert.equal(out.result.version,JAN_SEP_MODEL_VERSION);assert.notEqual(JAN_SEP_MODEL_VERSION,MONTHLY_MODEL_VERSION);
  assert.deepEqual(out.engineInput.months.map(row=>row.sourceMonth),['2025-01','2025-04','2025-09']);
  for(const month of out.engineInput.months){
@@ -78,8 +78,31 @@ test('contrato mensal impede competências, entradas e DIFAL forjados; ausência
  assert.throws(()=>calculateMonthlySimulation(draft,reports,[{...inputs[0],sourceMonth:'2025-04'},...inputs.slice(1)],'sales'));
  assert.throws(()=>calculateMonthlySimulation(draft,reports,[{...inputs[0],difal:0},...inputs.slice(1)],'sales'));
  assert.throws(()=>monthlyProjection([reports[0],reports[0]]));
- const bad=structuredClone(inputs);bad[0].groups.salesCpfCents=-10;assert.throws(()=>calculateMonthlySimulation(draft,reports,bad,'sales'),/2025-01/);
+ const bad=structuredClone(inputs);bad[0].groups.purchasesNonOptantCents=-10;assert.throws(()=>calculateMonthlySimulation(draft,reports,bad,'sales'),/valores válidos/);
  assert.equal(monthlyDifal([{...reports[0],difal:null}],'sales'),null);
+});
+
+test('devoluções superiores às saídas mantêm competência negativa, alertas e soma sem compensar tributos entre meses',()=>{
+ const rows=[make(1,-200000,50000,0,0),make(2,100000,25000,0,0)],before=structuredClone(rows);
+ const out=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales');
+ assert.deepEqual(rows,before);assert.equal(out.projection.totals.sales.totalCents,-100000);
+ assert.equal(out.projection.scenario.annual.revenueCents,-100000);assert.equal(out.result.annualRevenue,-1000);
+ assert.equal(out.result.bestRegimeId,null);assert.equal(out.result.difference,0);
+ assert.equal(out.result.monthlyResults[0].result.annualRevenue,-2000);
+ assert.equal(out.engineInput.months[0].input.revenueContext.revenueCents,-100000);
+ assert(out.result.regimes.every(row=>row.available&&row.margin===null&&row.taxBurden===null));
+ for(const regime of out.result.regimes){
+  close(regime.dre.revenue,-1000);close(regime.dre.cmv,-750);
+  const months=out.result.monthlyResults.map(month=>month.result.regimes.find(row=>row.id===regime.id));
+  close(regime.dre.netProfit,months.reduce((sum,row)=>sum+row.dre.netProfit,0));
+  assert(months.every(row=>row.totalTaxes>=0));
+ }
+ assert.equal(out.result.monthlyResults[0].result.credits.cbs.debit,0);
+ close(out.result.credits.cbs.debit,out.result.monthlyResults[1].result.credits.cbs.debit);
+ const notice=out.result.warnings.find(row=>row.code==='negative-revenue');assert.match(notice.detail,/2025-01/);
+ assert(!notice.detail.includes('2025-02'));
+ const calendar=buildMonthlyDre(out.result,2027),presentation=buildDrePresentation({result:out.result,calendar,projection:out.projection,source:{monthlyReports:rows}});
+ const csv=buildDreCsv({presentation,period:'monthly',year:2027});assert(csv.includes('-2000,00'));assert(csv.includes('-1000,00'));
 });
 test('doze competências com valores diferentes preservam centavos e soma exata de DIFAL',()=>{
  const months=Array.from({length:12},(_,i)=>make(i+1,100001+i*1000,20000+i*100,5+i,10000+i*100));
@@ -269,6 +292,23 @@ test('excedente gerencial do Presumido acima de R$ 5 milhões é rateado uma vez
   close(result.regimes[2].dre.netProfit,mixed?6000000-678000-6000-900000-50000-159000-84180:6000000-678000-6000-1080000-98000-65880);
   assert(result.warnings.some(item=>item.code==='presumption-increase'&&/não substitui a apuração/.test(item.detail)));
  }
+});
+
+test('mês com devoluções não infla o excedente do Presumido nem gera imposto negativo',()=>{
+ const revenues=[6000000,-500000,3000000],rows=revenues.map((revenue,index)=>make(index+1,revenue*100,0,0,0));
+ const {result,engineInput}=calculateMonthlySimulation({...draft,rbt12:3300000},rows,rows.map(row=>baselineMonth(row)),'sales');
+ assert.equal(result.annualRevenue,8500000);
+ const context=engineInput.months[0].input.revenueContext;
+ assert.equal(context.revenueCents,850000000);assert.equal(context.positiveRevenueCents,900000000);
+ const excess=result.monthlyResults.map(row=>row.result.memory.find(item=>item.id==='presumed.excessRevenue').value);
+ close(excess[0],3500000*2/3);assert.equal(excess[1],0);close(excess[2],3500000/3);
+ close(excess.reduce((sum,value)=>sum+value,0),3500000);
+ close(result.memory.find(item=>item.id==='presumed.excessRevenue').value,3500000);
+ const negative=result.monthlyResults[1].result.regimes.find(row=>row.id==='presumed');
+ assert.equal(negative.available,true);assert.equal(negative.dre.revenue,-500000);
+ assert.equal(negative.dre.irpj,0);assert.equal(negative.dre.csll,0);assert.equal(negative.dre.netProfit,-500000);
+ close(result.memory.find(item=>item.id==='presumed.irIncrease').value,3500000*.08*.1);
+ close(result.memory.find(item=>item.id==='presumed.csIncrease').value,3500000*.12*.1);
 });
 
 test('mês inicial sem receita não atribui receita zero ao consolidado dos meses seguintes',()=>{
