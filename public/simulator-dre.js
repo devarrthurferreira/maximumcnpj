@@ -78,12 +78,15 @@ export function dreRegimeStatuses(presentation,{sourceMonth=null}={}) {
 /** Historical unsupported Simples calculations are never promoted to confirmed payable amounts. */
 export function dreReportMemory(presentation,{includeDre=false}={}) {
   const simplesPending=(presentation?.regimes||[]).some(regime=>['pure','hybrid'].includes(regime.id)&&regime.available!==true);
+  const missingRbt12=presentation?.rbt12Source==='NOT_PROVIDED';
   const unavailable=new Map((presentation?.regimes||[]).filter(regime=>regime.available!==true).map(regime=>[regime.id,regime]));
   return (presentation?.report?.memory||[]).filter(item=>(presentation.regimeSelection===undefined||regimeMemoryApplies(item.id,presentation.regimeSelection))&&(includeDre||!/^dre\.|^summary\./.test(item.id))).map(item=>{
     const key=/^dre\.[^.]+\.(revenue|netRevenue)$/.exec(item.id)?.[1];
     const label=key==='revenue'?'Receita total utilizada':key==='netRevenue'?'Receita após deduções tributárias':item.label;
     const pending=unavailable.get(/^(?:dre|summary)\.([^.]+)\./.exec(item.id)?.[1]);
     if(pending&&typeof item.value==='number')return {...item,label,unit:'text',value:`Não disponível: ${pending.status||'o cálculo deste regime exige conferência neste período.'}`};
+    if(missingRbt12&&typeof item.value==='number'&&/^simples\./.test(item.id)&&item.id!=='simples.revenueReference')
+      return {...item,label,unit:'text',value:'Não disponível: a RBT12 não foi informada.'};
     if(simplesPending&&item.unit==='currency'&&/^simples\./.test(item.id)&&!/(?:\.deduction$|^simples\.revenueReference$)/.test(item.id))
       return {...item,label,unit:'text',value:'Não disponível: o cálculo do Simples exige conferência neste período.'};
     return label!==item.label?{...item,label}:item;
@@ -113,9 +116,10 @@ export function unifiedDreRows(presentation) {
   return rows;
 }
 
-export function buildDrePresentation({result,monthlyGroups,projection,source,reportMonths,engineInput,reprocessing,calendar,taxSources}={}) {
+export function buildDrePresentation({result,monthlyGroups,projection,source,reportMonths,engineInput,reprocessing,calendar,taxSources,rbt12Source}={}) {
   const capturedSelection=result?.regimeSelection!==undefined?result.regimeSelection:engineInput?.regimeSelection!==undefined?engineInput.regimeSelection:calendar?.regimeSelection;
   const regimeSelection=capturedSelection===undefined?undefined:resolveRegimeSelection(capturedSelection),hasSimples=requiresSimplesReference(regimeSelection);
+  const capturedRbt12Source=rbt12Source??result?.rbt12Source??calendar?.rbt12Source;
   const originals = (Array.isArray(result?.regimes) ? result.regimes : []).filter(regime=>!regimeSelection||regimeSelection.selected.includes(regime.id));
   const actual=result?.method==='REPORT_MONTHS_V1';
   const analysisPeriod=actual&&result.analysisPeriod?.version==='JAN_SEP_V1'?structuredClone(result.analysisPeriod):null;
@@ -344,6 +348,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,revenueReconciliation,icmsReconciliation,months,calendarYear,
     ...(analysisPeriod?{analysisPeriod,appliedCredits,commercialComposition,monthlyCommercialComposition}:{}),
     ...(regimeSelection?{regimeSelection}:{}),
+    ...(['NOT_PROVIDED','NOT_REQUIRED','MANUAL','SIMPLES_SECTION_22','SIMPLES_PDF'].includes(capturedRbt12Source)?{rbt12Source:capturedRbt12Source}:{}),
     ...(hasSimples&&result?.simplesDiagnostic?.version==='SIMPLES_DIAGNOSTIC_V1'?{simplesDiagnostic:structuredClone(result.simplesDiagnostic)}:{}),
     report:{modelVersion:typeof result?.version==='string'?result.version:null,
       sourceMonths:actual?(result.monthlyResults||[]).map(row=>row.sourceMonth):[],

@@ -1,4 +1,16 @@
-# Maximum CNPJ · v0.51.0
+# Maximum CNPJ · v0.52.0
+
+## RBT12 manual e extrato opcional — v0.52.0
+
+A referência do Simples oferece três opções: **Não informar agora**, **Informar manualmente** e **Importar PDF (opcional)**. Novas análises começam sem referência. É possível concluir Fiscal e Contábil, gerar, salvar, reabrir e exportar a análise sem enviar extrato do Simples ou PGDAS-D. A opção manual recebe a **RBT12 indicada no PGDAS-D**, em reais, com confirmação do valor; não se trata do valor da guia DAS.
+
+Com apenas Lucro Presumido e/ou Lucro Real selecionados, RBT12 e extrato não se aplicam e nenhuma leitura de PDF é solicitada. Se Puro ou Híbrido estiverem selecionados sem RBT12, somente esses cenários ficam **pendentes de cálculo**. A análise e os demais regimes continuam disponíveis. A referência ausente permanece nula, sem virar zero, receita mensal multiplicada por doze, imposto confirmado ou classificação automática do enquadramento. Também é possível salvar e exportar uma análise somente com cenários do Simples ainda pendentes, sem ranking ou valores tributários inventados.
+
+A escolha é capturada como `NOT_PROVIDED` quando há Simples selecionado e como `NOT_REQUIRED` quando a referência não se aplica. O PDF, quando escolhido, conserva as validações de CNPJ, seção 2.2 e histórico mensal; a referência manual conserva a identificação de origem e o valor confirmado. Trocar para a opção sem referência limpa os vínculos ativos do rascunho, mantendo documentos e versões anteriores preservados. O preenchimento posterior cria uma nova versão sem substituir o histórico.
+
+O motor `1.15.0-optional-rbt12`, o cálculo por competência e a DRE distinguem ausência de RBT12 de zero informado. PDF, CSV e tela identificam a referência ausente e os cenários pendentes. Permanecem os alertas financeiros da versão anterior para devoluções, compras e custos superiores à receita, assim como os controles de autenticação, isolamento por empresa, conciliação dos documentos e competências disponíveis.
+
+Validação local com dados sintéticos: tipos, build e versões conferidos; **440 testes de regras/HTTP**, **231 testes Python/PDF/Mongo/OCR** e as suítes de integração com MongoDB descartável aprovados, sem testes ignorados. Uma comparação independente de **120 cenários com RBT12 informada**, nas modalidades projetada e por competência, manteve os resultados financeiros da versão anterior; outros 24 casos conferiram a ausência explícita da referência. A verificação de navegador cobre as três opções, salvamento e reabertura, exportações, alertas financeiros e apresentação em celular.
 
 ## Alertas financeiros sem bloqueio — v0.51.0
 

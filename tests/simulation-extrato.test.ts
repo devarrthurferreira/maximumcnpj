@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {validateSection22,rbt12InputSource} from '../src/simulation-extrato.ts';
+import {defaultFiscalData,parseFiscalData} from '../src/analysis-contract.ts';
 import {section22,section22Year2025} from './fixtures/section22.ts';
 
 test('RBT12 provém de doze competências explícitas da seção 2.2, com ambos os mercados',()=>{
@@ -70,7 +71,7 @@ test('RBT12 manual é explícita, confirmada e independente do OCR, inclusive ze
  assert.equal(rbt12InputSource(undefined,undefined,'extraction-id',100),'SIMPLES_SECTION_22');
  assert.equal(rbt12InputSource('SIMPLES_SECTION_22',undefined,'extraction-id',100),'SIMPLES_SECTION_22');
 });
-test('Extrato é dispensado somente sem Simples, sem fabricar referência ou aceitar opções incompatíveis',()=>{
+test('Regimes sem Simples dispensam referência sem fabricar RBT12 ou aceitar opções incompatíveis',()=>{
  const selection={version:'REGIME_SELECTION_V1',selected:['presumed','actual']};
  assert.equal(rbt12InputSource('NOT_REQUIRED',undefined,null,undefined,selection),'NOT_REQUIRED');
  assert.equal(rbt12InputSource(undefined,undefined,null,null,selection),'NOT_REQUIRED');
@@ -82,4 +83,31 @@ test('Extrato é dispensado somente sem Simples, sem fabricar referência ou ace
   assert.throws(()=>rbt12InputSource('NOT_REQUIRED',undefined,null,undefined,{version:'REGIME_SELECTION_V1',selected}),(error:any)=>error.code==='RBT12_SOURCE');
  }
  assert.throws(()=>rbt12InputSource('NOT_REQUIRED',undefined,null,undefined),(error:any)=>error.code==='RBT12_SOURCE','A seleção omitida continua significando os quatro regimes legados.');
+});
+
+test('RBT12 não informada é uma escolha explícita, distinta de zero, manual e extrato',()=>{
+ for(const selected of [['pure'],['hybrid'],['pure','presumed','actual']]){
+  const selection={version:'REGIME_SELECTION_V1',selected};
+  for(const value of [null,undefined])assert.equal(rbt12InputSource('NOT_PROVIDED',undefined,null,value,selection),'NOT_PROVIDED');
+  for(const [confirmation,extraction,value] of [
+   [true,null,null],[false,null,null],[undefined,'extraction',null],[undefined,null,0],[undefined,null,100]
+  ] as const)assert.throws(()=>rbt12InputSource('NOT_PROVIDED',confirmation,extraction,value,selection),(error:any)=>error.code==='RBT12_SOURCE');
+ }
+ assert.equal(rbt12InputSource(undefined,undefined,null,undefined),'SIMPLES_SECTION_22',
+  'A falta de um PDF escolhido anteriormente não muda silenciosamente a origem da referência.');
+ assert.throws(()=>rbt12InputSource('NOT_PROVIDED',undefined,null,null,{version:'REGIME_SELECTION_V1',selected:['actual']}),
+  (error:any)=>error.code==='RBT12_SOURCE');
+});
+
+test('novo Fiscal com Simples inicia sem RBT12 e aceita somente ausência coerente de valor e vínculos',()=>{
+ const selection={version:'REGIME_SELECTION_V1' as const,selected:['pure','actual'] as ('pure'|'actual')[]};
+ const data=defaultFiscalData(selection);
+ assert.equal(data.rbt12Source,'NOT_PROVIDED');assert.equal(data.rbt12,null);assert.equal(data.rbt12ManualConfirmed,false);
+ assert.deepEqual(parseFiscalData(data,selection),data);
+ const id='10000000-0000-4000-8000-000000000001';
+ for(const change of [{rbt12:0},{rbt12:123.45},{rbt12ManualConfirmed:true},{rbt12ExtractionId:id},{rbt12DocumentId:id}]){
+  assert.throws(()=>parseFiscalData({...data,...change},selection),(error:any)=>error.code==='RBT12_SOURCE');
+ }
+ const withoutSimples={version:'REGIME_SELECTION_V1' as const,selected:['actual'] as 'actual'[]};
+ assert.equal(defaultFiscalData(withoutSimples).rbt12Source,'NOT_REQUIRED');
 });

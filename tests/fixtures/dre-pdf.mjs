@@ -53,7 +53,9 @@ export function drePdfFixture({variant='complete',simulationId=ids.simulation,cl
   });
   for(const row of reports)row.commercialComposition=composition([row]);
   const first=baselineMonth(reports[0]);
-  const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:variant==='unavailable'?4000000:3300000,difalPolicy:defaultDifalPolicy(),
+  const missingRbt12=variant==='without-rbt12'||variant==='without-rbt12-only-simples';
+  const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:missingRbt12?null:variant==='unavailable'?4000000:3300000,difalPolicy:defaultDifalPolicy(),
+    ...(missingRbt12?{regimeSelection:{version:'REGIME_SELECTION_V1',selected:variant==='without-rbt12-only-simples'?['pure','hybrid']:['pure','hybrid','presumed','actual']}}:{}),
     values:{salesRevenue:sum(Object.values(first.groups).slice(0,3)),serviceRevenue:first.values.serviceRevenue,simplePurchases:first.groups.purchasesOptantCents,regularPurchases:first.groups.purchasesNonOptantCents,salaries:0,benefits:0,adminExpenses:0,rent:0,cardExpenses:0}};
   const inputs=reports.map(row=>baselineMonth(row,variant==='zero'?{}:{salaries:22000+row.month*300,benefits:3600+row.month*80,adminExpenses:row.month===3?28000:4100+row.month*90,rent:variant==='loss'?185000:6500,cardExpenses:1800+row.month*110}));
   const computed=calculateMonthlySimulation(draft,reports,inputs,ids.sales,null,analysisPeriod);
@@ -65,10 +67,10 @@ export function drePdfFixture({variant='complete',simulationId=ids.simulation,cl
     purchases:{jobId:ids.purchases,fileName:'compras-demonstracao.csv',totalCents:sum(reports.map(row=>row.operationAudit.reportPurchasesCents)),formula:'Q - Y + AA - AB',calculationVersion:'NET_V2',completedAt:'2026-10-28T14:00:00Z',period},
     sales:{jobId:ids.sales,fileName:'vendas-demonstracao.csv',totalCents:sum(reports.map(row=>row.operationAudit.reportSalesCents)),formula:'Q - Y + AA - AB',calculationVersion:'NET_V2',completedAt:'2026-10-28T14:00:00Z',period},
     warnings:['Dados sintéticos de demonstração: nenhum valor pertence a cliente real.']};
-  const rbt12Manual={source:'MANUAL',confirmed:true,rbt12Cents:draft.rbt12*100,confirmedAt:'2026-10-28T14:00:00Z',confirmedBy:{id:'synthetic-reviewer',name:'Equipe de demonstração'}};
+  const rbt12Manual=missingRbt12?null:{source:'MANUAL',confirmed:true,rbt12Cents:draft.rbt12*100,confirmedAt:'2026-10-28T14:00:00Z',confirmedBy:{id:'synthetic-reviewer',name:'Equipe de demonstração'}};
   return {_id:simulationId,clientId,generationId,company,title:'DRE completa - demonstração sintética',source,draft,...computed,analysisPeriod,
     monthlyGroups:first.groups,monthlyGroupsUnit:'BRL',reportMonths:reports.length,reportPeriod:period,periodBasis:'COLUMN_H',periodConfirmed:true,manuallyAdjusted:false,
-    monthlyDre:buildMonthlyDre(computed.result,2027,rbt12Manual,period),rbt12Source:'MANUAL',rbt12Manual,
+    monthlyDre:buildMonthlyDre(computed.result,2027,rbt12Manual,period),rbt12Source:missingRbt12?'NOT_PROVIDED':'MANUAL',...(rbt12Manual?{rbt12Manual}:{}),
     createdAt:'2026-10-28T14:00:00Z',createdBy:{id:'synthetic-reviewer',name:'Equipe de demonstração'},year:2027,
     taxSources:TAX_SOURCES,modelVersion:computed.result.version,calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,
     annualRevenue:computed.result.annualRevenue,bestRegimeId:computed.result.bestRegimeId};

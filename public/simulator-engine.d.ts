@@ -8,7 +8,7 @@ export type SimplesRevenueContext={version:'SIMPLES_REVENUE_CONTEXT_V1';method:'
 export type SimplesDiagnostic={
   version:'SIMPLES_DIAGNOSTIC_V1';available:boolean;
   statusCode:'READY'|'ZERO_REVENUE'|'NEGATIVE_REVENUE'|'MISSING_RBT12'|'RATE_TABLE_EXCEEDED'|'LOCAL_TAX_REVIEW_REQUIRED'|'REVENUE_REVIEW_REQUIRED'|'ICMS_OPERATIONS_PENDING'|'MULTIPLE_MONTH_STATUSES';
-  message:string;action:string;rbt12:number|null;rbt12Min?:number;rbt12Max?:number;
+  message:string;action:string;rbt12:number|null;rbt12Min?:number|null;rbt12Max?:number|null;
   federalLimit:number;sublimit:number;revenueReference:number;revenueBasis:'ACTUAL_REPORT_MONTHS'|'AVERAGE_X12';
   sourceMonths:string[];coveredMonths:number;completeYear:boolean;icmsOutside:boolean;eligibilityVerified:false;assumptions:string[];
   months?:Array<SimplesDiagnostic & {sourceMonth:string}>;
@@ -24,7 +24,7 @@ export type DifalApplication = {
   version:'DIFAL_SCENARIOS_V1'|'DIFAL_SCENARIOS_V2'; enabled:boolean; blocked:boolean;
   /** V1 historical applications predate independent directions. */
   operations?:DifalOperations;
-  reason:'SUBLIMIT'|'ICMS_OUTSIDE_DAS'|'USER_EXCLUDED'|'ENABLED'|'NOT_APPLICABLE'|'NO_OPERATIONS'; message:string;
+  reason:'SUBLIMIT'|'ICMS_OUTSIDE_DAS'|'USER_EXCLUDED'|'ENABLED'|'NOT_APPLICABLE'|'NO_OPERATIONS'|'MISSING_RBT12'; message:string;
   rbt12:number|null; icmsOutside:boolean;
   /** Potential permission, independent of missing sources, pending lines or zero amounts. */
   salesDifal:boolean; purchaseAnticipation:boolean;
@@ -42,7 +42,7 @@ export type SimulationDraft = {
   year: 2027 | 2028;
   salesAnnex: 1 | 2;
   serviceAnnex: 3 | 4 | 5;
-  /** Required for an explicit selection containing Simples; unnecessary for LP/LR alone. */
+  /** Optional. Null leaves Simples uncalculated and never represents a confirmed zero. */
   rbt12?: number|null;
   /** Omission preserves the four historical regimes. New analyses store an explicit selection. */
   regimeSelection?: RegimeSelection;
@@ -71,6 +71,7 @@ export type SimulationResult = {
   bestRegimeId: string | null; difference: number;
   difalPolicy?: DifalPolicy;
   simplesDiagnostic?: SimplesDiagnostic;
+  rbt12Source?: 'NOT_PROVIDED';
   /** Omitted only in snapshots created before regime selection. */
   regimeSelection?: RegimeSelection;
 };

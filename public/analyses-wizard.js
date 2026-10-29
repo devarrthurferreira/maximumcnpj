@@ -3,7 +3,7 @@ const freezeSteps = steps => Object.freeze(steps.map(([id,label]) => Object.free
 
 export const WIZARD_STEPS = Object.freeze({
   new:freezeSteps([['company','Empresa'],['sector','Setor']]),
-  fiscal:freezeSteps([['regimes','Regimes'],['difal','DIFAL'],['rbt12','RBT12'],['documents','Entradas e saídas']]),
+  fiscal:freezeSteps([['regimes','Regimes'],['difal','DIFAL'],['rbt12','RBT12 (opcional)'],['documents','Entradas e saídas']]),
   accounting:freezeSteps([['values','Despesas']]),
   config:freezeSteps([['choices','Regimes e ano']])
 });
