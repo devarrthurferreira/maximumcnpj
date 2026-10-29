@@ -248,6 +248,7 @@ class DreModel:
         selected = {row['id'] for row in self.regimes}
         pending = {row['id']: row for row in self.regimes if not row['available']}
         simples = bool(selected & {'pure', 'hybrid'})
+        missing_rbt12 = (self.snapshot.get('rbt12Source') or self.result.get('rbt12Source')) == 'NOT_PROVIDED'
         for entry in self.result.get('memory', []):
             identifier = str(entry.get('id') or '')
             match = re.match(r'(?:(?:dre|summary)\.|difal\.(?:option|operations|status)\.)(pure|hybrid|presumed|actual)(?:\.|$)', identifier)
@@ -269,6 +270,8 @@ class DreModel:
                 item['section'] = 'Valores do período'
             if regime in pending and finite(item.get('value')):
                 item.update(value='Não disponível: ' + str(pending[regime].get('status') or 'cenário pendente'), unit='text')
+            elif missing_rbt12 and finite(item.get('value')) and identifier.startswith('simples.') and identifier != 'simples.revenueReference':
+                item.update(value='Não disponível: a RBT12 não foi informada.', unit='text')
             elif any(key in pending for key in ('pure', 'hybrid')) and item.get('unit') == 'currency' and identifier.startswith('simples.') and not (identifier.endswith('.deduction') or identifier == 'simples.revenueReference'):
                 item.update(value='Não disponível: o Simples exige conferência neste período.', unit='text')
             yield item

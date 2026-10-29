@@ -191,7 +191,7 @@ async function advanceWizard() {
         // Regime changes can remove the reference requirement. The captured draft
         // is normalized against the configuration returned by the server.
         if(!requiresSimplesReference(S.analysis.config.regimeSelection))Object.assign(S.fiscalDraft,{rbt12Source:'NOT_REQUIRED',rbt12:null,rbt12ExtractionId:null,rbt12DocumentId:null,rbt12ManualConfirmed:false});
-        else if(S.fiscalDraft.rbt12Source==='NOT_REQUIRED')S.fiscalDraft.rbt12Source='SIMPLES_SECTION_22';
+        else if(S.fiscalDraft.rbt12Source==='NOT_REQUIRED')S.fiscalDraft.rbt12Source='NOT_PROVIDED';
         setBusy(false);S.modalSteps.fiscal=state.next;renderDetail();return;
       }
     }
@@ -930,7 +930,9 @@ function captureFiscal() {
   }else if(result.rbt12Source==='MANUAL'){
     result.rbt12=readNumber($('#analysis-rbt12'),{label:'a RBT12'});result.rbt12ManualConfirmed=$('#analysis-rbt12-confirm')?.checked===true;
     result.rbt12ExtractionId=null;result.rbt12DocumentId=null;
-  }else if(result.rbt12Source==='NOT_REQUIRED')result.rbt12Source='SIMPLES_SECTION_22';
+  }else if(result.rbt12Source==='NOT_REQUIRED'||result.rbt12Source==='NOT_PROVIDED'){
+    result.rbt12Source='NOT_PROVIDED';result.rbt12=null;result.rbt12ExtractionId=null;result.rbt12DocumentId=null;result.rbt12ManualConfirmed=false;
+  }
   if(Array.isArray(result.monthlyOverrides))result.monthlyOverrides=result.monthlyOverrides.map(row=>{
     const host=document.querySelector(`[data-fiscal-month="${row.sourceMonth}"]`);if(!host)return row;
     const groups=Object.fromEntries(ADJUSTMENT_FIELDS.map(([key,label],index)=>[key,readNumber(host.querySelector(`[data-fiscal-field="${key}"]`),{signed:index<3,label:label+' em '+monthLabel(row.sourceMonth)})]));
@@ -1033,8 +1035,12 @@ function bindFiscal() {
   };
   $('#analysis-fiscal-form').onsubmit=event=>{event.preventDefault();void saveSector('fiscal',event.submitter?.value==='complete');};
   bindFiscalDocumentActions();bindInlineRbt12();
-  for(const [id,mode] of [['analysis-extrato-pdf','SIMPLES_SECTION_22'],['analysis-extrato-manual','MANUAL']])if($('#'+id))$('#'+id).onclick=()=>{
-    try{captureAll();S.fiscalDraft.rbt12Source=mode;S.fiscalDraft.rbt12=null;S.fiscalDraft.rbt12ExtractionId=null;S.fiscalDraft.rbt12ManualConfirmed=false;if(mode==='MANUAL')S.fiscalDraft.rbt12DocumentId=null;S.reference=null;markDirty('fiscal');renderDetail();$('#analysis-rbt12')?.focus();}catch(error){showError(error);}
+  for(const [id,mode] of [['analysis-extrato-none','NOT_PROVIDED'],['analysis-extrato-pdf','SIMPLES_SECTION_22'],['analysis-extrato-manual','MANUAL']])if($('#'+id))$('#'+id).onclick=()=>{
+    const previous=S.fiscalDraft;
+    // Choosing another source explicitly discards the current reference, including
+    // an unfinished manual value. Other fiscal fields retain their validation.
+    S.fiscalDraft={...previous,rbt12Source:mode};
+    try{captureAll();S.fiscalDraft.rbt12=null;S.fiscalDraft.rbt12ExtractionId=null;S.fiscalDraft.rbt12ManualConfirmed=false;if(mode!=='SIMPLES_SECTION_22')S.fiscalDraft.rbt12DocumentId=null;S.reference=null;S.pdfStatus='';S.documentStatus=null;markDirty('fiscal');renderDetail();$('#analysis-rbt12')?.focus();}catch(error){S.fiscalDraft=previous;showError(error);}
   };
   if($('#analysis-rbt12-pdf'))$('#analysis-rbt12-pdf').onchange=event=>{const file=event.target.files?.[0];if(file)void readPdf(file);};
   if($('#analysis-read-selected-pdf'))$('#analysis-read-selected-pdf').onclick=()=>{const file=$('#analysis-rbt12-pdf').files?.[0];if(file)void readPdf(file);else showError(new Error('Selecione o extrato em PDF antes de iniciar a leitura.'));};

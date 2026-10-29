@@ -155,6 +155,27 @@ class DreModelTests(unittest.TestCase):
                 self.assertEqual(row['unit'], 'text')
                 self.assertIn('Não disponível', row['value'])
 
+    def test_optional_rbt12_does_not_publish_zero_rates_or_simples_results(self):
+        for variant in ('without-rbt12', 'without-rbt12-only-simples'):
+            with self.subTest(variant=variant):
+                saved = fixture(variant)
+                view = model(saved)
+                for regime in view.regimes:
+                    for key in ('das', 'netProfit', 'totalTaxes'):
+                        value = view.value(regime, key)
+                        if regime['id'] in ('pure', 'hybrid'):
+                            self.assertIsNone(value)
+                        else:
+                            self.assertIsInstance(value, (int, float))
+                memory = list(view.memory())
+                rbt12 = next(row for row in memory if row['id'] == 'rbt12')
+                self.assertEqual(rbt12['unit'], 'text')
+                self.assertEqual(rbt12['value'], 'Não informada')
+                for row in memory:
+                    if row['id'].startswith('simples.') and row['id'] != 'simples.revenueReference':
+                        self.assertNotIsInstance(row['value'], (int, float), row['id'])
+                self.assertEqual(view.best is None, variant == 'without-rbt12-only-simples')
+
     def test_icms_historical_memory_confirms_outside_das_when_flag_is_absent(self):
         saved = copy.deepcopy(outside_snapshot())
         saved['engineInput'].pop('icmsOutside')

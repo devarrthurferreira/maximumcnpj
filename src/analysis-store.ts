@@ -78,7 +78,7 @@ async function fiscalSource(item:Analysis,data=item.fiscal.data,onSource?:(sourc
   if(requiresSimplesReference(item.config.regimeSelection)){
     const kind=rbt12InputSource(data.rbt12Source,data.rbt12Source==='MANUAL'?data.rbt12ManualConfirmed:undefined,data.rbt12ExtractionId,data.rbt12??undefined,item.config.regimeSelection);
     if(kind==='MANUAL') reference={source:'MANUAL',rbt12Cents:Math.round(data.rbt12!*100)};
-    else{
+    else if(kind==='SIMPLES_SECTION_22'){
       reference=await readRbt12Reference(data.rbt12ExtractionId,item.clientId,data.rbt12??undefined);
       // Only available Jan–Sep competences enter the comparison. Each selected
       // tax period requires its own previous-twelve-month history from section 2.2.
@@ -186,7 +186,7 @@ function seedLegacy(item:Analysis,snapshot:any,actor:LookupActor){
   const data=defaultFiscalData(selection);
   Object.assign(data,{generationId:snapshot.generationId,salesAnnex:snapshot.draft?.salesAnnex||1,serviceAnnex:snapshot.draft?.serviceAnnex||3,
     difalPolicy:upgradeDifalPolicy(snapshot.draft?.difalPolicy??snapshot.source?.difalPolicy),icmsOutside:snapshot.draft?.icmsOutside===true});
-  if(requiresSimplesReference(selection)) Object.assign(data,{rbt12Source:snapshot.rbt12Source==='MANUAL'?'MANUAL':'SIMPLES_SECTION_22',
+  if(requiresSimplesReference(selection)) Object.assign(data,{rbt12Source:snapshot.rbt12Source==='NOT_PROVIDED'?'NOT_PROVIDED':snapshot.rbt12Source==='MANUAL'?'MANUAL':'SIMPLES_SECTION_22',
     rbt12ExtractionId:snapshot.rbt12Extraction?.id||null,rbt12:snapshot.draft?.rbt12??null,rbt12ManualConfirmed:snapshot.rbt12Manual?.confirmed===true});
   const inputs=Array.isArray(snapshot.monthlyInputs)?snapshot.monthlyInputs:[];
   const accounting:AccountingData={months:inputs.map((row:any)=>({sourceMonth:row.sourceMonth,
@@ -302,7 +302,7 @@ export async function updateAnalysisConfig(actor:LookupActor,id:string,input:unk
   const expected=analysisRevision(input.expectedConfigRevision),year=analysisYear(input.year),selection=analysisSelection(input.regimeSelection),prior=await record(id);
   const data=structuredClone(prior.fiscal.data),needs=requiresSimplesReference(selection);
   if(!needs)Object.assign(data,{rbt12Source:'NOT_REQUIRED',rbt12:null,rbt12ExtractionId:null,rbt12DocumentId:null,rbt12ManualConfirmed:false});
-  else if(data.rbt12Source==='NOT_REQUIRED')data.rbt12Source='SIMPLES_SECTION_22';
+  else if(data.rbt12Source==='NOT_REQUIRED')data.rbt12Source='NOT_PROVIDED';
   const now=new Date();
   const updated=await(await analyses()).findOneAndUpdate(scope({_id:id,...active(),'config.revision':expected,'fiscal.revision':prior.fiscal.revision,...leaseFree()}),
     {$set:{activated:true,config:{revision:expected+1,year,regimeSelection:selection},'fiscal.data':data,'fiscal.status':'DRAFT','fiscal.completedAt':null,
@@ -365,12 +365,12 @@ function calculationInput(item:Analysis,source:Source,simulationId:string){
       benefits:expense.benefitsCents!/100,adminExpenses:expense.adminExpensesCents!/100});return entry;
   });
   const first=monthlyInputs[0],draft={year:item.config.year,salesAnnex:f.salesAnnex,serviceAnnex:f.serviceAnnex,regimeSelection:item.config.regimeSelection,
-    ...(requiresSimplesReference(item.config.regimeSelection)?{rbt12:f.rbt12!}:{}),difalPolicy:f.difalPolicy,icmsOutside:f.icmsOutside,
+    ...(requiresSimplesReference(item.config.regimeSelection)?{rbt12:f.rbt12}:{}),difalPolicy:f.difalPolicy,icmsOutside:f.icmsOutside,
     values:{...first.values,salesRevenue:ANALYSIS_GROUPS.slice(0,3).reduce((sum,key)=>sum+Math.round(first.groups[key]*100),0)/100,
       simplePurchases:first.groups.purchasesOptantCents,regularPurchases:first.groups.purchasesNonOptantCents}};
   return {simulationId,generationId:f.generationId,clientId:item.clientId,periodPolicy:JAN_SEP_POLICY,reportMonths:monthlyInputs.length,periodConfirmed:true,monthlyInputs,
     monthlyGroups:first.groups,draft,parentSimulationId:item.currentSimulation?.id||null,
-    ...(f.rbt12Source==='MANUAL'?{rbt12Source:'MANUAL',rbt12ManualConfirmed:true}:f.rbt12Source==='NOT_REQUIRED'?{rbt12Source:'NOT_REQUIRED'}:{rbt12ExtractionId:f.rbt12ExtractionId})};
+    ...(f.rbt12Source==='MANUAL'?{rbt12Source:'MANUAL',rbt12ManualConfirmed:true}:f.rbt12Source==='NOT_REQUIRED'||f.rbt12Source==='NOT_PROVIDED'?{rbt12Source:f.rbt12Source}:{rbt12ExtractionId:f.rbt12ExtractionId})};
 }
 async function generatedSimulation(id:string,options:AnalysisReadOptions){
   // Keep ownership/deletion/publication checks even when navigation only needs the saved ID.

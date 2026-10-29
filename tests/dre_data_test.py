@@ -26,7 +26,7 @@ def fixtures():
 import {drePdfFixture} from './tests/fixtures/dre-pdf.mjs';
 import {calculateSimulation} from './public/simulator-engine.js';
 import {buildMonthlyDre} from './public/simulator-calendar.js';
-const fixtures=Object.fromEntries(['complete','partial','loss','zero','unavailable','negative-revenue','purchases-above-revenue'].map(variant=>[variant,drePdfFixture({variant})]));
+const fixtures=Object.fromEntries(['complete','partial','loss','zero','unavailable','negative-revenue','purchases-above-revenue','without-rbt12','without-rbt12-only-simples'].map(variant=>[variant,drePdfFixture({variant})]));
 const legacy=structuredClone(fixtures.complete);
 legacy.result=calculateSimulation(legacy.draft);
 legacy.monthlyDre=buildMonthlyDre(legacy.result,2027,legacy.rbt12Manual);
@@ -80,6 +80,28 @@ class DreDataTests(unittest.TestCase):
                        {'source': {'company': {'code': 'ANOTHER COMPANY'}}}):
             with self.subTest(update=update), self.assertRaises(ReportError):
                 validate_dre_snapshot({**fixture(), **update})
+
+    def test_optional_rbt12_preserves_absence_and_unavailable_simples_in_saved_snapshots(self):
+        for variant in ('without-rbt12', 'without-rbt12-only-simples'):
+            with self.subTest(variant=variant):
+                saved = fixture(variant)
+                before = copy.deepcopy(saved)
+                self.assertIs(validate_dre_snapshot(saved), saved)
+                self.assertEqual(saved['rbt12Source'], 'NOT_PROVIDED')
+                self.assertIsNone(saved['draft']['rbt12'])
+                self.assertIsNone(saved['monthlyDre']['rbt12Reference'])
+                self.assertNotIn('rbt12Manual', saved)
+                self.assertNotIn('rbt12Extraction', saved)
+                for result in [saved['result'], *[row['result'] for row in saved['result']['monthlyResults']]]:
+                    self.assertEqual(result['simplesDiagnostic']['statusCode'], 'MISSING_RBT12')
+                    self.assertIsNone(result['simplesDiagnostic']['rbt12'])
+                    for regime in result['regimes']:
+                        self.assertEqual(regime['available'], regime['id'] not in ('pure', 'hybrid'))
+                for regime in saved['monthlyDre']['regimes']:
+                    if regime['id'] in ('pure', 'hybrid'):
+                        self.assertTrue(all(row['annual'] is None and all(value is None for value in row['months'])
+                                            for row in regime['rows']))
+                self.assertEqual(saved, before)
 
     def test_negative_revenue_preserves_values_and_rejects_fabricated_percentages(self):
         saved = fixture('negative-revenue')

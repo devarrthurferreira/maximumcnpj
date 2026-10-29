@@ -477,6 +477,38 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.deepEqual(await getSimulation(saved._id),saved,'O histórico OCR anterior permanece imutável.');
     });
 
+    await t.test('RBT12 opcional salva e reabre sem PDF ou estimativa, mantendo cálculos dos demais regimes e autorização',async()=>{
+      const {rbt12:_omitted,...withoutRbt12}=draft;
+      const request={...input,simulationId:randomUUID(),rbt12ExtractionId:undefined,rbt12Source:'NOT_PROVIDED',
+        draft:{...withoutRbt12,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid','presumed','actual']}}};
+      await assert.rejects(createSimulation(viewer,request),code('FORBIDDEN'));
+      await assert.rejects(createSimulation(actor,{...request,clientId:outside}),code('GENERATION_CLIENT'));
+      for(const change of [{rbt12ManualConfirmed:true},{rbt12ManualConfirmed:false},{rbt12ExtractionId:input.rbt12ExtractionId}]){
+        await assert.rejects(createSimulation(actor,{...request,...change}),change.rbt12ExtractionId?code('VALIDATION'):code('RBT12_SOURCE'));
+      }
+      for(const rbt12 of [0,123456])await assert.rejects(createSimulation(actor,{...request,draft:{...request.draft,rbt12}}),code('RBT12_SOURCE'));
+      const noReference=await createSimulation(operator,request);
+      assert.equal(noReference.rbt12Source,'NOT_PROVIDED');assert.equal(noReference.draft.rbt12,null);
+      assert.equal(noReference.rbt12Extraction,null);assert.equal(noReference.rbt12Manual,undefined);assert.equal(noReference.rbt12Schedule,undefined);
+      assert.equal(noReference.engineInput.rbt12,null);assert(noReference.engineInput.months.every((row:any)=>row.input.rbt12===null));
+      assert.deepEqual(noReference.result.regimes.map((row:any)=>[row.id,row.available]),[['pure',false],['hybrid',false],['presumed',true],['actual',true]]);
+      assert.equal(noReference.result.simplesDiagnostic.statusCode,'MISSING_RBT12');
+      assert.equal(noReference.result.simplesDiagnostic.rbt12,null);
+      assert(noReference.monthlyDre.regimes.filter((row:any)=>['pure','hybrid'].includes(row.id)).every((row:any)=>
+        row.available===false&&row.rows.every((value:any)=>value.annual===null&&value.months.every((amount:any)=>amount===null))));
+      assert(['presumed','actual'].includes(noReference.result.bestRegimeId));
+      assert(!noReference.result.warnings.some((row:any)=>row.code==='estimated-rbt12'));
+      assert.deepEqual(await getSimulation(noReference._id),noReference);
+      assert.deepEqual(await createSimulation(operator,{...request,draft:{...request.draft,rbt12:null}}),noReference,
+        'Ausência omitida e null explícito têm a mesma representação idempotente.');
+      const onlySimples=await createSimulation(operator,{...request,simulationId:randomUUID(),
+        draft:{...request.draft,rbt12:null,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure']}}});
+      assert.equal(onlySimples.result.regimes.length,1);assert.equal(onlySimples.result.regimes[0].available,false);
+      assert.equal(onlySimples.result.bestRegimeId,null);assert.equal(onlySimples.bestAnnualProfit,null);
+      assert.equal(onlySimples.bestRegimeName,null);assert.deepEqual(await getSimulation(onlySimples._id),onlySimples);
+      assert.deepEqual(await getSimulation(saved._id),saved);assert.equal(providerCalls,4);
+    });
+
     await t.test('receita negativa e compras maiores geram alertas, salvam e reabrem sem alterar fontes nem versões anteriores', async () => {
       const negativeGroups={salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:-2000,purchasesOptantCents:0,purchasesNonOptantCents:3500};
       const negativeDraft={...draft,values:{...draft.values,serviceRevenue:0,salesRevenue:-2000,simplePurchases:0,regularPurchases:3500,rent:6000}};

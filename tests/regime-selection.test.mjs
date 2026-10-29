@@ -74,11 +74,15 @@ test('LP/LR sem extrato nem RBT12 usam referência nula e omitem diagnóstico e 
   }
 });
 
-test('seleção explícita de Simples exige RBT12 real e não produz estimativa automática',()=>{
+test('seleção explícita de Simples permite referência ausente, sem produzir estimativa automática',()=>{
   for(const selected of [['pure'],['hybrid'],['hybrid','actual'],REGIME_IDS]){
     const d=draft(selected);delete d.rbt12;
-    assert.equal(draftToInput(d),null);assert.throws(()=>calculateSimulation(d),/Preencha todos/);
-    d.rbt12=null;assert.equal(draftToInput(d),null);
+    assert.equal(draftToInput(d).rbt12,null);
+    const missing=calculateSimulation(d);
+    assert.equal(missing.rbt12Source,'NOT_PROVIDED');assert.equal(missing.simplesDiagnostic.rbt12,null);
+    assert(missing.regimes.every(row=>row.available===!['pure','hybrid'].includes(row.id)));
+    assert(!missing.warnings.some(row=>row.code==='estimated-rbt12'));
+    d.rbt12=null;assert.deepEqual(calculateSimulation(d),missing);
     d.rbt12=0;assert(draftToInput(d));assert.equal(calculateSimulation(d).simplesDiagnostic.statusCode,'MISSING_RBT12');
   }
   const legacy=draft();delete legacy.regimeSelection;delete legacy.rbt12;

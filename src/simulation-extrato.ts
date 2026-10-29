@@ -11,8 +11,13 @@ export function rbt12InputSource(source: unknown, manualConfirmed: unknown, extr
       'Sem regimes do Simples selecionados, não envie extrato, confirmação manual ou uma RBT12 fictícia.',400,'RBT12_SOURCE');
     return 'NOT_REQUIRED' as const;
   }
-  need(source === undefined || source === 'SIMPLES_SECTION_22' || source === 'MANUAL',
-    'Selecione a origem da RBT12: extrato ou valor informado manualmente.', 400, 'RBT12_SOURCE');
+  need(source === undefined || source === 'SIMPLES_SECTION_22' || source === 'MANUAL' || source === 'NOT_PROVIDED',
+    'Escolha não informar a RBT12, preencher o valor manualmente ou usar o extrato.', 400, 'RBT12_SOURCE');
+  if(source==='NOT_PROVIDED'){
+    need(manualConfirmed===undefined && !extractionId && declared==null,
+      'Sem RBT12 informada, deixe o valor vazio e desvincule o extrato e a confirmação manual.',400,'RBT12_SOURCE');
+    return 'NOT_PROVIDED' as const;
+  }
   if (source !== 'MANUAL') {
     need(manualConfirmed === undefined, 'A confirmação manual exige selecionar a opção sem extrato.', 400, 'RBT12_SOURCE');
     return 'SIMPLES_SECTION_22' as const;

@@ -40,7 +40,8 @@ test('new wizard uses explicit RBT12 instead of monthly revenue times twelve', (
   assert.equal(memory.label,'RBT12 do Simples Nacional');
   assert.ok(projected.warnings.some(item=>item.code==='rbt12-source'));
   assert.ok(!projected.warnings.some(item=>item.code==='estimated-rbt12'));
-  draft.rbt12=null; assert.equal(draftToInput(draft),null);
+  draft.rbt12=null; assert.equal(draftToInput(draft).rbt12,null);
+  assert.equal(calculateSimulation(draft).simplesDiagnostic.statusCode,'MISSING_RBT12');
 });
 
 test('wizard rejects annual estimate overflow and unexpected or incomplete nested fields', () => {
@@ -94,7 +95,7 @@ test('historical explicit CBS rates reproduce the four reviewed spreadsheet resu
 
 test('new CBS default applies 11.3% to debits and regular credits while preserving the inside-DAS credit', () => {
   assert.equal(DEFAULT_RATES.cbs, .113);
-  assert.equal(MODEL_VERSION, '1.14.0-financial-alerts');
+  assert.equal(MODEL_VERSION, '1.15.0-optional-rbt12');
   const input = zero();
   Object.assign(input, {salesRevenue:10000, rbt12:120000, simplePurchases:2000, simpleRegularPurchases:500, regularPurchases:3000});
   input.credits.simple.base = 1500;
@@ -142,12 +143,45 @@ test('every required numeric field rejects absent, blank, null and numeric-strin
   ];
   for (const path of numericPaths) for (const invalid of [undefined, '', null, '0', NaN, Infinity, -1]) {
     if(path.length===1&&path[0]==='salesRevenue'&&invalid===-1)continue;
+    if(path.length===1&&path[0]==='rbt12'&&invalid===null)continue;
     const input = example()                                      ;
     let parent = input;
     for (const segment of path.slice(0, -1)) parent = parent[segment]                           ;
     parent[path.at(-1) ] = invalid;
     assert.equal(taxInputSchema.safeParse(input).success, false, `${path.join('.')} accepted ${String(invalid)}`);
   }
+});
+
+test('RBT12 opcional permanece ausente, sem estimar receita histórica ou confirmar imposto zero do Simples',()=>{
+  for(const salesRevenue of [10000,0,-1000]){
+    const input={...example(),salesRevenue,serviceRevenue:0,rbt12:null},before=structuredClone(input);
+    const result=calculateTax(input),reference=calculateTax({...input,rbt12:500000});
+    assert.deepEqual(input,before);
+    assert.equal(result.rbt12Source,'NOT_PROVIDED');assert.equal(result.simplesDiagnostic.rbt12,null);
+    assert.equal(result.simplesDiagnostic.statusCode,'MISSING_RBT12');
+    for(const id of ['pure','hybrid']){
+      const regime=result.regimes.find(row=>row.id===id);
+      assert.equal(regime.available,false);assert.equal(regime.margin,null);assert.equal(regime.taxBurden,null);
+      assert.equal(regime.difalApplication.reason,'MISSING_RBT12');
+      assert.equal(regime.difalApplication.salesDifal,false);assert.equal(regime.difalApplication.purchaseAnticipation,false);
+    }
+    for(const id of ['presumed','actual']){
+      const regime=result.regimes.find(row=>row.id===id),expected=reference.regimes.find(row=>row.id===id);
+      assert.equal(regime.available,true);assert.deepEqual(regime.dre,expected.dre);
+      assert.equal(regime.totalTaxes,expected.totalTaxes);assert.equal(regime.annualProfit,expected.annualProfit);
+    }
+    assert.equal(result.memory.find(row=>row.id==='rbt12').value,'Não informada');
+    assert.equal(result.memory.find(row=>row.id==='rbt12').unit,'text');
+    assert.equal(result.memory.find(row=>row.id==='simples.band').availability,'UNAVAILABLE');
+    if(salesRevenue<0)assert(result.warnings.some(row=>row.code==='negative-revenue'));
+  }
+  const missing={...example(),rbt12:null,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid']}};
+  const result=calculateTax(missing);
+  assert.equal(result.bestRegimeId,null);assert.equal(result.difference,0);
+  assert(result.regimes.every(row=>!row.available));
+  const zeroReference=calculateTax({...missing,salesRevenue:0,serviceRevenue:0,rbt12:0});
+  assert.equal(zeroReference.simplesDiagnostic.statusCode,'ZERO_REVENUE');
+  assert(zeroReference.regimes.every(row=>row.available));
 });
 
 test('negative net sales remain in every DRE without negative taxes, refunded credits or a ranking', () => {

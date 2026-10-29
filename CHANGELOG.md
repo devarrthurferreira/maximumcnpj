@@ -1,5 +1,15 @@
 # Histórico de alterações
 
+## [0.52.0] — 2026-10-29
+
+- Torna RBT12 e extrato/PGDAS-D opcionais na análise, com opções explícitas para não informar, digitar a referência manualmente ou importar um PDF.
+- Inicia novas análises sem referência e permite concluir setores, gerar, salvar, reabrir, reprocessar e exportar sem documento do Simples.
+- Mantém Lucro Presumido e Lucro Real independentes da RBT12; cenários do Simples sem referência ficam pendentes, sem bloquear a análise ou receber valores tributários e ranking fictícios.
+- Preserva a ausência como `NOT_PROVIDED` e valor nulo, distinguindo zero confirmado, referência manual, PDF e `NOT_REQUIRED` dos regimes fora do Simples.
+- Identifica a origem e as pendências na tela, memória, CSV e PDF, inclusive quando somente cenários do Simples estão selecionados.
+- Conserva as validações do PDF quando escolhido, o histórico imutável, os controles de acesso e os alertas financeiros sem bloqueio.
+- Atualiza o motor para `1.15.0-optional-rbt12` e inclui regressões com dados sintéticos para persistência, cálculo mensal, reprocessamento, relatórios e navegador.
+
 ## [0.51.0] — 2026-10-29
 
 - Aceita saldos de vendas e receita negativos quando devoluções ou ajustes superam as saídas, preservando os valores por competência e no consolidado.

@@ -25,7 +25,8 @@ test('4 meses viram média e 12 meses iguais, com conferência responsiva e RBT1
  await expect(page.locator('#simulator-app details[open]')).toHaveCount(0);
  await expect(page.locator('.projection-timeline')).toBeHidden();await expect(page.locator('#period-months')).toBeHidden();
  await expect(page.locator('.projection-tabs [aria-pressed=true]')).toHaveCount(1);await expect(page.locator('[data-projection-kind="sales"]')).toHaveAttribute('aria-pressed','true');
- await expect(page.locator('#rbt12-pdf')).toBeVisible();
+ await expect(page.locator('#rbt12-none')).toHaveAttribute('aria-pressed','true');
+ await expect(page.locator('#rbt12-pdf')).toBeHidden();
  const desktop=info.outputPath('projecao-desktop.png');await page.screenshot({path:desktop});await info.attach('Projeção desktop',{path:desktop,contentType:'image/png'});
  await page.locator('.projection-memory summary').focus();await page.keyboard.press('Enter');
  await expect(page.locator('.projection-timeline')).toBeVisible();

@@ -121,16 +121,20 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   pending(draft.values.serviceRevenue >= 0, 'REPROCESS_ADJUSTMENT',
     'O ajuste antigo produziria um valor de serviços inválido após separar mercadorias e serviços.');
   const needsReference=requiresSimplesReference(draft.regimeSelection);
-  if(needsReference){
+  if(needsReference && original.rbt12Source!=='NOT_PROVIDED'){
     pending(draft.rbt12 !== undefined, 'RBT12_REQUIRED', 'O histórico não conserva uma RBT12 efetiva. A receita mensal projetada em doze meses não substitui essa informação.');
     moneyCents(draft.rbt12);
   }
   let rbt12Extraction = null, rbt12Manual = null;
-  let rbt12Source: 'MANUAL' | 'SIMPLES_SECTION_22' | 'NOT_REQUIRED';
+  let rbt12Source: 'MANUAL' | 'SIMPLES_SECTION_22' | 'NOT_PROVIDED' | 'NOT_REQUIRED';
   if(!needsReference){
     pending(original.rbt12Source==='NOT_REQUIRED' && draft.rbt12==null && !original.rbt12Extraction && !original.rbt12Manual,
       'RBT12_SOURCE','A versão sem Simples contém uma referência fiscal incompatível. Revise os regimes selecionados.');
     rbt12Source='NOT_REQUIRED';
+  } else if(original.rbt12Source==='NOT_PROVIDED'){
+    pending(draft.rbt12===null && !original.rbt12Extraction && !original.rbt12Manual && !original.rbt12Schedule,
+      'RBT12_SOURCE','A versão sem RBT12 informada contém valor ou referência incompatível. Revise a origem da informação.');
+    rbt12Source='NOT_PROVIDED';
   } else if (original.rbt12Source === 'MANUAL') {
     pending(original.rbt12Manual?.source === 'MANUAL' && original.rbt12Manual?.confirmed === true &&
       original.rbt12Manual.rbt12Cents === moneyCents(draft.rbt12) && original.rbt12Manual.confirmedBy?.id && original.rbt12Manual.confirmedAt,
@@ -195,7 +199,7 @@ export function planReprocessing(original: any, source: any, workspaceId: string
     clientId: original.clientId, parentSimulationId: original._id, title: String(original.title || source.company.name).slice(0,140) + ' · Atualizada',
     reportMonths: original.reportMonths, periodConfirmed: true, monthlyGroups, draft, monthlyInputs,
     ...(source.analysisPeriod?{periodPolicy:JAN_SEP_POLICY}:{}),
-    ...(rbt12Source === 'MANUAL' ? {rbt12Source, rbt12ManualConfirmed: true} : rbt12Source==='NOT_REQUIRED'?{rbt12Source}:{rbt12ExtractionId: rbt12Extraction!.id})};
+    ...(rbt12Source === 'MANUAL' ? {rbt12Source, rbt12ManualConfirmed: true} : rbt12Source==='NOT_REQUIRED'||rbt12Source==='NOT_PROVIDED'?{rbt12Source}:{rbt12ExtractionId: rbt12Extraction!.id})};
   return {alreadyCurrent, input, context: {version: REPROCESS_VERSION, originalId: original._id, source, rbt12Extraction, rbt12Manual, serviceRevenueMigration}};
 }
 

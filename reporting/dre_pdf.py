@@ -589,6 +589,7 @@ class Report:
         self.add(self.note(m.coverage_note), Spacer(1, 9))
         if m.snapshot.get('rbt12Source'):
             labels = {'MANUAL': 'Informada manualmente e confirmada no cenário', 'NOT_REQUIRED': 'Não exigida pelos regimes selecionados',
+                      'NOT_PROVIDED': 'Não informada nesta versão; os cenários do Simples não foram calculados',
                       'SIMPLES_SECTION_22': 'Extrato do Simples, seção 2.2', 'SIMPLES_PDF': 'PDF do Simples, leitura histórica'}
             self.add(self.p('Referência de RBT12: ' + labels.get(m.snapshot['rbt12Source'], str(m.snapshot['rbt12Source'])) + '.', 'body'))
         schedule = m.snapshot.get('rbt12Schedule') or m.result.get('rbt12Schedule') or m.calendar.get('rbt12Schedule')

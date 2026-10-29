@@ -20,9 +20,9 @@ def amount(value):
     return f'{value:,.2f}'.replace(',', '_').replace('.', ',').replace('_', '.')
 
 
-def render(snapshot, period='complete', show_percent=False):
+def render(snapshot, period='complete', show_percent=False, regime_id='actual'):
     return render_dre_pdf({'snapshot': snapshot, 'options': {
-        'period': period, 'showPercent': show_percent, 'regimeId': 'actual'},
+        'period': period, 'showPercent': show_percent, 'regimeId': regime_id},
         'emittedAt': datetime(2026, 10, 28, 14, tzinfo=timezone.utc)})
 
 
@@ -244,6 +244,29 @@ class DrePdfTests(unittest.TestCase):
             self.assertIn('Dez/2027', annex)
             actual = next(row for row in fixture('legacy')['result']['regimes'] if row['id'] == 'actual')
             self.assertIn(amount(actual['dre']['revenue'] / 12), annex)
+
+    def test_optional_rbt12_exports_without_a_statement_or_fabricated_simples_values(self):
+        for variant in ('without-rbt12', 'without-rbt12-only-simples'):
+            with self.subTest(variant=variant):
+                saved = fixture(variant)
+                before = copy.deepcopy(saved)
+                content = render(saved, regime_id='pure' if variant.endswith('only-simples') else 'actual')
+                self.verify_document(content, monthly=True)
+                with pymupdf.open(stream=content, filetype='pdf') as document:
+                    full = normalized(' '.join(page.get_text() for page in document))
+                    self.assertIn('Referência de RBT12: Não informada nesta versão', full)
+                    self.assertIn('os cenários do Simples não foram calculados', full)
+                    self.assertIn('Consolidado indisponível:', full)
+                    self.assertIn('n/d', full)
+                    for regime in saved['result']['regimes']:
+                        if regime['available']:
+                            statement = section_text(document, 'DRE comparativa detalhada', 'Como o resultado se forma')
+                            self.assertIn(amount(regime['dre']['netProfit']), statement)
+                        else:
+                            self.assertIn(normalized(regime['status']), full)
+                    if variant.endswith('only-simples'):
+                        self.assertIn('Esta versão não registra um regime vencedor.', full)
+                self.assertEqual(saved, before)
 
     def test_long_textual_memory_paginates_without_truncation_or_financial_changes(self):
         saved = fixture('partial')

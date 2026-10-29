@@ -149,8 +149,8 @@ test('RBT12 é enviada junto de entradas e saídas, retomada em nova sessão e d
     await mockPdfTransport(page);await page.goto(`/analyses.html?id=${id}&sector=fiscal&step=documents`);
     await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','documents');
     await expect(page.locator('#analysis-inline-rbt12-pdf')).toBeEnabled();
-    await expect(page.locator('#analysis-inline-rbt12-view')).toContainText('RBT12 · seção 2.2');
-    await expect(page.locator('#analysis-inline-rbt12-view')).toContainText('Aguardando extrato');
+    await expect(page.locator('#analysis-inline-rbt12-view')).toContainText('RBT12 / PGDAS-D · opcional');
+    await expect(page.locator('#analysis-inline-rbt12-view')).toContainText('Você pode continuar sem extrato ou RBT12');
     // Invalid uploads show their reason in the same card and never request storage.
     await page.locator('#analysis-inline-rbt12-pdf').setInputFiles({name:'arquivo-invalido.csv',mimeType:'text/csv',buffer:Buffer.from('não é um PDF')});
     await expect(page.locator('#analysis-inline-pdf-status')).toContainText('em PDF');

@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildDreCsv, buildDreExportPayload} from '../public/simulator-dre-export.js';
-import {buildDrePresentation, unifiedDreRows, dreReportCoverage, dreRegimeStatuses} from '../public/simulator-dre.js';
+import {buildDrePresentation, unifiedDreRows, dreReportCoverage, dreRegimeStatuses, dreReportMemory} from '../public/simulator-dre.js';
 import {renderDrePrintDocument,renderAnnualDre} from '../public/simulator-dre-view.js';
 import {buildMonthlyDre, DRE_ROWS} from '../public/simulator-calendar.js';
+import {drePdfFixture} from './fixtures/dre-pdf.mjs';
 
 // A small independent CSV reader checks quoted separators/newlines and exact cell counts.
 function readCsv(csv) {
@@ -48,6 +49,33 @@ test('CSV anual inclui DRE, detalhes e indicadores, BOM e números com sinais se
   assert.equal(rows.filter(row => ['DRE','Detalhamento informativo','Indicadores'].includes(row[0])).length, 4);
   assert.deepEqual(rows.filter(row => ['DRE','Detalhamento informativo','Indicadores'].includes(row[0])).map(row => row[2]), ['Receita bruta total','Vendas; "CPFs"\nClientes','DAS','Margem líquida']);
   assert.deepEqual(data, before);
+});
+
+test('DRE, CSV e impressão preservam RBT12 não informada sem publicar alíquotas ou resultados fictícios do Simples', () => {
+  for(const variant of ['without-rbt12','without-rbt12-only-simples']){
+    const saved=drePdfFixture({variant}),before=structuredClone(saved);
+    const presentation=buildDrePresentation({...saved,calendar:saved.monthlyDre});
+    assert.equal(presentation.rbt12Source,'NOT_PROVIDED');
+    assert.equal(presentation.calendarReference,null);
+    for(const regime of presentation.regimes){
+      assert.equal(regime.available,!['pure','hybrid'].includes(regime.id));
+      if(!regime.available)for(const row of unifiedDreRows(presentation)){
+        assert.equal(row.values[regime.id],null,row.key);
+        assert(row.monthlyValues[regime.id].every(value=>value===null),row.key);
+      }
+    }
+    const memory=dreReportMemory(presentation),rbt12=memory.find(row=>row.id==='rbt12');
+    assert.equal(rbt12.unit,'text');assert.equal(rbt12.value,'Não informada');
+    for(const item of memory.filter(row=>row.id.startsWith('simples.')&&row.id!=='simples.revenueReference'))assert.notEqual(typeof item.value,'number',item.id);
+    const csv=buildDreCsv({presentation,company:saved.company,year:2027,period:'complete'});
+    assert.match(csv,/"Referência de RBT12";"Não informada nesta versão"/);
+    const annual=readCsv(csv).filter(row=>['DRE','Detalhamento informativo','Indicadores'].includes(row[0]));
+    assert(annual.length>0);assert(annual.every(row=>row[5]==='Não disponível'&&row[6]==='Não disponível'));
+    const print=renderDrePrintDocument({presentation,calendar:saved.monthlyDre,company:saved.company,year:2027});
+    assert.match(print,/RBT12 não informada/);assert(!print.includes('A RBT12 permanece fixa'));
+    assert(!print.includes('RBT12 fixa: R$ 0,00'));
+    assert.deepEqual(saved,before);
+  }
 });
 
 test('CSV mensal mantém uma tabela e um cabeçalho com doze meses, total e todos os regimes na ordem unificada', () => {
