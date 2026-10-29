@@ -14,6 +14,7 @@ export type DrePresentation = {
   commercialComposition?:any;
   monthlyCommercialComposition?:Record<string,any>|null;
   regimeSelection?:import('./regime-selection.js').RegimeSelection;
+  rbt12Source?:'NOT_PROVIDED'|'NOT_REQUIRED'|'MANUAL'|'SIMPLES_SECTION_22'|'SIMPLES_PDF';
   simplesDiagnostic?:any;
   sections:Array<{key:string;label:string;rows:DrePresentationRow[]}>;
   details:Array<{key:string;label:string;parentKey:string;rows:DrePresentationRow[]}>;indicators:DrePresentationRow[];
@@ -23,7 +24,7 @@ export type DrePresentation = {
   rbt12Schedule?:import('./simulator-rbt12.js').Rbt12Schedule;
   calendarYear:number|null;calendarReference:any;calendarRounding:string;percentBasis:string;
 };
-export function buildDrePresentation(input:{result:any;monthlyGroups?:any;projection?:any;source?:any;reportMonths?:number;engineInput?:any;reprocessing?:any;calendar?:any;taxSources?:any}):DrePresentation;
+export function buildDrePresentation(input:{result:any;monthlyGroups?:any;projection?:any;source?:any;reportMonths?:number;engineInput?:any;reprocessing?:any;calendar?:any;taxSources?:any;rbt12Source?:string}):DrePresentation;
 export function unifiedDreRows(presentation:DrePresentation):DrePresentationRow[];
 export function dreDifalNotes(presentation:DrePresentation,options?:{sourceMonth?:string|null}):string[];
 export function dreReportCoverage(presentation:DrePresentation):{actual:boolean;sourceMonths:string[];count:number|null;completeYear:boolean;completePeriod?:boolean;label:string;detail:string};

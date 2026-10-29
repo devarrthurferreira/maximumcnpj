@@ -91,6 +91,7 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   textLine(['Cobertura dos relatórios',coverage.label,coverage.detail]);
   if(coverage.actual)textLine(['Competências de origem',coverage.sourceMonths.join(', ')]);
   if(fixed)textLine(['Competências excluídas do período fixo',(presentation.analysisPeriod.excludedMonths||[]).join(', ')||'Nenhuma']);
+  if(presentation.rbt12Source==='NOT_PROVIDED')textLine(['Referência de RBT12','Não informada nesta versão','Os cenários do Simples não foram calculados.']);
   for(const status of dreRegimeStatuses(presentation)){
     textLine(['Situação do regime',status.name,status.available?'Cálculo disponível':'Conferência necessária',status.status]);
     for(const group of status.months)textLine(['Situação por competência',status.name,group.months.join(', '),group.status]);

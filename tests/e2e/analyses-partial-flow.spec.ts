@@ -21,7 +21,7 @@ async function api(request:APIRequestContext,baseURL:string,method:string,path:s
   expect(response.ok(),path+': '+await response.text()).toBe(true);return response.json();
 }
 
-test('Análises começa na empresa, escolhe setor, regimes, DIFAL e pede apenas RBT12 nessa etapa',async({page,baseURL,company},info)=>{
+test('Análises começa na empresa, escolhe setor, regimes, DIFAL e oferece RBT12 opcional nessa etapa',async({page,baseURL,company},info)=>{
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto('/analyses.html');
   const wizard=page.locator('#analysis-wizard');await expect(wizard).toHaveAttribute('data-wizard-step','company');
@@ -43,7 +43,8 @@ test('Análises começa na empresa, escolhe setor, regimes, DIFAL e pede apenas 
   }
   await page.locator('[data-analysis-difal-regime=hybrid][data-analysis-difal-operation=entry]').uncheck();
   await page.locator('#analysis-wizard-next').click();await expect(wizard).toHaveAttribute('data-wizard-step','rbt12');
-  await expect(page.locator('#analysis-rbt12-pdf')).toBeVisible();
+  await expect(page.locator('#analysis-extrato-none')).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('#analysis-rbt12-pdf')).toHaveCount(0);
   await expect(page.locator('#analysis-difal-panel')).not.toBeVisible();
   await expect(page.locator('#analysis-sales-annex')).not.toBeVisible();
   await expect(page.locator('#analysis-fiscal-documents-view')).not.toBeVisible();
@@ -116,7 +117,7 @@ test('Botões da empresa abrem Contábil vazio diretamente e Fiscal nos document
   await expect(inlineRbt12.getByRole('button',{name:'Adicionar RBT12 em PDF'})).toBeEnabled();
   await expect(inlineRbt12.locator('#analysis-inline-rbt12-pdf')).toHaveAttribute('accept','application/pdf,.pdf');
   await inlineRbt12.locator('[data-analysis-action=reference]').click();
-  await expect(wizard).toHaveAttribute('data-wizard-step','rbt12');await expect(page.locator('#analysis-rbt12-pdf')).toBeVisible();
+  await expect(wizard).toHaveAttribute('data-wizard-step','rbt12');await expect(page.locator('#analysis-extrato-none')).toHaveAttribute('aria-pressed','true');
   const after=await api(page.request,baseURL!,'GET',`/api/v4/analyses?clientId=${company.clientId}&summary=1`);expect(after.items).toHaveLength(1);
   expect(after.items[0].revision).toBe(saved.revision);expect(errors).toEqual([]);
 });

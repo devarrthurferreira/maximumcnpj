@@ -127,6 +127,24 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.equal(await (await collection('simulationReprocessItems')).countDocuments(scope()),5,'Filhos não entram no inventário.');
   });
 
+  await t.test('revisão de versão sem RBT12 mantém ausência explícita, demais regimes e snapshot original',async()=>{
+   switchWorkspace('optional-rbt12');const input=await fixture();
+   const {rbt12ManualConfirmed:_confirmed,...request}=input;
+   const original=await save({...request,rbt12Source:'NOT_PROVIDED',draft:{...input.draft,rbt12:null,
+    regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid','presumed','actual']}}},195,false,record=>{
+     record.modelVersion='LEGACY_OPTIONAL_REFERENCE';record.result.version='LEGACY_OPTIONAL_REFERENCE';
+    });
+   const first=await reprocessSimulations(actor,{}),done=first.hasMore?await finish():first;
+   assert.deepEqual(done.counts,{queued:0,processing:0,ok:1,pending:0,failed:0});
+   assert.equal(done.items[0].code,'UPDATED');
+   const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id));
+   assert.equal(child.rbt12Source,'NOT_PROVIDED');assert.equal(child.draft.rbt12,null);assert.equal(child.engineInput.rbt12,null);
+   assert.equal(child.rbt12Extraction,null);assert.equal(child.rbt12Manual,undefined);assert.equal(child.rbt12Schedule,undefined);
+   assert.deepEqual(child.result.regimes.map((regime:any)=>[regime.id,regime.available]),[['pure',false],['hybrid',false],['presumed',true],['actual',true]]);
+   assert.deepEqual(await(await collection('simulations')).findOne(scope({_id:original._id})),original);
+   assert.deepEqual((await reprocessSimulations(operator,{})).counts,done.counts);
+  });
+
   await t.test('CBS V10 cria um lote próprio após V9 concluído e conserva os snapshots de 9,11%',async()=>{
    switchWorkspace('cbs-version');const input=await fixture();
    const original=await save(input,90,true,record=>{

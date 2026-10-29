@@ -177,7 +177,7 @@ for(const role of ['operator','viewer'])test(`Guided ${role} resume respects pro
   await expect(page.locator('#lookup-live table,#lookup-live select')).toHaveCount(0);
 });
 
-test('Guided statement selection reads automatically and requires success before exposing the form',async({page},info)=>{
+test('Selected guided PDF reads automatically and requires confirmation before continuing with that reference',async({page},info)=>{
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
   let saves=0;page.on('request',r=>{if(r.method()==='POST'&&new URL(r.url()).pathname==='/api/v4/simulations')saves++;});
   await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'synthetic',role:'operator'}}}));

@@ -82,7 +82,8 @@ function toolbar(showPercent,reportPeriod='complete',fixed=false){
 function methodology({calendar,year,presentation}){
   const period=calendar?.reportPeriod;
   const rolling=calendar?.method==='REPORT_MONTHS_ROLLING_RBT12'&&calendar?.rbt12Schedule;
-  return `<p class="dre-method-note">${fixedPeriod(presentation,calendar)?'Janela de janeiro a setembro: consolidado somente das '+(presentation?.months?.length??calendar?.months?.length??0)+' competências com dados, sem completar ou projetar meses ausentes. Os valores de origem são aplicados ao mesmo mês do cenário '+esc(year)+'.':actualCalendar(calendar)?'Valores de cada competência dos relatórios, associados ao mesmo mês do cenário '+esc(year)+'. Meses fora do período importado ficam sem dados. Total anual = soma das competências.':'Projeção de janeiro a dezembro de '+esc(year)+', sem lançamentos históricos.'} ${period?'Base dos relatórios: '+esc(period.startMonth)+' a '+esc(period.endMonth)+'. ':''}${!simplesApplies(presentation,calendar)?'':rolling?'A RBT12 de cada competência soma os 12 meses anteriores do quadro 2.2 do extrato.':'A RBT12 permanece fixa no cenário.'} ${esc(calendar?.rounding||'Valores completos preservados; a soma dos meses exibidos pode diferir por centavos do total consolidado.')}</p>`;
+  const missing=(presentation?.rbt12Source??calendar?.rbt12Source)==='NOT_PROVIDED';
+  return `<p class="dre-method-note">${fixedPeriod(presentation,calendar)?'Janela de janeiro a setembro: consolidado somente das '+(presentation?.months?.length??calendar?.months?.length??0)+' competências com dados, sem completar ou projetar meses ausentes. Os valores de origem são aplicados ao mesmo mês do cenário '+esc(year)+'.':actualCalendar(calendar)?'Valores de cada competência dos relatórios, associados ao mesmo mês do cenário '+esc(year)+'. Meses fora do período importado ficam sem dados. Total anual = soma das competências.':'Projeção de janeiro a dezembro de '+esc(year)+', sem lançamentos históricos.'} ${period?'Base dos relatórios: '+esc(period.startMonth)+' a '+esc(period.endMonth)+'. ':''}${!simplesApplies(presentation,calendar)?'':missing?'A RBT12 não foi informada. Os cenários do Simples permanecem sem cálculo.':rolling?'A RBT12 de cada competência soma os 12 meses anteriores do quadro 2.2 do extrato.':'A RBT12 permanece fixa no cenário.'} ${esc(calendar?.rounding||'Valores completos preservados; a soma dos meses exibidos pode diferir por centavos do total consolidado.')}</p>`;
 }
 function legend(){return '<p class="dre-legend">As linhas de composição detalham os valores já incluídos na DRE. Subtotais, créditos informativos e indicadores não devem ser somados novamente ao resultado. — indica informação indisponível ou não aplicável.</p>';}
 function footnotes(presentation){
@@ -95,6 +96,7 @@ function difalNotes(presentation,sourceMonth=null){
 }
 function referenceLine(calendar,sourceMonth=null,presentation=null){
   if(!simplesApplies(presentation,calendar))return '';
+  if((presentation?.rbt12Source??calendar?.rbt12Source)==='NOT_PROVIDED')return '<p data-rbt12-source="NOT_PROVIDED">RBT12 não informada · os cenários do Simples não foram calculados.</p>';
   const schedule=calendar?.method==='REPORT_MONTHS_ROLLING_RBT12'?calendar.rbt12Schedule:null;
   if(schedule){
     const rows=sourceMonth?schedule.rows.filter(row=>row.sourceMonth===sourceMonth):schedule.rows;

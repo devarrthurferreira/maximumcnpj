@@ -1,4 +1,4 @@
-export const MONTHLY_MODEL_VERSION: '1.14.0-financial-alerts';
+export const MONTHLY_MODEL_VERSION: '1.15.0-optional-rbt12';
 import type {ReportFields} from './simulator-projection.js';
 import type {Rbt12Schedule} from './simulator-rbt12.js';
 import type {AnalysisPeriod} from './analysis-period.js';

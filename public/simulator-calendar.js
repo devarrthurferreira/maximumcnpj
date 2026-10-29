@@ -13,6 +13,7 @@ export function dreRows(result) {
 export function buildMonthlyDre(result, year, reference=null, reportPeriod=null) {
   if (!Number.isInteger(year) || year<2000 || year>2100 || !Array.isArray(result?.regimes)) throw new Error('Calendário da DRE inválido.');
   const selection=result.regimeSelection===undefined?null:resolveRegimeSelection(result.regimeSelection),hasSimples=requiresSimplesReference(selection??undefined);
+  const missingRbt12=hasSimples&&result.rbt12Source==='NOT_PROVIDED';
   const regimes=selection?result.regimes.filter(regime=>selection.selected.includes(regime.id)):result.regimes;
   const actual=result.method==='REPORT_MONTHS_V1';
   const analysisPeriod=actual&&result.analysisPeriod?.version==='JAN_SEP_V1'?structuredClone(assertCompleteAnalysisPeriod(result.analysisPeriod,result.monthlyResults)):null;
@@ -27,19 +28,20 @@ export function buildMonthlyDre(result, year, reference=null, reportPeriod=null)
     rbt12Schedule=structuredClone(schedule);
   }
   const manual=reference?.source==='MANUAL'&&reference?.confirmed===true&&Number.isSafeInteger(reference?.rbt12Cents)&&reference.rbt12Cents>=0&&reference.rbt12Cents<=100_000_000_000_000;
-  const rbt12=!hasSimples?null:manual ? {source:'MANUAL',rbt12Cents:reference.rbt12Cents} : reference?.sourceSection==='2.2'&&reference?.parserVersion==='SIMPLES_SECTION_22_V2' ? {
+  const rbt12=!hasSimples||missingRbt12?null:manual ? {source:'MANUAL',rbt12Cents:reference.rbt12Cents} : reference?.sourceSection==='2.2'&&reference?.parserVersion==='SIMPLES_SECTION_22_V2' ? {
     sourceSection:'2.2',parserVersion:reference.parserVersion,id:reference.id||reference.extractionId,
     pa:reference.pa,rbt12Cents:reference.rbt12Cents,basis:reference.rbt12Basis
   }:null;
   const rows = dreRows({regimes});
-  return {version:analysisPeriod?'DRE_CALENDAR_V4':actual?'DRE_CALENDAR_V3':rows.some(([key])=>['difal','icmsAnticipation'].includes(key)) ? CALENDAR_VERSION : 'DRE_CALENDAR_V1',year,unit:'BRL',method:!hasSimples?(actual?'REPORT_MONTHS_NO_RBT12':'AVERAGE_X12_NO_RBT12'):actual?(rbt12Schedule?'REPORT_MONTHS_ROLLING_RBT12':'REPORT_MONTHS_FIXED_RBT12'):manual?'AVERAGE_X12_FIXED_MANUAL_RBT12':'AVERAGE_X12_FIXED_STATEMENT_RBT12',
+  return {version:analysisPeriod?'DRE_CALENDAR_V4':actual?'DRE_CALENDAR_V3':rows.some(([key])=>['difal','icmsAnticipation'].includes(key)) ? CALENDAR_VERSION : 'DRE_CALENDAR_V1',year,unit:'BRL',method:!hasSimples?(actual?'REPORT_MONTHS_NO_RBT12':'AVERAGE_X12_NO_RBT12'):missingRbt12?(actual?'REPORT_MONTHS_WITHOUT_RBT12':'AVERAGE_X12_WITHOUT_RBT12'):actual?(rbt12Schedule?'REPORT_MONTHS_ROLLING_RBT12':'REPORT_MONTHS_FIXED_RBT12'):manual?'AVERAGE_X12_FIXED_MANUAL_RBT12':'AVERAGE_X12_FIXED_STATEMENT_RBT12',
     ...(selection?{regimeSelection:selection}:{}),
+    ...(missingRbt12?{rbt12Source:'NOT_PROVIDED'}:{}),
     ...(analysisPeriod?{analysisPeriod}:{}),
     reportPeriod,rbt12Reference:rbt12,...(rbt12Schedule?{rbt12Schedule}:{}),months:months.map(month=>{
       if(!actual)return month;
       const sourceMonth=result.monthlyResults.find(row=>row.month===month.number)?.sourceMonth||null;
       const scheduled=rbt12Schedule?.rows.find(row=>row.sourceMonth===sourceMonth);
-      return {...month,sourceMonth,...(rbt12Schedule?{rbt12Cents:scheduled?.status==='CONFIRMED'?scheduled.rbt12Cents:null}:{})};
+      return {...month,sourceMonth,...(rbt12Schedule?{rbt12Cents:scheduled?.status==='CONFIRMED'?scheduled.rbt12Cents:null}:missingRbt12?{rbt12Cents:null}:{})};
     }),
     rounding:`Valores completos preservados. Exibição com duas casas; somas de células exibidas podem diferir por centavos do ${analysisPeriod?'consolidado de janeiro a setembro':'total anual'}.`,
     regimes:regimes.map(regime=>({id:regime.id,name:regime.name,available:regime.available,

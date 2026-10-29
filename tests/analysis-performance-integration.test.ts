@@ -94,6 +94,14 @@ test('MongoDB desempenho das análises: navegação sem reconciliar arquivos e g
     await t.test('fonte continua disponível para preencher o Fiscal enquanto o extrato está pendente',async()=>{
       analysis=(await route('PATCH',`/analyses/${analysis.id}/config?summary=1`,{expectedConfigRevision:analysis.config.revision,
         year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure']}})).analysis;
+      assert.equal(analysis.fiscal.data.rbt12Source,'NOT_PROVIDED');
+      const optional=await observe(()=>route('GET',`/analyses/${analysis.id}?includeSource=1`));
+      assert.equal(optional.value.source.generationId,generationId);
+      assert(!optional.value.analysis.readiness.issues.some((issue:any)=>issue.code.startsWith('RBT12_')));
+      assert.deepEqual(optional.calls.filter(call=>['simplesDocuments','simplesExtractions'].includes(call.collection)),[],
+        'A opção sem RBT12 não lê arquivos nem extrações do Simples.');
+      analysis=(await route('PATCH',`/analyses/${analysis.id}/fiscal?summary=1`,{expectedSectorRevision:analysis.fiscal.revision,
+        expectedConfigRevision:analysis.config.revision,complete:false,data:{...analysis.fiscal.data,rbt12Source:'SIMPLES_SECTION_22'}})).analysis;
       const pending=await route('GET',`/analyses/${analysis.id}?includeSource=1`);
       assert.equal(pending.source.generationId,generationId);assert.equal(pending.source.monthlyReports.length,9);
       assert.equal(pending.sourceError,null);assert.equal(pending.analysis.readiness.ready,false);

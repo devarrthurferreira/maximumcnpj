@@ -31,7 +31,7 @@ const MANUAL = ['serviceRevenue','salaries','benefits','adminExpenses','rent','c
 const DIFAL_REGIMES=[['pure','Simples puro'],['hybrid','Simples híbrido']];
 const LEGACY_DIFAL_REGIMES=[...DIFAL_REGIMES,['presumed','Lucro Presumido'],['actual','Lucro Real']];
 const DIFAL_OPERATIONS=[['entry','DIFAL de entrada','Compras · antecipação de ICMS'],['exit','DIFAL de saída','Vendas']];
-const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',dreReportPeriod:'complete',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,rbt12DocumentConfirmed:false,rbt12DocumentRetryable:false,rbt12Sequence:0,pdfOperation:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales',guided:false,guidedStage:false,guidedResume:false,rbt12Mode:'PDF',serviceMigration:null,draftMigrationNotice:null,dreShowPercent:false,dreMonthView:true,dreMonth:0,dreContext:null,detailStates:new Map(),monthlyInputs:[],entry:0};
+const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',dreReportPeriod:'complete',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,rbt12DocumentConfirmed:false,rbt12DocumentRetryable:false,rbt12Sequence:0,pdfOperation:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales',guided:false,guidedStage:false,guidedResume:false,rbt12Mode:'NONE',serviceMigration:null,draftMigrationNotice:null,dreShowPercent:false,dreMonthView:true,dreMonth:0,dreContext:null,detailStates:new Map(),monthlyInputs:[],entry:0};
 let dreContextCache=null;
 const drePdf={operation:null,status:'',error:false,snapshot:null,optionsKey:null};
 const localTaxesOutside = () => S.readonly ? S.snapshot?.draft?.icmsOutside===true : $('#icms-outside')?.value==='outside';
@@ -195,7 +195,7 @@ function fixedPeriodNotice(){
 }
 function display(prefill=null) {
   cancelDrePdf();
-  S.readonly=false; S.result=null; S.snapshot=null; S.pending=null; S.rbt12Mode='PDF'; S.serviceMigration=servicesMigration(prefill)?{previousServices:Number(prefill.draft.values.serviceRevenue)||0}:null;S.draftMigrationNotice=null;clearRbt12();
+  S.readonly=false; S.result=null; S.snapshot=null; S.pending=null; S.rbt12Mode='NONE'; S.serviceMigration=servicesMigration(prefill)?{previousServices:Number(prefill.draft.values.serviceRevenue)||0}:null;S.draftMigrationNotice=null;clearRbt12();
   S.dreContext=null;dreContextCache=null;
   S.entry=0;S.monthlyInputs=[];
   S.difalPolicy=upgradeDifalPolicy(S.source.difalPolicy);
@@ -210,7 +210,7 @@ function display(prefill=null) {
     `<section class="card sim-source sim-period-manual"><h2>Confirme o período dos relatórios</h2><p class="sim-help">Informe quantos meses estão incluídos nos dois arquivos.</p><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1} ${i?'meses':'mês'}</option>`).join('')}</select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" required>Compras e vendas correspondem ao mesmo período.</label></div><p id="period-explanation" class="sim-help"></p></section>`;
   $('#simulator-app').innerHTML = `<div id="simulator-intro">${hero(false)}</div><div class="sim-context">${sourceCard()}<div id="simulation-notices"></div></div>
     <form id="simulator-form"><fieldset id="simulation-fields"><p class="sim-form-guidance">Valores em reais (R$). Campos com * são obrigatórios; informe 0 quando não houver valor.</p><div id="simulator-projection"></div>${periodText}
-    ${section('01','Extrato e cenário','Leia o PDF para preencher a RBT12.',`<div class="sim-pdf-grid"><div class="sim-field sim-pdf-upload"><label for="rbt12-pdf">Extrato ou declaração do Simples Nacional (PDF)</label><div class="sim-upload-controls"><input id="rbt12-pdf" type="file" accept="application/pdf,.pdf"><button type="button" id="rbt12-read">Ler RBT12</button></div><small id="rbt12-status" role="status" aria-live="polite">Selecione o extrato ou a declaração PGDAS-D em PDF para conferir a seção 2.2. Até 8 MiB.</small><div class="sim-pdf-actions"><button type="button" id="rbt12-view-original" hidden>Ver PDF original</button><button type="button" id="rbt12-view-searchable" hidden>Ver PDF pesquisável</button><button type="button" id="rbt12-reprocess" hidden>Ler novamente</button><button type="button" id="rbt12-check-status" hidden>Verificar leitura</button><a id="rbt12-download" hidden>Baixar PDF pesquisável</a></div></div>${moneyField('rbt12','RBT12 do PA · seção 2.2','Referência do PA do extrato. O cálculo mensal usa a janela de cada competência.',false,true)}</div><div id="rbt12-details"></div><div id="rbt12-schedule"></div><div class="sim-rbt12-mode"><button type="button" id="rbt12-manual">Informar RBT12 sem o extrato</button><button type="button" id="rbt12-use-pdf" hidden>Usar extrato em PDF</button><div id="rbt12-manual-notice" hidden><p class="sim-help">Informe a receita bruta efetiva dos 12 meses anteriores ao período de apuração. O valor ficará identificado como manual e será mantido fixo nas competências do cenário; não é a projeção das vendas.</p><label class="sim-confirm" for="rbt12-manual-confirm"><input id="rbt12-manual-confirm" type="checkbox">Confirmo que informei a receita bruta dos 12 meses anteriores ao período de apuração.</label></div></div><div class="sim-fields sim-scenario-fields"><div class="sim-field"><label for="simulation-year">Ano da simulação</label><select id="simulation-year"><option>2027</option><option>2028</option></select></div><div class="sim-field"><label for="sales-annex">Atividade das vendas</label><select id="sales-annex"><option value="1">Comércio · Anexo I</option><option value="2">Indústria · Anexo II</option></select></div><div class="sim-field"><label for="service-annex">Categoria dos serviços</label><select id="service-annex"><option value="3">Anexo III</option><option value="4">Anexo IV</option><option value="5">Anexo V</option></select></div></div><div class="sim-field sim-local-tax-choice"><label for="icms-outside">ICMS e ISS no cenário do Simples</label><select id="icms-outside" aria-describedby="icms-outside-help"><option value="inside">Dentro do DAS</option><option value="outside">Fora do DAS — situação já confirmada</option></select><small id="icms-outside-help">O limite geral de receita é R$ 4,8 milhões. O sublimite de R$ 3,6 milhões trata do ICMS/ISS e não significa exclusão automática do Simples. Escolha fora do DAS somente se essa situação já foi conferida para o período. Na sexta faixa, o cálculo dentro do DAS exige uma apuração específica.</small></div>${difalOptions()}`,'sim-section-extrato')}
+    ${section('01','Extrato e cenário','RBT12 / PGDAS-D é opcional. Informe manualmente, importe o PDF ou continue sem essa referência.',`<div class="sim-pdf-grid"><div class="sim-field sim-pdf-upload"><label for="rbt12-pdf">Extrato ou declaração do Simples Nacional (PDF)</label><div class="sim-upload-controls"><input id="rbt12-pdf" type="file" accept="application/pdf,.pdf"><button type="button" id="rbt12-read">Ler RBT12</button></div><small id="rbt12-status" role="status" aria-live="polite">Selecione o extrato ou a declaração PGDAS-D em PDF para conferir a seção 2.2. Até 8 MiB.</small><div class="sim-pdf-actions"><button type="button" id="rbt12-view-original" hidden>Ver PDF original</button><button type="button" id="rbt12-view-searchable" hidden>Ver PDF pesquisável</button><button type="button" id="rbt12-reprocess" hidden>Ler novamente</button><button type="button" id="rbt12-check-status" hidden>Verificar leitura</button><a id="rbt12-download" hidden>Baixar PDF pesquisável</a></div></div>${moneyField('rbt12','RBT12 do PA · seção 2.2','Referência do PA do extrato. O cálculo mensal usa a janela de cada competência.',false,true)}</div><div id="rbt12-details"></div><div id="rbt12-schedule"></div><div class="sim-rbt12-mode"><div class="sim-rbt12-choices" role="group" aria-label="Origem opcional da RBT12"><button type="button" id="rbt12-none" aria-pressed="true">Não informar agora</button><button type="button" id="rbt12-manual" aria-pressed="false">Informar manualmente</button><button type="button" id="rbt12-use-pdf" aria-pressed="false">Importar PDF (opcional)</button></div><p class="sim-help" id="rbt12-omitted-notice">Você pode gerar e salvar sem RBT12 ou extrato. Os cenários do Simples ficam sem cálculo; Lucro Presumido e Lucro Real continuam disponíveis.</p><div id="rbt12-manual-notice" hidden><p class="sim-help">Digite a RBT12 informada no PGDAS-D: receita bruta dos 12 meses anteriores ao período de apuração. Este campo não é o valor do DAS a pagar. O PDF não é necessário. O valor manual fica fixo nas competências deste cenário.</p><label class="sim-confirm" for="rbt12-manual-confirm"><input id="rbt12-manual-confirm" type="checkbox">Confirmo que informei a receita bruta dos 12 meses anteriores ao período de apuração.</label></div></div><div class="sim-fields sim-scenario-fields"><div class="sim-field"><label for="simulation-year">Ano da simulação</label><select id="simulation-year"><option>2027</option><option>2028</option></select></div><div class="sim-field"><label for="sales-annex">Atividade das vendas</label><select id="sales-annex"><option value="1">Comércio · Anexo I</option><option value="2">Indústria · Anexo II</option></select></div><div class="sim-field"><label for="service-annex">Categoria dos serviços</label><select id="service-annex"><option value="3">Anexo III</option><option value="4">Anexo IV</option><option value="5">Anexo V</option></select></div></div><div class="sim-field sim-local-tax-choice"><label for="icms-outside">ICMS e ISS no cenário do Simples</label><select id="icms-outside" aria-describedby="icms-outside-help"><option value="inside">Dentro do DAS</option><option value="outside">Fora do DAS — situação já confirmada</option></select><small id="icms-outside-help">O limite geral de receita é R$ 4,8 milhões. O sublimite de R$ 3,6 milhões trata do ICMS/ISS e não significa exclusão automática do Simples. Escolha fora do DAS somente se essa situação já foi conferida para o período. Na sexta faixa, o cálculo dentro do DAS exige uma apuração específica.</small></div>${difalOptions()}`,'sim-section-extrato')}
     ${actualMonths()?monthWorkspace():''}
     ${section('02','Vendas e serviços','Valores mensais após devoluções · confira os valores e os ajustes do cenário.',`<div class="sim-fields">${moneyField('serviceRevenue','Vendas de serviços',actualMonths()?'Serviços desta competência, separados das mercadorias.':hasImportedServices()?'Média mensal dos serviços do relatório. Natureza 9000 e seus complementos entram aqui, sem repetir nos grupos de mercadorias.':'Informe o valor mensal. Use 0 se não houver.',hasImportedServices())}${moneyField('salesRevenue','Vendas após devoluções','Soma dos três grupos abaixo, já após devoluções e com os ajustes informados. Saldos negativos geram alerta e permitem continuar.',false,true,true)}</div><div class="sim-fields sales">${moneyField('salesOptantCents','Vendas a optantes SN · após devoluções','Informe o valor após devoluções. O grupo pode ficar abaixo de zero.',true,false,true)}${moneyField('salesNonOptantCents','Vendas a não optantes SN · após devoluções','Inclui não confirmados; exclui CPFs. Informe o valor após devoluções, inclusive quando negativo.',true,false,true)}${moneyField('salesCpfCents','Vendas a CPFs · após devoluções','Clientes identificados por CPF. Informe o valor após devoluções, inclusive quando negativo.',true,false,true)}</div><div id="simulator-revenue-reconciliation"></div><div id="simulator-difal"></div>${S.serviceMigration?`<div class="sim-note" id="sim-service-migration"><h3>Confira a separação de serviços nesta nova versão</h3><p>Os valores importados foram restaurados pela classificação atual. A receita de serviços agora fica separada das mercadorias. O valor mensal de serviços informado na versão anterior era <strong>${money(S.serviceMigration.previousServices)}</strong>; ele pode já estar incluído nas vendas antigas. Confira o campo Vendas de serviços antes de simular.</p>${S.serviceMigration.previousServices>0?'<label class="sim-confirm"><input id="service-migration-confirm" type="checkbox" required>Revisei os serviços importados e o valor anterior, sem duplicar receitas.</label>':''}</div>`:''}<div class="sim-totals"><article><span>Receita utilizada no mês</span><strong id="monthly-revenue">Preencha as receitas</strong></article><article><span>${actualMonths()?'Receita utilizada · soma das competências':'Receita utilizada · projeção anual'}</span><strong id="annual-revenue">Calculada automaticamente</strong></article></div><details class="sim-inline-help"><summary>Sobre a receita após devoluções</summary><p>${actualMonths()?'As receitas usam os valores de cada competência dos relatórios e podem ser ajustadas nesse mês.':'As receitas usam a média mensal dos relatórios e podem ser ajustadas.'} Os campos de vendas já estão após as devoluções de venda da fonte. Ao editar, informe o valor final após devoluções; o fechamento mostra a diferença como ajuste manual, sem novo abatimento. Serviços identificados ficam separados das vendas de mercadorias; naturezas iniciadas por 9000 são serviços. Confira serviços adicionais sem repetir valores já importados. ${actualMonths()?'O total é a soma dos meses importados.':'A projeção é (vendas + serviços) × 12.'} A RBT12 é composta separadamente, pelas receitas do quadro 2.2 nos 12 meses anteriores a cada competência.</p></details>`,'sim-section-revenue')}
     ${section('03','Compras','Valores mensais · preenchidos pelos relatórios e editáveis.',`<div class="sim-fields">${moneyField('purchasesOptantCents','Compras de empresas do Simples','Fornecedores optantes pelo Simples.',true)}${moneyField('purchasesNonOptantCents','Compras de empresas fora do Simples','Inclui não confirmados e outros documentos.',true)}</div><div id="simulator-anticipation"></div>`,'sim-section-purchases')}
@@ -243,19 +243,21 @@ function display(prefill=null) {
   $('#rbt12-view-searchable').onclick = () => void viewStoredPdf('searchable');
   $('#rbt12-reprocess').onclick = () => void reprocessRbt12();
   $('#rbt12-check-status').onclick=()=>void restoreStoredRbt12();
-  $('#rbt12-pdf').onchange = () => {clearRbt12();invalidate();saveDraft();if(S.guidedStage)void readRbt12Pdf();};
-  $('#rbt12-manual').onclick=()=>{setRbt12Mode('MANUAL');invalidate();saveDraft();$('#rbt12').focus();};
-  $('#rbt12-use-pdf').onclick=()=>{setRbt12Mode('PDF');invalidate();saveDraft();$('#rbt12-pdf').focus();};
+  $('#rbt12-pdf').onchange = () => {setRbt12Mode('PDF');invalidate();saveDraft();if(S.guidedStage)void readRbt12Pdf();};
+  $('#rbt12-none').onclick=()=>{if(S.rbt12Mode!=='NONE'){setRbt12Mode('NONE');invalidate();saveDraft();}};
+  $('#rbt12-manual').onclick=()=>{if(S.rbt12Mode!=='MANUAL'){setRbt12Mode('MANUAL');invalidate();saveDraft();}$('#rbt12').focus();};
+  $('#rbt12-use-pdf').onclick=()=>{if(S.rbt12Mode!=='PDF'){setRbt12Mode('PDF');invalidate();saveDraft();}$('#rbt12-pdf').focus();};
   $('#simulator-form').onsubmit = event => { event.preventDefault(); void simulate(); };
+  setRbt12Mode('NONE');
   if(prefill) fillSnapshot(prefill);
   restoreDraft();
   updateRevenue(); renderNotices();
   if(fixedAnalysisPeriod()&&!S.source.analysisPeriod.complete){$('#generate-simulation').disabled=true;$('#draft-status').textContent='Preenchimento salvo nesta aba. Importe ao menos uma competência em comum entre janeiro e setembro para gerar.';}
   if(S.rbt12DocumentId&&!S.rbt12Data)void restoreStoredRbt12();
   else if(S.rbt12ExtractionId&&!S.rbt12Data)void restoreRbt12();
-  else if(!S.rbt12Data&&S.rbt12Mode!=='MANUAL')clearRbt12();
+  else if(!S.rbt12Data&&S.rbt12Mode==='PDF')clearRbt12();
   else if(S.rbt12Data&&S.rbt12ExtractionId===(S.rbt12Data.extractionId||S.rbt12Data.id))applyRbt12(S.rbt12Data);
-  else if(S.rbt12Mode!=='MANUAL')void restoreRbt12();
+  else if(S.rbt12Mode==='PDF')void restoreRbt12();
   if(S.guided)setupGuidedRbt12();
 }
 // One shared rule is used in browser, API, saved history and projection memory.
@@ -375,7 +377,7 @@ function validateAllMonths(sourceMonths=null) {
 function draft() {
   const d=createEmptyDraft(); d.year=Number($('#simulation-year').value);d.salesAnnex=Number($('#sales-annex').value);d.serviceAnnex=Number($('#service-annex').value);
   MANUAL.forEach(key=>d.values[key]=value(key));
-  d.rbt12=value('rbt12');d.icmsOutside=localTaxesOutside();
+  d.rbt12=S.rbt12Mode==='NONE'?null:value('rbt12');d.icmsOutside=localTaxesOutside();
   d.difalPolicy=parseDifalPolicy(S.difalPolicy);
   d.values.salesRevenue=salesTotal();d.values.simplePurchases=value('purchasesOptantCents');d.values.regularPurchases=value('purchasesNonOptantCents');
   return d;
@@ -406,7 +408,8 @@ function restoreDraft() {
     else if(!matchingRevenueSplit)S.draftMigrationNotice=`O rascunho anterior usava receitas sem a separação atual. Os campos importados foram preenchidos novamente; as despesas foram preservadas. Serviços no rascunho anterior: ${money(Number(data.fields?.serviceRevenue)||0)} por mês. Confira esse valor antes de simular.`;
     if($('#service-migration-confirm'))$('#service-migration-confirm').checked=matchingRevenueSplit&&data.serviceMigrationConfirmed===true;
     for(const key of [...IMPORTED,...MANUAL,'rbt12']) { if(actualMonths()&&key!=='rbt12')continue; if(isImportedField(key)&&(!matchingMonths||!matchingRevenueSplit))continue; const v=data.fields?.[key]; const signed=IMPORTED.slice(0,3).includes(key), pattern=signed?/^-?\d+(\.\d{1,2})?$/:/^\d+(\.\d{1,2})?$/; if(typeof v==='string' && (v==='' || pattern.test(v))) $('#'+key).value=v; }
-    if(data.rbt12Mode==='MANUAL'&&!data.rbt12ExtractionId){setRbt12Mode('MANUAL',{preserveValue:true});$('#rbt12-manual-confirm').checked=data.rbt12ManualConfirmed===true;}
+    if(data.rbt12Mode==='NONE')setRbt12Mode('NONE');
+    else if(data.rbt12Mode==='MANUAL'&&!data.rbt12ExtractionId){setRbt12Mode('MANUAL',{preserveValue:true});$('#rbt12-manual-confirm').checked=data.rbt12ManualConfirmed===true;}
     else {
       setRbt12Mode('PDF',{preserveValue:true});
       clearRbt12();
@@ -430,7 +433,7 @@ function hero(readonly) {
   }
   return `<div class="sim-top-links"><a class="sim-back" href="${esc(back)}">← Relatórios</a><a class="sim-back" href="/simulations.html?clientId=${encodeURIComponent(S.source.clientId)}">Histórico de versões →</a></div>
     <div class="sim-hero"><div><div class="eyebrow">${S.parentId?'NOVA VERSÃO':'PLANEJAMENTO TRIBUTÁRIO'}</div><h1>Simulador tributário</h1><p><strong>${esc(company.name)}</strong>${company.code?` <span class="sim-company-code">· ${esc(company.code)}</span>`:''}</p></div><span class="sim-hero-caption">${actualMonths()?'Valores por competência · total pela soma dos meses':'Confira os valores e compare os regimes.'}</span></div>
-    <nav class="sim-step-track" aria-label="Seções do simulador"><a href="#sim-section-extrato">01 · Extrato</a><a href="#sim-section-revenue">02 · Faturamento</a><a href="#sim-section-purchases">03 · Compras</a><a href="#sim-section-expenses">04 · Despesas</a></nav>`;
+    <nav class="sim-step-track" aria-label="Seções do simulador"><a href="#sim-section-extrato">01 · RBT12 opcional</a><a href="#sim-section-revenue">02 · Faturamento</a><a href="#sim-section-purchases">03 · Compras</a><a href="#sim-section-expenses">04 · Despesas</a></nav>`;
 }
 function sourceCard() {
   const d=S.source;
@@ -439,32 +442,37 @@ function sourceCard() {
 function setRbt12Mode(mode,{preserveValue=false}={}) {
   const previous=preserveValue?$('#rbt12').value:'';
   clearRbt12();S.rbt12Mode=mode;
-  const manual=mode==='MANUAL',input=$('#rbt12');
+  const manual=mode==='MANUAL',pdf=mode==='PDF',input=$('#rbt12');
   input.readOnly=!manual;input.required=manual;input.placeholder=manual?'Informe a RBT12':'Leia o PDF';input.value=previous;
-  $('label[for="rbt12"]').textContent=manual?'RBT12 informada manualmente *':'RBT12 do PA · seção 2.2';
+  $('label[for="rbt12"]').textContent=manual?'RBT12 informada no PGDAS-D (R$) *':'RBT12 do PA · seção 2.2';
   $('#rbt12-help').textContent=manual?'Receita efetiva dos 12 meses anteriores ao PA. O valor manual é fixo para as competências deste cenário.':'Referência do PA do extrato. O cálculo mensal usa a janela de cada competência.';
-  $('.sim-pdf-upload').hidden=manual;$('#rbt12-manual').hidden=manual;$('#rbt12-use-pdf').hidden=!manual;$('#rbt12-manual-notice').hidden=!manual;
+  $('.sim-pdf-grid').hidden=!manual&&!pdf;$('.sim-pdf-upload').hidden=!pdf;$('#rbt12-manual-notice').hidden=!manual;
+  $('#rbt12-omitted-notice').hidden=manual||pdf;
+  for(const [id,choice] of [['rbt12-none','NONE'],['rbt12-manual','MANUAL'],['rbt12-use-pdf','PDF']])$('#'+id).setAttribute('aria-pressed',String(mode===choice));
   $('#rbt12-manual-confirm').checked=false;$('#rbt12-manual-confirm').required=manual;
   updateGuidedRbt12();
 }
 function setupGuidedRbt12() {
   S.guidedStage=true;
-  $('#simulator-intro').insertAdjacentHTML('afterend',`<section class="card sim-guided-rbt12" id="guided-rbt12-stage" aria-labelledby="guided-rbt12-title"><div class="eyebrow">COMPRAS E VENDAS CONCLUÍDAS</div><h2 id="guided-rbt12-title" tabindex="-1">Agora, o extrato do Simples</h2><p>Se tiver o PDF, adicione abaixo. Vamos ler a seção 2.2 e preencher a RBT12 automaticamente.</p>${S.source.difalPolicy?`<p class="sim-guided-difal-summary" data-guided-difal-summary><strong>DIFAL dos cenários</strong> ${esc(difalSelectionSummary(S.difalPolicy))} Você poderá revisar essas opções nos dados da simulação.</p>`:''}<div id="guided-rbt12-reader"></div><div class="sim-guided-actions"><button type="button" id="guided-rbt12-skip">Não tenho o extrato agora</button><button type="button" class="primary" id="guided-rbt12-continue" disabled>Continuar com a RBT12</button></div><p class="sim-guided-note">Sem o PDF, você poderá informar a RBT12 nos próximos dados.</p></section>`);
+  const preferredMode=S.rbt12Mode;
+  $('#simulator-intro').insertAdjacentHTML('afterend',`<section class="card sim-guided-rbt12" id="guided-rbt12-stage" aria-labelledby="guided-rbt12-title"><div class="eyebrow">COMPRAS E VENDAS CONCLUÍDAS</div><h2 id="guided-rbt12-title" tabindex="-1">RBT12 / PGDAS-D · opcional</h2><p>Você pode continuar sem extrato ou RBT12, informar a referência manualmente ou importar a seção 2.2 do PDF.</p>${S.source.difalPolicy?`<p class="sim-guided-difal-summary" data-guided-difal-summary><strong>DIFAL dos cenários</strong> ${esc(difalSelectionSummary(S.difalPolicy))} Você poderá revisar essas opções nos dados da simulação.</p>`:''}<div id="guided-rbt12-reader"></div><div class="sim-guided-actions"><button type="button" id="guided-rbt12-none">Continuar sem RBT12</button><button type="button" id="guided-rbt12-skip">Informar manualmente</button><button type="button" class="primary" id="guided-rbt12-continue" disabled>Continuar com a RBT12 do PDF</button></div><p class="sim-guided-note">Sem a RBT12, os cenários do Simples ficam sem cálculo. A análise continua disponível para os demais regimes.</p></section>`);
   const reader=$('#guided-rbt12-reader');
   for(const selector of ['.sim-pdf-grid','#rbt12-details','#rbt12-schedule'])reader.append($(selector));
   if(S.rbt12Mode==='MANUAL'){
     // A previous manual draft remains available if the user chooses to continue without a PDF.
     S.manualDraft={value:$('#rbt12').value,valid:value('rbt12')!==null,confirmed:$('#rbt12-manual-confirm').checked};
-    setRbt12Mode('PDF');
   }
+  if(preferredMode!=='PDF')setRbt12Mode('PDF');
   $('#simulator-form').hidden=true;$('.sim-context').hidden=true;$('.sim-step-track').hidden=true;
   $('#rbt12-pdf').insertAdjacentHTML('beforebegin','<span class="sim-guided-placeholder" aria-hidden="true">Adicione o extrato ou a declaração em PDF<br><small>A leitura começa ao selecionar o arquivo · até 8 MiB</small></span>');
-  $('#guided-rbt12-continue').onclick=()=>{if(!S.readingPdf&&isSection22(S.rbt12Data)&&S.rbt12ExtractionId)finishGuidedRbt12(false);};
-  $('#guided-rbt12-skip').onclick=()=>{if(!S.readingPdf)finishGuidedRbt12(true);};
+  $('#guided-rbt12-continue').onclick=()=>{if(!S.readingPdf&&isSection22(S.rbt12Data)&&S.rbt12ExtractionId)finishGuidedRbt12('PDF');};
+  $('#guided-rbt12-skip').onclick=()=>{if(!S.readingPdf)finishGuidedRbt12('MANUAL');};
+  $('#guided-rbt12-none').onclick=()=>{if(!S.readingPdf)finishGuidedRbt12('NONE');};
   updateGuidedRbt12();$('#guided-rbt12-title').focus({preventScroll:true});
   if(S.guidedResume){
-    if(S.manualDraft?.valid&&S.manualDraft.confirmed)finishGuidedRbt12(true);
-    else if(isSection22(S.rbt12Data)&&S.rbt12ExtractionId)finishGuidedRbt12(false);
+    if(S.manualDraft?.valid&&S.manualDraft.confirmed)finishGuidedRbt12('MANUAL');
+    else if(preferredMode==='NONE')finishGuidedRbt12('NONE');
+    else if(isSection22(S.rbt12Data)&&S.rbt12ExtractionId)finishGuidedRbt12('PDF');
   }
 }
 function updateGuidedRbt12() {
@@ -472,22 +480,24 @@ function updateGuidedRbt12() {
   const valid=isSection22(S.rbt12Data)&&S.rbt12ExtractionId===(S.rbt12Data.extractionId||S.rbt12Data.id);
   $('#guided-rbt12-continue').disabled=S.readingPdf||!valid;
   $('#guided-rbt12-skip').disabled=S.readingPdf;
-  $('#guided-rbt12-continue').textContent=S.readingPdf?'Lendo a seção 2.2…':'Continuar com a RBT12';
+  $('#guided-rbt12-none').disabled=S.readingPdf;
+  $('#guided-rbt12-continue').textContent=S.readingPdf?'Lendo a seção 2.2…':'Continuar com a RBT12 do PDF';
   $('#rbt12-read').hidden=S.readingPdf||valid||!$('#rbt12-pdf')?.files?.length;
   $('#rbt12-read').textContent='Tentar ler novamente';
   $('#guided-rbt12-stage').setAttribute('aria-busy',String(S.readingPdf));
 }
-function finishGuidedRbt12(manual) {
+function finishGuidedRbt12(referenceMode) {
   S.guidedStage=false;S.guidedResume=false;
   const section=$('#sim-section-extrato'),mode=$('.sim-rbt12-mode');
   for(const selector of ['.sim-pdf-grid','#rbt12-details','#rbt12-schedule'])section.insertBefore($(selector),mode);
   $('.sim-guided-placeholder')?.remove();$('#guided-rbt12-stage').remove();
   $('#simulator-form').hidden=false;$('.sim-context').hidden=false;$('.sim-step-track').hidden=false;
   $('#rbt12-read').hidden=false;$('#rbt12-read').textContent='Ler RBT12';
-  if(manual){
+  if(referenceMode==='MANUAL'){
     setRbt12Mode('MANUAL');
     if(S.manualDraft){$('#rbt12').value=S.manualDraft.value;$('#rbt12-manual-confirm').checked=S.manualDraft.confirmed;}
   }
+  else if(referenceMode==='NONE')setRbt12Mode('NONE');
   S.manualDraft=null;saveDraft();renderNotices();
   updateDifalOptions();
   const params=new URLSearchParams(location.search);params.set('step','dados');history.replaceState(null,'','/simulator.html?'+params);
@@ -515,7 +525,7 @@ function clearRbt12(keepDocument=false) {
 function setReadingPdf(reading) {
   S.readingPdf=reading;
   for(const id of ['rbt12-pdf','rbt12-read','rbt12-reprocess','rbt12-check-status','generate-simulation'])if($('#'+id))$('#'+id).disabled=reading;
-  for(const id of ['rbt12-manual','rbt12-use-pdf'])if($('#'+id))$('#'+id).disabled=reading;
+  for(const id of ['rbt12-none','rbt12-manual','rbt12-use-pdf'])if($('#'+id))$('#'+id).disabled=reading;
   updateGuidedRbt12();
 }
 function applyRbt12(data) {
@@ -566,7 +576,7 @@ async function restoreRbt12() {
     const data=await api('/api/simples?'+new URLSearchParams({extractionId:id,clientId:context.clientId}));
     if(!currentRbt12(context)||S.rbt12ExtractionId!==id)return;
     validateRestoredRbt12(data,context,id);applyRbt12(data);saveDraft();
-    if(S.guidedResume&&S.guidedStage)finishGuidedRbt12(false);
+    if(S.guidedResume&&S.guidedStage)finishGuidedRbt12('PDF');
   }catch(error){if(currentRbt12(context)&&S.rbt12ExtractionId===id){clearRbt12(!!context.documentId);saveDraft();storedRbt12Actions();$('#rbt12-status').textContent=error.message;}}
 }
 async function restoreStoredRbt12(){
@@ -588,7 +598,7 @@ async function restoreStoredRbt12(){
       if(!currentRbt12(context))return;
       validateRestoredRbt12(data,context,document.extractionId);applyRbt12(data);invalidate();saveDraft();
       status.textContent+=' Leitura recuperada sem reenviar o PDF.';
-      if(S.guidedResume&&S.guidedStage)finishGuidedRbt12(false);
+      if(S.guidedResume&&S.guidedStage)finishGuidedRbt12('PDF');
       return;
     }
     storedRbt12Actions();
@@ -804,8 +814,9 @@ function fillSnapshot(snapshot) {
   if(!actualMonths()&&!S.serviceMigration)for(const key of IMPORTED) $('#'+key).value=Number(snapshot.monthlyGroups[key]).toFixed(2);
   for(const key of MANUAL)if(!actualMonths()&&(key!=='serviceRevenue'||!S.serviceMigration))$('#'+key).value=Number(snapshot.draft.values[key]).toFixed(2);
   if(snapshot.rbt12Source==='MANUAL'&&Number.isFinite(snapshot.draft.rbt12)) {setRbt12Mode('MANUAL');$('#rbt12').value=Number(snapshot.draft.rbt12).toFixed(2);}
-  else if(isSection22(snapshot.rbt12Extraction))applyRbt12(snapshot.rbt12Extraction);
-  else clearRbt12();
+  else if(isSection22(snapshot.rbt12Extraction)){setRbt12Mode('PDF');applyRbt12(snapshot.rbt12Extraction);}
+  else if(['NOT_PROVIDED','NOT_REQUIRED'].includes(snapshot.rbt12Source))setRbt12Mode('NONE');
+  else setRbt12Mode('PDF');
   $('#icms-outside').value=snapshot.draft.icmsOutside===true?'outside':'inside';
   $('#simulation-year').value=String(snapshot.draft.year);$('#sales-annex').value=String(snapshot.draft.salesAnnex);$('#service-annex').value=String(snapshot.draft.serviceAnnex);
   $('#period-confirm').checked=S.source.periodBasis==='COLUMN_H'; S.edited=S.serviceMigration?false:snapshot.manuallyAdjusted;
@@ -823,13 +834,13 @@ async function simulate() {
     try{assertCompleteAnalysisPeriod(S.source.analysisPeriod,S.source.monthlyReports);}
     catch(error){fail(error);return;}
   }
-  const manual=S.rbt12Mode==='MANUAL';
-  if(manual&&(value('rbt12')===null||!$('#rbt12-manual-confirm').checked)){fail(new Error('Informe a RBT12 efetiva e confirme a origem manual para gerar a simulação.'));(value('rbt12')===null?$('#rbt12'):$('#rbt12-manual-confirm')).focus();return;}
-  if(!manual&&(!isSection22(S.rbt12Data)||!S.rbt12ExtractionId||S.rbt12ExtractionId!==(S.rbt12Data.extractionId||S.rbt12Data.id)||Math.round(value('rbt12')*100)!==S.rbt12Data.rbt12Cents)){fail(new Error('Leia a seção 2.2 do PDF ou escolha informar a RBT12 sem o extrato.'));$('#rbt12-pdf').focus();return;}
+  const manual=S.rbt12Mode==='MANUAL',pdf=S.rbt12Mode==='PDF';
+  if(manual&&(value('rbt12')===null||!$('#rbt12-manual-confirm').checked)){fail(new Error('Informe e confirme a RBT12 manual ou escolha Não informar agora para continuar sem essa referência.'));(value('rbt12')===null?$('#rbt12'):$('#rbt12-manual-confirm')).focus();return;}
+  if(pdf&&(!isSection22(S.rbt12Data)||!S.rbt12ExtractionId||S.rbt12ExtractionId!==(S.rbt12Data.extractionId||S.rbt12Data.id)||Math.round(value('rbt12')*100)!==S.rbt12Data.rbt12Cents)){fail(new Error('Leia a seção 2.2 do PDF, informe a RBT12 manualmente ou escolha Não informar agora.'));$('#rbt12-pdf').focus();return;}
   try {
     $('#simulator-error').textContent='';
     captureMonth();
-    const selected=actualMonths()&&!manual&&fixedAnalysisPeriod()?selectAvailableRbt12Months(S.source,S.monthlyInputs,S.rbt12Data):{source:S.source,monthlyInputs:S.monthlyInputs,schedule:rbt12Schedule(),omittedMonths:[]};
+    const selected=actualMonths()&&pdf&&fixedAnalysisPeriod()?selectAvailableRbt12Months(S.source,S.monthlyInputs,S.rbt12Data):{source:S.source,monthlyInputs:S.monthlyInputs,schedule:rbt12Schedule(),omittedMonths:[]};
     const schedule=selected.schedule,calculationSource=selected.source,calculationInputs=selected.monthlyInputs;
     if(selected.omittedMonths.length&&selected.omittedMonths.includes(S.source.monthlyReports[S.entry]?.sourceMonth)){
       selectReportMonth(S.source.monthlyReports.findIndex(row=>row.sourceMonth===calculationInputs[0].sourceMonth));
@@ -843,7 +854,7 @@ async function simulate() {
     const input=draft(),groups=Object.fromEntries(IMPORTED.map(key=>[key,value(key)])),computed=actualMonths()?calculateMonthlySimulation(input,calculationSource.monthlyReports,calculationInputs,calculationSource.sales.jobId,schedule,calculationSource.analysisPeriod):null;
     const difal=computed?.difalProjection||difalProjection(),result=computed?.result||calculateSimulation(input,difal);
     S.result={input,result,source:calculationSource,monthlyInputs:calculationInputs,difalProjection:difal,rbt12Schedule:computed?.rbt12Schedule||result.rbt12Schedule||null,anticipationProjection:computed?.anticipationProjection||null,monthlyGroups:groups,projection:computed?.projection||{...annualizeReports(S.source.fields,S.months),scenario:projectScenario(groups,input.values)}};S.snapshot=null;S.saveError=null;S.viewPeriod='annual';if(actualMonths())S.dreMonth=fixedAnalysisPeriod()?Math.max(0,result.analysisPeriod.includedMonths.indexOf(S.source.monthlyReports[S.entry].sourceMonth)):S.source.monthlyReports[S.entry].month-1;saveDraft();
-    S.pending=canSave()?{simulationId:crypto.randomUUID(),generationId:S.source.generationId,clientId:S.source.clientId,reportMonths:calculationSource.reportMonths||S.months,periodConfirmed:true,...(fixedAnalysisPeriod()?{periodPolicy:JAN_SEP_POLICY}:{}),monthlyGroups:groups,draft:input,...(actualMonths()?{monthlyInputs:calculationInputs}:{}),...(manual?{rbt12Source:'MANUAL',rbt12ManualConfirmed:true}:{rbt12ExtractionId:S.rbt12ExtractionId}),...(S.parentId?{parentSimulationId:S.parentId}:{})}:null;
+    S.pending=canSave()?{simulationId:crypto.randomUUID(),generationId:S.source.generationId,clientId:S.source.clientId,reportMonths:calculationSource.reportMonths||S.months,periodConfirmed:true,...(fixedAnalysisPeriod()?{periodPolicy:JAN_SEP_POLICY}:{}),monthlyGroups:groups,draft:input,...(actualMonths()?{monthlyInputs:calculationInputs}:{}),...(manual?{rbt12Source:'MANUAL',rbt12ManualConfirmed:true}:pdf?{rbt12Source:'SIMPLES_SECTION_22',rbt12ExtractionId:S.rbt12ExtractionId}:{rbt12Source:'NOT_PROVIDED'}),...(S.parentId?{parentSimulationId:S.parentId}:{})}:null;
     renderResult();renderNotices();
     $('#results-top').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'});
     if(canSave())await persist();
@@ -967,7 +978,7 @@ function memoryContent() {
   for(const row of memory){if(!sections.has(row.section))sections.set(row.section,[]);sections.get(row.section).push(row);}
   const sources=snapshot?(snapshot.taxSources||[]):TAX_SOURCES;
   const engine=snapshot?.engineInput?.version==='REPORT_MONTHS_V1'?snapshot.engineInput.months[0]?.input:snapshot?.engineInput;
-  const referenceCaption=snapshot?.rbt12Source==='NOT_REQUIRED'?'Regimes selecionados sem exigência de extrato ou RBT12 do Simples.':engine?`Anexo de vendas ${esc(engine.salesAnnex)} · serviços ${esc(engine.serviceAnnex)} · ${snapshot?.engineInput?.version==='REPORT_MONTHS_V1'?'RBT12 da primeira competência':'referência de receita 12 meses'} ${money(engine.rbt12)}`:'';
+  const referenceCaption=snapshot?.rbt12Source==='NOT_REQUIRED'?'Regimes selecionados sem exigência de extrato ou RBT12 do Simples.':snapshot?.rbt12Source==='NOT_PROVIDED'?'RBT12 não informada. Os cenários do Simples permanecem sem cálculo nesta versão.':engine?`Anexo de vendas ${esc(engine.salesAnnex)} · serviços ${esc(engine.serviceAnnex)} · ${snapshot?.engineInput?.version==='REPORT_MONTHS_V1'?'RBT12 da primeira competência':'referência de receita 12 meses'} ${money(engine.rbt12)}`:'';
   const html=`<p class="sim-help">Modelo ${esc(snapshot?.modelVersion||result.version)} · ${result.method==='REPORT_MONTHS_V1'?'soma dos cálculos por competência':'memória original anual'}. A troca entre Mensal e ${fixedAnalysisPeriod()?'Jan–Set':'Anual'} altera a apresentação do painel e da DRE; as fórmulas abaixo conservam suas unidades originais.</p><div class="sim-links">${sources.map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.label)}</a>`).join('')}</div>${engine?`<div class="sim-engine-premises"><h3>Parâmetros capturados nesta versão</h3><p class="sim-help">${referenceCaption}</p><div class="sim-detail-grid">${Object.entries(engine.rates||{}).map(([key,val])=>`<article><span>${esc({cbs:'CBS',ibs:'IBS',icms:'ICMS',iss:'ISS',payroll:'Encargos sobre folha',irSales:'Presunção de IRPJ · vendas',csSales:'Presunção de CSLL · vendas',irServices:'Presunção de IRPJ · serviços',csServices:'Presunção de CSLL · serviços'}[key]||key)}</span><strong>${pct(val)}</strong></article>`).join('')}</div></div>`:''}
     ${[...sections].map(([section,rows])=>`<section class="sim-memory-section"><h3>${esc(section)}</h3><div class="sim-memory-items">${rows.map(row=>`<article data-memory-id="${esc(row.id)}"><div><strong>${esc(row.label)}</strong><p>${esc(row.formula)}</p></div><span>${formatMemory(row)}</span></article>`).join('')}</div></section>`).join('')}`;
   if(dreContextCache)dreContextCache.memoryHtml=html;
@@ -982,7 +993,7 @@ function capturedFields(snapshot) {
   const monthlyTable=snapshot.result?.method==='REPORT_MONTHS_V1'?`<p>${reference}</p><div class="projection-table-wrap"><table><thead><tr><th>Competência</th><th>Vendas</th><th>Serviços</th><th>Compras SN</th><th>Compras fora SN</th><th>Despesas</th>${frozenSchedule?'<th>RBT12 da competência</th>':''}</tr></thead><tbody>${snapshot.monthlyInputs.map(row=>`<tr><th>${esc(row.sourceMonth)}</th><td>${money(IMPORTED.slice(0,3).reduce((sum,key)=>sum+row.groups[key],0))}</td><td>${money(row.values.serviceRevenue)}</td><td>${money(row.groups.purchasesOptantCents)}</td><td>${money(row.groups.purchasesNonOptantCents)}</td><td>${money(MANUAL.slice(1).reduce((sum,key)=>sum+row.values[key],0))}</td>${frozenSchedule?`<td>${money(frozenSchedule.rows.find(item=>item.sourceMonth===row.sourceMonth)?.rbt12Cents/100)}</td>`:''}</tr>`).join('')}</tbody></table></div>`:null;
   const selection=d.regimeSelection?`<span>Regimes selecionados: ${snapshot.result.regimes.map(row=>esc(row.name)).join(' · ')}</span>`:'';
   const settings=simples?`<span>${d.year} · Vendas: Anexo ${d.salesAnnex===1?'I':'II'}</span><span>Serviços: Anexo ${{3:'III',4:'IV',5:'V'}[d.serviceAnnex]}</span><span>ICMS/ISS no Simples: ${d.icmsOutside===true?'fora do DAS':'dentro do DAS'}</span>`:`<span>Cenário ${d.year}</span>`;
-  const referenceLabel=simples?`RBT12: ${snapshot.rbt12Source==='SIMPLES_SECTION_22'?'Extrato · seção 2.2':snapshot.rbt12Source==='SIMPLES_PDF'?'Extrato · leitura anterior':snapshot.rbt12Source==='MANUAL'?'informada manualmente':'estimativa histórica'}`:'Extrato do Simples: não exigido';
+  const referenceLabel=simples?`RBT12: ${snapshot.rbt12Source==='SIMPLES_SECTION_22'?'Extrato · seção 2.2':snapshot.rbt12Source==='SIMPLES_PDF'?'Extrato · leitura anterior':snapshot.rbt12Source==='MANUAL'?'informada manualmente':snapshot.rbt12Source==='NOT_PROVIDED'?'não informada · opcional':'estimativa histórica'}`:'Extrato do Simples: não exigido';
   return `<section class="card sim-snapshot" id="simulation-snapshot"><details class="sim-captured-details"><summary>Dados usados no cálculo <span>Valores mensais${simples?' · exceto RBT12':''}</span></summary><h2>${esc(snapshot.title||'Simulação de '+S.source.company.name)}</h2>${!managed?`<p><a class="sim-back" data-analysis-return href="${esc(analysisUrl)}">Retomar empresa com Fiscal e Contábil →</a></p>`:''}
     ${snapshot.parentSimulationId&&!snapshot.parentSimulationDeleted?`<a class="sim-back" href="/simulator.html?simulation=${encodeURIComponent(snapshot.parentSimulationId)}">Abrir versão de origem →</a>`:snapshot.parentSimulationDeleted?'<p class="sim-help">A versão de origem foi excluída do histórico.</p>':''}
     <div class="sim-snapshot-meta">${selection}${settings}<span>${snapshot.reportMonths} ${snapshot.reportMonths===1?'mês':'meses'} nos arquivos · ${snapshot.periodBasis==='COLUMN_H'?'coluna H':'período confirmado'}</span><span>${referenceLabel}</span><span>${snapshot.manuallyAdjusted?'Valores importados ajustados':'Valores dos relatórios preservados'}</span></div>${monthlyTable||`<div class="sim-detail-grid">${fields.map(([label,val])=>`<article><span>${label}</span><strong>${money(val)}</strong></article>`).join('')}</div>`}${snapshot.adjustments?.length?`<details class="sim-adjustments"><summary>${snapshot.adjustments.length} ajustes em relação aos relatórios</summary><div class="sim-memory-items">${snapshot.adjustments.map(a=>`<article><div><strong>${a.sourceMonth?esc(a.sourceMonth)+' · ':''}${esc(fieldLabel(a.field))}</strong><p>Valor mensal dos relatórios: ${money(a.reportMonthlyValue)}</p></div><span>Simulado: ${money(a.simulatedMonthlyValue)}</span></article>`).join('')}</div></details>`:''}<p class="sim-help sim-record-id">Registro ${esc(snapshot._id)} · Modelo ${esc(snapshot.modelVersion)} · Base de cálculo ${esc(snapshot.calculatorSourceCommit)}</p></details></section>`;
@@ -1012,7 +1023,7 @@ async function openSnapshotVersion(snapshot) {
 
 function exportSimulation() {
   if(!S.result)return;
-  const payload=S.snapshot||{...(actualMonths()?{monthlyInputs:S.result.monthlyInputs||S.monthlyInputs}:{}),saved:false,generatedAt:new Date().toISOString(),calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,source:S.result.source||S.source,reportMonths:S.result.source?.reportMonths||S.months,manuallyAdjusted:S.edited,monthlyGroups:S.result.monthlyGroups,monthlyGroupsUnit:'BRL',projection:S.result.projection,difalProjection:S.result.difalProjection,anticipationProjection:S.result.anticipationProjection,rbt12Schedule:S.result.rbt12Schedule,rbt12Source:S.rbt12Mode==='MANUAL'?'MANUAL':'SIMPLES_SECTION_22',rbt12Extraction:S.rbt12Data,...(S.rbt12Mode==='MANUAL'?{rbt12Manual:{source:'MANUAL',confirmed:$('#rbt12-manual-confirm').checked,rbt12Cents:Math.round(value('rbt12')*100)}}:{}),monthlyDre:buildMonthlyDre(S.result.result,S.result.input.year,rbt12Reference(),(S.result.source||S.source).period),draft:S.result.input,result:S.result.result};
+  const payload=S.snapshot||{...(actualMonths()?{monthlyInputs:S.result.monthlyInputs||S.monthlyInputs}:{}),saved:false,generatedAt:new Date().toISOString(),calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,source:S.result.source||S.source,reportMonths:S.result.source?.reportMonths||S.months,manuallyAdjusted:S.edited,monthlyGroups:S.result.monthlyGroups,monthlyGroupsUnit:'BRL',projection:S.result.projection,difalProjection:S.result.difalProjection,anticipationProjection:S.result.anticipationProjection,rbt12Schedule:S.result.rbt12Schedule,rbt12Source:S.rbt12Mode==='MANUAL'?'MANUAL':S.rbt12Mode==='NONE'?'NOT_PROVIDED':'SIMPLES_SECTION_22',rbt12Extraction:S.rbt12Data,...(S.rbt12Mode==='MANUAL'?{rbt12Manual:{source:'MANUAL',confirmed:$('#rbt12-manual-confirm').checked,rbt12Cents:Math.round(value('rbt12')*100)}}:{}),monthlyDre:buildMonthlyDre(S.result.result,S.result.input.year,rbt12Reference(),(S.result.source||S.source).period),draft:S.result.input,result:S.result.result};
   const url=URL.createObjectURL(new Blob([JSON.stringify(buildDreExportPayload(payload,S.dreContext.presentation),null,2)],{type:'application/json;charset=utf-8'}));
   const anchor=document.createElement('a');anchor.href=url;anchor.download=`simulacao-${String(S.source.company.code||'empresa').replace(/[^\w-]/g,'_')}-${S.result.input.year}.json`;document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);
 }

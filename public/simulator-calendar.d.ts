@@ -7,6 +7,7 @@ export type MonthlyDre = {
   regimeSelection?: import('./regime-selection.js').RegimeSelection;
   analysisPeriod?:import('./analysis-period.js').AnalysisPeriod;
   rbt12Reference: any; rbt12Schedule?: import('./simulator-rbt12.js').Rbt12Schedule;
+  rbt12Source?: 'NOT_PROVIDED';
   months: Array<{number:number;label:string;period:string;sourceMonth?:string|null;rbt12Cents?:number|null}>; rounding:string;
   regimes:Array<{id:string;name:string;available:boolean;rows:Array<{key:string;label:string;annual:number|null;months:(number|null)[]}>}>;
 };

@@ -219,6 +219,24 @@ test('extrato congelado validado é reutilizado sem OCR ou confirmação manual 
  assert.equal(computed.engineInput.months[0].input.rbt12,78000);assert.equal(p.input.draft.rbt12,210000);
  original.rbt12Extraction.rbt12Window[0].totalCents++;assert.throws(()=>planReprocessing(original,source,'ws'),(e:any)=>e.code==='RBT12_EXTRACTION');
 });
+test('recálculo preserva ausência explícita de RBT12 e rejeita valor ou extrato misturado à opção',()=>{
+ const {original,source}=fixture();original.rbt12Source='NOT_PROVIDED';original.draft.rbt12=null;delete original.rbt12Manual;
+ original.draft.regimeSelection={version:'REGIME_SELECTION_V1',selected:['pure','hybrid','presumed','actual']};
+ const before=structuredClone(original),planned=planReprocessing(original,source,'ws');
+ assert.equal(planned.input.rbt12Source,'NOT_PROVIDED');assert.equal(planned.input.draft.rbt12,null);
+ assert.equal(planned.context.rbt12Extraction,null);assert.equal(planned.context.rbt12Manual,null);
+ const computed=calculateMonthlySimulation(planned.input.draft,source.monthlyReports,planned.input.monthlyInputs,source.sales.jobId);
+ assert.deepEqual(computed.result.regimes.map(row=>[row.id,row.available]),[['pure',false],['hybrid',false],['presumed',true],['actual',true]]);
+ assert(computed.engineInput.months.every(row=>row.input.rbt12===null));assert.deepEqual(original,before);
+ for(const change of [
+  (value:any)=>value.draft.rbt12=0,(value:any)=>delete value.draft.rbt12,
+  (value:any)=>value.rbt12Extraction={id:'extraction'},(value:any)=>value.rbt12Manual={source:'MANUAL'},
+  (value:any)=>value.rbt12Schedule={rows:[]}
+ ]){const altered=structuredClone(original);change(altered);assert.throws(()=>planReprocessing(altered,source,'ws'),(error:any)=>error.code==='RBT12_SOURCE');}
+ const legacy=structuredClone(original);delete legacy.rbt12Source;delete legacy.draft.rbt12;
+ assert.throws(()=>planReprocessing(legacy,source,'ws'),(error:any)=>error.code==='RBT12_REQUIRED',
+  'Um histórico antigo sem origem explícita não vira uma simulação sem RBT12 automaticamente.');
+});
 test('recálculo bloqueia lacuna anterior à janela do PA sem completar a receita ou modificar o snapshot',()=>{
  const {original,source}=fixture();original.rbt12Source='SIMPLES_SECTION_22';delete original.rbt12Manual;original.draft.rbt12=210000;
  original.rbt12Extraction={id:'10000000-0000-4000-8000-000000000006',...section22Year2025()};

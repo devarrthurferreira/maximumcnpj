@@ -161,18 +161,30 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       assert.equal((await simulationHistory(1,{clientId})).items.some(row=>row._id===candidateId),false);
     });
 
-    await t.test('regime com Simples volta a exigir confirmação efetiva de RBT12, sem reutilizar conclusão antiga',async()=>{
+    await t.test('regime com Simples pode concluir sem RBT12 e depois acrescentar valor manual sem alterar a versão anterior',async()=>{
       analysis=(await updateAnalysisConfig(actor,analysis.id,{expectedConfigRevision:analysis.config.revision,year:2028,
         regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','presumed']}})).analysis;
-      assert.equal(analysis.fiscal.status,'DRAFT');assert.equal(analysis.fiscal.data.rbt12Source,'SIMPLES_SECTION_22');
+      assert.equal(analysis.fiscal.status,'DRAFT');assert.equal(analysis.fiscal.data.rbt12Source,'NOT_PROVIDED');
       assert.equal((await getGeneration(analysis.fiscal.data.generationId)).companies[0].difalPolicy!.enabled.pure,false,
         'Mudar a seleção atual não altera a escolha capturada no relatório anterior.');
-      await assert.rejects(saveFiscal(),code('RBT12_REQUIRED'));
+      await saveFiscal();assert.equal(analysis.readiness.ready,true);
+      const withoutReference=await generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:analysis.revision});analysis=withoutReference.analysis;
+      const frozen=structuredClone(withoutReference.simulation);
+      assert.equal(frozen.rbt12Source,'NOT_PROVIDED');assert.equal(frozen.draft.rbt12,null);assert.equal(frozen.engineInput.rbt12,null);
+      assert.equal(frozen.rbt12Extraction,null);assert.equal(frozen.rbt12Manual,undefined);assert.equal(frozen.rbt12Schedule,undefined);
+      assert.deepEqual(frozen.result.regimes.map((row:any)=>[row.id,row.available]),[['pure',false],['presumed',true]]);
+      assert.equal(frozen.result.simplesDiagnostic.statusCode,'MISSING_RBT12');assert.equal(frozen.result.bestRegimeId,'presumed');
+      assert.deepEqual((await getAnalysis(analysis.id)).analysis.fiscal.data,analysis.fiscal.data);
+      assert.deepEqual(frozen.monthlyInputs.map((row:any)=>row.sourceMonth),analysis.readiness.months);
+      await assert.rejects(saveFiscal({...analysis.fiscal.data,rbt12Source:'SIMPLES_SECTION_22'}),code('RBT12_REQUIRED'),
+        'Selecionar um PDF exige uma leitura válida; a opção sem informação é explícita.');
       await assert.rejects(saveFiscal({...analysis.fiscal.data,rbt12Source:'MANUAL',rbt12:100000,rbt12ManualConfirmed:false}),code('RBT12_CONFIRMATION'));
       await saveFiscal({...analysis.fiscal.data,rbt12Source:'MANUAL',rbt12:100000,rbt12ManualConfirmed:true});
       assert.equal(analysis.readiness.ready,true);
       const next=await generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:analysis.revision});analysis=next.analysis;
       assert.deepEqual(next.simulation.result.regimes.map((row:any)=>row.id),['pure','presumed']);assert.equal(next.simulation.rbt12Manual.confirmed,true);
+      assert(next.simulation.result.regimes.every((row:any)=>row.available));assert.equal(next.simulation.parentSimulationId,frozen._id);
+      assert.deepEqual(await getSimulation(frozen._id),frozen,'Informar RBT12 depois cria uma versão nova; o resultado sem referência permanece congelado.');
     });
 
     await t.test('bridge legado preserva retry e exclusão antes da ativação; open adota sem mutar o original',async()=>{

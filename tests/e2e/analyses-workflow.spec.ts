@@ -285,11 +285,13 @@ test('Relatórios de doze meses geram Jan–Set, nove despesas e composição co
   }finally{await fiscalContext.close();}
 });
 
-test('Simples exige referência confirmada, trocar regimes retira o extrato e conflito mantém campos digitados',async({page,browser,baseURL,analysisAccounts})=>{
+test('PDF escolhido exige leitura confirmada, trocar regimes retira a referência e conflito mantém campos digitados',async({page,browser,baseURL,analysisAccounts})=>{
   test.setTimeout(120_000);
   await signIn(page.request,baseURL!,analysisAccounts.accounting);const client=await company(page.request,baseURL!);
   let analysis=(await post(page.request,baseURL!,'/api/v4/analyses',{clientId:client.id,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid']}})).analysis;
   const id=analysis.id;await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await importInBrowser(page,client.code);
+  await expect(page.locator('#analysis-extrato-none')).toHaveAttribute('aria-pressed','true');
+  await page.locator('#analysis-extrato-pdf').click();
   await expect(page.locator('#analysis-rbt12-pdf')).toBeVisible();
   await wizardStep(page,'fiscal','documents');
   const incomplete=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/fiscal`&&response.request().method()==='PATCH');
@@ -332,4 +334,60 @@ test('Simples exige referência confirmada, trocar regimes retira o extrato e co
     await expect(concurrent.locator('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]')).toHaveValue('111.00');
     const saved=await generate(concurrent,id);expect(saved.result.regimes.map((row:any)=>row.id)).toEqual(['actual']);expect(saved.rbt12Source).toBe('NOT_REQUIRED');
   }finally{await context.close();}
+});
+
+test('Análise conclui e exporta sem RBT12 ou PDF; informar PGDAS-D manualmente cria nova versão sem alterar a anterior',async({page,baseURL,analysisAccounts},info)=>{
+  test.setTimeout(150_000);page.setDefaultTimeout(15_000);
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await signIn(page.request,baseURL!,analysisAccounts.accounting);const client=await company(page.request,baseURL!);
+  let analysis=(await post(page.request,baseURL!,'/api/v4/analyses',{clientId:client.id,year:2027,
+    regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid','presumed','actual']}})).analysis;
+  const id=analysis.id;await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await importInBrowser(page,client.code);
+  await expect(page.locator('#analysis-extrato-none')).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('[data-rbt12-not-provided]')).toContainText('Você pode concluir a análise sem RBT12 ou extrato');
+  await expect(page.locator('#analysis-rbt12-pdf,#analysis-rbt12')).toHaveCount(0);
+  // A selected but unfinished manual entry can be explicitly abandoned.
+  await page.locator('#analysis-extrato-manual').click();await page.locator('#analysis-rbt12').fill('-1');
+  await page.locator('#analysis-extrato-none').click();await expect(page.locator('#analysis-extrato-none')).toHaveAttribute('aria-pressed','true');
+  for(const width of [1440,390]){
+    await page.setViewportSize({width,height:900});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+    await page.screenshot({path:info.outputPath(`analysis-rbt12-optional-${width}.png`),fullPage:true});
+  }
+  await page.setViewportSize({width:1440,height:1000});
+  analysis=await saveSector(page,id,'fiscal');
+  expect(analysis.fiscal.data).toMatchObject({rbt12Source:'NOT_PROVIDED',rbt12:null,rbt12DocumentId:null,rbt12ExtractionId:null,rbt12ManualConfirmed:false});
+  expect(analysis.fiscal.status).toBe('COMPLETE');
+  for(let month=1;month<=9;month++)await addMonth(page,'2025-0'+month,[0,0,0,0,0]);
+  analysis=await saveSector(page,id,'accounting');expect(analysis.readiness.ready).toBe(true);
+  const first=await generate(page,id);
+  expect(first.rbt12Source).toBe('NOT_PROVIDED');expect(first.draft.rbt12).toBeNull();
+  expect(first.rbt12Extraction).toBeNull();expect(first.rbt12Manual).toBeUndefined();expect(first.rbt12Schedule).toBeUndefined();
+  expect(first.result.regimes.filter((row:any)=>row.available).map((row:any)=>row.id)).toEqual(['presumed','actual']);
+  expect(first.result.simplesDiagnostic).toMatchObject({available:false,statusCode:'MISSING_RBT12',rbt12:null});
+  for(const month of first.result.monthlyResults)expect(month.engineInput.rbt12).toBeNull();
+  await page.locator('.dre-full-details > summary').click();
+  await expect(page.locator('#dre-demonstrativo [data-simples-diagnostic="MISSING_RBT12"]')).toBeVisible();
+  await expect(page.locator('#simulation-snapshot')).toContainText('não informada · opcional');
+  await expect(page.locator('#simulation-result')).not.toContainText('NaN');
+  const downloading=page.waitForEvent('download');await page.locator('#export-dre-csv').click();
+  const download=await downloading,stream=await download.createReadStream();let csv='';for await(const chunk of stream!)csv+=chunk;
+  expect(csv).toContain('Não informada nesta versão');expect(csv).toContain('Os cenários do Simples não foram calculados');
+  expect(csv).not.toContain('RBT12 fixa: 0');
+  await page.screenshot({path:info.outputPath('analysis-without-rbt12-result.png'),fullPage:true});
+  await page.reload();await page.locator('.dre-full-details > summary').click();
+  await expect(page.locator('#dre-demonstrativo [data-simples-diagnostic="MISSING_RBT12"]')).toBeVisible();
+  expect(await get(page.request,`/api/v4/simulations/${first._id}`)).toEqual(first);
+
+  await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await openSector(page,'fiscal','rbt12');
+  await expect(page.locator('#analysis-extrato-none')).toHaveAttribute('aria-pressed','true');
+  await page.locator('#analysis-extrato-manual').click();await expect(page.locator('#analysis-rbt12-pdf')).toHaveCount(0);
+  await expect(page.locator('label[for="analysis-rbt12"]')).toContainText('PGDAS-D');
+  await page.locator('#analysis-rbt12').fill('150000');await page.locator('#analysis-rbt12-confirm').check();
+  await saveSector(page,id,'fiscal');const second=await generate(page,id);
+  expect(second.rbt12Source).toBe('MANUAL');expect(second.draft.rbt12).toBe(150000);expect(second.rbt12Extraction).toBeNull();
+  expect(second.result.regimes.every((row:any)=>row.available)).toBe(true);
+  expect(second.parentSimulationId).toBe(first._id);expect(second._id).not.toBe(first._id);
+  expect(await get(page.request,`/api/v4/simulations/${first._id}`)).toEqual(first);
+  expect(errors).toEqual([]);
 });

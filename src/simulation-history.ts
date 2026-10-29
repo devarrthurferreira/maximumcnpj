@@ -84,7 +84,11 @@ export function validateSimulationRequest(input: unknown) {
     catch (error) { throw new AppError(400, 'VALIDATION', error instanceof Error ? error.message : 'Opções de DIFAL inválidas.'); }
   }
   const draft: SimulationDraft = {year: input.draft.year, salesAnnex: input.draft.salesAnnex, serviceAnnex: input.draft.serviceAnnex,
-    ...(Object.hasOwn(input.draft, 'rbt12') ? {rbt12: input.draft.rbt12===null && !requiresSimplesReference(regimeSelection)?null:money(input.draft.rbt12)} : {}),
+    // The new optional source canonicalizes omission and null at the same key
+    // position, keeping its retry hash stable without changing historical hashes.
+    ...(Object.hasOwn(input.draft, 'rbt12') || input.rbt12Source==='NOT_PROVIDED' ? {rbt12:
+      (input.rbt12Source==='NOT_PROVIDED' && input.draft.rbt12==null) || (input.draft.rbt12===null && !requiresSimplesReference(regimeSelection))
+        ? null : money(input.draft.rbt12)} : {}),
     ...(Object.hasOwn(input.draft, 'icmsOutside') ? {icmsOutside: input.draft.icmsOutside} : {}),
     // Keep omission and the normalized request hash unchanged for historical retries.
     ...(difalPolicy ? {difalPolicy} : {}),
@@ -100,7 +104,7 @@ export function validateSimulationRequest(input: unknown) {
     ...(input.periodPolicy===JAN_SEP_POLICY?{periodPolicy:JAN_SEP_POLICY}:{}),
     ...(input.monthlyInputs === undefined ? {} : {monthlyInputs: input.monthlyInputs}),
     // Preserve the previous normalized OCR request and hash for retries after an upgrade.
-    ...(rbt12Source === 'MANUAL' ? {rbt12Source, rbt12ManualConfirmed: true as const} : rbt12Source==='NOT_REQUIRED'?{rbt12Source}:{})};
+    ...(rbt12Source === 'MANUAL' ? {rbt12Source, rbt12ManualConfirmed: true as const} : rbt12Source==='NOT_REQUIRED'||rbt12Source==='NOT_PROVIDED'?{rbt12Source}:{})};
 }
 
 async function simulations() {
@@ -249,7 +253,7 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
       'O período da simulação deve corresponder ao intervalo identificado na coluna H dos relatórios.', 409, 'SIMULATION_PERIOD');
   }
   const rbt12Source = 'rbt12Source' in validated?validated.rbt12Source:'SIMPLES_SECTION_22';
-  const rbt12Extraction = rbt12Source === 'MANUAL' || rbt12Source==='NOT_REQUIRED' ? null : reprocessing?.rbt12Extraction || await readRbt12Reference(rbt12ExtractionId, clientId, draft.rbt12);
+  const rbt12Extraction = rbt12Source === 'SIMPLES_SECTION_22' ? reprocessing?.rbt12Extraction || await readRbt12Reference(rbt12ExtractionId, clientId, draft.rbt12) : null;
   const createdAt = new Date();
   const rbt12Manual = rbt12Source === 'MANUAL' ? reprocessing?.rbt12Manual || {source: 'MANUAL' as const, confirmed: true,
     rbt12Cents: Math.round(draft.rbt12! * 100), confirmedAt: createdAt,

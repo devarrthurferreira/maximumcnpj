@@ -1,6 +1,6 @@
 import {readStatement,mockStatement,statementHistory} from './extrato-helper.ts';
 import {test,expect} from '@playwright/test';
-import {calculateSimulation,draftToInput,TAX_SOURCES,CALCULATOR_SOURCE_COMMIT,MODEL_VERSION} from '../../public/simulator-engine.js';
+import {calculateSimulation,createEmptyDraft,draftToInput,TAX_SOURCES,CALCULATOR_SOURCE_COMMIT,MODEL_VERSION} from '../../public/simulator-engine.js';
 const generation='00000000-0000-4000-8000-000000000001',client='00000000-0000-4000-8000-000000000002';
 const source={generationId:generation,clientId:client,company:{code:'001',name:'EMPRESA SINTÉTICA'},
   purchases:{jobId:'00000000-0000-4000-8000-000000000003',fileName:'compras.csv',totalCents:450001,formula:'Q - Y + AA - AB',calculationVersion:'NET_V2',completedAt:'2026-09-30T15:00:00Z'},
@@ -13,8 +13,74 @@ async function setup(page:any){
   await page.route('**/api/v4/simulations',(r:any)=>r.fulfill({status:201,json:snapshot(r.request().postDataJSON())}));
 }
 const url=`/simulator.html?generation=${generation}&client=${client}`;
-function snapshot(body:any){return {_id:body.simulationId,generationId:generation,clientId:client,company:source.company,title:'Simulação de teste',source,rbt12Source:'SIMPLES_SECTION_22',rbt12Extraction:{id:body.rbt12ExtractionId,...statementHistory(Math.round(body.draft.rbt12*100))},draft:body.draft,result:calculateSimulation(body.draft),engineInput:draftToInput(body.draft),taxSources:TAX_SOURCES,monthlyGroups:body.monthlyGroups,monthlyGroupsUnit:'BRL',reportMonths:body.reportMonths,periodConfirmed:true,manuallyAdjusted:false,adjustments:[],createdAt:'2026-09-30T16:00:00Z',createdBy:{id:'operator',name:'Teste'},modelVersion:MODEL_VERSION,calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,parentSimulationId:body.parentSimulationId||null};}
+function snapshot(body:any){
+  const rbt12Source=body.rbt12Source||'SIMPLES_SECTION_22';
+  return {_id:body.simulationId,generationId:generation,clientId:client,company:source.company,title:'Simulação de teste',source,rbt12Source,
+    rbt12Extraction:rbt12Source==='SIMPLES_SECTION_22'?{id:body.rbt12ExtractionId,...statementHistory(Math.round(body.draft.rbt12*100))}:null,
+    ...(rbt12Source==='MANUAL'?{rbt12Manual:{source:'MANUAL',confirmed:true,rbt12Cents:Math.round(body.draft.rbt12*100)}}:{}),
+    draft:body.draft,result:calculateSimulation(body.draft),engineInput:draftToInput(body.draft),taxSources:TAX_SOURCES,monthlyGroups:body.monthlyGroups,monthlyGroupsUnit:'BRL',reportMonths:body.reportMonths,periodConfirmed:true,manuallyAdjusted:false,adjustments:[],createdAt:'2026-09-30T16:00:00Z',createdBy:{id:'operator',name:'Teste'},modelVersion:MODEL_VERSION,calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,parentSimulationId:body.parentSimulationId||null};
+}
 async function complete(page:any, values:any={}){await page.locator('#period-confirm').check();await readStatement(page,Math.round((values.rbt12??150000)*100));for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill(String(values[id]??0));}
+
+for(const guided of [false,true])test(`RBT12 opcional no ${guided?'fluxo guiado':'simulador'} salva ausência explícita e preserva o rascunho sem PDF`,async({page},info)=>{
+  await setup(page);const errors:string[]=[],savedBodies:any[]=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  await page.route('**/api/v4/simulations',route=>{
+    const body=route.request().postDataJSON();savedBodies.push(body);return route.fulfill({status:201,json:snapshot(body)});
+  });
+  await page.goto(url+(guided?'&guided=1&step=extrato':''));
+  if(guided){
+    await expect(page.locator('#guided-rbt12-stage')).toContainText('opcional');
+    await expect(page.locator('#guided-rbt12-continue')).toBeDisabled();
+    await page.locator('#guided-rbt12-none').click();
+    await expect(page.locator('#guided-rbt12-stage')).toHaveCount(0);
+  }
+  await expect(page.locator('#rbt12-none')).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('#rbt12')).not.toBeVisible();await expect(page.locator('#rbt12-pdf')).not.toBeVisible();
+  await expect(page.locator('#rbt12-omitted-notice')).toContainText('Você pode gerar e salvar sem RBT12 ou extrato');
+  await page.locator('#period-confirm').check();
+  for(const field of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+field).fill(field==='salaries'?'123':'0');
+  await page.reload();
+  await expect(page.locator('#rbt12-none')).toHaveAttribute('aria-pressed','true');await expect(page.locator('#salaries')).toHaveValue('123.00');
+  await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
+  expect(savedBodies).toHaveLength(1);expect(savedBodies[0]).toMatchObject({rbt12Source:'NOT_PROVIDED',draft:{rbt12:null,values:{salaries:123}}});
+  expect(savedBodies[0].rbt12ExtractionId).toBeUndefined();expect(savedBodies[0].rbt12ManualConfirmed).toBeUndefined();
+  await expect(page.locator('#dre-demonstrativo [data-simples-diagnostic="MISSING_RBT12"]')).toBeVisible();
+  expect(snapshot(savedBodies[0]).result.regimes.filter((row:any)=>row.available).map((row:any)=>row.id)).toEqual(['presumed','actual']);
+  const downloadEvent=page.waitForEvent('download');await page.locator('#export-simulation').click();
+  const download=await downloadEvent,stream=await download.createReadStream();let json='';for await(const chunk of stream!)json+=chunk;
+  expect(JSON.parse(json)).toMatchObject({rbt12Source:'NOT_PROVIDED',draft:{rbt12:null},rbt12Extraction:null});
+  await page.locator('#rbt12-manual').click();await expect(page.locator('label[for="rbt12"]')).toContainText('PGDAS-D');
+  await page.locator('#rbt12').fill('-1');await page.locator('#rbt12-none').click();
+  await expect(page.locator('#rbt12')).toHaveValue('');await expect(page.locator('#salaries')).toHaveValue('123.00');
+  for(const width of [1440,390]){
+    await page.setViewportSize({width,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+    await page.screenshot({path:info.outputPath(`rbt12-optional-${guided?'guided':'standalone'}-${width}.png`),fullPage:true});
+  }
+  expect(errors).toEqual([]);
+});
+
+for(const referenceSource of ['SIMPLES_SECTION_22','SIMPLES_PDF'])test(`Nova versão de ${referenceSource} sem leitura válida preserva a escolha de PDF até o usuário dispensar a referência`,async({page})=>{
+  await setup(page);
+  const draft={...createEmptyDraft(),rbt12:150000,values:{salesRevenue:10000.01,serviceRevenue:0,simplePurchases:1000.01,regularPurchases:3500,salaries:0,rent:0,cardExpenses:0,benefits:0,adminExpenses:0}};
+  const body={simulationId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',draft,reportMonths:1,
+    monthlyGroups:Object.fromEntries(Object.entries(source.fields).map(([key,value])=>[key,value/100]))};
+  const saved={...snapshot(body),rbt12Source:referenceSource,rbt12Extraction:null};
+  await page.route('**/api/v4/simulations/'+saved._id,route=>route.fulfill({json:saved}));
+  const writes:any[]=[];await page.route('**/api/v4/simulations',route=>{
+    const request=route.request().postDataJSON();writes.push(request);return route.fulfill({status:201,json:snapshot(request)});
+  });
+  await page.goto('/simulator.html?simulation='+saved._id);await page.locator('#create-version').click();
+  await expect(page.locator('#rbt12-use-pdf')).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('#rbt12-none')).toHaveAttribute('aria-pressed','false');
+  await expect(page.locator('#rbt12-pdf')).toBeVisible();await expect(page.locator('#rbt12')).toHaveValue('');
+  await page.locator('#period-confirm').check();await page.locator('#generate-simulation').click();
+  await expect(page.locator('#simulator-error')).toContainText('Leia a seção 2.2');expect(writes).toHaveLength(0);
+  await page.locator('#rbt12-none').click();await page.locator('#generate-simulation').click();
+  await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');expect(writes).toHaveLength(1);
+  expect(writes[0]).toMatchObject({rbt12Source:'NOT_PROVIDED',draft:{rbt12:null},parentSimulationId:saved._id});
+  expect(saved.rbt12Source).toBe(referenceSource);expect(saved.draft.rbt12).toBe(150000);
+});
 
 test('Verified report values populate five categories and require monthly inputs before computing original engine',async({page},info)=>{
   await setup(page);const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.setViewportSize({width:1440,height:1100});await page.goto(url);
@@ -163,6 +229,7 @@ test('Conferência do PDF abre pelo teclado e mantém avisos visíveis no celula
    extractionId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',documentId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
    searchableStored:true,warnings:[warning]}}));
  await page.goto(url);
+ await page.locator('#rbt12-use-pdf').click();
  for(const id of ['rbt12-pdf','serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await expect(page.locator('#'+id)).toBeVisible();
  await page.locator('#rbt12-pdf').setInputFiles({name:'sintetico.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic')});
  await page.locator('#rbt12-read').click();await expect(page.locator('#rbt12')).toHaveValue('150000.00');
@@ -194,6 +261,7 @@ test('OCR indisponível preserva original e reprocessa sem novo upload no endpoi
  await page.route('https://vercel.com/api/blob/**',r=>{uploads++;return r.fulfill({status:200,body:''});});
  await page.route('**/api/simples?*',r=>{reads++;return r.fulfill({status:504,contentType:'text/html',body:'<html>Gateway timeout</html>'});});
  await page.goto(url);
+ await page.locator('#rbt12-use-pdf').click();
  await expect(page.getByLabel('Extrato ou declaração do Simples Nacional (PDF)',{exact:true})).toBeVisible();
  await expect(page.locator('#rbt12-status')).toContainText('PGDAS-D');
  await page.locator('#rbt12-pdf').setInputFiles({name:'sintetico.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic')});

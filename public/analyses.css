@@ -176,6 +176,7 @@
 .analysis-subheading{font-size:13px;color:var(--analysis-ink);margin-bottom:12px}
 .analysis-fields{border:0;padding:0;margin:0;min-width:0}
 .analysis-config-year,.analysis-fiscal-options,.analysis-import-actions,.analysis-rbt12-modes{margin-top:18px}
+.analysis-rbt12-modes button[aria-pressed="true"]{opacity:1;border-color:var(--analysis-brand,#750207);background:#f8e9eb;color:#750207}
 .analysis-fiscal-options{margin-bottom:18px}
 .analysis-upload .analysis-document-actions{max-width:none;justify-content:flex-start}
 .analysis-adjustments{margin-top:22px;border-top:1px solid var(--analysis-line);padding-top:18px}

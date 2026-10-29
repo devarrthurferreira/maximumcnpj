@@ -14,7 +14,7 @@ export type AccountingData = {months:AccountingMonth[]};
 export type FiscalOverride = {sourceMonth:string;groups:Record<typeof ANALYSIS_GROUPS[number],number>;serviceRevenue:number};
 export type FiscalData = {
   generationId:string|null;salesAnnex:1|2;serviceAnnex:3|4|5;icmsOutside:boolean;difalPolicy:DifalPolicy;
-  rbt12Source:'SIMPLES_SECTION_22'|'MANUAL'|'NOT_REQUIRED';rbt12ExtractionId:string|null;rbt12DocumentId:string|null;
+  rbt12Source:'SIMPLES_SECTION_22'|'MANUAL'|'NOT_PROVIDED'|'NOT_REQUIRED';rbt12ExtractionId:string|null;rbt12DocumentId:string|null;
   rbt12:number|null;rbt12ManualConfirmed:boolean;monthlyOverrides:FiscalOverride[]|null;
 };
 export type AnalysisConfig = {revision:number;year:2027|2028;regimeSelection:RegimeSelection};
@@ -74,7 +74,7 @@ export function parseAccountingData(value:unknown,complete=false,options:{period
 }
 export function defaultFiscalData(selection:RegimeSelection):FiscalData {
   return {generationId:null,salesAnnex:1,serviceAnnex:3,icmsOutside:false,difalPolicy:upgradeDifalPolicy(),
-    rbt12Source:requiresSimplesReference(selection)?'SIMPLES_SECTION_22':'NOT_REQUIRED',rbt12ExtractionId:null,rbt12DocumentId:null,
+    rbt12Source:requiresSimplesReference(selection)?'NOT_PROVIDED':'NOT_REQUIRED',rbt12ExtractionId:null,rbt12DocumentId:null,
     rbt12:null,rbt12ManualConfirmed:false,monthlyOverrides:null};
 }
 /** Capture only applicable preferences for this import; the editable preferences remain unchanged. */
@@ -91,8 +91,8 @@ export function parseFiscalData(value:unknown,selection:RegimeSelection):FiscalD
   need(typeof value.icmsOutside==='boolean' && typeof value.rbt12ManualConfirmed==='boolean','Confirme as opções fiscais.');
   const difalPolicy=analysisDifalPolicy(value.difalPolicy);
   const needsReference=requiresSimplesReference(selection);
-  need(needsReference ? ['SIMPLES_SECTION_22','MANUAL'].includes(value.rbt12Source) : value.rbt12Source==='NOT_REQUIRED',
-    needsReference?'Selecione o extrato ou a informação manual de RBT12.':'Sem Simples selecionado, a referência de RBT12 deve estar dispensada.',400,'RBT12_SOURCE');
+  need(needsReference ? ['SIMPLES_SECTION_22','MANUAL','NOT_PROVIDED'].includes(value.rbt12Source) : value.rbt12Source==='NOT_REQUIRED',
+    needsReference?'Escolha não informar a RBT12, preencher manualmente ou usar o extrato.':'Sem Simples selecionado, a referência de RBT12 deve estar dispensada.',400,'RBT12_SOURCE');
   const data: FiscalData={generationId:value.generationId===null?null:analysisId(value.generationId),salesAnnex:value.salesAnnex,serviceAnnex:value.serviceAnnex,
     icmsOutside:value.icmsOutside,difalPolicy,rbt12Source:value.rbt12Source,
     rbt12ExtractionId:value.rbt12ExtractionId===null?null:analysisId(value.rbt12ExtractionId),
@@ -100,6 +100,8 @@ export function parseFiscalData(value:unknown,selection:RegimeSelection):FiscalD
     rbt12:value.rbt12===null?null:money(value.rbt12),rbt12ManualConfirmed:value.rbt12ManualConfirmed,monthlyOverrides:null};
   need(needsReference || (data.rbt12===null && data.rbt12ExtractionId===null && data.rbt12DocumentId===null && !data.rbt12ManualConfirmed),
     'Não envie uma RBT12 ou um extrato quando nenhum regime do Simples foi selecionado.',400,'RBT12_SOURCE');
+  need(data.rbt12Source!=='NOT_PROVIDED' || (data.rbt12===null && data.rbt12ExtractionId===null && data.rbt12DocumentId===null && !data.rbt12ManualConfirmed),
+    'Sem RBT12 informada, deixe o valor vazio e desvincule o extrato e a confirmação manual.',400,'RBT12_SOURCE');
   if(value.monthlyOverrides!==null){
     need(Array.isArray(value.monthlyOverrides) && value.monthlyOverrides.length>=1 && value.monthlyOverrides.length<=12,'Os ajustes fiscais precisam corresponder às competências.');
     data.monthlyOverrides=uniqueMonths(value.monthlyOverrides.map((row:unknown)=>{

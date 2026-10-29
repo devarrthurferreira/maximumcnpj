@@ -18,7 +18,7 @@ test('CBS de 11,3% fica capturada em cada competência e soma apenas os meses Ja
  const range={startMonth:'2025-01',endMonth:'2025-09',months:9};
  const period=selectAnalysisPeriod(buildAnalysisPeriod(range,range),rows.map(row=>row.sourceMonth));
  const out=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales',null,period);
- assert.equal(out.result.version,'1.14.0-financial-alerts-available-months');
+ assert.equal(out.result.version,'1.15.0-optional-rbt12-available-months');
  assert.equal(out.result.version,JAN_SEP_MODEL_VERSION);assert.notEqual(JAN_SEP_MODEL_VERSION,MONTHLY_MODEL_VERSION);
  assert.deepEqual(out.engineInput.months.map(row=>row.sourceMonth),['2025-01','2025-04','2025-09']);
  for(const month of out.engineInput.months){
@@ -36,6 +36,25 @@ test('CBS de 11,3% fica capturada em cada competência e soma apenas os meses Ja
  const calendar=buildMonthlyDre(out.result,2027);
  assert.deepEqual(calendar.months.filter(row=>row.sourceMonth).map(row=>row.sourceMonth),['2025-01','2025-04','2025-09']);
 });
+test('sem RBT12 mantém cada competência, calcula LP/LR e deixa somente o Simples pendente',()=>{
+ const rows=[make(1,100000,50000,0,10000),make(2,0,10000,0,0),make(3,-50000,20000,0,0)];
+ const inputs=rows.map(row=>baselineMonth(row)),before=structuredClone({rows,inputs});
+ const out=calculateMonthlySimulation({...draft,rbt12:null},rows,inputs,'sales');
+ const reference=calculateMonthlySimulation(draft,rows,inputs,'sales');
+ assert.deepEqual({rows,inputs},before);assert.equal(out.result.rbt12Source,'NOT_PROVIDED');
+ assert.equal(out.engineInput.rbt12,null);assert(out.engineInput.months.every(row=>row.input.rbt12===null));
+ assert.equal(out.result.simplesDiagnostic.rbt12,null);assert.equal(out.result.simplesDiagnostic.rbt12Min,null);assert.equal(out.result.simplesDiagnostic.rbt12Max,null);
+ assert(out.result.simplesDiagnostic.months.every(row=>row.rbt12===null&&row.statusCode==='MISSING_RBT12'));
+ assert.equal(out.result.memory.find(row=>row.id==='rbt12').value,'Não informada');
+ assert(!out.result.warnings.some(row=>/RBT12 fixa informada|RBT12 estimada/.test(row.detail)));
+ for(const id of ['presumed','actual'])assert.deepEqual(out.result.regimes.find(row=>row.id===id).dre,reference.result.regimes.find(row=>row.id===id).dre);
+ const calendar=buildMonthlyDre(out.result,2027);
+ assert.equal(calendar.rbt12Reference,null);assert.equal(calendar.rbt12Source,'NOT_PROVIDED');assert.equal(calendar.method,'REPORT_MONTHS_WITHOUT_RBT12');
+ assert(calendar.months.filter(row=>row.sourceMonth).every(row=>row.rbt12Cents===null));
+ for(const regime of calendar.regimes.filter(row=>['pure','hybrid'].includes(row.id)))assert(regime.rows.every(row=>row.annual===null&&row.months.every(value=>value===null)));
+ assert.equal(out.result.annualRevenue,500);assert(out.result.warnings.some(row=>row.code==='negative-revenue'));
+});
+
 test('competências distintas, mês sem movimento e período parcial: nenhuma média nem extrapolação',()=>{
  const p=monthlyProjection(reports);assert.equal(p.version,'REPORT_MONTHS_V1');assert.equal(p.totals.sales.annualCents,540020);assert(!Object.hasOwn(p.totals.sales,'monthlyCents'));
  const inputs=reports.map(row=>baselineMonth(row));inputs[2].values.rent=20;
