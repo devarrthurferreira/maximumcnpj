@@ -60,7 +60,7 @@ class DreModelTests(unittest.TestCase):
             self.assertAlmostEqual(value, reference, places=7)
 
     def test_saved_sections_months_and_vertical_ratios_match_screen(self):
-        for variant in ('complete', 'partial', 'loss', 'zero', 'unavailable', 'legacy'):
+        for variant in ('complete', 'partial', 'loss', 'zero', 'unavailable', 'legacy', 'negative-revenue', 'purchases-above-revenue'):
             saved = fixture(variant)
             before = copy.deepcopy(saved)
             view, reference = model(saved), screen(saved)
@@ -98,6 +98,25 @@ class DreModelTests(unittest.TestCase):
             with self.subTest(code=item['code']):
                 self.assertTrue(any(item['detail'].rstrip('. ') in text for text in warnings), item['detail'])
         self.assertIn(saved['source']['warnings'][0], warnings)
+
+    def test_negative_revenue_preserves_documentary_composition_and_alerts(self):
+        saved = fixture('negative-revenue')
+        view = model(saved)
+        before = copy.deepcopy(saved)
+        self.assertIsNone(view.best)
+        self.assertLess(view.commercial()['revenue']['totalCents'], 0)
+        for regime in view.regimes:
+            self.assertLess(view.value(regime, 'revenue'), 0)
+            self.assertLess(view.value(regime, 'netProfit'), 0)
+            self.assertIsNone(view.ratio(regime, 'revenue'))
+            self.assertIsNone(view.ratio(regime, 'netProfit'))
+            self.assertIsNone(view.ratio(regime, 'totalTaxes'))
+        financial = [row for row in saved['result']['warnings'] if row['code'] in
+                     ('negative-sales', 'negative-revenue', 'purchases-above-revenue', 'costs-above-revenue')]
+        self.assertTrue(financial)
+        for item in financial:
+            self.assertTrue(any(item['detail'].rstrip('. ') in warning for warning in view.warnings()))
+        self.assertEqual(saved, before)
 
     def test_memory_filters_match_regime_selection(self):
         for selection in (['pure'], ['hybrid'], ['presumed'], ['actual'], ['pure', 'hybrid']):

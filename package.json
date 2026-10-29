@@ -1,6 +1,6 @@
 {
   "name": "maximum-cnpj",
-  "version": "0.50.0",
+  "version": "0.51.0",
   "private": true,
   "type": "module",
   "description": "Consultas CNPJ, histórico por empresa e relatórios Python com Node.js e MongoDB",
@@ -39,5 +39,10 @@
     "@types/node": "22.15.30",
     "typescript": "5.8.3",
     "@playwright/test": "1.55.1"
+  },
+  "overrides": {
+    "@vercel/cli-config": {
+      "zod": "4.6.6"
+    }
   }
 }

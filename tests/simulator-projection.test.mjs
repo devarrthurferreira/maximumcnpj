@@ -39,7 +39,7 @@ test('Zero é válido, mas campos ausentes, inválidos, frações de centavo e o
  assert.throws(()=>annualizeReports({...fields,salesCpfCents:Number.MAX_SAFE_INTEGER},1));
  assert.throws(()=>annualizeReports({},4));
 });
-test('Devolução pode deixar um grupo de vendas negativo sem quebrar a projeção; total líquido negativo é bloqueado',()=>{
+test('Devoluções preservam grupos e total líquido negativo na projeção',()=>{
  const signed={...fields,salesOptantCents:-10001,salesNonOptantCents:50000,salesCpfCents:0};
  const p=annualizeReports(signed,3);
  assert.equal(p.monthlyGroupsCents.salesOptantCents,-3334);
@@ -51,8 +51,12 @@ test('Devolução pode deixar um grupo de vendas negativo sem quebrar a projeç�
  const scenario=projectScenario(groups,{...manual,salesRevenue:133.33,simplePurchases:p.monthlyGroupsCents.purchasesOptantCents/100,regularPurchases:p.monthlyGroupsCents.purchasesNonOptantCents/100});
  assert.equal(scenario.monthly.salesCents,13333);
  assert.equal(scenario.monthlyGroupsCents.salesOptantCents,-3334);
- assert.throws(()=>annualizeReports({...fields,salesOptantCents:-50000000,salesNonOptantCents:0,salesCpfCents:0},3),/saldo líquido total de vendas/i);
- assert.throws(()=>projectScenario({...groups,salesOptantCents:-999999,salesNonOptantCents:0,salesCpfCents:0},manual),/saldo líquido mensal de vendas/i);
+ const negative=annualizeReports({...fields,salesOptantCents:-50000000,salesNonOptantCents:0,salesCpfCents:0},3);
+ assert.equal(negative.totals.sales.totalCents,-50000000);assert.equal(negative.totals.sales.monthlyCents,-16666667);
+ assert.equal(negative.totals.sales.annualCents,-200000004);
+ const negativeScenario=projectScenario({...groups,salesOptantCents:-999999,salesNonOptantCents:0,salesCpfCents:0},manual);
+ assert.equal(negativeScenario.monthly.salesCents,-99999900);assert.equal(negativeScenario.monthly.revenueCents,-99799900);
+ assert.equal(negativeScenario.annual.revenueCents,-1197598800);
 });
 
 test('Cenário separa médias importadas de serviços/despesas mensais e não altera a RBT12',()=>{
@@ -101,7 +105,9 @@ test('Serviços importados formam sexto grupo sem duplicar receita; rateio prese
   assert.equal(goods+sample.monthlyGroupsCents.serviceRevenueCents,sample.totals.sales.monthlyCents);
  }
  assert.throws(()=>annualizeReports({...imported,serviceRevenueCents:-1},3));
- assert.throws(()=>annualizeReports({...imported,salesCpfCents:-40000},3),/mercadorias/);
+ const negativeGoods=annualizeReports({...imported,salesCpfCents:-40000},3);
+ assert.equal(REPORT_GROUPS.slice(0,3).reduce((sum,key)=>sum+negativeGoods.monthlyGroupsCents[key],0),-3167);
+ assert.equal(negativeGoods.monthlyGroupsCents.serviceRevenueCents,70007);
  assert.equal(annualizeReports(fields,3).version,'AVERAGE_X12_V1');
  assert.equal(Object.hasOwn(annualizeReports(fields,3).monthlyGroupsCents,'serviceRevenueCents'),false);
 });

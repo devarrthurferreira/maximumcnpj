@@ -144,6 +144,44 @@ class DrePdfTests(unittest.TestCase):
                 self.assertIn(amount(regime['dre']['salaries']), annex)
                 self.assertIn(amount(regime['dre']['netProfit']), annex)
 
+    def test_financial_excesses_export_pdf_with_alerts_and_preserved_negative_values(self):
+        for variant in ('negative-revenue', 'purchases-above-revenue'):
+            with self.subTest(variant=variant):
+                saved = fixture(variant)
+                before = copy.deepcopy(saved)
+                content = render(saved, 'complete', True)
+                self.verify_document(content, monthly=True)
+                with pymupdf.open(stream=content, filetype='pdf') as document:
+                    full = normalized(' '.join(page.get_text() for page in document))
+                    statement = section_text(document, 'DRE comparativa detalhada', 'Como o resultado se forma')
+                    annex = section_text(document, 'DRE mensal por regime', 'Premissas, cobertura e conferências')
+                    premises = section_text(document, 'Premissas, cobertura e conferências', 'Memória de cálculo')
+                    financial = [row for row in saved['result']['warnings'] if row['code'] in
+                                 ('negative-sales', 'negative-revenue', 'purchases-above-revenue', 'costs-above-revenue')]
+                    self.assertTrue(financial)
+                    for warning in financial:
+                        self.assertIn(normalized(warning['detail']).rstrip('. '), premises)
+                    for regime in saved['result']['regimes']:
+                        self.assertIn(amount(regime['dre']['revenue']), statement)
+                        self.assertIn(amount(regime['dre']['cmv']), statement)
+                        self.assertIn(amount(regime['dre']['netProfit']), statement)
+                        self.assertLess(regime['dre']['netProfit'], 0)
+                        self.assertGreaterEqual(regime['totalTaxes'], 0)
+                    for month in saved['result']['monthlyResults']:
+                        for regime in month['result']['regimes']:
+                            self.assertIn(amount(regime['dre']['revenue']), annex)
+                            self.assertIn(amount(regime['dre']['netProfit']), annex)
+                    self.assertNotRegex(full, r'\b(?:NaN|Infinity|undefined)\b')
+                    if variant == 'negative-revenue':
+                        self.assertIn('Esta versão não registra um regime vencedor.', full)
+                        self.assertIn('não fornece denominador positivo', full)
+                        self.assertIn('Sem base positiva para representar a composição.', full)
+                        self.assertNotIn('Maior resultado capturado:', full)
+                    else:
+                        self.assertTrue(all(-regime['dre']['cmv'] > regime['dre']['revenue']
+                                            for regime in saved['result']['regimes']))
+                self.assertEqual(saved, before)
+
     def test_contents_links_resolve_to_actual_section_pages_in_every_mode(self):
         for period in ('complete', 'annual', 'monthly'):
             with self.subTest(period=period), pymupdf.open(stream=rendered('complete', period), filetype='pdf') as document:

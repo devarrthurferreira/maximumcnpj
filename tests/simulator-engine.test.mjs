@@ -94,7 +94,7 @@ test('historical explicit CBS rates reproduce the four reviewed spreadsheet resu
 
 test('new CBS default applies 11.3% to debits and regular credits while preserving the inside-DAS credit', () => {
   assert.equal(DEFAULT_RATES.cbs, .113);
-  assert.equal(MODEL_VERSION, '1.13.0-cbs-113');
+  assert.equal(MODEL_VERSION, '1.14.0-financial-alerts');
   const input = zero();
   Object.assign(input, {salesRevenue:10000, rbt12:120000, simplePurchases:2000, simpleRegularPurchases:500, regularPurchases:3000});
   input.credits.simple.base = 1500;
@@ -141,12 +141,73 @@ test('every required numeric field rejects absent, blank, null and numeric-strin
     ...['simple', 'simpleRegular', 'regular'].flatMap(key => ['base', 'cbsRate', 'ibsRate'].map(field => ['credits', key, field])),
   ];
   for (const path of numericPaths) for (const invalid of [undefined, '', null, '0', NaN, Infinity, -1]) {
+    if(path.length===1&&path[0]==='salesRevenue'&&invalid===-1)continue;
     const input = example()                                      ;
     let parent = input;
     for (const segment of path.slice(0, -1)) parent = parent[segment]                           ;
     parent[path.at(-1) ] = invalid;
     assert.equal(taxInputSchema.safeParse(input).success, false, `${path.join('.')} accepted ${String(invalid)}`);
   }
+});
+
+test('negative net sales remain in every DRE without negative taxes, refunded credits or a ranking', () => {
+  const input=zero();
+  Object.assign(input,{salesRevenue:-1000,rbt12:120000,regularPurchases:2000});
+  input.credits.regular.base=2000;
+  const before=structuredClone(input),result=calculateTax(input);
+  assert.deepEqual(input,before);
+  assert.equal(result.annualRevenue,-12000);
+  assert.equal(result.bestRegimeId,null);assert.equal(result.difference,0);
+  assert.equal(result.simplesDiagnostic.statusCode,'NEGATIVE_REVENUE');
+  for(const regime of result.regimes){
+    assert.equal(regime.available,true);assert.equal(regime.dre.sales,-12000);
+    assert.equal(regime.dre.revenue,-12000);assert.equal(regime.dre.cmv,-24000);
+    assert.equal(regime.dre.netProfit,-36000);assert.equal(regime.totalTaxes,0);
+    assert.equal(regime.margin,null);assert.equal(regime.taxBurden,null);
+    for(const value of Object.values(regime.dre))assert.equal(Number.isFinite(value),true);
+  }
+  for(const credit of Object.values(result.credits)){
+    assert.equal(credit.debit,0);assert.equal(credit.used,0);assert.equal(credit.due,0);
+    assert.equal(credit.balance,credit.potential);
+  }
+  for(const code of ['negative-sales','negative-revenue','purchases-above-revenue','costs-above-revenue'])assert(result.warnings.some(row=>row.code===code));
+  assert.equal(memory(result,'taxable.sales'),0);assert.equal(memory(result,'taxable.revenue'),0);
+});
+
+test('purchases and operating expenses above positive revenue produce warnings and preserve losses', () => {
+  const input=zero();Object.assign(input,{salesRevenue:1000,rbt12:120000,regularPurchases:2000,rent:3000});
+  input.credits.regular.base=2000;
+  const result=calculateTax(input);
+  assert(result.regimes.every(row=>row.available&&row.annualProfit<0));
+  assert(result.warnings.some(row=>row.code==='purchases-above-revenue'));
+  assert(result.warnings.some(row=>row.code==='costs-above-revenue'));
+  assert(result.regimes.every(row=>row.dre.revenue===12000&&row.dre.cmv===-24000&&row.dre.rent===-36000));
+});
+
+test('negative merchandise balance with services keeps signed finances and nonnegative activity tax bases', () => {
+  const input=zero();Object.assign(input,{salesRevenue:-1000,serviceRevenue:2000,rbt12:120000});
+  const result=calculateTax(input),positiveServices=calculateTax({...input,salesRevenue:0});
+  assert.equal(result.annualRevenue,12000);
+  for(const regime of result.regimes){
+    assert.equal(regime.available,true);assert.equal(regime.dre.sales,-12000);assert.equal(regime.dre.services,24000);
+    assert(regime.totalTaxes>=0);assert.equal(Number.isFinite(regime.annualProfit),true);
+  }
+  assert.equal(memory(result,'simples.salesDas'),0);
+  assert.equal(memory(result,'simples.serviceDas'),memory(positiveServices,'simples.serviceDas'));
+  assert.equal(memory(result,'presumed.irBase'),memory(positiveServices,'presumed.irBase'));
+  assert.equal(memory(result,'presumed.csBase'),memory(positiveServices,'presumed.csBase'));
+  close(result.credits.cbs.debit,12000*.113);
+  assert(result.warnings.some(row=>row.code==='negative-sales'));
+  assert(!result.warnings.some(row=>row.code==='negative-revenue'));
+});
+
+test('wizard permits finite signed sales while preserving validation of costs, RBT12 and missing fields', () => {
+  const d=createEmptyDraft();for(const key of Object.keys(d.values))d.values[key]=0;
+  d.values.salesRevenue=-1000;d.rbt12=120000;
+  assert(draftToInput(d));assert.equal(calculateSimulation(d).annualRevenue,-12000);
+  for(const invalid of [null,NaN,Infinity,-1_000_000_000_001])assert.equal(draftToInput({...d,values:{...d.values,salesRevenue:invalid}}),null);
+  for(const key of Object.keys(d.values).filter(key=>key!=='salesRevenue'))assert.equal(draftToInput({...d,values:{...d.values,[key]:-1}}),null);
+  assert.equal(draftToInput({...d,rbt12:-1}),null);
 });
 
 test('all values zero remain explicit valid numbers and calculate without division by zero', () => {
@@ -402,6 +463,8 @@ test('opção explícita de ICMS e ISS fora do DAS é validada sem aceitar conte
   const context={version:'SIMPLES_REVENUE_CONTEXT_V1',method:'ACTUAL_REPORT_MONTHS',revenueCents:330000000,sourceMonths:['2025-01']};
   assert.equal(draftToInput(d,null,null,{...context,revenueCents:NaN}),null);
   assert.equal(draftToInput(d,null,null,{...context,sourceMonths:['2025-01','2025-01']}),null);
+  for(const positiveRevenueCents of [null,NaN,Infinity,-1,329999999,330000000.1])assert.equal(draftToInput(d,null,null,{...context,positiveRevenueCents}),null);
+  assert(draftToInput(d,null,null,{...context,positiveRevenueCents:330000001}));
 });
 
 test('memória de cenário Simples pendente não apresenta impostos intermediários ou zeros como confirmados',()=>{

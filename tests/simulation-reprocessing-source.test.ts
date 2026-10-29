@@ -80,6 +80,32 @@ test('Recálculo reconstrói serviços, devoluções e DIFAL sobre linhas congel
         finally{await jobs.updateOne(scope({_id:job._id}),{$set:{operationVersion:current.operationVersion}});}
       }
     });
+    await t.test('reconstrói receita negativa e alertas sem alterar os relatórios ou consultar novamente',async()=>{
+      const negativeGeneration=await createGeneration(actor,{generationId:randomUUID(),clientIds:[clientId]});
+      const negativePurchases=(await attachGenerationPurchase(actor,negativeGeneration._id,{importId:randomUUID(),clientId,fileName:'compras-devolucoes-sinteticas.csv',expectedRows:2,issuerUf:'MG'})).job;
+      await uploadLookup(actor,negativePurchases._id,{offset:0,rows:[line(9000,'12345678900','1102'),line(100000,'12345678900','1202')]});
+      await finalizeLookup(actor,negativePurchases._id);
+      const negativeSales=(await attachGenerationSale(actor,negativeGeneration._id,{importId:randomUUID(),clientId,fileName:'vendas-servicos-sinteticos.csv',expectedRows:2,issuerUf:'MG'})).job;
+      await uploadLookup(actor,negativeSales._id,{offset:0,rows:[line(20000,'12345678900','5102'),line(5000,'12345678900','9000')]});
+      await finalizeLookup(actor,negativeSales._id);
+      const negativeSource=await generationSimulator(negativeGeneration._id,clientId);
+      const snapshot:any={_id:randomUUID(),generationId:negativeGeneration._id,clientId,company:negativeSource.company,source:structuredClone(negativeSource),reportMonths:1,reportPeriod:negativeSource.period};
+      const before=structuredClone(snapshot),calls=providerCalls;
+      const query=scope({jobId:{$in:[negativePurchases._id,negativeSales._id]}}),stored=await collection('purchaseLines');
+      const originalRows=await stored.find(query).sort({jobId:1,index:1}).toArray();
+      const rebuilt=await rebuildSimulationSource(snapshot);
+      assert.equal(rebuilt.fields.salesCpfCents,-80000);assert.equal(rebuilt.fields.serviceRevenueCents,5000);
+      assert.equal(rebuilt.sales.selectedTotalCents,-75000);assert.equal(rebuilt.sales.totalCents,25000);
+      assert.equal(rebuilt.purchases.selectedTotalCents,9000);assert.equal(rebuilt.purchases.totalCents,109000);
+      assert.equal(rebuilt.reprocessingSource.recalculatedSalesTotalCents,-75000);
+      assert(rebuilt.warnings.some(warning=>warning.startsWith('Conferência financeira · 2026-08:')));
+      assert(rebuilt.warnings.some(warning=>warning.includes('não impedem continuar')));
+      assert.deepEqual(rebuilt.fields,negativeSource.fields);assert.deepEqual(snapshot,before);
+      assert.deepEqual(await stored.find(query).sort({jobId:1,index:1}).toArray(),originalRows);
+      assert.equal(providerCalls,calls);
+      const bad=structuredClone(snapshot);bad.source.monthlyReports[0].fields.salesCpfCents++;
+      await assert.rejects(rebuildSimulationSource(bad),(error:any)=>error.code==='REPROCESS_SOURCE');
+    });
     const source: any = structuredClone(current);
     delete source.operationVersion; delete source.operationAudit; delete source.monthlyReports;
     delete source.revenueSplit; delete source.fields.serviceRevenueCents;

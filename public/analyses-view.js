@@ -7,6 +7,7 @@ import {ACCOUNTING_FIELDS,accountingSummary,analysisGuidance,accountingSourceMon
 import {renderCommercialComposition} from './simulator-commercial-view.js';
 import {BRAZIL_UFS,normalizeUf} from './difal.js';
 import {documentDifalSummary} from './analysis-document-difal.js';
+import {renderFinancialAlerts} from './financial-alerts-view.js';
 
 export {ACCOUNTING_FIELDS} from './analyses-guidance.js';
 export const ADJUSTMENT_FIELDS=[
@@ -248,8 +249,8 @@ export function renderAnalysisPeriod(options,{compact=false}={}) {
 
 export function renderFiscalComposition(options) {
   const composition=options.source?.commercialComposition;
-  return composition?renderCommercialComposition(composition,{title:'Receitas e compras dos documentos',compact:true})+
-    (options.fiscalDraft?.monthlyOverrides?.length?'<p class="analysis-note">A composição mantém a classificação dos documentos. Ajustes manuais de receita e compras são aplicados no resultado da simulação.</p>':''):'';
+  return renderFinancialAlerts({source:options.source})+(composition?renderCommercialComposition(composition,{title:'Receitas e compras dos documentos',compact:true})+
+    (options.fiscalDraft?.monthlyOverrides?.length?'<p class="analysis-note">A composição mantém a classificação dos documentos. Ajustes manuais de receita e compras são aplicados no resultado da simulação.</p>':''):'');
 }
 
 function fiscalPanel(options) {

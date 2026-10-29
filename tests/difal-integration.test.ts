@@ -258,9 +258,19 @@ test('Serviços 9000: totais por enquadramento, separação de mercadorias e pre
     const negativeSales = await attachGenerationSale(actor, negative._id, {clientId, importId: randomUUID(), fileName: 'devolucoes-sinteticas.csv', expectedRows: 2, issuerUf: 'MG'});
     await uploadLookup(actor, negativeSales.job._id, {offset: 0, rows: [row('12345678900', '900001', 5000), row('12345678900', '6202', 1000)]});
     await finalizeLookup(actor, negativeSales.job._id);
-    const negativePurchases = await attachGenerationPurchase(actor, negative._id, {clientId, importId: randomUUID(), fileName: 'compras-sinteticas.csv', expectedRows: 1});
-    await uploadLookup(actor, negativePurchases.job._id, {offset: 0, rows: [row('12345678900', '1202', 1000)]}); await finalizeLookup(actor, negativePurchases.job._id);
-    await assert.rejects(generationSimulator(negative._id, clientId), (error: any) => error.code === 'SIMULATOR_NEGATIVE_SALES' && /devoluções.*mercadorias/.test(error.message));
+    const negativePurchases = await attachGenerationPurchase(actor, negative._id, {clientId, importId: randomUUID(), fileName: 'compras-sinteticas.csv', expectedRows: 2});
+    await uploadLookup(actor, negativePurchases.job._id, {offset: 0, rows: [row('12345678900', '1202', 10000),row('12345678900', '1102', 2000)]}); await finalizeLookup(actor, negativePurchases.job._id);
+    const negativeSource=await generationSimulator(negative._id,clientId);
+    assert.equal(negativeSource.fields.salesCpfCents,-10000,'Devoluções de mercadorias permanecem negativas mesmo sem venda no período.');
+    assert.equal(negativeSource.fields.serviceRevenueCents,5000,'Receita de serviços não é apagada para ajustar mercadorias.');
+    assert.equal(negativeSource.sales.selectedTotalCents,-5000);
+    assert.equal(negativeSource.purchases.selectedTotalCents,2000);
+    assert.equal(negativeSource.projection?.totals.sales.totalCents,-5000);
+    assert.equal(negativeSource.operationAudit.salesReturnsCents,10000);
+    assert.equal(negativeSource.operationAudit.excludedSalesCents,1000,'Devolução de compras continua fora da receita.');
+    const warnings=negativeSource.warnings.filter(warning=>warning.startsWith('Conferência financeira · '));
+    assert.equal(warnings.length,1);assert.match(warnings[0],/2026-06.*devoluções superam.*saldo negativo.*Compras.*não impedem/);
+    assert.equal(providerCalls,3,'Aceitar o saldo financeiro não refaz nem altera a consulta cadastral.');
   } finally {
     await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
     if (oldDb === undefined) delete process.env.MONGODB_DB; else process.env.MONGODB_DB = oldDb;

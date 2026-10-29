@@ -11,6 +11,14 @@ test('OCR recebe orçamento próprio sem ampliar as demais funções',()=>{
  assert.match(read('api/simples.py'),/convert_statement_pdf\(content, section_only=True, timeout_seconds=180\)/);
 });
 test('Vercel usa Other e saída estática',()=>{assert.equal(config.framework,null);assert.equal(config.outputDirectory,'public');assert.equal(config.buildCommand,'npm run build');assert.equal(pkg.engines.node,'>=22.16.0 <23');assert.equal(config.builds,undefined);});
+test('Build instala o lockfile com as ferramentas de desenvolvimento mesmo em produção', () => {
+  assert.equal(config.installCommand, 'npm ci --include=dev');
+  const lock = JSON.parse(read('package-lock.json'));
+  assert.deepEqual(lock.packages[''].dependencies, pkg.dependencies);
+  assert.deepEqual(lock.packages[''].devDependencies, pkg.devDependencies);
+  assert.equal(lock.packages['node_modules/typescript'].version, pkg.devDependencies.typescript);
+  assert.equal(lock.packages['node_modules/typescript'].dev, true);
+});
 test('API Node preservada e rota Python explícita antes do catch-all',()=>{assert.deepEqual(Object.keys(config.functions),['api/index.ts','api/reports.py','api/simples.py']);assert.deepEqual(config.rewrites,[{source:'/api/reports',destination:'/api/reports'},{source:'/api/simples',destination:'/api/simples'},{source:'/api/:path*',destination:'/api'}]);assert.match(read('api/index.ts'),/from ['"]\.\.\/src\/server\.ts['"]/);assert.doesNotMatch(read('api/index.ts'),/public\/|document\.|window\./);assert.match(read('api/reports.py'),/authenticate/);assert.match(read('api/simples.py'),/authenticate/);const pyproject=read('pyproject.toml');assert.match(pyproject,/opencv-python-headless==5\.0\.0\.93/);assert.match(pyproject,/exclude-dependencies\s*=\s*\["opencv-python"\]/);assert.equal(existsSync(new URL('../requirements.txt',import.meta.url)),false);assert.match(read('public/reports.html'),/reports-ui\.js/);});
 test('HTML novo e legado são scripts de navegador; favicon estático',()=>{assert.match(read('public/index.html'),/<script type="module" src="\/lookup-ui\.js(?:\?v=[\d.]+)?"><\/script>/);assert.match(read('public/legacy.html'),/<script type="module" src="\/app\.js"><\/script>/);assert.match(read('public/index.html'),/href="\/favicon\.svg"/);assert.deepEqual(config.redirects,[{source:'/favicon.ico',destination:'/favicon.svg',permanent:false}]);});
 test('Headers protegem HTML e API não é cacheada',()=>{const h=new Map(config.headers.find(v=>v.source==='/(.*)').headers.map(v=>[v.key,v.value]));assert.equal(h.get('X-Maximum-Deployment'),'static-api-v1');assert.match(h.get('Content-Security-Policy'),/script-src 'self'/);assert.match(h.get('Content-Security-Policy'),/frame-ancestors 'none'/);assert.ok(config.headers.find(v=>v.source==='/api/:path*').headers.some(v=>v.key==='Cache-Control'&&v.value==='no-store'));});

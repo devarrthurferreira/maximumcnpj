@@ -54,6 +54,18 @@ function fixture({rbt12=3300000,rent=100,adjustment=0,legacy=false,selectedMonth
   return {...calculation,source,calendar,presentation,year:2027};
 }
 
+test('cartões da DRE mantêm prejuízo e valores sem destacar regime quando a receita não é positiva',()=>{
+ const selectedMonths=['2026-01'],baseline=fixture({selectedMonths}).result.annualRevenue;
+ for(const adjustment of [-baseline-50,-baseline,0]){
+  const input=fixture({selectedMonths,adjustment}),before=structuredClone(input);
+  for(const html of [renderAnnualDre(input),renderCompleteMonthlyDre({...input,regimeId:'actual',month:0})]){
+   if(input.result.annualRevenue<=0){assert.doesNotMatch(html,/Maior resultado disponível|is-best/);assert.match(html,/Prejuízo estimado/);}
+   else assert.match(html,/Maior resultado disponível/);
+  }
+  assert.deepEqual(input,before);
+ }
+});
+
 test('DRE V4 contém nove competências e conserva RBT12 própria, resultados e devoluções capturados',()=>{
   const input=fixture(),before=structuredClone(input);freeze(input);
   assert.equal(input.calendar.version,'DRE_CALENDAR_V4');assert.equal(input.calendar.months.length,9);

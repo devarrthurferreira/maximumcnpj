@@ -26,7 +26,7 @@ def fixtures():
 import {drePdfFixture} from './tests/fixtures/dre-pdf.mjs';
 import {calculateSimulation} from './public/simulator-engine.js';
 import {buildMonthlyDre} from './public/simulator-calendar.js';
-const fixtures=Object.fromEntries(['complete','partial','loss','zero','unavailable'].map(variant=>[variant,drePdfFixture({variant})]));
+const fixtures=Object.fromEntries(['complete','partial','loss','zero','unavailable','negative-revenue','purchases-above-revenue'].map(variant=>[variant,drePdfFixture({variant})]));
 const legacy=structuredClone(fixtures.complete);
 legacy.result=calculateSimulation(legacy.draft);
 legacy.monthlyDre=buildMonthlyDre(legacy.result,2027,legacy.rbt12Manual);
@@ -80,6 +80,34 @@ class DreDataTests(unittest.TestCase):
                        {'source': {'company': {'code': 'ANOTHER COMPANY'}}}):
             with self.subTest(update=update), self.assertRaises(ReportError):
                 validate_dre_snapshot({**fixture(), **update})
+
+    def test_negative_revenue_preserves_values_and_rejects_fabricated_percentages(self):
+        saved = fixture('negative-revenue')
+        self.assertLess(saved['result']['annualRevenue'], 0)
+        self.assertIs(validate_dre_snapshot(saved), saved)
+        self.assertIsNone(saved['result']['bestRegimeId'])
+        for result in [saved['result'], *[row['result'] for row in saved['result']['monthlyResults']]]:
+            for regime in result['regimes']:
+                with self.subTest(regime=regime['id'], revenue=result['annualRevenue']):
+                    self.assertTrue(regime['available'])
+                    self.assertEqual(regime['dre']['revenue'], result['annualRevenue'])
+                    self.assertLess(regime['dre']['netProfit'], 0)
+                    self.assertGreaterEqual(regime['totalTaxes'], 0)
+                    self.assertIsNone(regime['margin'])
+                    self.assertIsNone(regime['taxBurden'])
+                    for tax in ('das', 'cbsDebit', 'ibsDebit', 'icmsNet', 'iss', 'payroll',
+                                'irpj', 'csll', 'difal', 'icmsAnticipation'):
+                        self.assertLessEqual(regime['dre'].get(tax, 0), 0,
+                                             f'{tax} must not become a refund from negative revenue.')
+        for field in ('margin', 'taxBurden'):
+            changed = copy.deepcopy(saved)
+            changed['result']['regimes'][0][field] = 0
+            with self.subTest(field=field), self.assertRaises(ReportError):
+                validate_dre_snapshot(changed)
+        changed = copy.deepcopy(saved)
+        changed['result']['annualRevenue'] = 0
+        with self.assertRaises(ReportError):
+            validate_dre_snapshot(changed)
 
     def test_malformed_and_unbalanced_dre_cannot_be_published(self):
         mutations = [
@@ -262,16 +290,21 @@ class DreDataMongoTests(unittest.TestCase):
 
         try:
             with patch.object(endpoint, 'database', return_value=self.db):
-                with call() as response:
-                    self.assertEqual(response.status, 200)
-                    self.assertEqual(response.headers['Content-Type'], 'application/pdf')
-                    self.assertEqual(response.headers['X-Report-Engine'], 'python')
-                    self.assertEqual(response.headers['Cache-Control'], 'no-store')
-                    self.assertIn(SIMULATION, response.headers['Content-Disposition'])
-                    self.assertIn('attachment;', response.headers['Content-Disposition'])
-                    data = response.read()
-                    self.assertTrue(data.startswith(b'%PDF-'))
-                    self.assertGreater(len(data), 10_000)
+                for variant in ('complete', 'negative-revenue', 'purchases-above-revenue'):
+                    saved = {**fixture(variant), 'workspaceId': self.ws}
+                    self.db.simulations.replace_one({'_id': SIMULATION}, saved)
+                    before = self.db.simulations.find_one({'_id': SIMULATION})
+                    with self.subTest(variant=variant), call() as response:
+                        self.assertEqual(response.status, 200)
+                        self.assertEqual(response.headers['Content-Type'], 'application/pdf')
+                        self.assertEqual(response.headers['X-Report-Engine'], 'python')
+                        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+                        self.assertIn(SIMULATION, response.headers['Content-Disposition'])
+                        self.assertIn('attachment;', response.headers['Content-Disposition'])
+                        data = response.read()
+                        self.assertTrue(data.startswith(b'%PDF-'))
+                        self.assertGreater(len(data), 10_000)
+                    self.assertEqual(self.db.simulations.find_one({'_id': SIMULATION}), before)
                 for headers, expected in (({'Cookie': ''}, 401), ({'Origin': 'https://evil.test'}, 403)):
                     with self.subTest(headers=headers), self.assertRaises(HTTPError) as caught:
                         call(headers=headers)

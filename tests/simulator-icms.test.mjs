@@ -54,6 +54,30 @@ test('devolução integral não duplica benefício de ICMS e saldo excedente nã
   assert.equal(all.usedCents,12000);assert.equal(all.dueCents,0);assert.equal(all.balanceCents,24000);
 });
 
+test('devoluções maiores que vendas mantêm receita negativa, débito bruto e saldo credor separado',()=>{
+  const source=summarizeIcmsOperations({...input(),sales:[line('6102',1000,'SP')],purchases:[line('2202',2500,'SP'),line('2102',2000,'SP')]}),before=structuredClone(source);
+  const p=projectIcmsOperations(source,{salesRevenueCents:-150000,regularPurchasesCents:200000});
+  assert.equal(p.available,true);assert.equal(p.grossSalesCents,100000);assert.equal(p.debitCents,12000);
+  assert.equal(p.salesReturnCreditCents,30000);assert.equal(p.purchaseCreditCents,24000);
+  assert.equal(p.usedCents,12000);assert.equal(p.dueCents,0);assert.equal(p.balanceCents,42000);
+  const row=report(source),out=calculateMonthlySimulation(draft(),[row],[baselineMonth(row)],'sales');
+  assert.equal(out.result.annualRevenue,-1500);assert(out.result.regimes.every(row=>row.available));
+  const regime=out.result.regimes.find(row=>row.id==='actual');
+  assert.equal(regime.dre.revenue,-1500);assert.equal(regime.dre.cmv,-2000);assert.equal(regime.dre.netProfit,-3500);
+  assert.equal(regime.dre.icmsUsed,120);assert.equal(regime.dre.icmsBalance,420);
+  assert.deepEqual(source,before);
+});
+
+test('ajuste com base reconstruída negativa gera alerta e débito zero, sem alterar receita ou créditos da origem',()=>{
+  const source=fixture(),d=draft();d.values.salesRevenue=-1000;
+  const p=projectIcmsOperations(source,{salesRevenueCents:-100000,regularPurchasesCents:140000});
+  assert.equal(p.available,true);assert.equal(p.unflooredGrossSalesCents,-70000);assert.equal(p.grossSalesFloorApplied,true);
+  assert.equal(p.debitCents,0);assert.equal(p.usedCents,0);assert.equal(p.dueCents,0);assert.equal(p.balanceCents,p.potentialCents);
+  const result=calculateSimulation(d,null,null,null,source);
+  assert(result.regimes.every(row=>row.available));assert(result.warnings.some(row=>row.code==='icms-sales-base-floor'));
+  assert(result.regimes.every(row=>row.dre.sales===-12000));
+});
+
 test('ajuste manual de vendas pondera as bases brutas e não altera crédito dos documentos',()=>{
   const source=fixture(),before=structuredClone(source);
   for(const [net,debit,due] of [[300000,46200,30600],[240000,37800,22200]]){

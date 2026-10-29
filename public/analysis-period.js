@@ -1,5 +1,5 @@
 export const JAN_SEP_POLICY='JAN_SEP_V1';
-export const JAN_SEP_MODEL_VERSION='1.13.0-cbs-113-available-months';
+export const JAN_SEP_MODEL_VERSION='1.14.0-financial-alerts-available-months';
 
 const check=(condition,message)=>{if(!condition)throw new TypeError(message);};
 export function analysisMonthsForYear(sourceYear){

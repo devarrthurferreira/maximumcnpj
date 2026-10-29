@@ -4,7 +4,7 @@ import {parseIcmsOperations} from './simulator-icms.js';
 import {resolveRegimeSelection,requiresSimplesReference} from './regime-selection.js';
 import {JAN_SEP_MODEL_VERSION,assertCompleteAnalysisPeriod} from './analysis-period.js';
 
-export const MONTHLY_MODEL_VERSION='1.13.0-cbs-113';
+export const MONTHLY_MODEL_VERSION='1.14.0-financial-alerts';
 export const MONTHLY_VERSION='REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS=Object.freeze([...REPORT_GROUPS,'serviceRevenueCents']);
 const sum=values=>values.reduce((a,b)=>a+b,0);
@@ -94,16 +94,17 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     const values=Object.fromEntries(['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,asCents(input.values[key])/100]));
     values.salesRevenue=sum(REPORT_GROUPS.slice(0,3).map(key=>asCents(groups[key],true)))/100;
     values.simplePurchases=groups.purchasesOptantCents;values.regularPurchases=groups.purchasesNonOptantCents;
-    check(values.salesRevenue>=0,`As devoluções superam as vendas de mercadorias em ${row.sourceMonth}. Revise essa competência antes de simular.`);
     for(const key of [...REPORT_GROUPS,'serviceRevenue']){
       const value=key==='serviceRevenue'?values[key]:groups[key],original=key==='serviceRevenue'?baseline.values[key]:baseline.groups[key];
       if(value!==original)adjustments.push({sourceMonth:row.sourceMonth,field:key,reportMonthlyValue:original,simulatedMonthlyValue:value});
     }
     return {row,index,groups,values};
   });
-  const revenueCents=sum(prepared.map(({values})=>asCents(values.salesRevenue)+asCents(values.serviceRevenue)));
-  check(Number.isSafeInteger(revenueCents),'Receita do período acima do limite seguro.');
-  const revenueContext={version:REVENUE_CONTEXT_VERSION,method:'ACTUAL_REPORT_MONTHS',revenueCents,sourceMonths:reports.map(row=>row.sourceMonth)};
+  const revenues=prepared.map(({values})=>asCents(values.salesRevenue,true)+asCents(values.serviceRevenue));
+  const revenueCents=sum(revenues),positiveRevenueCents=sum(revenues.map(value=>Math.max(0,value)));
+  check(Number.isSafeInteger(revenueCents)&&Number.isSafeInteger(positiveRevenueCents),'Receita do período acima do limite seguro.');
+  const revenueContext={version:REVENUE_CONTEXT_VERSION,method:'ACTUAL_REPORT_MONTHS',revenueCents,sourceMonths:reports.map(row=>row.sourceMonth),
+    ...(positiveRevenueCents===revenueCents?{}:{positiveRevenueCents})};
   const monthlyResults=prepared.map(({row,index,groups,values})=>{
     const d={...draft,...(rbt12Schedule?{rbt12:rbt12Schedule.rows[index].rbt12Cents/100}:{}),values},difal=row.difal?{version:'DIFAL_DRE_V1',monthlyCents:row.difal.amountCents,annualCents:row.difal.amountCents*12,
       sourceAmountCents:row.difal.amountCents,reportMonths:1,pendingLines:row.difal.pendingLines}:null;
@@ -125,7 +126,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     const totalTaxes=sum(all.map(item=>item.totalTaxes));
     const available=all.every(item=>item.available);
     const status=!available?`Cálculo pendente em: ${monthlyResults.filter((row,index)=>!all[index].available).map(row=>`${row.sourceMonth}: ${row.result.regimes.find(item=>item.id===regime.id).status}`).join(' ')}`:
-      annualRevenue===0?'Calculado com receita zero em todo o período':['pure','hybrid'].includes(regime.id)?`Cálculo disponível nas competências informadas · ICMS/ISS ${draft.icmsOutside?'fora do':'no'} DAS`:
+      annualRevenue===0?'Calculado com receita consolidada zero':annualRevenue<0?'Calculado com receita consolidada negativa; confira os alertas':['pure','hybrid'].includes(regime.id)?`Cálculo disponível nas competências informadas · ICMS/ISS ${draft.icmsOutside?'fora do':'no'} DAS`:
       regime.id==='presumed'?'Simulação sujeita ao enquadramento':'Cálculo disponível nas competências informadas';
     return {...regime,available,status,annualProfit:dre.netProfit,monthlyProfit:null,totalTaxes,dre,
       difalApplication:{version:regime.difalApplication.version,enabled:regime.difalApplication.enabled,operations:{...regime.difalApplication.operations},
@@ -180,7 +181,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
   }
   const result={...first,version:analysisPeriod?JAN_SEP_MODEL_VERSION:MONTHLY_MODEL_VERSION,method:MONTHLY_VERSION,...(analysisPeriod?{analysisPeriod}:{}),annualRevenue,...(simplesDiagnostic?{simplesDiagnostic}:{}),regimes,credits,memory,warnings,monthlyResults,...(rbt12Schedule?{rbt12Schedule}:{}),
     bestRegimeId:ranked[0]?.id||null,difference:ranked.length?ranked[0].annualProfit-ranked.at(-1).annualProfit:0};
-  projection.scenario={unit:'CENTS',annual:{revenueCents:sum(monthlyResults.map(row=>asCents(row.values.salesRevenue)+asCents(row.values.serviceRevenue)))},months:monthlyResults.map(({sourceMonth,groups,values})=>({sourceMonth,groups,values}))};
+  projection.scenario={unit:'CENTS',annual:{revenueCents:sum(monthlyResults.map(row=>asCents(row.values.salesRevenue,true)+asCents(row.values.serviceRevenue)))},months:monthlyResults.map(({sourceMonth,groups,values})=>({sourceMonth,groups,values}))};
   if(analysisPeriod)projection.analysisPeriod=analysisPeriod;
   return {result,projection,difalProjection,anticipationProjection,...(rbt12Schedule?{rbt12Schedule}:{}),adjustments,monthlyInputs:monthlyResults.map(({sourceMonth,groups,values})=>({sourceMonth,groups,values:Object.fromEntries(['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,values[key]]))})),
     engineInput:{version:MONTHLY_VERSION,...(analysisPeriod?{analysisPeriod}:{}),regimeSelection,icmsOutside:draft.icmsOutside===true,months:monthlyResults.map(({sourceMonth,engineInput})=>({sourceMonth,input:engineInput})),...(rbt12Schedule?{rbt12Method:rbt12Schedule.version}:{rbt12:hasSimples?draft.rbt12:null})}};

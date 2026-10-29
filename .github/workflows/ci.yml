@@ -30,7 +30,9 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22' }
       - name: Dependências
-        run: npm install
+        run: npm ci --include=dev
+      - name: Auditoria de dependências
+        run: npm audit --audit-level=high
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - uses: astral-sh/setup-uv@v6

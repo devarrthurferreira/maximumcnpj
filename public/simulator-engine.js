@@ -22,7 +22,7 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
-export const MODEL_VERSION = '1.13.0-cbs-113';
+export const MODEL_VERSION = '1.14.0-financial-alerts';
 export const SIMPLES_DIAGNOSTIC_VERSION = 'SIMPLES_DIAGNOSTIC_V1';
 export const REVENUE_CONTEXT_VERSION = 'SIMPLES_REVENUE_CONTEXT_V1';
 export const ICMS_ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_DRE_V1';
@@ -355,6 +355,11 @@ function strictObject(value, keys, path = []) {
 function checkNumber(value, max, path) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > max) failInput(path, `Informe um número entre 0 e ${max}.`);
 }
+function checkSalesNumber(value, path) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > VALUE_LIMIT) {
+    failInput(path, `Informe um número entre -${VALUE_LIMIT} e ${VALUE_LIMIT}.`);
+  }
+}
 function checkChoices(input) {
   for (const [key, values] of [['year', [2027, 2028]], ['salesAnnex', [1, 2]], ['serviceAnnex', [3, 4, 5]]]) {
     if (!values.includes(input[key])) failInput([key], 'Opção inválida.');
@@ -362,9 +367,11 @@ function checkChoices(input) {
 }
 /** Derived by the monthly adapter, never copied from an editable draft or client result. */
 function parseRevenueContext(value) {
-  strictObject(value,['version','method','revenueCents','sourceMonths'],['revenueContext']);
+  const hasPositiveRevenue=value!=null&&Object.hasOwn(value,'positiveRevenueCents');
+  strictObject(value,['version','method','revenueCents','sourceMonths',...(hasPositiveRevenue?['positiveRevenueCents']:[])],['revenueContext']);
   if(value.version!==REVENUE_CONTEXT_VERSION||value.method!=='ACTUAL_REPORT_MONTHS')failInput(['revenueContext'],'Contexto da receita inválido.');
-  if(!Number.isSafeInteger(value.revenueCents)||value.revenueCents<0)failInput(['revenueContext','revenueCents'],'Receita do período inválida.');
+  if(!Number.isSafeInteger(value.revenueCents))failInput(['revenueContext','revenueCents'],'Receita do período inválida.');
+  if(hasPositiveRevenue&&(!Number.isSafeInteger(value.positiveRevenueCents)||value.positiveRevenueCents<Math.max(0,value.revenueCents)))failInput(['revenueContext','positiveRevenueCents'],'A soma das receitas positivas do período é inválida.');
   if(!Array.isArray(value.sourceMonths)||value.sourceMonths.length<1||value.sourceMonths.length>12||
       value.sourceMonths.some(month=>typeof month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))||
       new Set(value.sourceMonths).size!==value.sourceMonths.length)failInput(['revenueContext','sourceMonths'],'Competências da receita inválidas.');
@@ -438,7 +445,9 @@ function parseTaxInput(input) {
   }
   checkChoices(input);
   if (typeof input.icmsOutside !== 'boolean') failInput(['icmsOutside'], 'Informe uma opção válida.');
-  for (const key of TAX_AMOUNT_FIELDS) if(key!=='rbt12'||needsRbt12||input[key]!=null)checkNumber(input[key], VALUE_LIMIT, [key]);
+  for (const key of TAX_AMOUNT_FIELDS) if(key!=='rbt12'||needsRbt12||input[key]!=null){
+    if(key==='salesRevenue')checkSalesNumber(input[key],[key]);else checkNumber(input[key], VALUE_LIMIT, [key]);
+  }
   strictObject(input.rates, RATE_FIELDS, ['rates']);
   for (const key of RATE_FIELDS) checkNumber(input.rates[key], 1, ['rates', key]);
   if(icmsOperations&&input.rates.icms!==icmsOperations.internalRatePercent/100)failInput(['rates','icms'],'A taxa interna diverge da premissa de ICMS capturada nas operações.');
@@ -473,6 +482,7 @@ const percent = (value)=>`${(value * 100).toLocaleString('pt-BR', {
 const positive = (value)=>Math.max(0, value);
 const cleanZero = (value)=>Object.is(value, -0) ? 0 : value;
 function apportion(debit, potential) {
+    debit = positive(debit);
     const used = Math.min(debit, potential);
     return {
         debit,
@@ -492,7 +502,7 @@ function diagnoseSimples(input, revenue) {
     let statusCode='READY',available=true;
     let message=input.icmsOutside?'Cálculo disponível com ICMS/ISS fora do DAS, conforme a premissa informada.':'Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.';
     let action='Confira enquadramento, atividade, receita do ano-calendário e demais condições antes de usar o resultado fiscalmente.';
-    if(revenue>0&&input.rbt12===0){
+    if((positive(input.salesRevenue)+input.serviceRevenue)>0&&input.rbt12===0){
       statusCode='MISSING_RBT12';available=false;
       message='Informe uma RBT12 válida para calcular o Simples com receita positiva.';
       action='Confirme a RBT12 do extrato ou informe a referência manual. Início de atividade exige a regra de proporcionalização aplicável.';
@@ -510,6 +520,8 @@ function diagnoseSimples(input, revenue) {
       action='Se ICMS/ISS já forem recolhidos fora do DAS, selecione essa situação. Se ainda estiverem no DAS, confira RBA, RBAA, parcela de excesso e a apuração local da sexta faixa; não altere a opção apenas para liberar o cálculo.';
     }else if(revenue===0){
       statusCode='ZERO_REVENUE';message='Cálculo disponível com receita zero; custos e despesas permanecem considerados.';
+    }else if(revenue<0){
+      statusCode='NEGATIVE_REVENUE';message='Cálculo disponível com receita negativa após devoluções; valores, custos e despesas permanecem considerados.';
     }
     return {version:SIMPLES_DIAGNOSTIC_VERSION,available,statusCode,message,action,rbt12:input.rbt12,
       federalLimit:SIMPLES_LIMIT,sublimit:SUBLIMIT,revenueReference,revenueBasis,sourceMonths,
@@ -597,6 +609,9 @@ export function calculateTax(rawInput) {
         cards: input.cardExpenses * MONTHS
     };
     const revenue = annual.services + annual.sales;
+    // The financial result keeps returns and losses. A negative assessment base
+    // does not create a negative tax, an automatic refund or cross-month credit.
+    const taxableSales = positive(annual.sales), taxableRevenue = positive(revenue);
     const simplesDiagnostic=hasSimples?diagnoseSimples(input,revenue):null;
     if(simplesDiagnostic&&input.icmsOutside&&icmsProjection&&!icmsProjection.available){
       const previous=simplesDiagnostic.available?'':simplesDiagnostic.message+' ';
@@ -633,6 +648,8 @@ export function calculateTax(rawInput) {
     for (const key of Object.keys(rateLabels))add(`rate.${key}`, 'Premissas', rateLabels[key], 'Percentual informado, armazenado como fração decimal.', input.rates[key], 'percent');
     for (const key of Object.keys(annual))add(`annual.${key}`, 'Valores anuais', DRE_LABELS[key], `${currency(annual[key] / MONTHS)} por mês × ${MONTHS}`, annual[key]);
     add('annual.revenue', 'Valores anuais', 'Receita total anual', 'Receita anual de serviços + receita anual de vendas', revenue);
+    add('taxable.sales', 'Bases de cálculo', 'Base não negativa de vendas', 'Máximo(0; receita de vendas após devoluções). O saldo negativo permanece na DRE; não cria restituição automática.', taxableSales);
+    add('taxable.revenue', 'Bases de cálculo', 'Base não negativa de CBS/IBS', 'Máximo(0; receita total após devoluções). A receita financeira permanece integral na DRE.', taxableRevenue);
     add('annual.cmv', 'Valores anuais', 'CMV total anual', 'CMV de optantes + CMV de não optantes; a parcela SN regular não é somada outra vez.', cmv);
     add('annual.operational', 'Valores anuais', 'Resultado antes de tributos e encargos', 'Receita − CMV − salários − benefícios − administração − aluguel − cartões', operational);
     if (hasDifal) add('difal.annual', 'Tributos e encargos', 'DIFAL anual importado, antes das opções por regime', 'Estimativa mensal vinculada às operações importadas × 12. A dedução efetiva depende da opção e do bloqueio de cada regime; confira suas linhas na DRE.', annualDifal);
@@ -671,9 +688,9 @@ export function calculateTax(rawInput) {
         add(`group.${key}.ibs`, 'Compras e créditos', `${groupNames[key]} — crédito IBS anual`, `${currency(group.base)} × ${percent(group.ibsRate)} × ${MONTHS}`, ibs);
     }
     const credits = {
-        cbs: apportion(revenue * input.rates.cbs, cbsPotential),
-        ibs: apportion(revenue * input.rates.ibs, ibsPotential),
-        icms: icmsProjection?apportion(icmsProjection.debitCents*MONTHS/100,icmsProjection.potentialCents*MONTHS/100):apportion(annual.sales * input.rates.icms, annual.cmvRegular * input.rates.icms)
+        cbs: apportion(taxableRevenue * input.rates.cbs, cbsPotential),
+        ibs: apportion(taxableRevenue * input.rates.ibs, ibsPotential),
+        icms: icmsProjection?apportion(icmsProjection.debitCents*MONTHS/100,icmsProjection.potentialCents*MONTHS/100):apportion(taxableSales * input.rates.icms, annual.cmvRegular * input.rates.icms)
     };
     if(icmsProjection){
       const p=icmsProjection,s=p.source,annualAmount=value=>value*MONTHS/100;
@@ -696,7 +713,7 @@ export function calculateTax(rawInput) {
     ]){
         const credit = credits[key];
         const name = key.toUpperCase();
-        add(`${key}.debit`, `Apuração de ${name}`, `Débito de ${name}`, key === 'icms' ? icmsProjection?'Vendas brutas elegíveis: internas × 18% + interestaduais × 12%, por linha. Ajuste de receita ponderado pela composição da origem.':`${currency(annual.sales)} de vendas anuais × ${percent(input.rates.icms)}` : `${currency(revenue)} de receita anual × ${percent(input.rates[key])}`, credit.debit);
+        add(`${key}.debit`, `Apuração de ${name}`, `Débito de ${name}`, key === 'icms' ? icmsProjection?'Vendas brutas elegíveis: internas × 18% + interestaduais × 12%, por linha. Ajuste de receita ponderado pela composição da origem; base mínima zero.':`Máximo(0; ${currency(annual.sales)} de vendas anuais) × ${percent(input.rates.icms)}` : `Máximo(0; ${currency(revenue)} de receita anual) × ${percent(input.rates[key])}`, credit.debit);
         add(`${key}.potential`, `Apuração de ${name}`, `Crédito potencial de ${name}`, key === 'icms' ? icmsProjection?'Crédito das compras elegíveis + crédito das devoluções de venda. Naturezas 8000 não geram crédito.':`${currency(annual.cmvRegular)} de compras/CMV de não optantes × ${percent(input.rates.icms)}` : `Soma dos créditos de ${name} dos três grupos; sem compensar outro tributo.`, credit.potential);
         add(`${key}.used`, `Apuração de ${name}`, `Crédito utilizado de ${name}`, 'Mínimo entre débito e crédito potencial', credit.used);
         add(`${key}.due`, `Apuração de ${name}`, `${name} líquido a recolher`, 'Débito − crédito utilizado; nunca imposto negativo', credit.due);
@@ -721,15 +738,15 @@ export function calculateTax(rawInput) {
     const cappedIV = input.serviceAnnex === 4 && bandIndex === 4 && serviceEffective * (serviceBand?.localShare ?? 0) > DAS_ISS_CAP;
     const serviceCbsEffective = cappedIII ? (serviceEffective - DAS_ISS_CAP) * .232 : cappedIV ? (serviceEffective - DAS_ISS_CAP) * .3627 : serviceEffective * (serviceBand?.cbsShare ?? 0);
     const serviceIbsEffective = cappedIII ? (serviceEffective - DAS_ISS_CAP) * .0026 : cappedIV ? (serviceEffective - DAS_ISS_CAP) * .004 : serviceEffective * (serviceBand?.ibsShare ?? 0);
-    const salesDas = annual.sales * salesEffective;
+    const salesDas = taxableSales * salesEffective;
     const serviceDas = annual.services * serviceEffective;
-    const icmsRemoved = input.icmsOutside ? annual.sales * salesIcmsEffective : 0;
+    const icmsRemoved = input.icmsOutside ? taxableSales * salesIcmsEffective : 0;
     const issRemoved = input.icmsOutside ? annual.services * serviceIssEffective : 0;
     const pureDas = salesDas - icmsRemoved + serviceDas - issRemoved;
-    const cbsRemoved = annual.sales * salesCbsEffective + annual.services * serviceCbsEffective;
-    const ibsRemoved = annual.sales * salesIbsEffective + annual.services * serviceIbsEffective;
+    const cbsRemoved = taxableSales * salesCbsEffective + annual.services * serviceCbsEffective;
+    const ibsRemoved = taxableSales * salesIbsEffective + annual.services * serviceIbsEffective;
     const hybridDas = positive(pureDas - cbsRemoved - ibsRemoved);
-    const ipiIncluded = annual.sales * salesEffective * (salesBand?.ipiShare ?? 0);
+    const ipiIncluded = taxableSales * salesEffective * (salesBand?.ipiShare ?? 0);
     add('simples.band', 'Simples Nacional', 'Faixa pela RBT12 total', 'Primeiro teto que comporta a RBT12; 0 significa sem faixa válida.', bandIndex + 1, 'number');
     for (const [prefix, annex, band, effective] of [
         [
@@ -793,7 +810,7 @@ export function calculateTax(rawInput) {
         [
             'salesDas',
             'DAS cheio de vendas',
-            'Receita de vendas anual × alíquota efetiva de vendas',
+            'Máximo(0; receita de vendas anual após devoluções) × alíquota efetiva de vendas',
             salesDas
         ],
         [
@@ -805,7 +822,7 @@ export function calculateTax(rawInput) {
         [
             'icmsRemoved',
             'ICMS retirado do DAS',
-            'Se recolhimento fora do DAS: vendas anuais × ICMS efetivo no DAS; caso contrário, zero.',
+            'Se recolhimento fora do DAS: máximo(0; vendas anuais) × ICMS efetivo no DAS; caso contrário, zero.',
             icmsRemoved
         ],
         [
@@ -823,13 +840,13 @@ export function calculateTax(rawInput) {
         [
             'cbsRemoved',
             'CBS retirada no Híbrido',
-            'Vendas anuais × CBS efetiva de vendas + serviços anuais × CBS efetiva de serviços',
+            'Máximo(0; vendas anuais) × CBS efetiva de vendas + serviços anuais × CBS efetiva de serviços',
             cbsRemoved
         ],
         [
             'ibsRemoved',
             'IBS retirado no Híbrido',
-            'Vendas anuais × IBS efetivo de vendas + serviços anuais × IBS efetivo de serviços',
+            'Máximo(0; vendas anuais) × IBS efetivo de vendas + serviços anuais × IBS efetivo de serviços',
             ibsRemoved
         ],
         [
@@ -841,19 +858,23 @@ export function calculateTax(rawInput) {
         [
             'ipiIncluded',
             'IPI incluído no DAS do Anexo II',
-            'Vendas anuais × efetiva × participação IPI; já no DAS, sem nova soma.',
+            'Máximo(0; vendas anuais) × efetiva × participação IPI; já no DAS, sem nova soma.',
             ipiIncluded
         ]
     ])add(`simples.${id}`, 'Simples Nacional', label, formula, value);
-    // In the monthly adapter, distribute the model's annual excess across the
-    // actual period. A seasonal month is not evidence of a R$ 5m annual excess.
+    // In the monthly adapter, distribute the model's excess exactly once across
+    // positive months. The signed period total determines the excess; negative
+    // months neither generate refunds nor inflate the shares of positive months.
+    const positiveRevenueReference=input.revenueContext?
+      (input.revenueContext.positiveRevenueCents??positive(input.revenueContext.revenueCents))/100:taxableRevenue;
     const excessRevenue = input.revenueContext
-      ? (revenueReference>0?positive(revenueReference-PRESUMPTION_LIMIT)*revenue/revenueReference:0)
+      ? (positiveRevenueReference>0?positive(revenueReference-PRESUMPTION_LIMIT)*taxableRevenue/positiveRevenueReference:0)
       : positive(revenue - PRESUMPTION_LIMIT);
-    const irBase = annual.sales * input.rates.irSales + annual.services * input.rates.irServices;
-    const csBase = annual.sales * input.rates.csSales + annual.services * input.rates.csServices;
-    const irCoefficient = revenue > 0 ? irBase / revenue : 0;
-    const csCoefficient = revenue > 0 ? csBase / revenue : 0;
+    const irBase = taxableSales * input.rates.irSales + annual.services * input.rates.irServices;
+    const csBase = taxableSales * input.rates.csSales + annual.services * input.rates.csServices;
+    const taxableActivities = taxableSales + annual.services;
+    const irCoefficient = taxableActivities > 0 ? irBase / taxableActivities : 0;
+    const csCoefficient = taxableActivities > 0 ? csBase / taxableActivities : 0;
     const irIncrease = excessRevenue * irCoefficient * PRESUMPTION_INCREASE;
     const csIncrease = excessRevenue * csCoefficient * PRESUMPTION_INCREASE;
     const irTotalBase = irBase + irIncrease;
@@ -872,13 +893,13 @@ export function calculateTax(rawInput) {
         [
             'excessRevenue',
             'Receita excedente a R$ 5 milhões',
-            input.revenueContext?'Excedente do período a R$ 5.000.000, rateado pela receita da competência no modelo gerencial; contribuição anualizada para conversão mensal. Não representa apuração trimestral.':'Máximo(0; receita anual − R$ 5.000.000)',
+            input.revenueContext?'Excedente da receita líquida do período a R$ 5.000.000, rateado pela proporção da receita positiva da competência na soma das receitas positivas. Contribuição anualizada para conversão mensal; não representa apuração trimestral.':'Máximo(0; receita anual − R$ 5.000.000)',
             excessRevenue
         ],
         [
             'irBase',
             'Base IRPJ sem acréscimo',
-            `Vendas anuais × ${percent(input.rates.irSales)} + serviços anuais × ${percent(input.rates.irServices)}`,
+            `Máximo(0; vendas anuais) × ${percent(input.rates.irSales)} + serviços anuais × ${percent(input.rates.irServices)}`,
             irBase
         ],
         [
@@ -914,7 +935,7 @@ export function calculateTax(rawInput) {
         [
             'csBase',
             'Base CSLL sem acréscimo',
-            `Vendas anuais × ${percent(input.rates.csSales)} + serviços anuais × ${percent(input.rates.csServices)}`,
+            `Máximo(0; vendas anuais) × ${percent(input.rates.csSales)} + serviços anuais × ${percent(input.rates.csServices)}`,
             csBase
         ],
         [
@@ -936,8 +957,8 @@ export function calculateTax(rawInput) {
             presumedCs
         ]
     ])add(`presumed.${id}`, 'Lucro Presumido', label, formula, value);
-    add('presumed.irCoefficient', 'Lucro Presumido', 'Coeficiente médio IRPJ', 'Base IRPJ sem acréscimo ÷ receita total; zero se receita zero.', irCoefficient, 'percent');
-    add('presumed.csCoefficient', 'Lucro Presumido', 'Coeficiente médio CSLL', 'Base CSLL sem acréscimo ÷ receita total; zero se receita zero.', csCoefficient, 'percent');
+    add('presumed.irCoefficient', 'Lucro Presumido', 'Coeficiente médio IRPJ', 'Base IRPJ sem acréscimo ÷ soma das bases não negativas de vendas e serviços; zero se não houver base.', irCoefficient, 'percent');
+    add('presumed.csCoefficient', 'Lucro Presumido', 'Coeficiente médio CSLL', 'Base CSLL sem acréscimo ÷ soma das bases não negativas de vendas e serviços; zero se não houver base.', csCoefficient, 'percent');
     for (const [id, label, formula, value] of [
         [
             'preTax',
@@ -984,7 +1005,7 @@ export function calculateTax(rawInput) {
         const outside = !isSimple || input.icmsOutside;
         const icmsPending=outside&&icmsProjection&&!icmsProjection.available;
         const available = (!isSimple || simpleAvailable)&&!icmsPending;
-        const status=isSimple?simpleStatus:icmsPending?icmsProjection.status:revenue===0?'Calculado com receita zero':id==='presumed'?'Simulação sujeita ao enquadramento':'Disponível';
+        const status=isSimple?simpleStatus:icmsPending?icmsProjection.status:revenue===0?'Calculado com receita zero':revenue<0?'Calculado com receita negativa; confira os alertas':id==='presumed'?'Simulação sujeita ao enquadramento':'Disponível';
         const application=difalApplications[id];
         const dre = {
             services: annual.services,
@@ -1091,6 +1112,7 @@ export function calculateTax(rawInput) {
     warn('model-period', 'info', 'Cenário de 2027/2028', `O ano selecionado é ${input.year}. As partilhas pertencem a 2027/2028. CBS de ${percent(input.rates.cbs)} e IBS de ${percent(input.rates.ibs)} são premissas deste cenário.${input.rates.cbs===DEFAULT_RATES.cbs?' A CBS padrão de 11,3% acompanha a referência proposta pelo TCU em 28/10/2026, ainda sujeita à fixação pelo Senado Federal.':' Os percentuais informados foram preservados no cálculo.'} As premissas do cenário não confirmam alíquotas oficiais definitivas ou enquadramento fiscal.`);
     warn('icms-assumption', 'info',icmsProjection?'ICMS por natureza e UF':'Utilização da alíquota padrão de ICMS',icmsProjection?'Premissa gerencial: 18% nas operações internas e 12% nas interestaduais com UFs confirmadas. O crédito potencial soma compras elegíveis e devoluções de venda; serviços 8000 não geram crédito. A devolução usa a mesma premissa das vendas e não é abatida duas vezes. A alíquota e a base efetivas da nota, inclusive nas devoluções, precisam de conferência; 12% não é alíquota universal.':`O padrão da simulação é 18% nas vendas e nas compras/CMV de não optantes; o cenário usa ${percent(input.rates.icms)}. A mesma taxa gera débito e crédito potencial somente com ICMS fora do DAS. Não representa alíquota única nacional. Créditos dependem das operações e documentos fiscais.`);
     if(icmsProjection?.salesAdjustmentCents)warn('icms-sales-adjustment','info','Ajuste de receita com a composição de UFs da origem','O ajuste manual altera a base bruta de vendas pela proporção das bases internas e interestaduais importadas, com arredondamento no total da competência. Sem ajuste, conserva o arredondamento por linha. Devoluções e créditos dos documentos permanecem preservados.');
+    if(icmsProjection?.grossSalesFloorApplied)warn('icms-sales-base-floor','warning','Base de ICMS limitada a zero','O ajuste manual deixou a base bruta reconstruída de ICMS abaixo de zero. O débito usa base zero, com receita e ajuste integralmente preservados na DRE. Créditos dos documentos permanecem separados, sem restituição automática. A análise continua disponível para conferência.');
     if(icmsProjection?.purchaseAdjustmentCents)warn('icms-purchase-adjustment','info','Crédito de ICMS vinculado aos documentos','O ajuste manual de compras modifica o custo, mas não cria ou exclui crédito fiscal das operações importadas. Para alterar naturezas, UFs ou crédito de origem, revise e reimporte os documentos.');
     if(icmsProjection&&!icmsProjection.available)warn('icms-operations-pending','warning','Apuração de ICMS exige conferência',icmsProjection.status+' Regimes com ICMS fora do DAS ficam pendentes; o Simples com ICMS no DAS mantém seu cálculo.');
     if(!input.revenueContext)warn('projection', 'info', 'Projeção gerencial de 12 meses', 'Um mês é repetido 12 vezes. Compras/CMV são uma simplificação de custo; não há controle de estoque, ajustes fiscais do Lucro Real, compensação de prejuízos nem apuração trimestral. O maior resultado é apenas o maior deste cenário, sujeito a enquadramento e premissas.');
@@ -1116,6 +1138,11 @@ export function calculateTax(rawInput) {
     if (input.serviceAnnex === 4 && input.serviceRevenue > 0 && input.extraPayroll === 0) warn('annex-iv-payroll', 'warning', 'Anexo IV com encargos fora do DAS zerados', 'O Anexo IV exige revisar a CPP fora do DAS. Informe os encargos efetivos, considerando eventual atividade mista; o modelo mantém o zero que foi explicitamente informado.');
     if (excessRevenue > 0) warn('presumption-increase', 'warning', 'Acréscimo dos coeficientes de presunção', input.revenueContext?'O excedente do período a R$ 5 milhões é rateado proporcionalmente entre as competências, com acréscimo relativo de 10% nos coeficientes. Essa alocação gerencial anual não substitui a apuração e os limites proporcionais de cada trimestre.':'A parcela projetada acima de R$ 5 milhões recebe acréscimo relativo de 10% nos coeficientes, ponderado pela receita das atividades. A projeção pressupõe composição uniforme e não substitui a verificação por período.');
     if (revenue === 0) warn('zero-revenue', 'info', 'Receita zero aceita', 'A DRE continua calculando custos e despesas. Margem, carga sobre receita e ranking não são apresentados, pois não há receita para comparação.');
+    if (annual.sales < 0) warn('negative-sales', 'warning', 'Devoluções ou ajustes superiores às vendas', 'O saldo de vendas de mercadorias após devoluções e ajustes está negativo. O valor foi preservado na DRE e a análise pode continuar. Bases de tributos sobre vendas usam mínimo zero; o excesso não cria imposto negativo, restituição ou compensação automática entre competências.');
+    if (revenue < 0) warn('negative-revenue', 'warning', 'Receita negativa aceita', 'A receita após devoluções e ajustes ficou negativa e foi preservada integralmente. A DRE continua calculando compras, custos e despesas. Margem, carga sobre receita e ranking ficam sem percentual ou classificação quando a receita não é positiva.');
+    if (cmv > 0 && cmv > revenue) warn('purchases-above-revenue', 'warning', 'Compras superiores à receita', 'As compras/CMV superam a receita após devoluções e ajustes. Os valores permanecem na DRE e não impedem concluir a análise. Confira formação de estoque, período dos documentos e a classificação das operações.');
+    const operatingCosts = cmv + annual.salaries + annual.benefits + annual.administrative + annual.rent + annual.cards;
+    if (operatingCosts > 0 && operatingCosts > revenue) warn('costs-above-revenue', 'warning', 'Custos e despesas superiores à receita', 'A soma de compras/CMV e despesas operacionais supera a receita. O resultado negativo é mantido e a análise continua disponível, com os valores informados e as premissas do cenário.');
     if (hasDifal) warn('difal-estimate', 'info', 'DIFAL de saída nos cenários Simples', 'A referência importada de 10% permanece disponível. Sua dedução ocorre somente no Simples Puro e Híbrido, com o cenário e a saída selecionados. RBT12 igual ou superior a R$ 3,6 milhões ou ICMS fora do DAS zera sua aplicação. Esta é uma premissa gerencial, não uma determinação de incidência legal.');
     if (hasAnticipation) warn('icms-anticipation', 'info', 'DIFAL de entrada — antecipação de ICMS', anticipationBlocked ? 'Antecipação zerada nesta competência: a RBT12 alcançou o sublimite de R$ 3,6 milhões ou o ICMS está fora do DAS. A base importada permanece na memória para conferência.' : 'Premissa gerencial de 7,32% sobre compras interestaduais elegíveis, somente no Simples Puro e Híbrido, com o cenário e a entrada selecionados. A dedução entra uma única vez na DRE e não gera crédito adicional.');
     if(!simpleAvailable){
@@ -1171,11 +1198,13 @@ export function draftToInput(draft, difalProjection = null, anticipationProjecti
     const difalPolicy=hasDifalPolicy?parseDifalPolicy(draft.difalPolicy):null;
     checkChoices(draft);
     strictObject(draft.values, SIMULATION_VALUE_FIELDS, ['values']);
-    for (const key of SIMULATION_VALUE_FIELDS) checkNumber(draft.values[key], VALUE_LIMIT, ['values', key]);
+    for (const key of SIMULATION_VALUE_FIELDS) {
+      if(key==='salesRevenue')checkSalesNumber(draft.values[key],['values',key]);else checkNumber(draft.values[key], VALUE_LIMIT, ['values', key]);
+    }
     const values = draft.values;
     if(hasRegimeSelection&&needsRbt12&&!explicitRbt12)failInput(['rbt12'],'Informe a RBT12 para os regimes do Simples selecionados.');
     if(explicitRbt12&&(needsRbt12||draft.rbt12!=null))checkNumber(draft.rbt12, VALUE_LIMIT, ['rbt12']);
-    const rbt12 = needsRbt12 ? explicitRbt12 ? draft.rbt12 : (values.serviceRevenue + values.salesRevenue) * 12 : null;
+    const rbt12 = needsRbt12 ? explicitRbt12 ? draft.rbt12 : positive(values.serviceRevenue + values.salesRevenue) * 12 : null;
     if(needsRbt12)checkNumber(rbt12, VALUE_LIMIT, ['rbt12']);
     if (difalProjection !== null && (difalProjection.version !== 'DIFAL_DRE_V1' ||
         !Number.isSafeInteger(difalProjection.monthlyCents) || difalProjection.monthlyCents < 0 ||
@@ -1237,8 +1266,8 @@ export function calculateSimulation(draft, difalProjection = null, anticipationP
     result.warnings.push({ code: 'rbt12-source', severity: 'info', title: 'RBT12 informada', detail: 'A faixa do Simples usa a RBT12 fornecida para este cenário. Quando o valor veio do PDF, confira a conciliação exibida no leitor do extrato.' });
   } else if(rbt12) {
     rbt12.label = 'Receita estimada em 12 meses';
-    rbt12.formula = 'Receita mensal de serviços + receita mensal de vendas, multiplicadas por 12. Compatibilidade com versões anteriores; não é a RBT12 efetiva.';
-    result.warnings.push({ code: 'estimated-rbt12', severity: 'info', title: 'RBT12 estimada em versão anterior', detail: 'Este cenário não recebeu RBT12 explícita e preserva a regra histórica de receita mensal × 12.' });
+    rbt12.formula = 'Máximo(0; receita mensal de serviços + receita mensal de vendas) × 12. Compatibilidade com versões anteriores; não é a RBT12 efetiva.';
+    result.warnings.push({ code: 'estimated-rbt12', severity: 'info', title: 'RBT12 estimada em versão anterior', detail: 'Este cenário não recebeu RBT12 explícita e usa a estimativa de receita mensal × 12, com mínimo zero para saldos negativos. Confira a RBT12 efetiva antes de usar o resultado fiscalmente.' });
   }
   return result;
 }
