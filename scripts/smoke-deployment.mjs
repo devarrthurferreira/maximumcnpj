@@ -19,7 +19,7 @@ async function main() {
   const page = await get('/', 200, 'text/html');
   assert.equal(page.headers.get('x-maximum-deployment'), 'static-api-v1', 'O domínio ainda não usa a configuração corrigida.');
   const html = await page.text();
-  assert.match(html, /<script type="module" src="\/lookup-ui\.js"><\/script>/);
+  assert.match(html, /<script type="module" src="\/lookup-ui\.js(?:\?v=[\d.]+)?"><\/script>/);
   assert.match(html, /Maximum CNPJ/);
   await get('/app.js', 200, 'javascript');
   await get('/lookup-ui.js', 200, 'javascript');

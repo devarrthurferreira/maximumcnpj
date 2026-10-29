@@ -10,6 +10,7 @@
 - Corrige as dependências transitivas `undici` e `zod` com lockfile e override restrito, mantendo `@vercel/blob@2.8.0`; auditoria local sem vulnerabilidades.
 - Usa `npm ci --include=dev` na Vercel e no CI e inclui auditoria de severidade alta/crítica no CI.
 - Alinha o exemplo de `APP_ORIGIN` e as verificações públicas ao domínio `maximumcnpj.vercel.app`; permite configurar `SMOKE_ORIGIN` para outra implantação.
+- Reconhece o parâmetro de versão dos assets no smoke público, evitando uma falha indevida ao verificar o HTML publicado.
 - Adiciona regressões com dados sintéticos para cálculos, MongoDB, histórico, PDF autenticado e navegador.
 
 ## [0.50.0] — 2026-10-28

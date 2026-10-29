@@ -12,6 +12,8 @@ O build da Vercel e o CI usam `npm ci --include=dev`, com instalação reproduz�
 
 O exemplo de produção usa `APP_ORIGIN=https://maximumcnpj.vercel.app`, sem barra final, e mantém `ADMIN_EMAIL=programacao@maximumcontabil.com.br`. A senha e a URI privada do MongoDB devem ser configuradas somente no ambiente da plataforma. Os scripts de verificação pública de autenticação e relatórios usam esse domínio; `SMOKE_ORIGIN` permite conferir outra implantação sem alterar os arquivos. Esses exemplos não modificam as variáveis já cadastradas na Vercel.
 
+O smoke da implantação reconhece o parâmetro de versão dos arquivos JavaScript, usado pelo HTML para atualizar o cache do navegador, e continua conferindo a versão real retornada pela API.
+
 As regressões cobrem valores negativos, excesso de compras e despesas, meses positivos e negativos na mesma análise, salvamento/reabertura, reprocessamento, alertas visíveis e exportações. Validação local: **435 testes de regras/HTTP**, **oito suítes de integração**, **228 testes Python/PDF/Mongo/OCR** e **sete cenários de navegador** aprovados, com MongoDB descartável e dados sintéticos. Uma comparação independente de 120 cenários positivos/zero manteve os valores do motor anterior. Nenhuma credencial ou documento real integra o repositório.
 
 ## DIFAL após a leitura dos documentos — v0.50.0
