@@ -55,15 +55,13 @@ const creditRows=[
 ] as const;
 
 async function openCompleteDre(page:Page){
-  const detail=page.locator('[data-simulation-detail="dre"]');
-  if(await detail.getAttribute('open')===null)await detail.locator(':scope > summary').click();
-  await expect(detail.locator('[data-simulation-lazy="dre"]')).toHaveAttribute('data-loaded','true');
+  await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
 }
 async function assertAnnual(page:Page){
   await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');
   await openCompleteDre(page);
   await page.locator('#dre-regime').selectOption('presumed');
-  const main=page.locator('#dre-demonstrativo [data-simulation-lazy="dre"] > .dre-table-wrap');
+  const main=page.locator('#dre-demonstrativo > .dre-table-wrap');
   const footer=page.locator('#dre-demonstrativo [data-icms-reconciliation="dre"]');
   await expect(footer).toHaveCount(1);
   await expect(footer.locator('[data-dre-row]')).toHaveCount(creditRows.length);
@@ -101,7 +99,7 @@ async function assertMonthly(page:Page){
     await expect(cells.nth(1)).toHaveText('R$ 0,00');
     await expect(cells.last()).toHaveText(`R$ ${amount}`);
   }
-  const revenue=page.locator('#dre-demonstrativo [data-simulation-lazy="dre"] > .dre-table-wrap [data-dre-row="revenue"] td');
+  const revenue=page.locator('#dre-demonstrativo > .dre-table-wrap [data-dre-row="revenue"] td');
   await expect(revenue.first()).toHaveText('R$ 2.700,00');
   await expect(revenue.nth(1)).toHaveText('R$ 0,00');
   await expect(revenue.last()).toHaveText('R$ 2.700,00');

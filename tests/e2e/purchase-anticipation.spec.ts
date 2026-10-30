@@ -200,15 +200,15 @@ test('Relatório de entradas sem dados salvos suficientes informa indisponibilid
   await expect(page.locator('#purchase-result-list tbody')).not.toContainText('R$ 0,00');
 });
 
-test('DIFAL vendas inclui CNPJ numérico e alfanumérico na prévia e usa a versão atual do resumo histórico',async({page})=>{
+test('DIFAL vendas exclui CNPJ numérico e alfanumérico na prévia e usa a versão atual do resumo histórico',async({page})=>{
   await base(page,'MG');let writes=0;
   const job={_id:jobId,clientId,clientCode:client.code,clientName:client.name,mode:'SALES_V1',issuerUf:'MG',difalVersion:DIFAL_CATALOG_VERSION,calculationVersion:'NET_V2',fileName:'810-VENDAS.csv',status:'COMPLETED',expectedRows:1,uploaded:1,createdAt:'2026-10-20T12:00:00Z'};
   await page.route(/\/api\/v4\/sales(?:[/?]|$)/,route=>{
     if(route.request().method()!=='GET')writes++;
     const url=new URL(route.request().url());
     if(url.pathname==='/api/v4/sales')return route.fulfill({json:{items:[job],total:1}});
-    if(url.pathname.endsWith('/summary'))return route.fulfill({json:{job,calculationVersion:'NET_V2',difal:{...summary,version:DIFAL_VERSION,ratePercent:10,amountCents:1500},difalOrigin:'DERIVED_FROM_SNAPSHOT',totals,reportingGroups:groups}});
-    if(url.pathname.endsWith('/results')||url.pathname.endsWith('/lines'))return route.fulfill({json:{items:[{document:'11222333000181',name:'COMPRADOR CNPJ SINTÉTICO',documentKind:'CNPJ',recipientUf:'SP',quantity:'1',natureCode:'6108',operation:'VENDA',totalCents:15000,difal:{...result,amountCents:1500},difalOrigin:'DERIVED_FROM_SNAPSHOT'}],page:1,total:1,pageSize:100}});
+    if(url.pathname.endsWith('/summary'))return route.fulfill({json:{job,calculationVersion:'NET_V2',difal:{...summary,version:DIFAL_VERSION,ratePercent:10,amountCents:0,baseCents:0,eligibleLines:0,pendingLines:0},difalOrigin:'DERIVED_FROM_SNAPSHOT',totals,reportingGroups:groups}});
+    if(url.pathname.endsWith('/results')||url.pathname.endsWith('/lines'))return route.fulfill({json:{items:[{document:'11222333000181',name:'COMPRADOR CNPJ SINTÉTICO',documentKind:'CNPJ',recipientUf:'SP',quantity:'1',natureCode:'6108',operation:'VENDA',totalCents:15000,difal:{eligible:false,baseCents:0,amountCents:0,reason:'NOT_CPF'},difalOrigin:'DERIVED_FROM_SNAPSHOT'}],page:1,total:1,pageSize:100}});
     return route.fulfill({json:job});
   });
   await page.goto('/purchases.html?type=SALES');await page.getByLabel('Empresa responsável (Código / ID)').selectOption(clientId);
@@ -219,17 +219,18 @@ test('DIFAL vendas inclui CNPJ numérico e alfanumérico na prévia e usa a vers
     {name:'CNPJ inválido',document:'11222333000182',nature:'6108'}]))});
   await page.getByRole('button',{name:'Conferir colunas e valores'}).click();
   const previewPanel=page.locator('#purchase-review .purchase-difal');
-  await expect(previewPanel).toContainText('Vendas com CPF ou CNPJ');
-  await expect(previewPanel.locator('[data-difal-amount]')).toContainText('45,00');
-  await expect(previewPanel).toContainText('3 linha(s) elegível(is)');
-  await expect(page.locator('#purchase-review .purchase-preview tbody tr').filter({hasText:'CNPJ inválido'})).toContainText('Destinatário não identificado por CPF ou CNPJ válido');
+  await expect(previewPanel).toContainText('Vendas com CPF');
+  await expect(previewPanel.locator('[data-difal-amount]')).toContainText('15,00');
+  await expect(previewPanel).toContainText('1 linha(s) elegível(is)');
+  await expect(page.locator('#purchase-review .purchase-preview tbody tr').filter({hasText:'CNPJ inválido'})).toContainText('Destinatário não identificado por CPF');
   await page.goto(`/purchases.html?type=SALES&client=${clientId}&job=${jobId}`);
   const panel=page.locator('#purchase-report-view .purchase-difal');
-  await expect(panel).toContainText('Vendas com CPF ou CNPJ');
+  await expect(panel).toContainText('Vendas com CPF');
   await expect(panel).toContainText('Calculado a partir dos dados já salvos neste relatório.');
-  await expect(panel.locator('[data-difal-amount]')).toContainText('15,00');
+  await expect(panel.locator('[data-difal-amount]')).toContainText('0,00');
+  await expect(panel).toContainText('Não possui vendas elegíveis para CPF de outro estado');
   await page.getByLabel('Visualização').selectOption('lines');
-  await expect(page.locator('#purchase-result-list tbody')).toContainText('15,00');
+  await expect(page.locator('#purchase-result-list tbody')).toContainText('Não se aplica');
   await expect(page.locator('#purchase-result-list tbody')).toContainText('Calculado dos dados salvos');expect(writes).toBe(0);
 });
 

@@ -63,7 +63,13 @@ test('MongoDB: reconsulta idempotente, retomada de cópia, permissões e snapsho
         assert.equal(calls, 1, 'Apenas um CNPJ único é consultado novamente.');
         const after = await purchaseSummary(importId, true, mode);
         assert.deepEqual(after.totals, before.totals); assert.deepEqual(after.components, before.components);
-        if (mode === SALES_MODE) {assert.deepEqual(after.difal, before.difal); assert.equal(after.difal?.amountCents, 4500);}
+        if (mode === SALES_MODE) {
+          assert.deepEqual(after.difal, before.difal);
+          assert.equal(after.difal?.amountCents, 1500, 'Só o CPF interestadual compõe o DIFAL; as duas linhas de CNPJ ficam excluídas.');
+          assert.equal(after.difal?.baseCents, 15000);
+          assert.equal(after.difal?.eligibleLines, 1);
+          assert.equal(after.difal?.pendingLines, 0);
+        }
         assert.equal(after.groups.find(group => group.status === 'NAO_OPTANTE')?.count, 1);
         assert.deepEqual(await purchaseSummary(old._id, true, mode), before);
         assert.deepEqual(await getJob(old._id), original);

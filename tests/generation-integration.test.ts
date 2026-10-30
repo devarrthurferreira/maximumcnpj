@@ -100,7 +100,10 @@ test('MongoDB gerações: DIFAL por empresa, validação estrita, retry imutáve
     assert.deepEqual(source.difalPolicy, mixed);
     assert.equal(Object.hasOwn(sourceWithoutPolicy, 'difalPolicy'), false);
     assert.deepEqual(source.monthlyReports, sourceWithoutPolicy.monthlyReports, 'A opção não modifica bases nem estimativas dos relatórios.');
-    assert.equal(source.sales.difal?.amountCents, 1000);
+    assert.equal(source.sales.difal?.amountCents, 0, 'Venda interestadual a CNPJ não compõe o DIFAL de saída.');
+    assert.equal(source.sales.difal?.baseCents, 0);
+    assert.equal(source.sales.difal?.eligibleLines, 0);
+    assert.equal(source.sales.difal?.pendingLines, 0);
     assert.equal(source.monthlyReports[0].anticipation.amountCents, 732);
 
     const monthlyInputs = source.monthlyReports.map(report => baselineMonth(report)), firstMonth = monthlyInputs[0];
@@ -113,7 +116,7 @@ test('MongoDB gerações: DIFAL por empresa, validação estrita, retry imutáve
     assert.deepEqual(inherited.draft.difalPolicy, mixed, 'O pedido sem política herda as escolhas desta empresa.');
     assert.deepEqual(inherited.result.difalPolicy, mixed);
     for (const regime of inherited.result.regimes) {
-      assert.equal(regime.dre.difal, regime.id === 'hybrid' ? -10 : 0);
+      assert.equal(regime.dre.difal, 0, 'Ativar a saída não torna uma venda a CNPJ elegível.');
       assert.equal(regime.dre.icmsAnticipation, 0, 'A entrada desmarcada não é deduzida no híbrido.');
     }
     assert.deepEqual(await getSimulation(inherited._id), inherited);
@@ -123,7 +126,7 @@ test('MongoDB gerações: DIFAL por empresa, validação estrita, retry imutáve
       draft: {...simulationRequest.draft, difalPolicy: directions}};
     const directed = await createSimulation(actor, directedRequest);
     for (const regime of directed.result.regimes) {
-      assert.equal(regime.dre.difal, regime.id === 'hybrid' ? -10 : 0);
+      assert.equal(regime.dre.difal, 0, 'Alterar a política conserva a exclusão da venda a CNPJ.');
       assert.equal(regime.dre.icmsAnticipation, regime.id === 'pure' ? -7.32 : 0);
       assert.equal(regime.difalApplication.months[0].reason, ['pure', 'hybrid'].includes(regime.id) ? 'ENABLED' : 'NOT_APPLICABLE');
     }
@@ -626,10 +629,12 @@ test('MongoDB relatórios: DIFAL desmarcado, CSV auditável, propriedade e linha
       const ids = {purchase: '', sales: ''};
       for (const sales of [false, true]) {
         const {job} = await (sales ? attachGenerationSale : attachGenerationPurchase)(actor, generation._id,
-          {clientId, importId: randomUUID(), fileName: sales ? 'vendas.csv' : 'compras.csv', expectedRows: 1, issuerUf: 'MG'});
-        await uploadLookup(actor, job._id, {offset: 0, rows: [{document: '00000000000191', name: 'Documento sintético',
+          {clientId, importId: randomUUID(), fileName: sales ? 'vendas.csv' : 'compras.csv', expectedRows: sales ? 2 : 1, issuerUf: 'MG'});
+        const reportRow = {document: '00000000000191', name: 'Documento sintético',
           serviceDate: '2026-08-15', quantity: '1', natureCode: sales ? '6102' : '2102', description: 'Mercadoria sintética', recipientUf: 'SP',
-          grossCents: 10000, totalCents: 10000, discountCents: 0, accessoryCents: 0, freightCents: 0, abatementCents: 0}]});
+          grossCents: 10000, totalCents: 10000, discountCents: 0, accessoryCents: 0, freightCents: 0, abatementCents: 0};
+        // CPF elegível mantém a auditoria do DIFAL; o CNPJ sem DIFAL mantém a reconsulta cadastral da mesma origem.
+        await uploadLookup(actor, job._id, {offset: 0, rows: sales ? [{...reportRow, document: '12345678900'}, reportRow] : [reportRow]});
         await finalizeLookup(actor, job._id); await finishJob(job._id);
         ids[sales ? 'sales' : 'purchase'] = job._id;
       }
@@ -643,8 +648,12 @@ test('MongoDB relatórios: DIFAL desmarcado, CSV auditável, propriedade e linha
     const summary = await purchaseSummary(firstSale, true, SALES_MODE);
     assert.deepEqual(summary.difalPolicy, entryOnly);
     assert.equal(summary.difal?.amountCents, 1000, 'A estimativa bruta não muda quando a saída está desmarcada.');
+    assert.equal(summary.difal?.eligibleLines, 1);
+    assert.equal(summary.difal?.baseCents, 10000);
     const detail = await purchaseRows(firstSale, 'ALL', 1, true, SALES_MODE);
     assert.deepEqual(detail.difalPolicy, entryOnly); assert.equal(detail.items[0].difal.amountCents, 1000);
+    assert.equal(detail.items[1].difal.reason, 'NOT_CPF');
+    assert.equal(detail.items[1].difal.amountCents, 0);
     const excludedCsv = parseCsv((await purchaseExport(firstSale, 'ALL', 1, SALES_MODE)).content);
     assert.equal(excludedCsv['DIFAL estimado (R$)'], '0,00');
     assert.equal(excludedCsv['Base DIFAL (R$)'], '0,00');

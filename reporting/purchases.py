@@ -22,7 +22,7 @@ from .brand import draw_brand_header
 from .difal_policy import report_difal_policy, direction_selection
 from .revenue import RevenueEvidence, report_revenue_reconciliation, unavailable_revenue
 from .core import VERSION, display_date, number, percent, require, utcnow, snapshot_source
-from .difal import DIFAL_VERSION, DIFAL_VERSIONS, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
+from .difal import DIFAL_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_VERSIONS, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
 from .operation_catalog import OPERATION_CATALOG_VERSION, classify_operation_nature, normalize_operation_nature
 from .tax_documents import is_canonical_cnpj as _valid_cnpj
 from .anticipation import (ANTICIPATION_VERSION, ANTICIPATION_VERSIONS, ANTICIPATION_RATE_PERCENT,
@@ -810,7 +810,7 @@ def difal_story(difal, width, styles, origin=None, policy=None):
                           'do destinatário preservados. Reimporte as vendas para completar esses dados.', 'small')]
     if origin == 'DERIVED_FROM_SNAPSHOT':
         story.append(p('Calculado a partir dos dados salvos no relatório de origem, após conferir a regra original, '
-                       'sem modificar o lote ou as suas linhas. A estimativa atual inclui CPF ou CNPJ válido.', 'small'))
+                       'sem modificar o lote ou as suas linhas. A estimativa atual inclui somente CPF.', 'small'))
     rows = [['UF do emitente', 'Linhas elegíveis', 'Base elegível', 'DIFAL sobre vendas (10%)'],
             [difal['issuerUf'] or 'Não informada', number(difal['eligibleLines']),
              money(difal['baseCents']), money(difal['amountCents'])]]
@@ -818,8 +818,11 @@ def difal_story(difal, width, styles, origin=None, policy=None):
     if difal['pendingLines']:
         story.append(p(f'Estimativa parcial: {number(difal["pendingLines"])} linhas pendentes por UF do emitente '
                        'ou do destinatário ausente. Essas linhas não integram a base nem o valor acima.', 'small'))
+    if not difal['baseCents'] and not difal['pendingLines']:
+        story.append(p('Não possui vendas elegíveis para CPF de outro estado. DIFAL de vendas: R$ 0,00.', 'small'))
+    recipients = 'CPF ou CNPJ válido' if difal['version'] == DIFAL_CPF_CNPJ_VERSION else 'CPF'
     story.append(p('Alíquota média estimada de 10%, sem equivalência automática à alíquota legal. '
-                   'Aplica-se somente a vendas de mercadoria elegíveis para CPF ou CNPJ válido de outra UF; '
+                   f'Aplica-se somente a vendas de mercadoria elegíveis para {recipients} de outra UF; '
                    'base = total registrado da venda. Valores arredondados por linha e somados uma única vez. '
                    'Este relatório mostra o total do período importado, sem alterar o total de vendas. '
                    'Nas novas simulações, cada competência usa as vendas daquele mês, e o total anual soma '

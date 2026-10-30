@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {documentDifalSummary} from '../public/analysis-document-difal.js';
+import {documentDifalSummary,loadDocumentDifal} from '../public/analysis-document-difal.js';
 import {defaultDifalPolicy} from '../public/simulator-engine.js';
 
 function options(type='SALES') {
-  const entry=type==='PURCHASES',version=entry?'ICMS_ANTICIPATION_V4':'DIFAL_ESTIMATE_V4';
+  const entry=type==='PURCHASES',version=entry?'ICMS_ANTICIPATION_V4':'DIFAL_ESTIMATE_V5';
   return {type,jobId:'job',clientId:'client',generationId:'generation',choice:'yes',
     regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid','presumed','actual']},policy:defaultDifalPolicy(),
     job:{_id:'job',clientId:'client',generationId:'generation',mode:entry?'PURCHASES_V1':'SALES_V1',status:'COMPLETED',
-      [entry?'anticipationVersion':'difalVersion']:version,
+      [entry?'anticipationVersion':'difalVersion']:version,reportPeriod:{startMonth:'2026-01',endMonth:'2026-09',months:9},
       purchaseInput:{[entry?'anticipation':'difal']:{version,ratePercent:entry?7.32:10,issuerUf:'MG',
         amountCents:entry?3660:10000,baseCents:entry?50000:100000,eligibleLines:1,pendingLines:0}}}};
 }
@@ -70,7 +70,7 @@ test('zero registrado sem operações elegíveis é exibido como zero',()=>{
     const input=options(type);Object.assign(source(input),{amountCents:0,baseCents:0,eligibleLines:0});
     const summary=documentDifalSummary(input);
     assert.equal(summary.state,'ready');assert.equal(summary.amountCents,0);
-    assert.match(summary.note,/Sem operações elegíveis/);
+    assert.match(summary.note,type==='PURCHASES'?/Sem operações elegíveis/:/Não possui vendas elegíveis para CPF de outro estado/);
   }
 });
 
@@ -110,7 +110,9 @@ test('resumo histórico reconhecido mantém a sua própria versão e cifra',()=>
     source(input).version=version;source(input).amountCents=987654321;
     input.job[type==='PURCHASES'?'anticipationVersion':'difalVersion']=version;
     const before=structuredClone(input);
-    assert.equal(documentDifalSummary(input).amountCents,987654321);assert.deepEqual(input,before);
+    if(type==='PURCHASES')assert.equal(documentDifalSummary(input).amountCents,987654321);
+    else assert.equal(documentDifalSummary(input).state,'unavailable');
+    assert.deepEqual(input,before);
   }
 });
 
@@ -118,4 +120,51 @@ test('política ausente ou inválida não é interpretada como autorização par
   for(const policy of [undefined,null,{version:'unknown'}]){
     const input=options();input.policy=policy;assert.equal(documentDifalSummary(input),null);
   }
+});
+
+ test('cartão usa a leitura CPF atual fornecida pelo servidor sem modificar o resumo V4',()=>{
+  const input=options();input.job.difalVersion='DIFAL_ESTIMATE_V4';source(input).version='DIFAL_ESTIMATE_V4';
+  input.job.currentDifal={...source(input),version:'DIFAL_ESTIMATE_V5',baseCents:0,amountCents:0,eligibleLines:0};
+  input.job.currentDifalPeriod={version:'JAN_SEP_V1',sourceYear:2026,complete:true,includedMonths:['2026-01']};
+  const before=structuredClone(input),summary=documentDifalSummary(input);
+  assert.equal(summary.amountCents,0);assert.equal(summary.state,'ready');
+  assert.match(summary.note,/Não possui vendas elegíveis para CPF de outro estado/);assert.deepEqual(input,before);
+  input.job.currentDifal=null;assert.equal(documentDifalSummary(input).state,'unavailable');
+});
+
+test('carrega DIFAL CPF Jan–Set fora do status dos documentos, verifica identidade e reutiliza a resposta',async()=>{
+  const input=options();input.job._id=input.jobId='legacy-load';input.job.difalVersion='DIFAL_ESTIMATE_V4';source(input).version='DIFAL_ESTIMATE_V4';
+  const generation={_id:'generation',companies:[{clientId:'client',salesJobId:input.jobId,sales:input.job}]};
+  let calls=0,updates=0;
+  const result={jobId:input.jobId,clientId:'client',generationId:'generation',
+    difal:{...source(input),version:'DIFAL_ESTIMATE_V5',amountCents:0,baseCents:0,eligibleLines:0},
+    period:{version:'JAN_SEP_V1',sourceYear:2026,complete:true,includedMonths:['2026-01']}};
+  const request=async path=>{calls++;assert.equal(path,'/api/v4/sales/legacy-load/difal-period');return result;};
+  await loadDocumentDifal(generation,{clientId:'client',request,onUpdate:()=>updates++});
+  await loadDocumentDifal(generation,{clientId:'client',request,onUpdate:()=>updates++});
+  assert.equal(calls,1);assert.equal(updates,2);assert.equal(documentDifalSummary(input).amountCents,0);
+  assert.match(documentDifalSummary(input).context,/janeiro a setembro de 2026/);
+  assert.equal(source(input).amountCents,10000,'Resumo original V4 não foi substituído.');
+  input.job._id=input.jobId='wrong-source';generation.companies[0].salesJobId=input.jobId;
+  await loadDocumentDifal(generation,{clientId:'client',request:async()=>({...result,jobId:'other'})});
+  assert.equal(documentDifalSummary(input).state,'unavailable');
+});
+
+test('arquivo só do quarto trimestre não recebe zero como se houvesse dados Jan–Set',()=>{
+  const input=options();input.job.reportPeriod={startMonth:'2026-10',endMonth:'2026-12',months:3};
+  Object.assign(source(input),{amountCents:0,baseCents:0,eligibleLines:0});
+  assert.equal(documentDifalSummary(input).state,'unavailable');assert.equal(documentDifalSummary(input).amountCents,null);
+});
+
+test('falha transitória no resumo permite nova tentativa e nunca confirma zero indevido',async()=>{
+  const input=options();input.job._id=input.jobId='retry-load';input.job.difalVersion='DIFAL_ESTIMATE_V4';source(input).version='DIFAL_ESTIMATE_V4';
+  const generation={_id:'generation',companies:[{clientId:'client',salesJobId:input.jobId,sales:input.job}]};
+  let calls=0;
+  const request=async()=>{calls++;if(calls===1)throw new Error('Temporário');return {
+    jobId:input.jobId,clientId:'client',generationId:'generation',difal:{...source(input),version:'DIFAL_ESTIMATE_V5'},
+    period:{version:'JAN_SEP_V1',sourceYear:2026,complete:true,includedMonths:['2026-01']}};};
+  await loadDocumentDifal(generation,{clientId:'client',request});
+  assert.equal(documentDifalSummary(input).state,'unavailable');assert.equal(documentDifalSummary(input).amountCents,null);
+  await loadDocumentDifal(generation,{clientId:'client',request});
+  assert.equal(calls,2);assert.equal(documentDifalSummary(input).amountCents,10000);
 });

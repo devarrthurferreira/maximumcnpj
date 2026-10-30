@@ -50,8 +50,8 @@ function septemberStatement(){
     rbt12Basis:{...original.rbt12Basis,startMonth:'2025-09',endMonth:'2026-08'}};
 }
 async function openCompleteDre(page:Page){
-  await page.locator('[data-simulation-detail="dre"] > summary').click();
-  await expect(page.locator('[data-simulation-lazy="dre"]')).toHaveAttribute('data-loaded','true');
+  await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
+  await expect(page.locator('#dre-demonstrativo [data-dre-row="salaries"]')).toBeVisible();
 }
 
 test('Real saved simulation survives a fresh login and a new version preserves every original detail', async ({ page, browser, baseURL }) => {

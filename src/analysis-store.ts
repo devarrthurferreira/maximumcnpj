@@ -17,7 +17,7 @@ import {resolveRegimeSelection,requiresSimplesReference} from '../public/regime-
 import {upgradeDifalPolicy} from '../public/simulator-engine.js';
 import type {DifalPolicy} from '../public/simulator-engine.js';
 import {ANALYSIS_VERSION,ANALYSIS_GROUPS,ACCOUNTING_FIELDS,analysisObject,analysisId,analysisRevision,
-  analysisYear,analysisSelection,analysisDifalPolicy,defaultFiscalData,effectiveAnalysisDifalPolicy,parseFiscalData,parseAccountingData} from './analysis-contract.ts';
+  analysisYear,analysisSelection,analysisDifalPolicy,defaultFiscalData,effectiveAnalysisDifalPolicy,parseFiscalData,parseAccountingData,accountingForYear} from './analysis-contract.ts';
 import type {AnalysisConfig,AccountingData,FiscalData,AnalysisIssue} from './analysis-contract.ts';
 import {analysisDeletion,analysisDeletionStarted,assertAnalysisNotDeleted,companyHasAnalysisDeletion,reserveAnalysisDeletion} from './analysis-deletion.ts';
 import type {AnalysisDeletionReceipt} from './analysis-deletion.ts';
@@ -126,7 +126,7 @@ async function readiness(item:Analysis):Promise<Readiness>{
   }
   if(item.accounting.status!=='COMPLETE')issues.push({code:'ACCOUNTING_NOT_CONFIRMED',sector:'accounting',message:'Salve e conclua as despesas do setor Contábil.'});
   const fiscalPeriod=(source as Source|null)?.analysisPeriod||savedAnalysisPeriod(item);
-  const accounting=item.accounting.data.months.filter(row=>isAnalysisMonth(row.sourceMonth,fiscalPeriod?.sourceYear)&&ACCOUNTING_FIELDS.some(key=>row[key]!==null));
+  const accounting=accountingForYear(item.accounting.data,fiscalPeriod?.sourceYear).months.filter(row=>isAnalysisMonth(row.sourceMonth,fiscalPeriod?.sourceYear)&&ACCOUNTING_FIELDS.some(key=>row[key]!==null));
   const available=fiscalPeriod?.includedMonths||checked?.months||[];
   const months=available.filter(month=>accounting.some(row=>row.sourceMonth===month&&ACCOUNTING_FIELDS.every(key=>row[key]!==null)));
   const analysisPeriod=months.length&&fiscalPeriod?selectAnalysisPeriod(fiscalPeriod,months):fiscalPeriod;
@@ -150,7 +150,7 @@ function savedReadiness(item:Analysis):Readiness{
     issues.push({code:'FISCAL_SOURCE_CHANGED',sector:'fiscal',message:'Confira e conclua o Fiscal para estas escolhas da análise.'});
   }
   if(item.accounting.status!=='COMPLETE')issues.push({code:'ACCOUNTING_NOT_CONFIRMED',sector:'accounting',message:'Salve e conclua as despesas do setor Contábil.'});
-  const accounting=item.accounting.data.months.filter(row=>isAnalysisMonth(row.sourceMonth,fiscalPeriod?.sourceYear)&&ACCOUNTING_FIELDS.some(key=>row[key]!==null));
+  const accounting=accountingForYear(item.accounting.data,fiscalPeriod?.sourceYear).months.filter(row=>isAnalysisMonth(row.sourceMonth,fiscalPeriod?.sourceYear)&&ACCOUNTING_FIELDS.some(key=>row[key]!==null));
   const months=available.filter(month=>accounting.some(row=>row.sourceMonth===month&&ACCOUNTING_FIELDS.every(key=>row[key]!==null)));
   const analysisPeriod=months.length&&fiscalPeriod?selectAnalysisPeriod(fiscalPeriod,months):fiscalPeriod;
   if(!accounting.length||accounting.some(row=>ACCOUNTING_FIELDS.some(key=>row[key]===null))){
@@ -166,7 +166,7 @@ async function presentation(item:Analysis,options:AnalysisReadOptions={},prepare
   const {checked,source,sourceError,...ready}=options.summary?savedReadiness(item):prepared||await readiness(item);
   const {workspaceId:_workspace,_id:id,leaseOwner:_owner,leaseUntil:_until,activated:_activated,lastGeneration:_last,...rest}=item;
   const current=item.currentSimulation;
-  const analysis={...rest,id,periodPolicy:JAN_SEP_POLICY,readiness:ready,currentSimulation:current?{...current,stale:current.legacy || current.modelVersion!==JAN_SEP_MODEL_VERSION || current.analysisRevision!==item.revision ||
+  const analysis={...rest,accounting:{...item.accounting,data:accountingForYear(item.accounting.data,ready.analysisPeriod?.sourceYear)},id,periodPolicy:JAN_SEP_POLICY,readiness:ready,currentSimulation:current?{...current,stale:current.legacy || current.modelVersion!==JAN_SEP_MODEL_VERSION || current.analysisRevision!==item.revision ||
     (!options.summary&&(!checked || checked.fingerprint!==item.fiscal.confirmation?.fingerprint))}:null};
   return {analysis,...(options.includeSource?{source,sourceError}:{})};
 }
@@ -356,7 +356,7 @@ export async function importAnalysisGeneration(actor:LookupActor,id:string,input
 }
 function deterministicId(key:string){const hex=digest(`${scope().workspaceId}:${key}`);return `${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;}
 function calculationInput(item:Analysis,source:Source,simulationId:string){
-  const f=item.fiscal.data,expenses=new Map(item.accounting.data.months.map(row=>[row.sourceMonth,row]));
+  const f=item.fiscal.data,expenses=new Map(accountingForYear(item.accounting.data,source.analysisPeriod?.sourceYear).months.map(row=>[row.sourceMonth,row]));
   const overrides=new Map((f.monthlyOverrides||[]).map(row=>[row.sourceMonth,row]));
   const monthlyInputs=source.monthlyReports!.map(row=>{
     const expense=expenses.get(row.sourceMonth)!,entry=baselineMonth(row);const override=overrides.get(row.sourceMonth);

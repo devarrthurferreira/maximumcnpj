@@ -156,9 +156,8 @@ function expectDifal(snapshot:any,enabled:boolean){
   ]);
 }
 async function fullDre(page:Page){
-  const details=page.locator('#dre-demonstrativo [data-simulation-detail="dre"]');
-  if(await details.getAttribute('open')===null)await details.locator(':scope > summary').click();
-  const host=details.locator('[data-simulation-lazy="dre"]');await expect(host).toHaveAttribute('data-loaded','true');return host;
+  const host=page.locator('#dre-demonstrativo');
+  await expect(host.locator('[data-dre-row="netProfit"]')).toBeVisible();return host;
 }
 async function expectZeroDre(page:Page){
   await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');
@@ -543,14 +542,14 @@ test('Excluir nos modais Contábil e configuração preserva campos ao cancelar 
   });
   await page.goto('/analyses.html?id='+id+'&sector=accounting');
   const wizard=page.locator('#analysis-wizard'),opener=page.locator('#analysis-delete-in-wizard'),dialog=page.locator('#analysis-delete-dialog');
-  const salary=page.locator('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]');await salary.fill('-5');
+  const salary=page.locator('[data-accounting-average="salariesCents"]');await salary.fill('-5');
   const originalInput=await salary.elementHandle();
   for(const cancel of ['button','escape']){
     await opener.click();await expect(dialog).toBeVisible();await expect(page.locator('#analysis-delete-cancel')).toBeFocused();
     if(cancel==='button')await page.locator('#analysis-delete-cancel').click();else await page.keyboard.press('Escape');
     await expect(dialog).not.toBeVisible();await expect(opener).toBeFocused();
     await expect(wizard).toHaveAttribute('data-wizard-kind','accounting');await expect(salary).toHaveValue('-5');
-    expect(await originalInput!.evaluate(node=>node===document.querySelector('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]'))).toBe(true);
+    expect(await originalInput!.evaluate(node=>node===document.querySelector('[data-accounting-average="salariesCents"]'))).toBe(true);
   }
   expect(removals).toEqual([]);expect(patches).toEqual([]);
   await salary.fill('123.45');await page.locator('#analysis-wizard-close').click();await page.locator('#analysis-open-config').click();

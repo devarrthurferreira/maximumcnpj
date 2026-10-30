@@ -167,16 +167,16 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const simulations=await collection('simulations'),batches=await collection('simulationReprocessBatches'),items=await collection('simulationReprocessItems');
    await simulations.insertOne(oldChild);await batches.insertOne(oldBatch);await items.insertOne(oldItem);
    const before=await simulationReprocessingStatus();
-   assert.equal(before.version,'CBS_2026_10_V10');assert.equal(before.total,0);assert.equal(before.inventoryComplete,false);
+   assert.equal(before.version,'DIFAL_CPF_2026_10_V11');assert.equal(before.total,0);assert.equal(before.inventoryComplete,false);
    assert.equal((await getSimulation(original._id)).engineInput.rates.cbs,.0911);
    assert.equal((await getSimulation(oldChild._id)).engineInput.rates.cbs,.0911);
    await reprocessSimulations(actor,{});const done=await finish();
-   assert.equal(done.version,'CBS_2026_10_V10');assert.equal(done.total,1);
+   assert.equal(done.version,'DIFAL_CPF_2026_10_V11');assert.equal(done.total,1);
    assert.deepEqual(done.counts,{queued:0,processing:0,ok:1,pending:0,failed:0});
    const childId=reprocessedSimulationId(scope().workspaceId,oldChild._id),child=await getSimulation(childId);
    assert.notEqual(childId,oldChild._id);assert.equal(child.parentSimulationId,oldChild._id);
    assert.equal(done.items[0].originalId,oldChild._id,'A família usa a revisão automática mais recente.');
-   assert.equal(child.reprocessing.version,'CBS_2026_10_V10');
+   assert.equal(child.reprocessing.version,'DIFAL_CPF_2026_10_V11');
    assert.equal(child.engineInput.months[0].input.rates.cbs,.113);
    assert.equal(child.engineInput.months[0].input.credits.regular.cbsRate,.113);
    assert.equal(child.engineInput.months[0].input.credits.simpleRegular.cbsRate,.113);
@@ -223,7 +223,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.equal((await getAnalysis(opened.analysis.id,{summary:true})).analysis.currentSimulation.id,childId);
    assert.deepEqual(await simulations.find(scope({_id:{$in:frozen.map(old=>old._id)}})).sort({_id:1}).toArray(),frozen);
    await reprocessSimulations(operator,{});assert.equal((await simulationReprocessingStatus()).total,1);
-   assert.equal(await simulations.countDocuments(scope({'reprocessing.version':'CBS_2026_10_V10'})),1);
+   assert.equal(await simulations.countDocuments(scope({'reprocessing.version':'DIFAL_CPF_2026_10_V11'})),1);
    if(selected==='orphan')assert.equal((await getSimulation(chosen._id)).parentSimulationDeleted,true);
   });
 
@@ -257,7 +257,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const original=await save({...input,draft:{...input.draft,difalPolicy:policy}},80);
    const jobs=await collection('lookupJobs'),lines=await collection('purchaseLines');
    const sourcesBefore={jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({_id:1}).toArray()};
-   const done=await reprocessSimulations(actor,{});assert.equal(done.version,'CBS_2026_10_V10');
+   const done=await reprocessSimulations(actor,{});assert.equal(done.version,'DIFAL_CPF_2026_10_V11');
    assert.deepEqual(done.counts,{queued:0,processing:0,ok:1,pending:0,failed:0});
    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id));
    assert.deepEqual(child.draft.difalPolicy,policy);assert.deepEqual(child.result.difalPolicy,policy);

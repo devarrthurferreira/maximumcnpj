@@ -1,12 +1,14 @@
 import {test as base,expect,type APIRequestContext,type Page} from '@playwright/test';
 import {randomUUID} from 'node:crypto';
 import {MongoClient,type Db} from 'mongodb';
+import {processLookup} from '../../src/lookup-jobs.ts';
+import {closeDatabase} from '../../src/store.ts';
 import {hashPassword} from '../../src/security.ts';
 
 type Account={id:string;email:string;password:string};
 type Workspace={db:Db;workspaceId:string;writer:Account;viewer:Account};
 type ReportType='PURCHASES'|'SALES';
-type ReportRow={totalCents:number;recipientUf:string};
+type ReportRow={totalCents:number;recipientUf:string;document?:string;serviceDate?:string};
 const test=base.extend<{difalWorkspace:Workspace}>({
   difalWorkspace:async({},use)=>{
     expect(process.env.MONGODB_URI,'Use somente MongoDB descartável').toBeTruthy();
@@ -26,6 +28,8 @@ const test=base.extend<{difalWorkspace:Workspace}>({
     }
   }
 });
+
+test.afterAll(async()=>closeDatabase());
 
 async function api(request:APIRequestContext,baseURL:string,method:'GET'|'POST'|'PATCH',path:string,data?:unknown){
   const response=await request.fetch(path,{method,...(data===undefined?{}:{data}),headers:{Origin:new URL(baseURL).origin}});
@@ -81,11 +85,18 @@ async function attach(request:APIRequestContext,baseURL:string,analysis:any,gene
     importId:randomUUID(),clientId:analysis.clientId,fileName:`difal-${name}.csv`,expectedRows:rows.length,issuerUf:'MG'
   });
   await api(request,baseURL,'POST',`/api/v4/${name}/${attached.job._id}/rows`,{offset:0,rows:rows.map(row=>({
-    document:'12345678900',name:'Pessoa sintética',recipientUf:row.recipientUf,serviceDate:'2025-01-15',
+    document:row.document??'12345678900',name:'Pessoa sintética',recipientUf:row.recipientUf,serviceDate:row.serviceDate??'2025-01-15',
     natureCode:type==='SALES'?'5102001':'1102001',description:'Operação sintética',quantity:'1',grossCents:row.totalCents,
     discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:row.totalCents
   }))});
-  if(finalize){const completed=await api(request,baseURL,'POST',`/api/v4/${name}/${attached.job._id}/finalize`,{});expect(completed.status).toBe('COMPLETED');}
+  if(finalize){
+    let completed=await api(request,baseURL,'POST',`/api/v4/${name}/${attached.job._id}/finalize`,{});
+    if(completed.status!=='COMPLETED'){
+      const actor=(await api(request,baseURL,'GET','/api/auth/session')).user;
+      completed=await processLookup(actor,attached.job._id,(async()=>Response.json({cnpj:'00000000000191',razao_social:'Empresa sintética',opcao_pelo_simples:false})) as typeof fetch);
+    }
+    expect(completed.status).toBe('COMPLETED');
+  }
   return attached.job._id;
 }
 async function fiscalStep(page:Page,step:'regimes'|'difal'|'rbt12'|'documents'){
@@ -176,4 +187,39 @@ test('leitura incompleta não mostra DIFAL e todas as UFs pendentes não viram z
   await expect(tax(page,'SALES')).not.toContainText('R$ 0,00');
   const generation=await generationFor(page.request,baseURL!,analysis.id);expect(generation.companies[0].sales._id).toBe(jobId);
   expect(generation.companies[0].sales.purchaseInput.difal).toMatchObject({amountCents:0,eligibleLines:0,pendingLines:1});
+});
+
+
+test('cartão de vendas soma somente CPF de outra UF em janeiro–setembro e confirma quando não possui DIFAL',async({page,baseURL,difalWorkspace},info)=>{
+  test.setTimeout(90_000);
+  const analysis=await createAnalysis(page.request,baseURL!,difalWorkspace.writer),prepared=await prepare(page.request,baseURL!,analysis);
+  const jobId=await attach(page.request,baseURL!,analysis,prepared.generationId,'SALES',[
+    {totalCents:100_000,recipientUf:'SP'},
+    {totalCents:200_000,recipientUf:'SP',document:'00000000000191'},
+    {totalCents:300_000,recipientUf:'MG',serviceDate:'2025-09-15'},
+    {totalCents:900_000,recipientUf:'SP',serviceDate:'2025-10-15'},
+    {totalCents:500_000,recipientUf:'',document:'00000000000191',serviceDate:'2025-09-15'}
+  ]);
+  const original=await generationFor(page.request,baseURL!,analysis.id);
+  expect(original.companies[0].sales.purchaseInput.difal.amountCents).toBe(100_000);
+  await page.goto(documentsUrl(analysis.id));
+  await expect(amount(page,'SALES')).toHaveText('R$ 100,00');
+  await expect(tax(page,'SALES')).toContainText('janeiro a setembro de 2025');
+  await expect(card(page,'PURCHASES')).toContainText('Aguardando documento');
+  const limited=await api(page.request,baseURL!,'GET',`/api/v4/sales/${jobId}/difal-period`);
+  expect(limited.difal).toMatchObject({amountCents:10_000,baseCents:100_000,eligibleLines:1,pendingLines:0,version:'DIFAL_ESTIMATE_V5'});
+  expect(limited.period.excludedMonths).toEqual(['2025-10']);
+  expect(await generationFor(page.request,baseURL!,analysis.id)).toEqual(original);
+  await page.reload();await expect(amount(page,'SALES')).toHaveText('R$ 100,00');
+  const emptyAnalysis=await createAnalysis(page.request,baseURL!,difalWorkspace.writer),emptyPrepared=await prepare(page.request,baseURL!,emptyAnalysis);
+  await attach(page.request,baseURL!,emptyAnalysis,emptyPrepared.generationId,'SALES',[
+    {totalCents:200_000,recipientUf:'SP',document:'00000000000191'},
+    {totalCents:300_000,recipientUf:'MG',serviceDate:'2025-09-15'}
+  ]);
+  await page.goto(documentsUrl(emptyAnalysis.id));await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
+  await expect(tax(page,'SALES')).toContainText('Não possui vendas elegíveis para CPF de outro estado');
+  await expect(tax(page,'SALES')).not.toContainText(/pendente|indisponível/i);
+  await page.setViewportSize({width:390,height:900});await tax(page,'SALES').scrollIntoViewIfNeeded();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await tax(page,'SALES').screenshot({path:info.outputPath('difal-cpf-zero-jan-set.png')});
 });

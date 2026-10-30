@@ -101,7 +101,7 @@ test('PDF Python único conserva snapshot, timbrado, comparativos e opções de 
     await page.locator('#dre-report-period').selectOption(period);
     if(period==='monthly'){
       await page.locator('#dre-show-percent').check();
-      await page.locator('[data-simulation-detail="dre"] > summary').click();
+      await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
       await page.locator('#dre-regime').selectOption('actual');
     }
     const path=info.outputPath('dre-python-'+period+'.pdf');
