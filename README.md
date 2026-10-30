@@ -1,4 +1,39 @@
-# Maximum CNPJ · v0.53.0
+# Maximum CNPJ · v0.54.0
+
+## MongoDB 1 → 2 → 3 para armazenamento dos relatórios — v0.54.0
+
+O sistema aceita até **três clusters MongoDB**, com seleção sequencial e preventiva para novas importações. As linhas temporárias, linhas financeiras, itens consultados e respectivos estados cadastrais ficam juntos no destino salvo no cabeçalho do relatório (`storageVersion: MONGODB_POOL_V1`, `storageSlot: 1|2|3`). Ao avançar para o banco 2 ou 3, os relatórios anteriores continuam sendo lidos pelo seu destino original. Registros antigos sem localizador permanecem no banco 1; não existe migração destrutiva nem nova consulta cadastral para habilitar o pool.
+
+### Variáveis na Vercel
+
+Mantenha `MONGODB_URI` e `MONGODB_DB` como estão e cadastre, no projeto **maximumcnpj**, em **Settings → Environment Variables → Production**:
+
+| Variável | Valor |
+|---|---|
+| `MONGODB_URI_2` | URI completa do segundo cluster, com usuário e senha próprios |
+| `MONGODB_DB_2` | Nome do banco do segundo cluster; omitido, herda `MONGODB_DB` |
+| `MONGODB_URI_3` | URI completa do terceiro cluster |
+| `MONGODB_DB_3` | Nome do banco do terceiro cluster; omitido, herda `MONGODB_DB` |
+
+As URIs são segredos de servidor. Não use prefixos públicos nem envie credenciais ao navegador. Salve as variáveis e faça **Redeploy** para aplicá-las à execução. Para testar em Preview, use credenciais e bancos próprios de teste. Não é necessário selecionar manualmente um banco ativo: a configuração de dois ou três destinos habilita a escolha automática. Sem conexões adicionais, o comportamento de um banco permanece compatível.
+
+Os destinos precisam ser **clusters distintos**. Criar três databases no mesmo cluster não aumenta sua cota; conexões com o mesmo endereço são rejeitadas, mesmo que apontem para databases diferentes. O Atlas permite normalmente um cluster Free por projeto, portanto três Free requerem projetos distintos. [Limitações oficiais do Atlas Free](https://www.mongodb.com/docs/atlas/reference/free-shared-limitations/).
+
+### Capacidade, reserva e continuidade
+
+No modo pool, cada destino assume um orçamento conservador configurável de `536870912` bytes. Use `MONGODB_STORAGE_LIMIT_BYTES`, `MONGODB_STORAGE_LIMIT_BYTES_2` e `MONGODB_STORAGE_LIMIT_BYTES_3` para informar outros orçamentos, sempre compatíveis com a capacidade real. O gatilho padrão é **85%**, ajustável por `MONGODB_ROLLOVER_PERCENT` entre 50 e 90. A seleção inclui reserva estimada para terminar o novo relatório: linhas temporárias e finais coexistem durante a conferência, além de itens, estados e índices. Reservas de importações ainda em andamento também entram na escolha; cancelá-las libera a reserva lógica. A margem e a reserva podem fazer a troca ocorrer antes dos 85%.
+
+O comando oficial `atlasSize` mede **dados BSON sem compressão + índices de todo o cluster**. O roteamento Atlas exige essa medição completa; uma falha de permissão/conexão não equivale a banco vazio nem autoriza mudança de destino. Em MongoDB local/dedicado, o fallback `dbStats` mede somente o database configurado e fica identificado como tal. O dashboard apresenta cada destino, sua ocupação, o banco ativo e as medições indisponíveis, sem publicar URIs ou credenciais. [Comando oficial atlasSize](https://www.mongodb.com/docs/atlas/free-tier-commands/).
+
+**O banco 1 continua sendo o controle central** de usuários, sessões, cadastros, análises, versões da DRE, documentos do extrato, limites, recibos de exclusão e cabeçalhos/localizadores. A expansão distribui o volume das importações de consultas, compras e vendas; não representa três réplicas nem permite desligar o primário. Por isso a troca acontece preventivamente, preservando margem para salvamentos. Se o primário já estiver totalmente cheio, configurar destinos adicionais não recupera sozinho o espaço necessário ao controle: será preciso liberar capacidade de forma conferida ou ampliá-la antes de novas gravações. Não remova uma URI depois que ela receber histórico.
+
+O destino fica fixo para cada relatório, inclusive nas retomadas. Uma falha depois de parte do lote gravado não muda o proprietário nem duplica registros no próximo banco. O navegador mede o conteúdo UTF-8 de cada linha, e o servidor confere o tamanho acumulado de cada parte antes de gravar; a reserva inclui duas cópias do conteúdo e margem por linha. Clientes antigos sem essa medição recebem uma reserva conservadora pelos limites de texto suportados. A reconsulta mede os registros originais no servidor, cria uma nova versão no destino disponível e copia as linhas em partes idempotentes, mantendo a origem. Espaço liberado por finalização ou cancelamento pode atender **novas** importações, seguindo a preferência 1 → 2 → 3, sem mover dados anteriores. Se todos os destinos configurados estiverem sem orçamento, o sistema bloqueia a nova importação e conserva o histórico. Falhas reais de cota no meio de uma operação permanecem explícitas e retomáveis, sem sucesso parcial silencioso.
+
+Telas, totais cadastrais, contagens do dashboard, DIFAL, conciliação de receita, DRE e exportações Python resolvem cada origem pelo destino salvo. Compras e vendas da mesma análise podem estar em clusters diferentes; autenticação e exclusões continuam usando a autoridade central. Uma origem necessária indisponível gera erro explícito, em vez de receita zero, histórico truncado ou cópia desatualizada.
+
+### Verificação do pool
+
+As regressões usam três servidores MongoDB descartáveis. `npm run test:mongo-storage` recebe o primário em `MONGODB_URI` e os outros dois em `MONGODB_TEST_URI_2` / `MONGODB_TEST_URI_3`, cria databases com UUID, habilita as novas conexões apenas no teste e as remove ao concluir. A CI mantém os testes de banco único e adiciona os fluxos de capacidade, reinício, concorrência, reconsulta, exclusão, PDF/CSV e origens distribuídas. Nenhum teste usa credenciais ou documentos reais de clientes.
 
 ## DIFAL para CPF, DRE completa e média contábil preservada — v0.53.0
 

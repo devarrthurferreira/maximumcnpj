@@ -1,4 +1,5 @@
-import {collection, scope} from './store.ts';
+import {scope} from './store.ts';
+import {jobCollection} from './mongo-storage.ts';
 import {need} from './security.ts';
 import {exactCents, exactSignedCents, financialReportingStatus, SALES_MODE, PURCHASE_MODE, reportPeriod} from './purchase-domain.ts';
 import {summarizeDifal, normalizeUf, salesOperation} from './difal.ts';
@@ -133,8 +134,8 @@ export function selectOperationMonths(purchases: ReconciledRows, sales: Reconcil
 export async function monthlyReportSource(purchases: any, sales: any, _currentSalesRows?: any[], issuerUf?: string, options:MonthlySourceOptions={}): Promise<OperationMonthlyReport[] | null> {
   const read = async (summary: any): Promise<ReconciledRows> => {
     const [rows, items] = await Promise.all([
-      (await collection('purchaseLines')).find(scope({jobId:summary.job._id})).sort({index:1}).maxTimeMS(20000).toArray(),
-      (await collection('lookupItems')).find(scope({jobId:summary.job._id})).project({cnpj:1,status:1}).maxTimeMS(20000).toArray()
+      (await jobCollection('purchaseLines',summary.job)).find(scope({jobId:summary.job._id})).sort({index:1}).maxTimeMS(20000).toArray(),
+      (await jobCollection('lookupItems',summary.job)).find(scope({jobId:summary.job._id})).project({cnpj:1,status:1}).maxTimeMS(20000).toArray()
     ]);
     need(rows.length===summary.totals.lines&&rows.every((row,index)=>row.index===index),'Linhas mensais incompletas. Reimporte o relatório.',409,'SIMULATION_MONTHS');
     need(rows.reduce((total,row)=>exactSignedCents(total+(row.balanceCents??row.totalCents)),0)===summary.totals.totalCents,

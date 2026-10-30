@@ -1,4 +1,5 @@
 import { collection, scope } from './store.ts';
+import {jobCollection,jobStorageSlot,storageDatabases} from './mongo-storage.ts';
 import {dashboardDetails, activityHistory} from './dashboard.ts';
 import { need, integer, escapeRegex } from './security.ts';
 import { normalizeCnpj, reportingStatus } from './domain.ts';
@@ -18,17 +19,45 @@ async function items(id:string,page:number,status:string,search:string){
   const q:any=scope({jobId:id});if(status){need(['OPTANTE','NAO_OPTANTE','NAO_CONFIRMADO'].includes(status),'Situação inválida.');q.status=status === 'NAO_OPTANTE' ? {$ne:'OPTANTE'} : status;}
   const stages:any[]=[{$match:q},{$lookup:{from:'cnpjStates',localField:'stateId',foreignField:'_id',as:'details'}},{$set:{details:{$arrayElemAt:['$details',0]}}}];
   if(search){const term=escapeRegex(search.slice(0,100));stages.push({$match:{$or:[{cnpj:{$regex:term,$options:'i'}},{submittedName:{$regex:term,$options:'i'}},{'details.name':{$regex:term,$options:'i'}}]}});}
-  const [result]=await (await collection('lookupItems')).aggregate([...stages,{$facet:{items:[{$sort:{cnpj:1}},{$skip:(page-1)*100},{$limit:100},{$project:{workspaceId:0}}],count:[{$count:'total'}]}}],{maxTimeMS:20000}).toArray();
+  const [result]=await (await jobCollection('lookupItems',job)).aggregate([...stages,{$facet:{items:[{$sort:{cnpj:1}},{$skip:(page-1)*100},{$limit:100},{$project:{workspaceId:0}}],count:[{$count:'total'}]}}],{maxTimeMS:20000}).toArray();
   return {items:(result?.items||[]).map((row:any)=>({...row,reportingStatus:reportingStatus(row.status)})),total:result?.count?.[0]?.total||0,page};
 }
 async function history(clientId:string,page:number,cnpj:string){
   const q:any=scope({...(clientId?{clientId}:{}),mode:{$nin:[PURCHASE_MODE,SALES_MODE]}});
-  if(cnpj){const d=normalizeCnpj(cnpj);need(d.valid,'Informe CNPJ válido para o histórico.');const ids=await (await collection('lookupItems')).distinct('jobId',scope({cnpj:d.cnpj,...(clientId?{clientId}:{})}));q._id={$in:ids};}
+  if(cnpj){
+    const d=normalizeCnpj(cnpj);need(d.valid,'Informe CNPJ válido para o histórico.');
+    const databases=await storageDatabases({usedOnly:true});
+    const groups=await Promise.all(databases.map(({db})=>db.collection('lookupItems').distinct('jobId',scope({cnpj:d.cnpj,...(clientId?{clientId}:{})}))));
+    q._id={$in:[...new Set(groups.flat())]};
+  }
   const c=await collection('lookupJobs');return {items:await c.find(q).sort({createdAt:-1}).skip((page-1)*30).limit(30).toArray(),total:await c.countDocuments(q),page};
 }
 async function dashboard(clientId:string){
   const q=scope(clientId?{clientId}:{});
-  const values=await (await collection('lookupItems')).aggregate([{$match:{...q,state:'DONE'}},{$lookup:{from:'lookupJobs',localField:'jobId',foreignField:'_id',as:'job'}},{$match:{'job.status':'COMPLETED'}},{$sort:{cnpj:1,checkedAt:-1,jobId:-1}},{$group:{_id:'$cnpj',status:{$first:'$status'}}},{$group:{_id:'$status',count:{$sum:1}}}],{allowDiskUse:true,maxTimeMS:20000}).toArray();
+  const databases=await storageDatabases({usedOnly:true}),jobs=await(await collection('lookupJobs'))
+    .find({...q,status:'COMPLETED'}).project({_id:1,storageSlot:1,storageVersion:1}).toArray();
+  const bySlot=new Map<number,string[]>();
+  for(const job of jobs){const slot=jobStorageSlot(job),ids=bySlot.get(slot)||[];ids.push(job._id);bySlot.set(slot,ids);}
+  // Reduce the latest observation of each CNPJ across destinations. Summing each
+  // database's final counters would count a reconsulted company more than once.
+  const latest=new Map<string,{status:string;checkedAt:Date;jobId:string}>();
+  for(const {slot,db} of databases){
+    const ids=bySlot.get(slot)||[];
+    for(let offset=0;offset<ids.length;offset+=1000){
+      const cursor=db.collection('lookupItems').aggregate([
+        {$match:{...q,state:'DONE',jobId:{$in:ids.slice(offset,offset+1000)}}},
+        {$sort:{cnpj:1,checkedAt:-1,jobId:-1}},
+        {$group:{_id:'$cnpj',status:{$first:'$status'},checkedAt:{$first:'$checkedAt'},jobId:{$first:'$jobId'}}}
+      ],{allowDiskUse:true,maxTimeMS:20000});
+      for await(const row of cursor){
+        const previous=latest.get(row._id),time=row.checkedAt instanceof Date?row.checkedAt.getTime():-Infinity,
+          priorTime=previous?.checkedAt instanceof Date?previous.checkedAt.getTime():-Infinity;
+        if(!previous||time>priorTime||time===priorTime&&row.jobId>previous.jobId)latest.set(row._id,{status:row.status,checkedAt:row.checkedAt,jobId:row.jobId});
+      }
+    }
+  }
+  const counts=new Map<string,number>();for(const row of latest.values())counts.set(row.status,(counts.get(row.status)||0)+1);
+  const values=[...counts].map(([_id,count])=>({_id,count}));
   const get=(s:string)=>values.find(v=>v._id===s)?.count||0;const optants=get('OPTANTE'),nonOptants=get('NAO_OPTANTE'),unknown=get('NAO_CONFIRMADO'),reportingNonOptants=nonOptants+unknown,total=optants+nonOptants+unknown;
   const p=(v:number)=>total?Math.round(v/total*10000)/100:0;
   return {...await dashboardDetails(clientId),metrics:{total,optants,nonOptants,unknown,optantsPercent:p(optants),nonOptantsPercent:p(nonOptants),unknownPercent:p(unknown),coverage:p(optants+nonOptants),reportingNonOptants,reportingNonOptantsPercent:total?(10000-Math.round(p(optants)*100))/100:0,unknownIncludedInNonOptants:true},recent:(await history(clientId,1,'')).items.slice(0,8),entities:await (await collection('cnpjEntities')).countDocuments(scope()),clientCount:await (await collection('clients')).countDocuments(scope({active:true})),source:'Minha Receita',sourceReferenceDate:null};

@@ -4,6 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {collection,database,closeDatabase,scope} from '../src/store.ts';
 import {activityHistory,dashboardDetails} from '../src/dashboard.ts';
 import {PURCHASE_MODE,SALES_MODE} from '../src/purchase-domain.ts';
+import {storageDatabases,STORAGE_VERSION} from '../src/mongo-storage.ts';
 
 test('dashboard history paginates all types, searches companies, scopes data, and counts days without merging repeated lookups',{skip:!process.env.MONGODB_URI},async()=>{
  const previous={db:process.env.MONGODB_DB,workspace:process.env.WORKSPACE_ID,limit:process.env.MONGODB_STORAGE_LIMIT_BYTES};
@@ -40,5 +41,86 @@ test('dashboard history paginates all types, searches companies, scopes data, an
  } finally {
   await(await database()).dropDatabase();await closeDatabase();
   for(const [key,value] of Object.entries({MONGODB_DB:previous.db,WORKSPACE_ID:previous.workspace,MONGODB_STORAGE_LIMIT_BYTES:previous.limit})){if(value===undefined)delete process.env[key];else process.env[key]=value;}
+ }
+});
+
+test('dashboard rejects a missing persisted active bank even with a warm single-bank storage cache',
+ {skip:!process.env.MONGODB_URI},async()=>{
+ const keys=['MONGODB_DB','MONGODB_URI_2','MONGODB_URI_3','WORKSPACE_ID','MONGODB_STORAGE_LIMIT_BYTES'];
+ const previous=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+ process.env.MONGODB_DB='dashboard_missing_bank_'+randomUUID().replaceAll('-','');
+ process.env.WORKSPACE_ID='dashboard-missing-bank';process.env.MONGODB_STORAGE_LIMIT_BYTES='1000000000';
+ delete process.env.MONGODB_URI_2;delete process.env.MONGODB_URI_3;
+ try {
+  const legacy=await dashboardDetails();
+  assert.equal(legacy.storage.status,'AVAILABLE');assert.equal('mode' in legacy.storage,false);
+  const controls=await collection('storageControl');
+  for(const activeSlot of [2,3]){
+   await controls.updateOne({_id:'mongo-storage-pool-v1'},{$set:{activeSlot}},{upsert:true});
+   // All previously used destinations are required; the first missing one can
+   // precede the latest active slot (for example both2 and3 are unconfigured).
+   await assert.rejects(dashboardDetails(),(error:any)=>error.code==='STORAGE_NOT_CONFIGURED'&&/MongoDB [23]/.test(error.message));
+   assert.equal((await controls.findOne({_id:'mongo-storage-pool-v1'}))?.activeSlot,activeSlot);
+  }
+ } finally {
+  await(await database()).dropDatabase();await closeDatabase();
+  for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}
+ }
+});
+
+test('dashboard counts lookup activity in every used bank while history and company filters stay on the control bank',
+ {skip:!process.env.MONGODB_URI||!process.env.MONGODB_TEST_URI_2||!process.env.MONGODB_TEST_URI_3},async()=>{
+ const keys=['MONGODB_DB','MONGODB_URI_2','MONGODB_URI_3','MONGODB_DB_2','MONGODB_DB_3','WORKSPACE_ID',
+  'MONGODB_STORAGE_LIMIT_BYTES','MONGODB_STORAGE_LIMIT_BYTES_2','MONGODB_STORAGE_LIMIT_BYTES_3'];
+ const previous=Object.fromEntries(keys.map(key=>[key,process.env[key]])),suffix=randomUUID().replaceAll('-','');
+ process.env.MONGODB_DB='dashboard_pool_1_'+suffix;process.env.MONGODB_DB_2='dashboard_pool_2_'+suffix;process.env.MONGODB_DB_3='dashboard_pool_3_'+suffix;
+ process.env.MONGODB_URI_2=process.env.MONGODB_TEST_URI_2;process.env.MONGODB_URI_3=process.env.MONGODB_TEST_URI_3;
+ process.env.WORKSPACE_ID='dashboard-pool-test';
+ for(const key of ['MONGODB_STORAGE_LIMIT_BYTES','MONGODB_STORAGE_LIMIT_BYTES_2','MONGODB_STORAGE_LIMIT_BYTES_3'])process.env[key]='1000000000';
+ let sources:Awaited<ReturnType<typeof storageDatabases>>=[];
+ try {
+  sources=await storageDatabases();
+  const clientId=randomUUID(),otherId=randomUUID(),now=new Date('2026-10-30T15:00:00Z'),createdAt=new Date('2026-10-30T12:00:00Z');
+  await(await collection('clients')).insertMany([
+   {_id:clientId,...scope(),code:'0301',name:'Empresa com histórico nos três bancos',active:true,createdAt},
+   {_id:otherId,...scope(),code:'0302',name:'Outra empresa',active:true,createdAt}
+  ]);
+  const jobs=sources.map(({slot})=>({_id:randomUUID(),...scope(),clientId,clientName:'Empresa com histórico nos três bancos',clientCode:'0301',
+   storageSlot:slot,storageVersion:STORAGE_VERSION,mode:SALES_MODE,fileName:`Saídas ${slot}.csv`,status:'COMPLETED',createdAt}));
+  await(await collection('lookupJobs')).insertMany(jobs);
+  await(await collection('storageControl')).insertOne({_id:'mongo-storage-pool-v1',activeSlot:3});
+  for(const {slot,db} of sources){
+   const job=jobs.find(item=>item.storageSlot===slot)!;
+   await db.collection('lookupItems').insertMany([
+    {_id:randomUUID(),...scope(),jobId:job._id,clientId,state:'DONE',cnpj:'00000000000191',checkedAt:createdAt},
+    {_id:randomUUID(),...scope(),jobId:randomUUID(),clientId,state:'RETRY',cnpj:'00000000000191',checkedAt:createdAt},
+    {_id:randomUUID(),workspaceId:'hidden',jobId:randomUUID(),clientId,state:'DONE',cnpj:'00000000000191',checkedAt:createdAt},
+    {_id:randomUUID(),...scope(),jobId:randomUUID(),clientId,state:'DONE',cnpj:'00000000000191',checkedAt:new Date('2026-10-01T12:00:00Z')},
+    ...(slot===2?[{_id:randomUUID(),...scope(),jobId:randomUUID(),clientId:otherId,state:'DONE',cnpj:'00000000000191',checkedAt:createdAt}]:[])
+   ]);
+   // Shared CNPJ states are snapshots, never an additional lookup in the activity counter.
+   await db.collection('cnpjStates').insertOne({_id:randomUUID(),...scope(),cnpj:'00000000000191',checkedAt:createdAt});
+  }
+  const analysisId=randomUUID();
+  await(await collection('analysisRevisions')).insertOne({_id:randomUUID(),...scope(),clientId,analysisId,createdAt,kind:'accounting',revision:1,data:{status:'COMPLETE'}});
+  await(await collection('simulations')).insertOne({_id:randomUUID(),...scope(),clientId,createdAt,title:'DRE preservada no controle'});
+  const originalJobs=await(await collection('lookupJobs')).find(scope()).sort({_id:1}).toArray();
+  const dashboard=await dashboardDetails(clientId,now),storage=dashboard.storage;
+  assert.equal(dashboard.activity.queriesLast7Days,3,'One CNPJ in three distinct jobs must count three completed lookups.');
+  assert.equal(dashboard.activity.days[6].count,3);assert.equal(dashboard.activity.batchesLast7Days,3);
+  assert.equal(dashboard.historyCount,5);assert.equal(dashboard.simulationCount,1);assert.equal(dashboard.recentCompanies[0]._id,clientId);
+  assert('mode' in storage);assert.equal(storage.mode,'POOL');assert.equal(storage.activeSlot,3);assert.equal(storage.configuredSlots,3);
+  assert.deepEqual(storage.slots.map(item=>item.slot),[1,2,3]);
+  assert(storage.slots.every(item=>item.usedBytes!==null&&item.usedBytes>0));
+  assert.equal((await dashboardDetails(otherId,now)).activity.queriesLast7Days,1);
+  assert.equal((await dashboardDetails('',now)).activity.queriesLast7Days,4);
+  const history=await activityHistory({clientId});assert.equal(history.total,5);
+  assert.equal(history.items.filter(item=>item.kind==='SALES').length,3);
+  assert.deepEqual(await(await collection('lookupJobs')).find(scope()).sort({_id:1}).toArray(),originalJobs);
+  const serialized=JSON.stringify(storage);
+  for(const secret of [process.env.MONGODB_URI,process.env.MONGODB_URI_2,process.env.MONGODB_URI_3,process.env.MONGODB_DB,process.env.MONGODB_DB_2,process.env.MONGODB_DB_3])assert(!serialized.includes(secret!));
+ } finally {
+  await Promise.all(sources.map(({db})=>db.dropDatabase()));await closeDatabase();
+  for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}
  }
 });

@@ -1,22 +1,14 @@
 """Read-only fiscal snapshots with the same MongoDB session as Node.js."""
 from __future__ import annotations
-import os
 import math
 from datetime import timedelta
 from .core import (ReportError, require, session_hash, utcnow, STATUSES, KINDS,
                    percentage, PAGE_SIZE, PDF_PART_SIZE, CSV_PART_SIZE)
-
-_client = None
+from .storage import slot_database, job_database, assert_job_available
 
 def database():
-    global _client
-    from pymongo import MongoClient
-    require(bool(os.getenv('MONGODB_URI')), 503, 'DATABASE_NOT_CONFIGURED', 'MongoDB não configurado.')
-    if _client is None:
-        _client = MongoClient(os.environ['MONGODB_URI'], maxPoolSize=5, minPoolSize=0,
-                             serverSelectionTimeoutMS=8000, connectTimeoutMS=8000,
-                             socketTimeoutMS=25000, tz_aware=True)
-    return _client[os.getenv('MONGODB_DB', 'maximum_cnpj')]
+    # Sessions, users, limits, headers, audit and OCR always use the primary.
+    return slot_database(1)
 
 
 def authenticate(db, headers, workspace):
@@ -50,6 +42,7 @@ def get_job(db, job_id, workspace, client_id=''):
         q['clientId'] = client_id
     job = db.lookupJobs.find_one(q)
     require(job, 404, 'NOT_FOUND', 'Consulta não encontrada para esta empresa.')
+    assert_job_available(db, job, workspace)
     require(job.get('status') == 'COMPLETED', 409, 'INCOMPLETE',
             'Conclua a consulta antes de gerar seu relatório. Resultados parciais não são publicados.')
     return job
@@ -100,7 +93,8 @@ def details_stages(workspace):
 
 
 def metadata(db, job, workspace, kind):
-    values = list(db.lookupItems.aggregate(base_stages(job['_id'], workspace) + [
+    payload = job_database(db, job, workspace)
+    values = list(payload.lookupItems.aggregate(base_stages(job['_id'], workspace) + [
         {'$group': {'_id': {'status': '$status', 'kind': '$reportKind'}, 'count': {'$sum': 1},
                     'occurrences': {'$sum': {'$ifNull': ['$occurrences', 1]}},
                     'firstCheck': {'$min': '$checkedAt'}, 'lastCheck': {'$max': '$checkedAt'},
@@ -134,6 +128,8 @@ def metadata(db, job, workspace, kind):
 
 
 def result_rows(db, job_id, workspace, options, size=PAGE_SIZE, page=1):
+    job = get_job(db, job_id, workspace, options.get('clientId', ''))
+    payload = job_database(db, job, workspace)
     stages = cohort(base_stages(job_id, workspace), options['kind'], options['status'])
     search = options.get('search', '')
     if search:
@@ -149,7 +145,7 @@ def result_rows(db, job_id, workspace, options, size=PAGE_SIZE, page=1):
     selected += [{'$project': {'_id': 0, 'cnpj': 1, 'status': 1, 'submittedName': 1, 'kind': 1,
                                'uf': 1, 'occurrences': 1, 'reason': 1, 'nameMatch': 1, 'checkedAt': 1,
                                'source': 1, 'details': 1, 'reportKind': 1}}]
-    output = list(db.lookupItems.aggregate(stages + [{'$facet': {'items': selected, 'count': [{'$count': 'total'}]}}], maxTimeMS=20000))[0]
+    output = list(payload.lookupItems.aggregate(stages + [{'$facet': {'items': selected, 'count': [{'$count': 'total'}]}}], maxTimeMS=20000))[0]
     total = output['count'][0]['total'] if output['count'] else 0
     require(page == 1 or (page-1)*size < total, 400, 'PART_RANGE', 'Parte ou página fora do intervalo.')
     for row in output['items']:
