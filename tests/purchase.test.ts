@@ -1,4 +1,4 @@
-import { calculateDifal, summarizeDifal, normalizeUf, DIFAL_VERSION, DIFAL_PREVIOUS_VERSION, DIFAL_ELIGIBLE_CFOPS } from '../src/difal.ts';
+import { calculateDifal, summarizeDifal, normalizeUf, DIFAL_VERSION, DIFAL_CPF_ONLY_VERSION, DIFAL_PREVIOUS_VERSION, DIFAL_ELIGIBLE_CFOPS } from '../src/difal.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compactPurchaseLine, calculationVersion, exactCents, percentage, signedPercentage, reconciledPercentages, reconciledSignedPercentages, purchaseCsv, moneyText, MAX_LINE_CENTS, PURCHASE_MODE, SALES_MODE, isFinancialMode, financialKind, financialReportingStatus, reportPeriod, normalizeNatureCode, salesOperation } from '../src/purchase-domain.ts';
@@ -108,7 +108,7 @@ test('Naturezas 9000 classificam vendas de serviços pelos quatro primeiros díg
         {issuerUf: 'MG', difalVersion: DIFAL_VERSION});
       assert.equal(service.natureCode, '9000'); assert.equal(service.operation, 'SERVICO');
       assert.equal(service.balanceCents, row.totalCents);
-      assert.equal(service.difal?.reason, 'NOT_SALE'); assert.equal(service.difal?.amountCents, 0);
+      assert.equal(service.difal?.reason, 'OUTGOING_DISABLED'); assert.equal(service.difal?.amountCents, 0);
     }
   }
 });
@@ -167,8 +167,24 @@ test('Percentuais líquidos coincidem com o PDF, inclusive devoluções, empates
 });
 
 const difalSale = {totalCents: 15000, natureCode: '6108', description: 'Camiseta', document: '123.456.789-00', issuerUf: 'MG', recipientUf: 'SP'};
-test('DIFAL estimado: cenários de venda CPF interestadual, exclusões e recálculo sem alterar componentes', () => {
-  assert.deepEqual(calculateDifal(difalSale), {eligible: true, baseCents: 15000, amountCents: 1500, reason: 'ELIGIBLE'});
+const historicalDifal = (input: Parameters<typeof calculateDifal>[0], version: Parameters<typeof calculateDifal>[1] = DIFAL_CPF_ONLY_VERSION) => calculateDifal(input, version);
+const historicalSummary = (rows: Parameters<typeof summarizeDifal>[0], issuerUf: unknown) => summarizeDifal(rows, issuerUf, DIFAL_CPF_ONLY_VERSION);
+test('DIFAL V6 desativa saída mesmo para CPF interestadual e preserva os R$ 17.431,97 históricos de V5', () => {
+  const source={...difalSale,totalCents:17431970},before=structuredClone(source);
+  assert.deepEqual(calculateDifal(source,DIFAL_CPF_ONLY_VERSION),{eligible:true,baseCents:17431970,amountCents:1743197,reason:'ELIGIBLE'});
+  for(const document of [source.document,'00000000000191','','123'])for(const issuerUf of ['MG',''])for(const recipientUf of ['SP','MG','']) {
+    const input={...source,document,issuerUf,recipientUf};
+    assert.deepEqual(calculateDifal(input),{eligible:false,baseCents:0,amountCents:0,reason:'OUTGOING_DISABLED'});
+    assert.deepEqual(summarizeDifal([input],issuerUf),{version:DIFAL_VERSION,ratePercent:10,issuerUf,baseCents:0,amountCents:0,eligibleLines:0,pendingLines:0});
+  }
+  const current=compactPurchaseLine({...row,...source,grossCents:17431970,discountCents:0,freightCents:0,abatementCents:0},'NET_V2',SALES_MODE,{issuerUf:'MG',difalVersion:DIFAL_VERSION});
+  assert.equal(current.totalCents,17431970);assert.equal(current.balanceCents,17431970);assert.equal(current.operation,'VENDA');
+  assert.equal(current.difal?.reason,'OUTGOING_DISABLED');assert.equal(current.difal?.amountCents,0);
+  assert.deepEqual(source,before);
+  assert.equal(calculateDifal({...source,totalCents:NaN}).reason,'INVALID_TOTAL');
+});
+test('DIFAL V5 histórico: cenários de venda CPF interestadual, exclusões e recálculo sem alterar componentes', () => {
+  assert.deepEqual(historicalDifal(difalSale), {eligible: true, baseCents: 15000, amountCents: 1500, reason: 'ELIGIBLE'});
   for (const [change, reason] of [
     [{document: '00.000.000/0001-92'}, 'NOT_CPF'], [{recipientUf: 'MG'}, 'SAME_UF'],
     [{natureCode: '9000', description: 'Prestação de serviços'}, 'NOT_SALE'],
@@ -177,55 +193,55 @@ test('DIFAL estimado: cenários de venda CPF interestadual, exclusões e recálc
     [{operation: 'OUTRAS'}, 'NOT_SALE'],
     [{document: ''}, 'NOT_CPF'], [{document: '123456789012'}, 'NOT_CPF']
   ] as const) {
-    assert.deepEqual(calculateDifal({...difalSale, ...change}), {eligible: false, baseCents: 0, amountCents: 0, reason});
+    assert.deepEqual(historicalDifal({...difalSale, ...change}), {eligible: false, baseCents: 0, amountCents: 0, reason});
   }
-  assert.equal(calculateDifal({...difalSale, description: 'Venda de kit para conserto'}).eligible, true);
+  assert.equal(historicalDifal({...difalSale, description: 'Venda de kit para conserto'}).eligible, true);
   for (const description of ['Venda de serviços','Remessa de mercadoria para venda','Devolução']) {
-    assert.equal(calculateDifal({...difalSale,description}).eligible,true);
-    assert.equal(calculateDifal({...difalSale,description},DIFAL_PREVIOUS_VERSION).reason,'NOT_SALE');
+    assert.equal(historicalDifal({...difalSale,description}).eligible,true);
+    assert.equal(historicalDifal({...difalSale,description},DIFAL_PREVIOUS_VERSION).reason,'NOT_SALE');
   }
-  assert.equal(calculateDifal({...difalSale, totalCents: 100000}).amountCents, 10000);
-  assert.equal(calculateDifal({...difalSale, totalCents: 999}).amountCents, 100);
-  assert.equal(calculateDifal({...difalSale, totalCents: 5}).amountCents, 1);
-  assert.equal(calculateDifal({...difalSale, totalCents: 4}).amountCents, 0);
-  assert.equal(calculateDifal({...difalSale, totalCents: 0}).amountCents, 0);
-  assert.equal(calculateDifal({...difalSale, totalCents: 1.5}).reason, 'INVALID_TOTAL');
-  for (const natureCode of DIFAL_ELIGIBLE_CFOPS) assert.equal(calculateDifal({...difalSale, natureCode, description: ''}).eligible, true);
+  assert.equal(historicalDifal({...difalSale, totalCents: 100000}).amountCents, 10000);
+  assert.equal(historicalDifal({...difalSale, totalCents: 999}).amountCents, 100);
+  assert.equal(historicalDifal({...difalSale, totalCents: 5}).amountCents, 1);
+  assert.equal(historicalDifal({...difalSale, totalCents: 4}).amountCents, 0);
+  assert.equal(historicalDifal({...difalSale, totalCents: 0}).amountCents, 0);
+  assert.equal(historicalDifal({...difalSale, totalCents: 1.5}).reason, 'INVALID_TOTAL');
+  for (const natureCode of DIFAL_ELIGIBLE_CFOPS) assert.equal(historicalDifal({...difalSale, natureCode, description: ''}).eligible, true);
   const source = {...row, ...difalSale, grossCents: 16000, discountCents: 1000, freightCents: 0, abatementCents: 0, recipientUf: ' sp ', difal: {amountCents: 999999}, operation: 'SERVICO'};
-  const compact = compactPurchaseLine(source, 'NET_V2', SALES_MODE, {issuerUf: 'mg', difalVersion: DIFAL_VERSION});
+  const compact = compactPurchaseLine(source, 'NET_V2', SALES_MODE, {issuerUf: 'mg', difalVersion: DIFAL_CPF_ONLY_VERSION});
   assert.equal(compact.difal?.amountCents, 1500); assert.equal(compact.operation, 'VENDA'); assert.equal(compact.recipientUf, 'SP');
   assert.equal(compact.totalCents, 15000); assert.equal(compact.grossCents, 16000); assert.equal(compact.discountCents, 1000); assert.equal(compact.accessoryCents, row.accessoryCents);
-  assert.equal(compactPurchaseLine({...source, grossCents: 101000, totalCents: 100000}, 'NET_V2', SALES_MODE, {issuerUf: 'MG', difalVersion: DIFAL_VERSION}).difal?.amountCents, 10000);
+  assert.equal(compactPurchaseLine({...source, grossCents: 101000, totalCents: 100000}, 'NET_V2', SALES_MODE, {issuerUf: 'MG', difalVersion: DIFAL_CPF_ONLY_VERSION}).difal?.amountCents, 10000);
   const purchase = compactPurchaseLine(source);
   assert.equal(purchase.difal, undefined); assert.equal(purchase.recipientUf, 'SP');
 });
-test('DIFAL: pendências de UF, contexto legado e soma dos centavos por venda', () => {
+test('DIFAL V5 histórico: pendências de UF, contexto legado e soma dos centavos por venda', () => {
   assert.equal(normalizeUf(' mg '), 'MG'); assert.equal(normalizeUf('XX'), '');
-  assert.equal(calculateDifal({...difalSale, issuerUf: ''}).reason, 'MISSING_ISSUER_UF');
-  assert.equal(calculateDifal({...difalSale, recipientUf: 'XX'}).reason, 'MISSING_RECIPIENT_UF');
-  const result = summarizeDifal([difalSale, {...difalSale, totalCents: 100000}, {...difalSale, recipientUf: ''}, {...difalSale, document: '00000000000191'}], 'MG');
-  assert.deepEqual(result, {version: DIFAL_VERSION, ratePercent: 10, issuerUf: 'MG', eligibleLines: 2, baseCents: 115000, amountCents: 11500, pendingLines: 1});
-  assert.equal(summarizeDifal([{...difalSale, totalCents: 5}, {...difalSale, totalCents: 5}], 'MG').amountCents, 2);
+  assert.equal(historicalDifal({...difalSale, issuerUf: ''}).reason, 'MISSING_ISSUER_UF');
+  assert.equal(historicalDifal({...difalSale, recipientUf: 'XX'}).reason, 'MISSING_RECIPIENT_UF');
+  const result = historicalSummary([difalSale, {...difalSale, totalCents: 100000}, {...difalSale, recipientUf: ''}, {...difalSale, document: '00000000000191'}], 'MG');
+  assert.deepEqual(result, {version: DIFAL_CPF_ONLY_VERSION, ratePercent: 10, issuerUf: 'MG', eligibleLines: 2, baseCents: 115000, amountCents: 11500, pendingLines: 1});
+  assert.equal(historicalSummary([{...difalSale, totalCents: 5}, {...difalSale, totalCents: 5}], 'MG').amountCents, 2);
   const source = {...row, natureCode: '6108', description: 'Camiseta', recipientUf: 'SP'};
   const legacy = compactPurchaseLine(source, 'NET_V2', SALES_MODE, {issuerUf: undefined, difalVersion: undefined});
   assert.equal(legacy.operation, 'OUTRAS'); assert.equal(legacy.difal, undefined); assert.equal(legacy.recipientUf, undefined);
-  const csv = purchaseCsv({mode: SALES_MODE, calculationVersion: 'NET_V2', difalVersion: DIFAL_VERSION, issuerUf: 'MG', _id: 'difal', clientName: 'Empresa', fileName: 'vendas.csv'}, [{...compactPurchaseLine({...row, ...difalSale, grossCents: 15000, discountCents: 0, freightCents: 0, abatementCents: 0}, 'NET_V2', SALES_MODE, {issuerUf: 'MG', difalVersion: DIFAL_VERSION}), index: 0}]);
-  assert(csv.includes(`"MG";"SP";"10";"150,00";"15,00";"ELIGIBLE";"${DIFAL_VERSION}"`));
+  const csv = purchaseCsv({mode: SALES_MODE, calculationVersion: 'NET_V2', difalVersion: DIFAL_CPF_ONLY_VERSION, issuerUf: 'MG', _id: 'difal', clientName: 'Empresa', fileName: 'vendas.csv'}, [{...compactPurchaseLine({...row, ...difalSale, grossCents: 15000, discountCents: 0, freightCents: 0, abatementCents: 0}, 'NET_V2', SALES_MODE, {issuerUf: 'MG', difalVersion: DIFAL_CPF_ONLY_VERSION}), index: 0}]);
+  assert(csv.includes(`"MG";"SP";"10";"150,00";"15,00";"ELIGIBLE";"${DIFAL_CPF_ONLY_VERSION}"`));
 });
 
-test('5102 usa CPF e UFs reais, conserva exclusões e a regra histórica V1', () => {
+test('5102 histórico V5 usa CPF e UFs reais, conserva exclusões e a regra histórica V1', () => {
   for (const natureCode of ['5102', '5102001', '5102090', '5.102.001']) {
     const sale = {...difalSale, natureCode, description: 'LEGGING SINTÉTICA'};
-    assert.equal(calculateDifal(sale).amountCents, 1500);
-    assert.equal(calculateDifal(sale, 'DIFAL_ESTIMATE_V1').amountCents, 0);
+    assert.equal(historicalDifal(sale).amountCents, 1500);
+    assert.equal(historicalDifal(sale, 'DIFAL_ESTIMATE_V1').amountCents, 0);
     assert.equal(salesOperation(natureCode, sale.description, true, 'DIFAL_ESTIMATE_V1'), 'OUTRAS');
     for (const [change, reason] of [
       [{recipientUf:'MG'}, 'SAME_UF'], [{recipientUf:''}, 'MISSING_RECIPIENT_UF'],
       [{issuerUf:''}, 'MISSING_ISSUER_UF'], [{document:'00000000000192'}, 'NOT_CPF'],
       [{natureCode:'900001'}, 'NOT_SALE'], [{natureCode:'6202001'}, 'NOT_SALE'],
       [{natureCode:'5949'}, 'NOT_SALE']
-    ] as const) assert.equal(calculateDifal({...sale,...change}).reason, reason);
-    assert.equal(calculateDifal({...sale,description:'Remessa para venda'}).eligible,true);
-    assert.equal(calculateDifal({...sale,description:'Remessa para venda'},DIFAL_PREVIOUS_VERSION).reason,'NOT_SALE');
+    ] as const) assert.equal(historicalDifal({...sale,...change}).reason, reason);
+    assert.equal(historicalDifal({...sale,description:'Remessa para venda'}).eligible,true);
+    assert.equal(historicalDifal({...sale,description:'Remessa para venda'},DIFAL_PREVIOUS_VERSION).reason,'NOT_SALE');
   }
 });

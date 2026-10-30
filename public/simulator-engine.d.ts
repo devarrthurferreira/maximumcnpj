@@ -1,6 +1,7 @@
 /** Types for the shared, dependency-free calculator used by browser and server. */
 import type {RegimeId,RegimeSelection} from './regime-selection.js';
 export const MODEL_VERSION: string;
+export const OUTGOING_DIFAL_MESSAGE: string;
 export const SIMPLES_DIAGNOSTIC_VERSION:'SIMPLES_DIAGNOSTIC_V1';
 export const REVENUE_CONTEXT_VERSION:'SIMPLES_REVENUE_CONTEXT_V1';
 /** Derived by the monthly calculation from validated rows; never accepted in a draft. */
@@ -27,7 +28,7 @@ export type DifalApplication = {
   reason:'SUBLIMIT'|'ICMS_OUTSIDE_DAS'|'USER_EXCLUDED'|'ENABLED'|'NOT_APPLICABLE'|'NO_OPERATIONS'|'MISSING_RBT12'; message:string;
   rbt12:number|null; icmsOutside:boolean;
   /** Potential permission, independent of missing sources, pending lines or zero amounts. */
-  salesDifal:boolean; purchaseAnticipation:boolean;
+  salesDifal:boolean; purchaseAnticipation:boolean; outgoingDisabled?:boolean;
 };
 export function defaultDifalPolicy(): CurrentDifalPolicy;
 export function parseDifalPolicy(value:unknown): DifalPolicy;
@@ -64,7 +65,7 @@ export type SimulationRegime = {
   difalApplication?: DifalApplication | {version:'DIFAL_SCENARIOS_V1'|'DIFAL_SCENARIOS_V2';enabled:boolean;operations?:DifalOperations;months:Array<DifalApplication & {sourceMonth:string}>};
 };
 export type SimulationResult = {
-  version: string; annualRevenue: number; regimes: SimulationRegime[];
+  version: string; annualRevenue: number; regimes: SimulationRegime[]; outgoingDifalDisabled?:boolean;
   credits: Record<string, Record<string, number>>;
   warnings: Array<{code: string; severity: string; title: string; detail: string}>;
   memory: Array<{id: string; section: string; label: string; formula: string; value: number | string; unit: string;availability?:'UNAVAILABLE'}>;

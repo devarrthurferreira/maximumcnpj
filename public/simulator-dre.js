@@ -179,7 +179,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     return {key,label,kind,unit,values,monthlyValues,calendarAnnualValues,percentValues,monthlyPercentValues,calendarAnnualPercentValues,
       reasonByRegime,calendarReasonByRegime,monthlyReasonByRegime,notes:[...notes],informative,...(parentKey?{parentKey}:{}),sourceRefs:[...sourceRefs]};
   }
-  const baseRows=dreRows({regimes:originals}),labels=new Map(baseRows);
+  const baseRows=dreRows({...result,regimes:originals}),labels=new Map(baseRows);
   const base=key=>row(key,labels.get(key),SUBTOTALS.has(key)?'subtotal':'line',f=>currency(f.get(key)),{sourceRefs:[`result.regimes[].dre.${key}`]});
   const reconciledSum=(keys,parent,less=null)=>f=>{
     const value=sum(keys.map(key=>f.get(key))),expected=less?sum([f.get(parent),finite(f.get(less))?-f.get(less):null]):f.get(parent);

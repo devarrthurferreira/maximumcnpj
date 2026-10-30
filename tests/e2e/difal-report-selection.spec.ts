@@ -3,7 +3,7 @@ import {test,expect,type Page} from '@playwright/test';
 const clientId='b3100000-0000-4000-8000-000000000001',generationId='b3100000-0000-4000-8000-000000000002',jobId='b3100000-0000-4000-8000-000000000003';
 const company={_id:clientId,clientId,code:'930',name:'Empresa sintética opções dos relatórios',active:true,uf:'MG'};
 const selection=(pureEntry=true,pureExit=false,hybridEntry=true,hybridExit=false)=>({version:'DIFAL_SCENARIOS_V2',enabled:{pure:true,hybrid:true,presumed:false,actual:false},operations:{pure:{entry:pureEntry,exit:pureExit},hybrid:{entry:hybridEntry,exit:hybridExit}}});
-const difal={version:'DIFAL_ESTIMATE_V4',ratePercent:10,issuerUf:'MG',eligibleLines:1,baseCents:15000,amountCents:1500,pendingLines:0};
+const difal={version:'DIFAL_ESTIMATE_V6',ratePercent:10,issuerUf:'MG',eligibleLines:0,baseCents:0,amountCents:0,pendingLines:0};
 const anticipation={version:'ICMS_ANTICIPATION_V3',ratePercent:7.32,issuerUf:'MG',eligibleLines:1,baseCents:15000,amountCents:1098,pendingLines:0};
 const rawLine={document:'12345678900',name:'Parceiro sintético',documentKind:'CPF',recipientUf:'SP',quantity:'1',totalCents:15000,grossCents:15000,discountCents:0,freightCents:0,accessoryCents:0,abatementCents:0};
 function reportCsv(sales=true){
@@ -16,7 +16,7 @@ async function mount(page:Page,{sales=true,completed=true,policy=selection()}:{s
   const type=sales?'SALES':'PURCHASES',name=sales?'sales':'purchases';
   const job={_id:jobId,generationId,clientId,clientCode:company.code,clientName:company.name,type,mode:sales?'SALES':'PURCHASES',status:'COMPLETED',calculationVersion:'NET_V2',operationVersion:'NATURE_OPERATIONS_2026_10_V1',difalVersion:difal.version,anticipationVersion:anticipation.version,issuerUf:'MG',fileName:'930-relatorio.csv',createdAt:'2026-10-23T12:00:00Z',expectedRows:1,uploaded:1};
   const generation={_id:generationId,requiredReports:['PURCHASES','SALES'],companies:[{...company,...(policy===undefined?{}:{difalPolicy:policy}),...(completed?{[sales?'sales':'purchase']:job,[sales?'salesJobId':'purchaseJobId']:jobId}:{})}]};
-  const row={...rawLine,natureCode:sales?'6108':'2102',operation:sales?'VENDA':'COMPRAS',reportingStatus:sales?'CPF':'NAO_OPTANTE',difal:{eligible:true,baseCents:15000,amountCents:1500,reason:'ELIGIBLE'},anticipation:{eligible:true,baseCents:15000,amountCents:1098,reason:'ELIGIBLE'}};
+  const row={...rawLine,natureCode:sales?'6108':'2102',operation:sales?'VENDA':'COMPRAS',reportingStatus:sales?'CPF':'NAO_OPTANTE',difal:{eligible:false,baseCents:0,amountCents:0,reason:'OUTGOING_DISABLED'},anticipation:{eligible:true,baseCents:15000,amountCents:1098,reason:'ELIGIBLE'}};
   const summary={job,...(policy===undefined?{}:{difalPolicy:policy}),calculationVersion:'NET_V2',difal:sales?difal:undefined,anticipation:sales?undefined:anticipation,totals:{lines:1,totalCents:15000,uniqueDocuments:1,uniqueCnpjs:0,nonCnpjDocumentCount:1,nonCnpjLines:1},reportingGroups:[{status:sales?'CPF':'NAO_OPTANTE',count:1,lines:1,totalCents:15000,countPercent:100,valuePercent:100}]};
   await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'report-selection',role:'operator',name:'Teste'}}}));
   await page.route('**/api/v4/clients',r=>r.fulfill({json:{items:[company]}}));
@@ -39,13 +39,13 @@ test('saída desmarcada não aparece como DIFAL ativo na prévia de vendas',asyn
   const panel=page.locator('#purchase-review .purchase-difal');
   await expect(panel.locator('[data-difal-amount]')).toContainText('0,00');
   await expect(panel).toHaveAttribute('data-tax-selection','disabled');
-  await expect(panel).toContainText('não incluído');
-  await expect(panel.locator('[data-tax-origin]')).not.toHaveAttribute('open','');
+  await expect(panel).toContainText('Não possui DIFAL de saída');
+  await expect(panel.locator('[data-tax-origin]')).toHaveCount(0);
   await expect(panel.locator('[data-difal-raw-amount]')).toBeHidden();
   await expect(page.locator('#purchase-review .import-totals')).toContainText('150,00');
   await expect(page.locator('#purchase-review tbody [data-tax-cell-amount]')).toContainText('0,00');
   await panel.screenshot({path:info.outputPath('saida-desmarcada-previa.png')});
-  await panel.locator('[data-tax-origin]>summary').click();await expect(panel.locator('[data-difal-raw-amount]')).toContainText('15,00');
+  await expect(panel.locator('[data-difal-raw-amount]')).toHaveCount(0);
 });
 
 for(const guided of [false,true])test(`saída desmarcada fica zerada no resumo ${guided?'guiado':'completo e linhas por link direto'}`,async({page},info)=>{
@@ -54,23 +54,25 @@ for(const guided of [false,true])test(`saída desmarcada fica zerada no resumo $
   const panel=page.locator('#purchase-report-view .purchase-difal');
   await expect(panel.locator('[data-difal-amount]')).toContainText('0,00');await expect(panel).toHaveAttribute('data-tax-selection','disabled');
   await expect(panel.locator('[data-difal-raw-amount]')).toBeHidden();await expect(page.locator('#purchase-report-view .purchase-hero')).toContainText('150,00');
-  if(!guided){await page.getByLabel('Visualização').selectOption('lines');await expect(page.locator('#purchase-result-list [data-tax-cell-amount]')).toContainText('0,00');await expect(page.locator('#purchase-result-list')).toContainText('Não incluído por escolha');}
+  if(!guided){await page.getByLabel('Visualização').selectOption('lines');await expect(page.locator('#purchase-result-list [data-tax-cell-amount]')).toContainText('0,00');await expect(page.locator('#purchase-result-list')).toContainText('Saída desativada');}
   for(const width of [1280,390,320]){await page.setViewportSize({width,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await panel.screenshot({path:info.outputPath(`saida-desmarcada-${guided?'guiado':'completo'}-${width}.png`)});}
-  await panel.locator('[data-tax-origin]>summary').click();await expect(panel.locator('[data-difal-raw-amount]')).toContainText('15,00');
+  await expect(panel.locator('[data-difal-raw-amount]')).toHaveCount(0);
   expect(JSON.stringify(summary)).toBe(before);
 });
 
-for(const sales of [false,true])test(`escolha mista identifica ${sales?'saída no Puro':'entrada no Híbrido'} sem ativar o outro cenário`,async({page})=>{
+for(const sales of [false,true])test(`escolha antiga de saída não reativa DIFAL; ${sales?'saída zerada':'entrada no Híbrido preservada'}`,async({page})=>{
   const policy=selection(false,true,true,false);await mount(page,{sales,policy});
   await page.goto(`/purchases.html?type=${sales?'SALES':'PURCHASES'}&client=${clientId}&job=${jobId}`);
   const panel=page.locator('#purchase-report-view .purchase-difal');
-  await expect(panel).toHaveAttribute('data-tax-selection','enabled');
-  await expect(panel.locator('[data-tax-selection-summary]')).toContainText(sales?'Simples puro':'Simples híbrido');
-  await expect(panel.locator('[data-tax-selection-summary]')).toContainText(sales?'Simples híbrido: não incluído':'Simples puro: não incluído');
-  await expect(panel.locator(sales?'[data-difal-amount]':'[data-anticipation-amount]')).toContainText(sales?'15,00':'10,98');
-  await expect(panel).toContainText('estimativa');
-  await page.getByLabel('Visualização').selectOption('lines');await expect(page.locator('#purchase-result-list [data-tax-cell-amount]')).toContainText(sales?'15,00':'10,98');
-  await expect(page.locator('#purchase-result-list [data-tax-cell-scope]')).toContainText(sales?'Simples puro':'Simples híbrido');
+  await expect(panel).toHaveAttribute('data-tax-selection',sales?'disabled':'enabled');
+  if(sales)await expect(panel).toContainText('Não possui DIFAL de saída');
+  else {
+    await expect(panel.locator('[data-tax-selection-summary]')).toContainText('Simples híbrido');
+    await expect(panel.locator('[data-tax-selection-summary]')).toContainText('Simples puro: não incluído');
+  }
+  await expect(panel.locator(sales?'[data-difal-amount]':'[data-anticipation-amount]')).toContainText(sales?'0,00':'10,98');
+  await page.getByLabel('Visualização').selectOption('lines');await expect(page.locator('#purchase-result-list [data-tax-cell-amount]')).toContainText(sales?'0,00':'10,98');
+  await expect(page.locator('#purchase-result-list [data-tax-cell-scope]')).toContainText(sales?'Saída desativada':'Simples híbrido');
 });
 
 test('entrada continua selecionada quando a saída está desmarcada nos dois cenários',async({page})=>{
@@ -80,13 +82,13 @@ test('entrada continua selecionada quando a saída está desmarcada nos dois cen
   await expect(panel.locator('[data-tax-selection-summary]')).toContainText('Simples puro');await expect(panel.locator('[data-tax-selection-summary]')).toContainText('Simples híbrido');
 });
 
-test('resumo sem política confirmada mantém estimativa identificada sem reutilizar escolha da geração',async({page})=>{
+test('saída atual permanece zerada mesmo sem política capturada, sem reutilizar escolhas da geração',async({page})=>{
   const {summary}=await mount(page);delete summary.difalPolicy;
   Object.assign(summary.job,{difalPolicy:selection()});
   await page.goto(`/purchases.html?generation=${generationId}&type=SALES&client=${clientId}&job=${jobId}`);
   const panel=page.locator('#purchase-report-view .purchase-difal');
-  await expect(panel).toHaveAttribute('data-tax-selection','unconfigured');await expect(panel.locator('[data-difal-amount]')).toContainText('15,00');
-  await expect(panel).toContainText('sem escolha de cenário registrada');
+  await expect(panel).toHaveAttribute('data-tax-selection','disabled');await expect(panel.locator('[data-difal-amount]')).toContainText('0,00');
+  await expect(panel).toContainText('Não possui DIFAL de saída');
 });
 
 test('link de outra geração não aplica suas opções a um relatório antigo',async({page})=>{
@@ -98,35 +100,43 @@ test('link de outra geração não aplica suas opções a um relatório antigo',
 
 test('geração identifica a saída desmarcada e mantém entrada nos cenários escolhidos',async({page})=>{
   await mount(page);await page.goto(`/generations.html?id=${generationId}`);
-  await expect(page.locator('[data-generation-tax-direction="exit"]')).toContainText('não incluir');
+  await expect(page.locator('[data-generation-tax-direction="exit"]')).toContainText('R$ 0,00 · saída desativada');
   await expect(page.locator('[data-generation-tax-direction="entry"]')).toContainText('Simples puro e Simples híbrido');
 });
 
-test('impressão mantém saída zerada e oculta a auditoria sem mudar sua abertura na tela',async({page})=>{
+test('impressão mantém saída zerada e preserva a abertura dos detalhes financeiros',async({page})=>{
   await mount(page);await page.goto(`/purchases.html?type=SALES&client=${clientId}&job=${jobId}`);
-  const panel=page.locator('#purchase-report-view .purchase-difal'),audit=panel.locator('[data-tax-origin]'),financial=page.locator('#purchase-report-view .purchase-source-details').first();
+  const panel=page.locator('#purchase-report-view .purchase-difal'),financial=page.locator('#purchase-report-view .purchase-source-details').first();
   await expect(panel.locator('[data-difal-amount]')).toContainText('0,00');await expect(financial).not.toHaveAttribute('open','');
-  for(const opened of [false,true]){
-    if(opened)await audit.locator('summary').click();
-    await page.evaluate(()=>window.dispatchEvent(new Event('beforeprint')));
-    await expect(financial).toHaveAttribute('open','');expect(await audit.evaluate((element:HTMLDetailsElement)=>element.open)).toBe(opened);
-    await page.emulateMedia({media:'print'});
-    await expect(panel.locator('[data-difal-amount]')).toBeVisible();await expect(panel.locator('[data-difal-amount]')).toContainText('0,00');
-    await expect(audit).toBeHidden();await expect(panel.locator('[data-difal-raw-amount]')).toBeHidden();
-    await page.emulateMedia({media:'screen'});await page.evaluate(()=>window.dispatchEvent(new Event('afterprint')));
-    await expect(financial).not.toHaveAttribute('open','');expect(await audit.evaluate((element:HTMLDetailsElement)=>element.open)).toBe(opened);
-    if(opened)await expect(panel.locator('[data-difal-raw-amount]')).toContainText('15,00');else await expect(panel.locator('[data-difal-raw-amount]')).toBeHidden();
-  }
+  await expect(panel.locator('[data-tax-origin]')).toHaveCount(0);
+  await page.evaluate(()=>window.dispatchEvent(new Event('beforeprint')));
+  await expect(financial).toHaveAttribute('open','');
+  await page.emulateMedia({media:'print'});
+  await expect(panel.locator('[data-difal-amount]')).toBeVisible();await expect(panel.locator('[data-difal-amount]')).toContainText('0,00');
+  await expect(panel).toContainText('Não possui DIFAL de saída');
+  await page.emulateMedia({media:'screen'});await page.evaluate(()=>window.dispatchEvent(new Event('afterprint')));
+  await expect(financial).not.toHaveAttribute('open','');
 });
 
-test('trocar empresa na prévia conserva a escolha própria de saída sem misturar políticas',async({page})=>{
+test('trocar empresa na prévia preserva o vínculo e mantém saída zerada mesmo com escolha antiga',async({page})=>{
   const {generation}=await mount(page,{completed:false}),other={...company,_id:'b3100000-0000-4000-8000-000000000004',clientId:'b3100000-0000-4000-8000-000000000004',code:'931',name:'Outra empresa sintética'};
   generation.companies.push({...other,difalPolicy:selection(true,true,true,false)});
   await page.route('**/api/v4/clients',r=>r.fulfill({json:{items:[company,other]}}));
-  for(const [selected,name,amount] of [[clientId,'930-vendas.csv','0,00'],[other.clientId,'931-vendas.csv','15,00'],[clientId,'930-vendas.csv','0,00']]){
+  for(const [selected,name,amount] of [[clientId,'930-vendas.csv','0,00'],[other.clientId,'931-vendas.csv','0,00'],[clientId,'930-vendas.csv','0,00']]){
     await page.goto(`/purchases.html?generation=${generationId}&client=${selected}&type=SALES`);
     await expect(page.locator('#purchase-company')).toBeDisabled();await expect(page.locator('#purchase-company')).toHaveValue(selected);
     await page.locator('#purchase-file').setInputFiles({name,mimeType:'text/csv',buffer:reportCsv()});await page.getByRole('button',{name:'Conferir colunas e valores'}).click();
     await expect(page.locator('#purchase-review [data-difal-amount]')).toContainText(amount);
   }
+});
+
+
+test('resumo atual inconsistente não transforma imposto antigo em zero confirmado',async({page})=>{
+  const {summary}=await mount(page);
+  summary.difal={...difal,amountCents:1743197};
+  await page.goto(`/purchases.html?type=SALES&client=${clientId}&job=${jobId}`);
+  const panel=page.locator('#purchase-report-view .purchase-difal');
+  await expect(panel.locator('[data-difal-amount]')).toHaveText('Indisponível');
+  await expect(panel).toContainText('Não foi possível conferir');
+  await expect(panel).not.toContainText('17.431,97');
 });

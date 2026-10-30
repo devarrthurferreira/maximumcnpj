@@ -8,6 +8,7 @@ import {buildMonthlyDre,dreRows} from '../public/simulator-calendar.js';
 import {renderAnnualDre,renderCompleteMonthlyDre,renderDrePrintDocument} from '../public/simulator-dre-view.js';
 import {baselineMonth,calculateMonthlySimulation} from '../public/simulator-monthly.js';
 import {buildDreCsv} from '../public/simulator-dre-export.js';
+import {legacyOutgoingDreFixture,legacyWithoutOutgoingDreFixture} from './fixtures/dre-outgoing-legacy.mjs';
 
 const near=(a,b)=>assert(Math.abs(a-b)<1e-7,`${a} != ${b}`);
 const allRows=p=>[...p.sections.flatMap(section=>section.rows),...p.details.flatMap(section=>section.rows),...p.indicators,...(p.revenueReconciliation?.rows||[]),...(p.icmsReconciliation?.rows||[])];
@@ -41,7 +42,7 @@ test('DRE concilia antecipação de ICMS separada do DIFAL em anual, meses, subt
  const input=fixture(),baseline=structuredClone(input.result),projection={version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73200,annualCents:878400};
  input.result=calculateSimulation(input.draft,{version:'DIFAL_DRE_V1',monthlyCents:300,annualCents:3600,sourceAmountCents:900,reportMonths:3,pendingLines:0},projection);
  input.calendar=buildMonthlyDre(input.result,2027);const before=structuredClone(input),p=buildDrePresentation(input);
- assert.equal(find(p,'icmsAnticipation').label,'− Antecipação de ICMS');assert.equal(find(p,'difal').label,'− DIFAL sobre vendas (10%)');
+ assert.equal(find(p,'icmsAnticipation').label,'− Antecipação de ICMS');assert.equal(find(p,'difal').label,'− DIFAL de saída — desativado');
  for(const regime of input.result.regimes){
   const amount=['pure','hybrid'].includes(regime.id)?-8784:0;
   assert.equal(find(p,'icmsAnticipation').values[regime.id],amount);
@@ -72,40 +73,34 @@ test('escolha de DIFAL e bloqueio ficam visíveis na DRE, CSV e impressão sem r
   assert.match(output,/DIFAL nos cenários/);assert.match(output,/Zerado automaticamente/);assert.match(output,/DIFAL: não se aplica/);
  }
  assert.deepEqual(input,before);
- const legacy=structuredClone(input.result);delete legacy.difalPolicy;for(const regime of legacy.regimes)delete regime.difalApplication;
- legacy.regimes.find(regime=>regime.id==='presumed').dre.difal=-1200;
+ const legacy=legacyOutgoingDreFixture().result;delete legacy.difalPolicy;for(const regime of legacy.regimes)delete regime.difalApplication;
  const original=JSON.stringify(legacy),old=buildDrePresentation({result:legacy});
  assert.equal(Object.hasOwn(old,'difalPolicy'),false);assert.deepEqual(dreDifalNotes(old),[]);
  assert(!buildDreCsv({presentation:old}).includes('DIFAL nos cenários'));
  assert(!renderDrePrintDocument({presentation:old,year:2027}).includes('DIFAL nos cenários'));
- assert.equal(find(old,'difal').values.presumed,-1200);assert.equal(JSON.stringify(legacy),original);
+ assert.equal(find(old,'difal').values.pure,-3780);assert.equal(JSON.stringify(legacy),original);
 });
 
-test('DRE, CSV e impressão preservam entrada e saída independentes e decisões V1 históricas',()=>{
+test('DRE, CSV e impressão mantêm entrada independente, saída desativada e valores históricos 1.17',()=>{
  const input=fixture(),policy=defaultDifalPolicy();policy.operations.pure.exit=false;policy.operations.hybrid.entry=false;
  input.draft.difalPolicy=policy;
  input.result=calculateSimulation(input.draft,{version:'DIFAL_DRE_V1',monthlyCents:10000,annualCents:120000},
   {version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:7320,annualCents:87840});
  input.calendar=buildMonthlyDre(input.result,2027);
  const before=structuredClone(input),p=buildDrePresentation(input);
- assert.deepEqual(find(p,'difal').values,{pure:0,hybrid:-1200,presumed:0,actual:0});
+ assert.deepEqual(find(p,'difal').values,{pure:0,hybrid:0,presumed:0,actual:0});
  assert.deepEqual(find(p,'icmsAnticipation').values,{pure:-878.4,hybrid:0,presumed:0,actual:0});
  for(const output of [dreDifalNotes(p).join('\n'),buildDreCsv({presentation:p}),renderAnnualDre({presentation:p,calendar:input.calendar,year:2027}),renderDrePrintDocument({presentation:p,calendar:input.calendar,year:2027})]){
   assert.match(output,/Seleção de entrada: incluir; seleção de saída: excluir/);
-  assert.match(output,/Seleção de entrada: excluir; seleção de saída: incluir/);
+  assert.match(output,/Seleção de entrada: excluir; seleção de saída: excluir/);
   assert.match(output,/Lucro Presumido · DIFAL: não se aplica/);
  }
  assert.deepEqual(input,before);
- const historical=structuredClone(input.result);
- historical.difalPolicy={version:'DIFAL_SCENARIOS_V1',enabled:{pure:true,hybrid:true,presumed:true,actual:true}};
- for(const regime of historical.regimes){
-  regime.dre.difal=-1200;
-  regime.difalApplication={version:'DIFAL_SCENARIOS_V1',enabled:true,blocked:false,reason:'ENABLED',message:'Incluído: DIFAL das vendas elegíveis.',rbt12:180000,icmsOutside:false,salesDifal:true,purchaseAnticipation:false};
- }
+ const historical=legacyOutgoingDreFixture().result;
  const captured=structuredClone(historical);freeze(historical);const old=buildDrePresentation({result:historical});
- assert.equal(find(old,'difal').values.actual,-1200);
- assert.match(dreDifalNotes(old)[3],/Lucro Real · DIFAL: incluir/);
- assert(!dreDifalNotes(old).join('\n').includes('não se aplica'));
+ assert.equal(find(old,'difal').values.pure,-3780);
+ assert.equal(find(old,'difal').label,'− DIFAL sobre vendas (10%)');
+ assert.match(dreDifalNotes(old)[0],/seleção de saída: incluir/);
  assert.deepEqual(old.difalPolicy,captured.difalPolicy);assert.deepEqual(historical,captured);
 });
 
@@ -240,7 +235,7 @@ test('IRPJ normal/adicional usa somente memória anual única, válida e concili
 });
 
 test('legado sem DIFAL ou detalhes conserva totais e usa indisponível, sem zeros fabricados',()=>{
- const {draft}=fixture(),result=calculateSimulation(draft);delete result.memory;delete result.credits;
+ const {result}=legacyWithoutOutgoingDreFixture();delete result.memory;delete result.credits;
  const p=buildDrePresentation({result});assert.equal(find(p,'difal'),undefined);
  for(const key of ['serviceReport','serviceAdjustment','salesCpfCents','irpjBasic','cbs.due'])assert.equal(find(p,key).values.actual,null,key);
  assert.equal(find(p,'revenue').values.actual,result.regimes[3].dre.revenue);
@@ -313,7 +308,7 @@ test('DRE única inclui cada linha uma vez, composição junto ao total e indica
 });
 
 test('DRE única mantém legado, detalhes indisponíveis e extensões sem repetir chaves',()=>{
- const {draft}=fixture(),p=buildDrePresentation({result:calculateSimulation(draft)});
+ const p=buildDrePresentation({result:legacyWithoutOutgoingDreFixture().result});
  p.details.push(p.details[0]);
  const extension={...p.details[0].rows[0],key:'extraDetail',parentKey:'missingParent'};
  p.details.push({key:'extension',label:'Extensão',parentKey:'missingParent',rows:[extension]});

@@ -81,18 +81,17 @@ export function annualizeReports(fields, reportMonths) {
     timeline: Array.from({length: PROJECTION_MONTHS}, (_, i) => ({month: i + 1,
       salesCents: totals.sales.monthlyCents, purchasesCents: totals.purchases.monthlyCents}))};
 }
-/** The source is the reconciled per-line estimate. Never derive eligibility from edited monthly sales. */
+/** Current analyses disable outgoing DIFAL; original estimates remain in the immutable source. */
 export function projectDifal(summary, reportMonths, sourceJobId) {
   if (summary == null) return null;
   months(reportMonths);
-  if (!summary || typeof summary !== 'object' || Array.isArray(summary) || !['DIFAL_ESTIMATE_V1','DIFAL_ESTIMATE_V2','DIFAL_ESTIMATE_V3','DIFAL_ESTIMATE_V4','DIFAL_ESTIMATE_V5'].includes(summary.version) || summary.ratePercent !== 10 ||
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary) || !['DIFAL_ESTIMATE_V1','DIFAL_ESTIMATE_V2','DIFAL_ESTIMATE_V3','DIFAL_ESTIMATE_V4','DIFAL_ESTIMATE_V5','DIFAL_ESTIMATE_V6'].includes(summary.version) || summary.ratePercent !== 10 ||
       typeof sourceJobId !== 'string' || !sourceJobId || typeof summary.issuerUf !== 'string') throw new TypeError('Referência do DIFAL inválida.');
   for (const key of ['amountCents', 'baseCents', 'pendingLines', 'eligibleLines']) cents(summary[key]);
-  const monthlyCents = safeBigInt(roundedDivision(BigInt(summary.amountCents), BigInt(reportMonths)));
-  return {version: DIFAL_PROJECTION_VERSION, sourceJobId, sourceVersion: summary.version,
-    sourceAmountCents: summary.amountCents, sourceBaseCents: summary.baseCents, reportMonths,
-    ratePercent: summary.ratePercent, pendingLines: summary.pendingLines, eligibleLines: summary.eligibleLines,
-    issuerUf: summary.issuerUf, monthlyCents, annualCents: annual(monthlyCents)};
+  return {version: DIFAL_PROJECTION_VERSION, sourceJobId, sourceVersion: 'DIFAL_ESTIMATE_V6',outgoingDisabled:true,
+    sourceAmountCents: 0, sourceBaseCents: 0, reportMonths,
+    ratePercent: summary.ratePercent, pendingLines: 0, eligibleLines: 0,
+    issuerUf: summary.issuerUf, monthlyCents:0, annualCents:0};
 }
 /** Manually entered amounts are monthly BRL, not totals for the imported period. RBT12 is never annualized. */
 export function projectScenario(monthlyGroups, values) {

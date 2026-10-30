@@ -1,16 +1,35 @@
 import {test as base,expect,type Page,type APIRequestContext,type Route} from '@playwright/test';
 import {randomUUID} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+import {gunzipSync} from 'node:zlib';
 import {MongoClient,type Db} from 'mongodb';
 import {hashPassword} from '../../src/security.ts';
 import {csvParse} from '../../src/domain.ts';
-import {calculateMonthlySimulation} from '../../public/simulator-monthly.js';
-import {buildMonthlyDre} from '../../public/simulator-calendar.js';
 
 type Account={id:string;email:string;password:string;role:'admin'|'operator'|'viewer'};
 type Workspace={db:Db;workspaceId:string;admin:Account;operator:Account;viewer:Account};
 type Company={id:string;code:string;name:string};
 type Method='GET'|'POST'|'PATCH';
 const selection={version:'REGIME_SELECTION_V1',selected:['pure','hybrid']};
+// Captured with the actual 1.17 engine at commit1a9edf8: Jan/Feb CPF sales
+// 1000/2000, purchases500/700, seven zero months, RBT12=100000 and no expenses.
+// A current engine must never be used to invent a historical positive tax.
+const historicalCalculation=JSON.parse(gunzipSync(readFileSync(new URL('../fixtures/dre-outgoing-legacy-small.json.gz',import.meta.url))).toString('utf8'));
+function legacyOutgoingSnapshot(current:any){
+  const saved=JSON.parse(JSON.stringify(historicalCalculation).replaceAll(historicalCalculation.sourceJobId,current.source.sales.jobId));
+  const {capturedFrom,sourceJobId,reports,draft,...calculated}=saved;
+  expect(capturedFrom).toBe('1a9edf8');expect(sourceJobId).toBe(current.source.sales.jobId);
+  const legacy={...structuredClone(current),...calculated,draft,modelVersion:calculated.result.version,
+    annualRevenue:calculated.result.annualRevenue,bestRegimeId:calculated.result.bestRegimeId};
+  legacy.source.difalPolicy=structuredClone(draft.difalPolicy);
+  for(const [index,row] of legacy.source.monthlyReports.entries())row.difal=structuredClone(reports[index].difal);
+  legacy.source.sales.difal={version:'DIFAL_ESTIMATE_V5',ratePercent:10,issuerUf:'MG',
+    baseCents:300_000,amountCents:30_000,eligibleLines:9,pendingLines:0};
+  legacy.source.projection=structuredClone(legacy.projection);
+  expect(legacy.modelVersion).toBe('1.17.0-dre-sales-difal-sync-available-months');
+  for(const regime of legacy.result.regimes)expect(regime.dre).toMatchObject({revenue:3000,difal:-300,icmsAnticipation:-87.84});
+  return legacy;
+}
 const test=base.extend<{analysisWorkspace:Workspace}>({
   analysisWorkspace:async({},use)=>{
     expect(process.env.MONGODB_URI,'Use somente MongoDB descartável').toBeTruthy();
@@ -121,26 +140,17 @@ async function prepareSources(request:APIRequestContext,baseURL:string,analysis:
   expect(analysis.readiness.ready).toBe(true);return analysis;
 }
 
-test('Abrir DRE atual confere a fonte zerada, corrige os totais e mantém a versão histórica',async({page,baseURL,analysisWorkspace},info)=>{
+test('Abrir DRE atual zera saída mesmo para CPF interestadual e mantém a versão histórica positiva',async({page,baseURL,analysisWorkspace},info)=>{
   test.setTimeout(120_000);page.setDefaultTimeout(15_000);
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   await signIn(page.request,baseURL!,analysisWorkspace.admin);
-  const company=await createCompany(page.request,baseURL!,'Empresa sintética sem saída interestadual');
+  const company=await createCompany(page.request,baseURL!,'Empresa sintética CPF interestadual');
   await signIn(page.request,baseURL!,analysisWorkspace.operator);
   let analysis=(await api(page.request,baseURL!,'POST','/api/v4/analyses',{clientId:company.id,year:2027,regimeSelection:selection})).analysis;
-  analysis=await prepareSources(page.request,baseURL!,analysis,company,'MG');
-  const generated=await generateByApi(page.request,baseURL!,analysis),legacy=structuredClone(generated.simulation);
-  // Reproduce a captured, obsolete DRE charging exit DIFAL while its stored
-  // underlying sales prove CPF recipients in the same UF. Only synthetic data.
-  const reports=legacy.source.monthlyReports;
-  for(const [index,row] of reports.entries()){
-    const baseCents=index===0?100_000:index===1?200_000:0;
-    row.difal={...row.difal,version:'DIFAL_ESTIMATE_V4',baseCents,amountCents:baseCents/10,eligibleLines:baseCents?1:0,pendingLines:0};
-  }
-  legacy.source.sales.difal={version:'DIFAL_ESTIMATE_V4',ratePercent:10,issuerUf:'MG',baseCents:300_000,amountCents:30_000,eligibleLines:2,pendingLines:0};
-  Object.assign(legacy,calculateMonthlySimulation(legacy.draft,reports,legacy.monthlyInputs,legacy.source.sales.jobId,legacy.rbt12Schedule??null,legacy.source.analysisPeriod));
-  legacy.monthlyDre=buildMonthlyDre(legacy.result,legacy.draft.year,legacy.rbt12Manual,legacy.source.period);
-  legacy.modelVersion='1.16.0-cpf-sales-difal-available-months';legacy.result.version=legacy.modelVersion;
+  analysis=await prepareSources(page.request,baseURL!,analysis,company,'SP');
+  const generated=await generateByApi(page.request,baseURL!,analysis),legacy=legacyOutgoingSnapshot(generated.simulation);
+  // Bind a real historical calculation to the synthetic reports of the same
+  // amounts. Opening current must replace the old tax, not the old revenue.
   const {db,workspaceId}=analysisWorkspace;
   await db.collection<any>('simulations').replaceOne({_id:legacy._id,workspaceId},{...legacy,workspaceId});
   await db.collection<any>('analyses').updateOne({_id:analysis.id,workspaceId},{$set:{'currentSimulation.modelVersion':legacy.modelVersion}});
@@ -157,10 +167,13 @@ test('Abrir DRE atual confere a fonte zerada, corrige os totais e mantém a vers
   const dre=await fullDre(page),zero=dre.locator('[data-dre-row="difal"] td');
   await expect(zero).toHaveCount(2);for(const cell of await zero.all())await expect(cell).toHaveText('R$ 0,00');
   await expect(dre.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('87,84');
-  await expect(page.locator('#simulator-difal')).toContainText('Não possui vendas interestaduais para CPF elegíveis');
+  await expect(page.locator('#simulator-difal')).toContainText('Não possui DIFAL de saída');
+  expect(corrected.result.outgoingDifalDisabled).toBe(true);
+  expect(corrected.source.monthlyReports.every((row:any)=>row.difal.version==='DIFAL_ESTIMATE_V6'&&row.difal.amountCents===0)).toBe(true);
   for(const regime of corrected.result.regimes){
     const prior=original.result.regimes.find((row:any)=>row.id===regime.id);
     expect(regime.dre.difal).toBe(0);expect(regime.dre.icmsAnticipation).toBe(prior.dre.icmsAnticipation);
+    expect(regime.dre.revenue).toBe(prior.dre.revenue);
     expect(regime.totalTaxes).toBeCloseTo(prior.totalTaxes-300,8);
     expect(regime.dre.netProfit).toBeCloseTo(prior.dre.netProfit+300,8);
   }
@@ -171,7 +184,7 @@ test('Abrir DRE atual confere a fonte zerada, corrige os totais e mantém a vers
   expect(latest.fiscal).toEqual(generated.analysis.fiscal);expect(latest.accounting).toEqual(generated.analysis.accounting);
   const downloading=page.waitForEvent('download');await page.locator('#export-dre-csv').click();
   const download=await downloading,stream=await download.createReadStream();let csv='';for await(const chunk of stream!)csv+=chunk;
-  const annual=csvParse(csv,';').find(row=>row[2]==="'− DIFAL sobre vendas (10%)");expect(annual?.slice(5,7)).toEqual(['0,00','0,00']);
+  const annual=csvParse(csv,';').find(row=>row[2]==="'− DIFAL de saída — desativado");expect(annual?.slice(5,7)).toEqual(['0,00','0,00']);
   await page.screenshot({path:info.outputPath('dre-current-no-exit-difal.png'),fullPage:true});
   await page.reload();await expect(page.locator('#simulation-snapshot')).toBeVisible();
   expect(await db.collection('simulations').countDocuments({workspaceId,analysisId:analysis.id})).toBe(2);
@@ -210,13 +223,13 @@ function expectDifal(snapshot:any,enabled:boolean){
   expect(snapshot.result.annualRevenue).toBe(3000);
   for(const regime of snapshot.result.regimes){
     expect(regime.available).toBe(true);
-    expect(Math.round(regime.dre.difal*100)).toBe(enabled?-30_000:0);
+    expect(Math.round(regime.dre.difal*100)).toBe(0);
     expect(Math.round(regime.dre.icmsAnticipation*100)).toBe(enabled?-8_784:0);
   }
   expect(snapshot.result.monthlyResults.map((month:any)=>month.result.regimes.map((row:any)=>[
     Math.round(row.dre.difal*100),Math.round(row.dre.icmsAnticipation*100)
   ]))).toEqual([
-    ...(enabled?[[[-10_000,-3_660],[-10_000,-3_660]],[[-20_000,-5_124],[-20_000,-5_124]]]:[[[0,0],[0,0]],[[0,0],[0,0]]]),
+    ...(enabled?[[[0,-3_660],[0,-3_660]],[[0,-5_124],[0,-5_124]]]:[[[0,0],[0,0]],[[0,0],[0,0]]]),
     ...Array.from({length:7},()=>[[0,0],[0,0]])
   ]);
 }
@@ -260,7 +273,7 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   await page.goto('/analyses.html?id='+id);
   const included=await generateInBrowser(page,baseURL!,id);expectDifal(included,true);
   const sources=await freezeSources(analysisWorkspace,analysis,included);expect(sources.lines).toHaveLength(18);
-  expect(included.source.monthlyReports.map((row:any)=>row.difal.amountCents)).toEqual([10_000,20_000,...Array(7).fill(0)]);
+  expect(included.source.monthlyReports.map((row:any)=>row.difal.amountCents)).toEqual(Array(9).fill(0));
   expect(included.source.monthlyReports.map((row:any)=>row.anticipation.amountCents)).toEqual([3_660,5_124,...Array(7).fill(0)]);
 
   await page.goto('/analyses.html?id='+id+'&sector=fiscal');await fiscalStep(page,'difal');
@@ -273,12 +286,12 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   if(await details.getAttribute('open')===null)await details.locator(':scope > summary').click();
   const enabled=(regime:string)=>details.locator('[data-analysis-difal-enabled="'+regime+'"]');
   const direction=(regime:string,operation:string)=>details.locator('[data-analysis-difal-regime="'+regime+'"][data-analysis-difal-operation="'+operation+'"]');
-  await direction('pure','exit').uncheck();await direction('hybrid','entry').uncheck();await enabled('hybrid').uncheck();
+  await expect(direction('pure','exit')).toBeDisabled();await direction('hybrid','entry').uncheck();await enabled('hybrid').uncheck();
   await page.locator('#analysis-difal-no').check();await expect(details).toBeHidden();
   await page.locator('#analysis-difal-yes').check();await expect(details).toHaveJSProperty('open',true);
   await expect(enabled('pure')).toBeChecked();await expect(enabled('hybrid')).not.toBeChecked();
   await expect(direction('pure','entry')).toBeChecked();await expect(direction('pure','exit')).not.toBeChecked();
-  await expect(direction('hybrid','entry')).not.toBeChecked();await expect(direction('hybrid','exit')).toBeChecked();
+  await expect(direction('hybrid','entry')).not.toBeChecked();await expect(direction('hybrid','exit')).not.toBeChecked();
   await expect(direction('hybrid','entry')).toBeDisabled();await expect(direction('hybrid','exit')).toBeDisabled();
   expect(policyWrites).toEqual([]);
   expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+id)).analysis.fiscal).toEqual(savedFiscal);
@@ -297,12 +310,12 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   expect(policyWrites).toEqual(['/api/v4/analyses/'+id+'/fiscal']);
   expect(analysis.currentSimulation.stale).toBe(true);
   expect(analysis.fiscal.data.difalPolicy.enabled).toEqual({pure:false,hybrid:false,presumed:false,actual:false});
-  expect(analysis.fiscal.data.difalPolicy.operations).toEqual({pure:{entry:true,exit:false},hybrid:{entry:false,exit:true}});
+  expect(analysis.fiscal.data.difalPolicy.operations).toEqual({pure:{entry:true,exit:false},hybrid:{entry:false,exit:false}});
   const excluded=await generateInBrowser(page,baseURL!,id);expectDifal(excluded,false);
   expect(excluded._id).not.toBe(included._id);expect(excluded.parentSimulationId).toBe(included._id);
   for(const regime of excluded.result.regimes){
     const previous=included.result.regimes.find((row:any)=>row.id===regime.id);
-    expect(Math.round((regime.dre.netProfit-previous.dre.netProfit)*100)).toBe(38_784);
+    expect(Math.round((regime.dre.netProfit-previous.dre.netProfit)*100)).toBe(8_784);
   }
   await expectZeroDre(page);
   await page.locator('#dre-report-period').selectOption('complete');
@@ -310,7 +323,7 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   const download=await downloading;await download.saveAs(info.outputPath('analysis-difal-excluded-dre.csv'));
   const stream=await download.createReadStream();let csv='';for await(const chunk of stream!)csv+=chunk;
   const rows=csvParse(csv,';');
-  for(const label of ['− DIFAL sobre vendas (10%)','− Antecipação de ICMS']){
+  for(const label of ['− DIFAL de saída — desativado','− Antecipação de ICMS']){
     // The exported text keeps its Excel formula guard; numeric cells remain real numbers.
     const escapedLabel="'"+label;
     const annual=rows.filter(row=>row[2]===escapedLabel);expect(annual).toHaveLength(1);expect(annual[0].slice(5,7)).toEqual(['0,00','0,00']);

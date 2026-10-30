@@ -13,9 +13,14 @@ import { reportDifalPolicy } from '../src/report-difal-policy.ts';
 import { routeV4 } from '../src/lookup-http.ts';
 import { generationSimulator } from '../src/simulator-store.ts';
 import { digits } from '../src/domain.ts';
-import { defaultDifalPolicy } from '../public/simulator-engine.js';
+import { defaultDifalPolicy, upgradeDifalPolicy } from '../public/simulator-engine.js';
 import { baselineMonth } from '../public/simulator-monthly.js';
 import { createSimulation, getSimulation } from '../src/simulation-history.ts';
+
+const currentPolicy = (value:any) => {
+  const policy=upgradeDifalPolicy(value);
+  return {...policy,operations:{pure:{...policy.operations.pure,exit:false},hybrid:{...policy.operations.hybrid,exit:false}}};
+};
 
 test('MongoDB gerações: DIFAL por empresa, validação estrita, retry imutável e origem do simulador', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
   const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
@@ -113,12 +118,15 @@ test('MongoDB gerações: DIFAL por empresa, validação estrita, retry imutáve
       draft: {year: 2027, salesAnnex: 1, serviceAnnex: 3, rbt12: 100000, values: {...firstMonth.values,
         salesRevenue: 100, simplePurchases: 0, regularPurchases: 100}}};
     const inherited = await createSimulation(actor, simulationRequest);
-    assert.deepEqual(inherited.draft.difalPolicy, mixed, 'O pedido sem política herda as escolhas desta empresa.');
-    assert.deepEqual(inherited.result.difalPolicy, mixed);
+    assert.deepEqual(inherited.draft.difalPolicy, upgradeDifalPolicy(mixed), 'O pedido conserva a política capturada; o resultado aplica saída desativada.');
+    assert.deepEqual(inherited.result.difalPolicy, currentPolicy(mixed));
     for (const regime of inherited.result.regimes) {
       assert.equal(regime.dre.difal, 0, 'Ativar a saída não torna uma venda a CNPJ elegível.');
+      assert.equal(regime.difalApplication.operations.exit,false,'Uma escolha histórica true não reativa a saída aplicada.');
       assert.equal(regime.dre.icmsAnticipation, 0, 'A entrada desmarcada não é deduzida no híbrido.');
     }
+    for(const month of inherited.engineInput.months)for(const id of ['pure','hybrid'])
+      assert.equal(month.input.difalPolicy.operations[id].exit,false,'O motor recebe a política efetiva sem saída.');
     assert.deepEqual(await getSimulation(inherited._id), inherited);
     assert.deepEqual(await createSimulation(actor, simulationRequest), inherited, 'Retry sem política usa o hash do pedido original.');
     const directions = {...mixed, enabled: {...mixed.enabled, pure: true}};
@@ -128,9 +136,9 @@ test('MongoDB gerações: DIFAL por empresa, validação estrita, retry imutáve
     for (const regime of directed.result.regimes) {
       assert.equal(regime.dre.difal, 0, 'Alterar a política conserva a exclusão da venda a CNPJ.');
       assert.equal(regime.dre.icmsAnticipation, regime.id === 'pure' ? -7.32 : 0);
-      assert.equal(regime.difalApplication.months[0].reason, ['pure', 'hybrid'].includes(regime.id) ? 'ENABLED' : 'NOT_APPLICABLE');
+      assert.equal(regime.difalApplication.months[0].reason, regime.id==='pure' ? 'ENABLED' : regime.id==='hybrid' ? 'NO_OPERATIONS' : 'NOT_APPLICABLE');
     }
-    assert.deepEqual(directed.draft.difalPolicy, directions);
+    assert.deepEqual(directed.draft.difalPolicy, upgradeDifalPolicy(directions));
     assert.deepEqual(await getSimulation(directed._id), directed);
     assert.deepEqual(await getSimulation(inherited._id), inherited, 'A nova direção não modifica a versão anterior.');
     await assert.rejects(createSimulation(actor, {...directedRequest,
@@ -354,7 +362,7 @@ test('MongoDB simulador: cinco campos vêm de snapshots conciliados, com CPF pr�
     // Historical reports remain readable; a new catalog-based scenario needs its original nature evidence.
     const legacyReport=await purchaseSummary(sales.job._id,true,'SALES_V1');
     assert.equal(legacyReport.totals.totalCents,49200);
-    assert.equal(legacyReport.difal,null);
+    assert.equal(legacyReport.difal?.amountCents,0);
     assert.equal(calls,6,'Reabrir vendas anteriores não recalcula nem consulta os CNPJs novamente.');
     await jobs.updateOne(scope({_id:sales.job._id}),{$set:{'purchaseInput.balanceCents':null}});
     await assert.rejects(generationSimulator(id,clientId),errorCode('RESULT_COUNT'));
@@ -647,33 +655,33 @@ test('MongoDB relatórios: DIFAL desmarcado, CSV auditável, propriedade e linha
     const firstSale = reports.get(first)!.sales, firstPurchase = reports.get(first)!.purchase;
     const summary = await purchaseSummary(firstSale, true, SALES_MODE);
     assert.deepEqual(summary.difalPolicy, entryOnly);
-    assert.equal(summary.difal?.amountCents, 1000, 'A estimativa bruta não muda quando a saída está desmarcada.');
-    assert.equal(summary.difal?.eligibleLines, 1);
-    assert.equal(summary.difal?.baseCents, 10000);
+    assert.equal(summary.difal?.amountCents, 0, 'A saída atual está desativada independentemente da escolha armazenada.');
+    assert.equal(summary.difal?.eligibleLines, 0);
+    assert.equal(summary.difal?.baseCents, 0);
     const detail = await purchaseRows(firstSale, 'ALL', 1, true, SALES_MODE);
-    assert.deepEqual(detail.difalPolicy, entryOnly); assert.equal(detail.items[0].difal.amountCents, 1000);
-    assert.equal(detail.items[1].difal.reason, 'NOT_CPF');
+    assert.deepEqual(detail.difalPolicy, entryOnly); assert.equal(detail.items[0].difal.amountCents, 0);
+    assert.equal(detail.items[1].difal.reason, 'OUTGOING_DISABLED');
     assert.equal(detail.items[1].difal.amountCents, 0);
     const excludedCsv = parseCsv((await purchaseExport(firstSale, 'ALL', 1, SALES_MODE)).content);
     assert.equal(excludedCsv['DIFAL estimado (R$)'], '0,00');
     assert.equal(excludedCsv['Base DIFAL (R$)'], '0,00');
-    assert.equal(excludedCsv['Situação DIFAL'], 'Não incluído por escolha');
-    assert.equal(excludedCsv['Auditoria — DIFAL de saída estimado na origem (R$)'], '10,00');
-    assert.equal(excludedCsv['Auditoria — situação da estimativa de origem'], 'ELIGIBLE');
-    assert.match(excludedCsv['Escolha de DIFAL por cenário'], /Não incluído/);
+    assert.equal(excludedCsv['Situação DIFAL'], 'OUTGOING_DISABLED');
+    assert.equal(excludedCsv['Auditoria — DIFAL de saída estimado na origem (R$)'], '0,00');
+    assert.equal(excludedCsv['Auditoria — situação da estimativa de origem'], 'OUTGOING_DISABLED');
+    assert.match(excludedCsv['Escolha de DIFAL por cenário'], /desativado/);
     const entryCsv = parseCsv((await purchaseExport(firstPurchase, 'ALL', 1, PURCHASE_MODE)).content);
     assert.equal(entryCsv['DIFAL de entrada — Antecipação de ICMS (R$)'], '7,32');
     assert.equal(entryCsv['Escolha de DIFAL por cenário'], 'Simples puro');
     const hybridSale = parseCsv((await purchaseExport(reports.get(second)!.sales, 'ALL', 1, SALES_MODE)).content);
-    assert.equal(hybridSale['DIFAL estimado (R$)'], '10,00');
-    assert.equal(hybridSale['Escolha de DIFAL por cenário'], 'Simples híbrido');
+    assert.equal(hybridSale['DIFAL estimado (R$)'], '0,00');
+    assert.equal(hybridSale['Escolha de DIFAL por cenário'], 'DIFAL de saída desativado');
     const excludedEntry = parseCsv((await purchaseExport(reports.get(second)!.purchase, 'ALL', 1, PURCHASE_MODE)).content);
     assert.equal(excludedEntry['DIFAL de entrada — Antecipação de ICMS (R$)'], '0,00');
     assert.equal(excludedEntry['Auditoria — DIFAL de entrada estimado na origem (R$)'], '7,32');
     assert.equal(Object.hasOwn(await purchaseSummary(reports.get(legacy)!.sales, true, SALES_MODE), 'difalPolicy'), false);
     const legacyCsv = parseCsv((await purchaseExport(reports.get(legacy)!.sales, 'ALL', 1, SALES_MODE)).content);
-    assert.equal(legacyCsv['DIFAL estimado (R$)'], '10,00');
-    assert.match(legacyCsv['Escolha de DIFAL por cenário'], /Sem escolha registrada/);
+    assert.equal(legacyCsv['DIFAL estimado (R$)'], '0,00');
+    assert.match(legacyCsv['Escolha de DIFAL por cenário'], /desativado/);
     assert.deepEqual(await jobs.find(scope({generationId: generation._id})).sort({_id: 1}).toArray(), originalJobs);
     assert.deepEqual(await lines.find(scope()).sort({_id: 1}).toArray(), originalLines);
     assert.deepEqual(await generations.findOne(scope({_id: generation._id})), originalGeneration);
@@ -721,7 +729,7 @@ test('MongoDB relatórios: DIFAL desmarcado, CSV auditável, propriedade e linha
     assert.deepEqual((await purchaseSummary(descendant._id, true, SALES_MODE)).difalPolicy, entryOnly, 'Reconsulta nova conserva escolha depois da exclusão da origem.');
     const orphan = await purchaseSummary(repeated._id, true, SALES_MODE);
     assert.equal(Object.hasOwn(orphan, 'difalPolicy'), false, 'Origem antiga ausente não inventa seleção nem impede ler suas linhas autossuficientes.');
-    assert.equal(orphan.difal?.amountCents, 1000);
+    assert.equal(orphan.difal?.amountCents, 0);
     await assert.rejects(reportDifalPolicy(current), errorCode('GENERATION_DELETED'));
   } finally {
     await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();

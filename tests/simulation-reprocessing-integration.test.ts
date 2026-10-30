@@ -12,7 +12,7 @@ import {createGeneration, attachGenerationPurchase, attachGenerationSale} from '
 import {uploadLookup, finalizeLookup, processLookup} from '../src/lookup-jobs.ts';
 import {createSimulation, getSimulation, deleteSimulation} from '../src/simulation-history.ts';
 import {reprocessSimulations, simulationReprocessingStatus, reprocessedSimulationId, refreshSimulation, REPROCESS_VERSION, SERVICE_REVENUE_MIGRATION_REVISION} from '../src/simulation-reprocessing.ts';
-import {DIFAL_CPF_CNPJ_VERSION, summarizeDifal} from '../src/difal.ts';
+import {DIFAL_CPF_CNPJ_VERSION, DIFAL_CPF_ONLY_VERSION, DIFAL_VERSION, summarizeDifal} from '../src/difal.ts';
 import {currentSalesDocumentDifal} from '../src/purchase-store.ts';
 import {annualizeReports, projectScenario} from '../public/simulator-projection.js';
 import {calculateSimulation, calculateTax, draftToInput, defaultDifalPolicy, upgradeDifalPolicy} from '../public/simulator-engine.js';
@@ -21,6 +21,11 @@ import {section22} from './fixtures/section22.ts';
 import {digest, token} from '../src/security.ts';
 import {handler} from '../src/server.ts';
 import {openAnalysis,getAnalysis} from '../src/analysis-store.ts';
+
+const currentPolicy = (value:any) => {
+  const policy=upgradeDifalPolicy(value);
+  return {...policy,operations:{pure:{...policy.operations.pure,exit:false},hybrid:{...policy.operations.hybrid,exit:false}}};
+};
 
 const actor = {_id:'reprocess-admin',role:'admin',name:'Administradora sintética',email:'admin@example.test'};
 const operator = {...actor,_id:'reprocess-operator',role:'operator',name:'Operador sintético',email:'operator@example.test'};
@@ -39,22 +44,25 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
   serviceDate:'2026-08-15',natureCode,description:natureCode.startsWith('9000')?'Serviço sintético':'Mercadoria sintética',
   recipientUf:'SP',totalCents,grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0});
  let providerCalls=0;
- async function fixture(recipientUf='SP',salesDocument='12345678900'){
+ async function fixture(recipientUf='SP',salesDocument='12345678900',salesCents=10000,historicalVersion?:string){
   const clientId=(await importCatalog(actor,[{code:'990',name:'Empresa sintética',uf:'MG'}])).items[0].id;
   const generation=await createGeneration(actor,{generationId:randomUUID(),clientIds:[clientId]});
   for(const [attach,fileName,entries] of [
    [attachGenerationPurchase,'compras-sinteticas.csv',[rows(1000,'1102')]],
-   [attachGenerationSale,'vendas-sinteticas.csv',[rows(10000,'6102'),rows(5000,'900001')]]
+   [attachGenerationSale,'vendas-sinteticas.csv',[rows(salesCents,'6102'),rows(5000,'900001')]]
   ] as const){
    const {job}=await attach(actor,generation._id,{clientId,importId:randomUUID(),fileName,expectedRows:entries.length,issuerUf:'MG'});
+   if(attach===attachGenerationSale && historicalVersion)
+    await(await collection('lookupJobs')).updateOne(scope({_id:job._id}),{$set:{difalVersion:historicalVersion}});
    await uploadLookup(actor,job._id,{offset:0,rows:entries.map(row=>({...row,recipientUf,
     ...(attach===attachGenerationSale?{document:salesDocument}:{})}))});await finalizeLookup(actor,job._id);
    if(attach===attachGenerationSale && salesDocument.length===14)await processLookup(actor,job._id,(async()=>{
     providerCalls++;return Response.json({cnpj:salesDocument,razao_social:'Empresa sintética',opcao_pelo_simples:false,opcao_pelo_mei:false,uf:recipientUf});
    }) as typeof fetch);
   }
-  const monthlyGroups={salesOptantCents:0,salesNonOptantCents:salesDocument.length===14?110:0,salesCpfCents:salesDocument.length===14?0:110,purchasesOptantCents:0,purchasesNonOptantCents:12};
-  const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:100000,values:{serviceRevenue:50,salesRevenue:110,
+  const salesRevenue=salesCents/100+10;
+  const monthlyGroups={salesOptantCents:0,salesNonOptantCents:salesDocument.length===14?salesRevenue:0,salesCpfCents:salesDocument.length===14?0:salesRevenue,purchasesOptantCents:0,purchasesNonOptantCents:12};
+  const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:100000,values:{serviceRevenue:50,salesRevenue,
    simplePurchases:0,regularPurchases:12,salaries:1,benefits:2,adminExpenses:3,rent:4,cardExpenses:5}};
   return {generationId:generation._id,clientId,reportMonths:1,periodConfirmed:true,monthlyGroups,draft,monthlyInputs:[{sourceMonth:'2026-08',groups:monthlyGroups,values:Object.fromEntries(['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,(draft.values as any)[key]]))}],
    rbt12Source:'MANUAL',rbt12ManualConfirmed:true};
@@ -86,15 +94,37 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
   assert.equal(status.hasMore,false,'O lote finito deve concluir sem polling indefinido.');return status;
  }
  try{
-  for(const periodPolicy of [undefined,JAN_SEP_POLICY])await t.test(`abrir análise salva reconcilia CNPJ V4 com zero atual, preserva original e promove uma única filha: ${periodPolicy||'mensal'}`,async t=>{
+  for(const {periodPolicy,document,version,amountCents} of [
+   {periodPolicy:undefined,document:'00000000000191',version:DIFAL_CPF_CNPJ_VERSION,amountCents:10000},
+   {periodPolicy:JAN_SEP_POLICY,document:'12345678900',version:DIFAL_CPF_ONLY_VERSION,amountCents:17431970}
+  ])await t.test(`abrir análise salva zera saída histórica ${version}, preserva original e promove uma única filha: ${periodPolicy||'mensal'}`,async t=>{
    switchWorkspace('refresh-cnpj-'+(periodPolicy||'monthly'));
-   const input=await fixture('SP','00000000000191');
+   const input=await fixture('SP',document,amountCents,version),oldAmount=amountCents/1000;
    const original=await save({...input,...(periodPolicy?{periodPolicy}:{})},periodPolicy?811:810,false,record=>{
-    const oldDifal=summarizeDifal([{...rows(10000,'6102'),document:'00000000000191'}],'MG',DIFAL_CPF_CNPJ_VERSION);
+    const oldDifal=summarizeDifal([{...rows(amountCents,'6102'),document}],'MG',version);
     record.source.sales.difal=structuredClone(oldDifal);record.source.monthlyReports[0].difal=structuredClone(oldDifal);
     const computed=calculateMonthlySimulation(record.draft,record.source.monthlyReports,record.monthlyInputs,record.source.sales.jobId,null,record.source.analysisPeriod);
     Object.assign(record,computed);
-    record.modelVersion='1.15.0-archived-cnpj-difal';record.result.version=record.modelVersion;
+    // Frozen historical values are fixture data: today's engine intentionally
+    // cannot recreate a positive outgoing charge, even with a legacy source.
+    for(const policy of [record.draft.difalPolicy,record.result.difalPolicy])for(const id of ['pure','hybrid'])policy.operations[id].exit=true;
+    const archiveResult=(result:any)=>{
+     for(const regime of result.regimes.filter((entry:any)=>['pure','hybrid'].includes(entry.id))){
+      regime.dre.difal=-oldAmount;
+      for(const field of ['netRevenue','grossProfit','preTax','netProfit'])regime.dre[field]-=oldAmount;
+      regime.annualProfit=regime.dre.netProfit;regime.totalTaxes+=oldAmount;
+      regime.margin=regime.dre.netProfit/regime.dre.revenue;regime.taxBurden=regime.totalTaxes/regime.dre.revenue;
+     }
+     for(const item of result.memory||[]){
+      const match=/^dre\.(pure|hybrid)\.(\w+)$/.exec(item.id);
+      if(match)item.value=result.regimes.find((regime:any)=>regime.id===match[1]).dre[match[2]];
+     }
+    };
+    archiveResult(record.result);for(const month of record.result.monthlyResults)archiveResult(month.result);
+    record.difalProjection={...record.difalProjection,sourceVersion:version,sourceAmountCents:oldDifal.amountCents,
+     sourceBaseCents:oldDifal.baseCents,annualCents:oldDifal.amountCents,eligibleLines:1,pendingLines:0,
+     months:[{sourceMonth:'2026-08',month:8,...oldDifal}]};
+    record.modelVersion='1.17.0-archived-outgoing-difal';record.result.version=record.modelVersion;
     record.monthlyDre=buildMonthlyDre(record.result,record.draft.year,record.rbt12Manual,record.source.period);
    });
    const simulations=await collection('simulations'),analyses=await collection('analyses');
@@ -105,17 +135,22 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const frozen=await simulations.findOne(scope({_id:original._id})),beforeAnalysis=(await analyses.findOne(scope({_id:opened.analysis.id})))!;
    const jobs=await collection('lookupJobs'),lines=await collection('purchaseLines');
    const sourceBefore={jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({jobId:1,index:1}).toArray()};
-   assert.equal((await currentSalesDocumentDifal(original.source.sales.jobId)).difal.amountCents,0,'O cartão já usa CPF e confirma ausência.');
-   assert.equal((await getSimulation(original._id)).result.regimes.find((r:any)=>r.id==='pure').dre.difal,-10,'O resultado congelado reproduz a divergência antiga.');
+   assert.equal((await currentSalesDocumentDifal(original.source.sales.jobId)).difal.amountCents,0,'O cartão aplica saída desativada.');
+   assert.equal((await getSimulation(original._id)).result.regimes.find((r:any)=>r.id==='pure').dre.difal,-oldAmount,'O resultado congelado conserva a cobrança histórica.');
    const callsBefore=providerCalls;
    const [first,concurrent]=await Promise.all([refreshSimulation(actor,original._id,{}),refreshSimulation(operator,original._id,{})]);
    const child=first.simulation;
    assert.equal(first.updated,true);assert.equal(first.originalId,original._id);assert.equal(concurrent.simulation._id,child._id);
    assert.equal(child.parentSimulationId,original._id);assert.equal(child.reprocessing.originalId,original._id);
    assert.equal(child.modelVersion,periodPolicy?JAN_SEP_MODEL_VERSION:MONTHLY_MODEL_VERSION);
-   assert.equal(child.source.sales.difal.version,'DIFAL_ESTIMATE_V5');assert.equal(child.source.sales.difal.amountCents,0);
+   assert.equal(child.source.sales.difal.version,DIFAL_VERSION);assert.equal(child.source.sales.difal.amountCents,0);
    assert.equal(child.difalProjection.sourceAmountCents,0);assert.equal(child.difalProjection.pendingLines,0);
    for(const regime of child.result.regimes)assert.equal(regime.dre.difal,0);
+   for(const id of ['pure','hybrid']){
+    const current=child.result.regimes.find((regime:any)=>regime.id===id),archived=original.result.regimes.find((regime:any)=>regime.id===id);
+    assert.equal(Math.round((current.dre.netProfit-archived.dre.netProfit)*100),Math.round(oldAmount*100));
+    assert.equal(Math.round((archived.totalTaxes-current.totalTaxes)*100),Math.round(oldAmount*100));
+   }
    for(const month of child.result.monthlyResults)for(const regime of month.result.regimes)assert.equal(regime.dre.difal,0);
    assert.equal(child.result.regimes.find((r:any)=>r.id==='pure').dre.icmsAnticipation,-.73,'A entrada continua calculada separadamente.');
    assert.deepEqual(child.rbt12Manual,original.rbt12Manual);assert.deepEqual(child.monthlyInputs,original.monthlyInputs);
@@ -141,7 +176,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    }finally{for(const mock of mocks)mock.mock.restore();}
   });
 
-  await t.test('refresh mantém CPF interestadual, UF pendente e edição concorrente da análise',async t=>{
+  await t.test('refresh zera CPF interestadual, preserva pendência de entrada e edição concorrente da análise',async t=>{
    switchWorkspace('refresh-cpf');const input=await fixture(),original=await save(input,820,false,record=>{
     record.modelVersion='LEGACY_REFRESH';record.result.version=record.modelVersion;
    });
@@ -171,12 +206,12 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    try{await assert.rejects(refreshSimulation(actor,raceOriginal._id,{}),code('ANALYSIS_RESULT_CHANGED'));}
    finally{raced.mock.restore();}
    assert.equal((await analyses.findOne(scope({_id:raceAnalysis.analysis.id})))!.currentSimulation.id,raceOriginal._id);
-   assert.equal((await getSimulation(childId)).result.regimes.find((r:any)=>r.id==='pure').dre.difal,-10,
-    'A filha preservada no histórico mantém o DIFAL do CPF interestadual, sem apresentá-la como corrente.');
+   assert.equal((await getSimulation(childId)).result.regimes.find((r:any)=>r.id==='pure').dre.difal,0,
+    'A filha preservada no histórico zera a saída, sem apresentá-la como corrente.');
    switchWorkspace('refresh-pending');const pendingInput=await fixture(''),pending=await save(pendingInput,821,false,record=>{
     record.modelVersion='LEGACY_REFRESH';record.result.version=record.modelVersion;
    });
-   await assert.rejects(refreshSimulation(actor,pending._id,{}),code('DIFAL_UF_PENDING'));
+   await assert.rejects(refreshSimulation(actor,pending._id,{}),code('ANTICIPATION_UF_PENDING'));
    assert.equal(await simulations.countDocuments(scope({parentSimulationId:pending._id})),0);
    assert.deepEqual(await simulations.findOne(scope({_id:pending._id})),pending,'Ausência de UF não pode virar zero confirmado.');
   });
@@ -229,14 +264,14 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    for(const original of originals)assert.deepEqual(await (await collection('simulations')).findOne(scope({_id:original._id})),original);
    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,safe._id));
    assert.equal(child.parentSimulationId,safe._id);assert.equal(child.draft.values.salesRevenue,110);
-   assert.deepEqual(child.draft.difalPolicy,upgradeDifalPolicy(policy));
-   for(const regime of child.result.regimes)assert.equal(regime.difalApplication.enabled,upgradeDifalPolicy(policy).enabled[regime.id as keyof typeof policy.enabled]);
+   assert.deepEqual(child.draft.difalPolicy,currentPolicy(policy));
+   for(const regime of child.result.regimes)assert.equal(regime.difalApplication.enabled,currentPolicy(policy).enabled[regime.id as keyof typeof policy.enabled]);
    assert.equal(child.draft.values.serviceRevenue,50);assert.equal(child.draft.values.regularPurchases,12);
    for(const field of ['salaries','benefits','adminExpenses','rent','cardExpenses'])assert.equal(child.draft.values[field],safe.draft.values[field]);
    assert.deepEqual(child.rbt12Manual,safe.rbt12Manual);assert.equal(child.rbt12Manual.confirmedBy.id,actor._id);
    assert.deepEqual(child.result,calculateMonthlySimulation(child.draft,child.source.monthlyReports,child.monthlyInputs,child.source.sales.jobId).result);
    assert.deepEqual(child.engineInput,calculateMonthlySimulation(child.draft,child.source.monthlyReports,child.monthlyInputs,child.source.sales.jobId).engineInput);
-   assert.equal(child.source.sales.difal.amountCents,1000);assert.equal(child.monthlyDre.months.length,12);
+   assert.equal(child.source.sales.difal.amountCents,0);assert.equal(child.monthlyDre.months.length,12);
    const additionalChild=await getSimulation(reprocessedSimulationId(scope().workspaceId,additional._id));
    assert.equal(additionalChild.draft.values.serviceRevenue,75);assert.equal(additionalChild.draft.values.salesRevenue,110);
    assert.equal(additionalChild.result.annualRevenue,(additional.draft.values.salesRevenue+additional.draft.values.serviceRevenue));
@@ -307,7 +342,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.equal(child.engineInput.months[0].input.credits.simple.cbsRate,.015);
    assert(Math.abs(child.result.credits.cbs.debit-160*.113)<1e-10);
    assert(Math.abs(child.result.credits.cbs.potential-12*.113)<1e-10);
-   assert.match(done.items[0].message,/CBS de 11,3%/);
+   assert.match(done.items[0].message,/DIFAL de saída zerado/);
    assert.deepEqual(await simulations.findOne(scope({_id:original._id})),original);
    assert.deepEqual(await simulations.findOne(scope({_id:oldChild._id})),oldChild);
    assert.deepEqual(await batches.findOne(scope({_id:oldBatchId})),oldBatch);
@@ -363,11 +398,11 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    await reprocessSimulations(actor,{});const done=await finish();
    assert.deepEqual(done.counts,{queued:0,processing:0,ok:2,pending:1,failed:0});
    const outcomes=new Map(done.items.map((item:any)=>[item.originalId,item]));
-   assert.equal(outcomes.get(enabled._id)!.code,'DIFAL_UF_PENDING');
+   assert.equal(outcomes.get(enabled._id)!.code,'ANTICIPATION_UF_PENDING');
    for(const original of [excluded,atSublimit]){
     const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id));
-    assert.deepEqual(child.draft.difalPolicy,upgradeDifalPolicy(original.draft.difalPolicy));
-    assert(child.source.monthlyReports[0].difal.pendingLines>0);
+    assert.deepEqual(child.draft.difalPolicy,currentPolicy(original.draft.difalPolicy));
+    assert.equal(child.source.monthlyReports[0].difal.pendingLines,0);
     assert(child.source.monthlyReports[0].anticipation.pendingLines>0);
     for(const regime of child.result.regimes){assert.equal(regime.dre.difal,0);assert.equal(regime.dre.icmsAnticipation,0);}
    }
@@ -375,7 +410,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.deepEqual({jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({_id:1}).toArray()},sourceBefore);
   });
 
-  await t.test('revisão V7 conserva entrada no Puro e saída no Híbrido e não altera relatórios nem originais',async()=>{
+  await t.test('revisão conserva entrada no Puro, desativa saída no Híbrido e não altera relatórios nem originais',async()=>{
    switchWorkspace('directions');const input=await fixture();
    const policy={...defaultDifalPolicy(),operations:{pure:{entry:true,exit:false},hybrid:{entry:false,exit:true}}};
    const original=await save({...input,draft:{...input.draft,difalPolicy:policy}},80);
@@ -384,9 +419,9 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const done=await reprocessSimulations(actor,{});assert.equal(done.version,REPROCESS_VERSION);
    assert.deepEqual(done.counts,{queued:0,processing:0,ok:1,pending:0,failed:0});
    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id));
-   assert.deepEqual(child.draft.difalPolicy,policy);assert.deepEqual(child.result.difalPolicy,policy);
+   assert.deepEqual(child.draft.difalPolicy,currentPolicy(policy));assert.deepEqual(child.result.difalPolicy,currentPolicy(policy));
    for(const regime of child.result.regimes){
-    assert.equal(regime.dre.difal,regime.id==='hybrid'?-10:0);
+    assert.equal(regime.dre.difal,0);
     assert.equal(regime.dre.icmsAnticipation,regime.id==='pure'?-.73:0);
    }
    assert.deepEqual(await (await collection('simulations')).findOne(scope({_id:original._id})),original);

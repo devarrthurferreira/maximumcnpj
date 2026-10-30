@@ -205,16 +205,18 @@ function rawDifalCsvFields(job:any,row:any,view:FinancialCsvView) {
   if(!isDifalVersion(version)||!row.difal||origin==='UNAVAILABLE')
     return [...prefix,'','','','Indisponível — reimporte as vendas','','UNAVAILABLE'];
   const pending=isPendingDifal(row.difal);
-  return [...prefix,DIFAL_RATE_PERCENT,pending?'':moneyText(row.difal.baseCents),pending?'':moneyText(row.difal.amountCents),
+  return [...prefix,version===DIFAL_VERSION?0:DIFAL_RATE_PERCENT,pending?'':moneyText(row.difal.baseCents),pending?'':moneyText(row.difal.amountCents),
     pending?(row.difal.reason==='MISSING_ISSUER_UF'?'Pendente — UF do emitente ausente':'Pendente — UF do destinatário ausente'):row.difal.reason,version,origin];
 }
 function selectedTaxCsvFields(raw: (string|number)[], view: FinancialCsvView, sales: boolean) {
+  if(sales && raw[6]===DIFAL_VERSION)return raw;
   const choice = difalDirectionSelection(view.difalPolicy, sales ? 'exit' : 'entry');
   // A zero in the selected columns expresses an explicit exclusion, not missing
   // fiscal evidence. Original availability and amounts remain in audit columns.
   return choice && !choice.enabled ? [...raw.slice(0, 2), '', '0,00', '0,00', 'Não incluído por escolha', ...raw.slice(6)] : raw;
 }
 function taxAuditCsvFields(raw: (string|number)[], view: FinancialCsvView, sales: boolean) {
+  if(sales && raw[6]===DIFAL_VERSION)return ['DIFAL de saída desativado',view.difalPolicy?.version||'',...raw.slice(2,6)];
   const choice = difalDirectionSelection(view.difalPolicy, sales ? 'exit' : 'entry');
   return [choice ? (choice.enabled ? choice.label : 'Não incluído por escolha — Simples puro e híbrido') : 'Sem escolha registrada — estimativa de origem', view.difalPolicy?.version || '', ...raw.slice(2, 6)];
 }

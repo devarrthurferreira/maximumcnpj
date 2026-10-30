@@ -1,5 +1,6 @@
 import {test,expect,type Page} from '@playwright/test';
-import {drePdfFixture} from '../fixtures/dre-pdf.mjs';
+import {legacyOutgoingDreFixture} from '../fixtures/dre-outgoing-legacy.mjs';
+import {OUTGOING_DIFAL_MESSAGE} from '../../public/simulator-engine.js';
 import {calculateMonthlySimulation} from '../../public/simulator-monthly.js';
 import {buildMonthlyDre} from '../../public/simulator-calendar.js';
 import {REPROCESS_VERSION} from '../../public/simulation-reprocess-contract.js';
@@ -7,18 +8,18 @@ import {REPROCESS_VERSION} from '../../public/simulation-reprocess-contract.js';
 const analysisId='96969696-9696-4696-8696-969696969606';
 const correctedId='96969696-9696-4696-8696-969696969607';
 const otherClientId='96969696-9696-4696-8696-969696969608';
-const previousModel='1.16.0-cpf-sales-difal-available-months';
+const previousModel='1.17.0-dre-sales-difal-sync-available-months';
 const money=(value:number)=>value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}).replace(/\u00a0/g,' ');
 
 function snapshots(){
-  const original:any=drePdfFixture();
+  const original:any=legacyOutgoingDreFixture();
   original.analysisId=analysisId;original.analysisRevision=4;
-  original.modelVersion=previousModel;original.result.version=previousModel;
+  expect(original.modelVersion).toBe(previousModel);
   const corrected=structuredClone(original);
   corrected._id=correctedId;corrected.parentSimulationId=original._id;
   corrected.reprocessing={version:REPROCESS_VERSION,originalId:original._id,completedAt:'2026-10-30T14:00:00Z'};
   for(const report of corrected.source.monthlyReports){
-    report.difal={...report.difal,version:'DIFAL_ESTIMATE_V5',baseCents:0,amountCents:0,eligibleLines:0,pendingLines:0};
+    report.difal={...report.difal,version:'DIFAL_ESTIMATE_V6',baseCents:0,amountCents:0,eligibleLines:0,pendingLines:0};
   }
   Object.assign(corrected,calculateMonthlySimulation(corrected.draft,corrected.source.monthlyReports,
     corrected.monthlyInputs,corrected.source.sales.jobId,null,corrected.analysisPeriod));
@@ -89,7 +90,13 @@ test('DRE atual oculta resultado antigo durante falha 503 e nova tentativa abre 
   await expect(page).toHaveURL(new RegExp(`${pair.corrected._id}&current=1$`));
   await expectStatement(page,pair.corrected);
   await expect(page.locator('[data-simulation-revision="updated"]')).toContainText('A versão anterior continua no histórico.');
-  await expect(page.locator('#simulator-difal [data-difal-empty]')).toContainText('Não possui vendas interestaduais para CPF elegíveis. DIFAL de saída: R$ 0,00.');
+  await expect(page.locator('#simulator-difal [data-difal-disabled]').first()).toHaveText(OUTGOING_DIFAL_MESSAGE);
+  // A client may have retained the old directional policy in its audited draft;
+  // the read-only current view must explain the applied policy from the result.
+  expect(pair.corrected.draft.difalPolicy.operations.pure.exit).toBe(true);
+  expect(pair.corrected.result.difalPolicy.operations.pure.exit).toBe(false);
+  await expect(page.locator('[data-difal-option="pure"] .sim-difal-scope')).toHaveText('entrada (compras)');
+  await expect(page.locator('[data-difal-option="hybrid"] .sim-difal-scope')).toHaveText('entrada (compras)');
   await expect(page.getByRole('link',{name:'Consultar versão anterior'})).toHaveAttribute('href',savedUrl(pair.original._id,'historical'));
   expect(writes(api.requests)).toEqual(Array.from({length:2},()=>({method:'POST',path:`/api/v4/simulations/${pair.original._id}/refresh`,body:'{}'})));
   expect(api.errors).toEqual([]);
@@ -129,7 +136,7 @@ test('viewer consulta o resumo da análise e segue a DRE atual indicada sem envi
   await page.goto(savedUrl(pair.original._id,'current'));
   await expect(page).toHaveURL(new RegExp(`${pair.corrected._id}&current=1$`));
   await expectStatement(page,pair.corrected);
-  await expect(page.locator('#simulator-difal [data-difal-empty]')).toContainText('DIFAL de saída: R$ 0,00.');
+  await expect(page.locator('#simulator-difal [data-difal-disabled]').first()).toHaveText(OUTGOING_DIFAL_MESSAGE);
   await expect(page.locator('[data-simulation-refresh],#retry-current-simulation,[data-simulation-revision="historical"]')).toHaveCount(0);
   expect(writes(api.requests)).toEqual([]);
   expect(api.requests.filter(request=>request.path.startsWith('/api/v4/')).map(request=>request.path)).toEqual([

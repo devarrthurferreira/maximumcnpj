@@ -112,23 +112,24 @@ test('Serviços importados formam sexto grupo sem duplicar receita; rateio prese
  assert.equal(Object.hasOwn(annualizeReports(fields,3).monthlyGroupsCents,'serviceRevenueCents'),false);
 });
 
-test('DIFAL usa total importado já arredondado por linha, média mensal e doze meses sem recalcular a base',()=>{
+test('projeção atual mantém saída zero e preserva o resumo antigo positivo sem aplicá-lo',()=>{
  const summary={version:'DIFAL_ESTIMATE_V1',ratePercent:10,issuerUf:'MG',eligibleLines:2,baseCents:10005,amountCents:1001,pendingLines:1};
  const p=projectDifal(summary,3,'source-job');
- assert.equal(p.version,'DIFAL_DRE_V1');assert.equal(p.sourceAmountCents,1001);assert.equal(p.sourceBaseCents,10005);
- assert.equal(p.monthlyCents,334);assert.equal(p.annualCents,4008);assert.equal(p.pendingLines,1);
+ assert.equal(p.version,'DIFAL_DRE_V1');assert.equal(p.sourceAmountCents,0);assert.equal(p.sourceBaseCents,0);
+ assert.equal(p.monthlyCents,0);assert.equal(p.annualCents,0);assert.equal(p.pendingLines,0);assert.equal(p.outgoingDisabled,true);
  assert.equal(p.sourceJobId,'source-job');assert.equal(summary.amountCents,1001);
  assert.equal(projectDifal(null,3,'source-job'),null);
  assert.equal(projectDifal({...summary,amountCents:0,baseCents:0,eligibleLines:0},3,'source-job').annualCents,0);
  for(const months of[0,13,1.5])assert.throws(()=>projectDifal(summary,months,'source-job'));
- for(const amountCents of[-1,1.2,'1',null,Infinity,Number.MAX_SAFE_INTEGER])assert.throws(()=>projectDifal({...summary,amountCents},1,'source-job'));
+ for(const amountCents of[-1,1.2,'1',null,Infinity,Number.MAX_SAFE_INTEGER+1])assert.throws(()=>projectDifal({...summary,amountCents},1,'source-job'));
+ assert.equal(projectDifal({...summary,amountCents:Number.MAX_SAFE_INTEGER},1,'source-job').annualCents,0);
  assert.throws(()=>projectDifal({...summary,ratePercent:18},1,'source-job'));
 });
 
 
-test('projeção aceita a versão CPF/CNPJ sem reclassificar versões históricas',()=>{
- for(const version of ['DIFAL_ESTIMATE_V1','DIFAL_ESTIMATE_V2','DIFAL_ESTIMATE_V3','DIFAL_ESTIMATE_V4','DIFAL_ESTIMATE_V5']){
+test('projeção nova ignora estimativas de saída positivas de todas as versões e permanece zerada',()=>{
+ for(const version of ['DIFAL_ESTIMATE_V1','DIFAL_ESTIMATE_V2','DIFAL_ESTIMATE_V3','DIFAL_ESTIMATE_V4','DIFAL_ESTIMATE_V5','DIFAL_ESTIMATE_V6']){
   const result=projectDifal({version,ratePercent:10,issuerUf:'MG',eligibleLines:3,baseCents:60000,amountCents:6000,pendingLines:0},2,'source-job');
-  assert.equal(result.sourceVersion,version);assert.equal(result.monthlyCents,3000);assert.equal(result.annualCents,36000);
+  assert.equal(result.sourceVersion,'DIFAL_ESTIMATE_V6');assert.equal(result.monthlyCents,0);assert.equal(result.annualCents,0);
  }
 });

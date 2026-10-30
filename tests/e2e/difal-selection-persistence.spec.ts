@@ -34,7 +34,7 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
   const policy={version:'DIFAL_SCENARIOS_V2',enabled:{pure:true,hybrid:true,presumed:false,actual:false},operations:{pure:{entry:true,exit:false},hybrid:{entry:true,exit:false}}};
   await page.goto('/generations.html');await page.locator('#generation-search').fill(code);
   await page.locator(`[data-select-company="${clientId}"]`).click();
-  for(const id of ['pure','hybrid'])await page.locator(`#generation-difal-exit-${id}`).uncheck();
+  for(const id of ['pure','hybrid']){await expect(page.locator(`#generation-difal-exit-${id}`)).toBeDisabled();await expect(page.locator(`#generation-difal-exit-${id}`)).not.toBeChecked();}
   const creating=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/generations'&&response.request().method()==='POST');
   await page.locator('#generation-create').click();const created=await creating;
   expect(created.ok()).toBe(true);expect(created.request().postDataJSON().companyDifalPolicies).toEqual([{clientId,difalPolicy:policy}]);
@@ -48,7 +48,7 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
     else{
       await expect(page.locator('#purchase-report-view .purchase-difal')).toHaveAttribute('data-tax-selection','disabled');
       await expect(page.locator('#purchase-report-view [data-difal-amount]')).toContainText('0,00');
-      await expect(page.locator('#purchase-report-view .purchase-difal')).toContainText('não incluído');
+      await expect(page.locator('#purchase-report-view .purchase-difal')).toContainText('Não possui DIFAL de saída');
       await page.locator('#purchase-report-view .purchase-difal').screenshot({path:info.outputPath('saida-excluida-relatorio-real.png')});
     }
     await expect(page.locator('[data-guided-continue]')).toBeVisible();await page.locator('[data-guided-continue]').click();
@@ -72,18 +72,18 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
   expect(saved.result.regimes.map((regime:any)=>Math.round(regime.dre.icmsAnticipation*100))).toEqual([-3660,-3660,0,0]);
   const jobId=saved.source.sales.jobId;
   const summary=await (await page.request.get(`/api/v4/sales/${jobId}/summary`)).json();
-  expect(summary.difalPolicy).toEqual(policy);expect(summary.difal.amountCents).toBe(1500);
+  expect(summary.difalPolicy).toEqual(policy);expect(summary.difal.amountCents).toBe(0);
   const exported=await post(`/api/v4/sales/${jobId}/csv`,{status:'ALL',part:1}),csv=csvParse(exported.content);
   expect(csv[0]).toContain('DIFAL estimado (R$)');
   expect(csv[1][csv[0].indexOf('DIFAL estimado (R$)')]).toBe('0,00');
-  expect(csv[1][csv[0].indexOf('Situação DIFAL')]).toContain('Não incluído por escolha');
+  expect(csv[1][csv[0].indexOf('Situação DIFAL')]).toContain('OUTGOING_DISABLED');
   const mongo=new MongoClient(process.env.MONGODB_URI!);
   try{
     await mongo.connect();const db=mongo.db(process.env.MONGODB_DB),workspaceId=process.env.WORKSPACE_ID||'maximum';
     const stored=await db.collection<any>('generations').findOne({_id:generationId,workspaceId});
     expect(stored?.companies.find((company:any)=>company.clientId===clientId).difalPolicy).toEqual(policy);
     const original=await db.collection<any>('lookupJobs').findOne({_id:jobId,workspaceId});
-    expect(original?.purchaseInput.difal.amountCents).toBe(1500);
+    expect(original?.purchaseInput.difal.amountCents).toBe(0);
   }finally{await mongo.close();}
   const fresh=await browser.newContext({baseURL});
   try{
@@ -100,7 +100,7 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
     expect(await (await fresh.request.get(`/api/v4/simulations/${saved._id}`)).json()).toEqual(saved);
     await reopened.goto(`/purchases.html?type=SALES&client=${clientId}&job=${jobId}`);
     await expect(reopened.locator('[data-difal-amount]')).toContainText('0,00');
-    await expect(reopened.locator('.purchase-difal')).toContainText('não incluído');
+    await expect(reopened.locator('.purchase-difal')).toContainText('Não possui DIFAL de saída');
   }finally{await fresh.close();}
   expect(errors).toEqual([]);
 });

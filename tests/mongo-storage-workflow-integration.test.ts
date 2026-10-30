@@ -211,7 +211,7 @@ test('três MongoDB preservam importação, reconsulta parcial, histórico, DRE,
       const details=await purchaseRows(recheckId,'ALL',1,false,SALES_MODE);
       assert.equal(details.total,2);assert.equal(details.items.find((item:any)=>item.cnpj===cnpj)?.details?.status,'NAO_OPTANTE');
       const exported=await purchaseExport(recheckId,'ALL',1,SALES_MODE);assert.equal(exported.total,502);assert(exported.content.includes(cnpj));
-      const estimate=await currentSalesDocumentDifal(recheckId);assert.equal(estimate.difal.eligibleLines,1);assert.equal(estimate.period.months,9);
+      const estimate=await currentSalesDocumentDifal(recheckId);assert.equal(estimate.difal.eligibleLines,0);assert.equal(estimate.difal.amountCents,0);assert.equal(estimate.period.months,9);
     });
 
     let savedSimulation:any,purchases:Doc;

@@ -86,23 +86,22 @@ test('MongoDB: serviços9000 e mercadorias com devolução alimentam DRE/DIFAL s
   const saved=await createSimulation(actor,request),baseline=calculateMonthlySimulation(draft,source.monthlyReports!.map(row=>({...row,difal:null})),request.monthlyInputs,source.sales.jobId).result;
   assert.equal(saved.manuallyAdjusted,false);assert.deepEqual(saved.adjustments,[]);
   close(saved.result.annualRevenue,11100.03);assert.equal(saved.projection.scenario.annual.revenueCents,1110003);
-  assert.equal(saved.difalProjection?.sourceJobId,sales.job._id);assert.equal(saved.difalProjection?.sourceAmountCents,90000);
-  assert.equal(saved.difalProjection?.sourceBaseCents,900000);assert.equal(saved.difalProjection?.eligibleLines,3);
-  assert(saved.difalProjection?.months.every((row:any)=>row.amountCents===30000));assert.equal(saved.difalProjection?.annualCents,90000);
-  assert.equal(saved.engineInput.months[0].input.difalMonthly,300);
+  assert.equal(saved.difalProjection?.sourceJobId,sales.job._id);assert.equal(saved.difalProjection?.sourceAmountCents,0);
+  assert.equal(saved.difalProjection?.sourceBaseCents,0);assert.equal(saved.difalProjection?.eligibleLines,0);
+  assert(saved.difalProjection?.months.every((row:any)=>row.amountCents===0));assert.equal(saved.difalProjection?.annualCents,0);
+  assert.equal(saved.engineInput.months[0].input.difalMonthly,0);
   for(const regime of saved.result.regimes){
    const prior=baseline.regimes.find(item=>item.id===regime.id)!;
-   close(regime.dre.services,3000.03);close(regime.dre.sales,8100);close(regime.dre.difal,['pure','hybrid'].includes(regime.id)?-900:0);
-   const applied=['pure','hybrid'].includes(regime.id)?900:0;
-   close(regime.dre.netRevenue,prior.dre.netRevenue-applied);close(regime.dre.preTax,prior.dre.preTax-applied);
-   close(regime.totalTaxes,prior.totalTaxes+applied);close(regime.annualProfit,prior.annualProfit-applied);
+   close(regime.dre.services,3000.03);close(regime.dre.sales,8100);close(regime.dre.difal,0);
+   close(regime.dre.netRevenue,prior.dre.netRevenue);close(regime.dre.preTax,prior.dre.preTax);
+   close(regime.totalTaxes,prior.totalTaxes);close(regime.annualProfit,prior.annualProfit);
   }
   const actual=saved.result.regimes.find(item=>item.id==='actual')!;
   close(actual.dre.csll,-Math.max(0,actual.dre.preTax)*.09);
   close(saved.result.memory.find(item=>item.id==='actual.preTax')!.value as number,actual.dre.preTax);
   assert.deepEqual(saved.result.credits,baseline.credits);
   assert.equal(saved.monthlyDre.version,'DRE_CALENDAR_V3');
-  assert(saved.monthlyDre.regimes.every((regime:any)=>regime.rows.find((row:any)=>row.key==='difal').months.slice(5,8).every((value:number)=>value===(['pure','hybrid'].includes(regime.id)?-300:0))));
+  assert(saved.monthlyDre.regimes.every((regime:any)=>regime.rows.find((row:any)=>row.key==='difal').months.slice(5,8).every((value:number)=>value===0)));
   for(const addition of[{difalProjection:{monthlyCents:0}},{difalMonthly:0},{source:{sales:{difal:{amountCents:0}}}}]){
    await assert.rejects(createSimulation(actor,{...request,...addition,simulationId:randomUUID()}),(error:any)=>error.code==='VALIDATION');
   }

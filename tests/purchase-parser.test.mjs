@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {amountCents, decimal, decodePurchaseCsv, parsePurchaseMatrix, fiscalDate} from '../public/purchase-parser.js';
 import {OPERATION_CATALOG_VERSION} from '../public/operation-catalog.js';
-import {DIFAL_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_CATALOG_VERSION} from '../public/difal.js';
+import {DIFAL_VERSION, DIFAL_CPF_ONLY_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_CATALOG_VERSION} from '../public/difal.js';
 import {ANTICIPATION_VERSION, ANTICIPATION_CPF_CNPJ_VERSION, ANTICIPATION_PREVIOUS_VERSION, ANTICIPATION_LEGACY_VERSION} from '../public/icms-anticipation.js';
 
 const header = Array(28).fill('');
@@ -282,7 +282,7 @@ test('CSV diagnostics keep physical line numbers across blank and quoted multili
 });
 
 
-test('DIFAL preview uses registered sale total, recipient UF and the shared isolated rule', () => {
+test('DIFAL preview preserves sale totals and displays outgoing disabled; explicit historical rules remain reproducible', () => {
   const sale = (document, uf, nature, description, value) => {
     const input = row(document,'Comprador sintético','',''+value);
     input[9]=uf; input[11]=nature; input[14]=description;
@@ -301,13 +301,15 @@ test('DIFAL preview uses registered sale total, recipient UF and the shared isol
   assert.equal(report.errors.length,0);
   assert.equal(report.rows[0].recipientUf,'SP');
   assert.equal(report.rows[0].operation,'VENDA');
-  assert.deepEqual(report.rows.map(row=>row.difal.amountCents),[1500,0,0,0,10000,0,0,0]);
-  assert.deepEqual(report.rows.map(row=>row.difal.eligible),[true,false,false,false,true,false,false,false]);
-  assert.equal(report.rows.at(-1).difal.reason,'NOT_CPF');
-  assert.equal(report.difal.amountCents,11500);
-  assert.equal(report.difal.baseCents,115000);
-  assert.equal(report.difal.eligibleLines,2);
+  assert.deepEqual(report.rows.map(row=>row.difal.amountCents),Array(8).fill(0));
+  assert.deepEqual(report.rows.map(row=>row.difal.eligible),Array(8).fill(false));
+  assert(report.rows.every(row=>row.difal.reason==='OUTGOING_DISABLED'));
+  assert.equal(report.difal.amountCents,0);
+  assert.equal(report.difal.baseCents,0);
+  assert.equal(report.difal.eligibleLines,0);
   assert.equal(report.difal.pendingLines,0);
+  const v5=parsePurchaseMatrix([header,...inputs],0,{type:'SALES',issuerUf:'MG',difalVersion:DIFAL_CPF_ONLY_VERSION});
+  assert.equal(v5.difal.amountCents,11500);assert.equal(v5.difal.eligibleLines,2);
   const v4=parsePurchaseMatrix([header,...inputs],0,{type:'SALES',issuerUf:'MG',difalVersion:DIFAL_CPF_CNPJ_VERSION});
   assert.equal(v4.difal.amountCents,14500);assert.equal(v4.difal.eligibleLines,4);
   const historical=parsePurchaseMatrix([header,...inputs],0,{type:'SALES',issuerUf:'MG',difalVersion:DIFAL_CATALOG_VERSION});
@@ -315,26 +317,28 @@ test('DIFAL preview uses registered sale total, recipient UF and the shared isol
   const changedUf=parsePurchaseMatrix([header,eligible],0,{type:'SALES',issuerUf:'SP'});
   assert.equal(changedUf.difal.amountCents,0);
   eligible[16]='1000,00';
-  assert.equal(parsePurchaseMatrix([header,eligible],0,{type:'SALES',issuerUf:'MG'}).rows[0].difal.amountCents,10000);
+  assert.equal(parsePurchaseMatrix([header,eligible],0,{type:'SALES',issuerUf:'MG'}).rows[0].difal.amountCents,0);
   eligible[24]='100,00'; eligible[26]='20,00'; eligible[27]='10,00'; eligible[25]='900,00';
   const adjusted=parsePurchaseMatrix([header,eligible],0,{type:'SALES',issuerUf:'MG'});
   assert.equal(adjusted.rows[0].totalCents,91000);
-  assert.equal(adjusted.rows[0].difal.baseCents,91000);
-  assert.equal(adjusted.rows[0].difal.amountCents,9100);
+  assert.equal(adjusted.rows[0].difal.baseCents,0);
+  assert.equal(adjusted.rows[0].difal.amountCents,0);
   assert.equal(adjusted.components.accessoryCents,90000);
 });
 
-test('DIFAL missing UF stays pending; purchases preserve nature and UF without sales DIFAL', () => {
+test('DIFAL V6 has no outgoing UF pending; historical V5 and purchases preserve their evidence', () => {
   const input=row('123.456.789-00','Comprador sintético','1','150,00');
   input[9]='SP'; input[11]='6108'; input[14]='Venda de mercadoria';
   const missingIssuer=parsePurchaseMatrix([header,input],0,{type:'SALES'});
-  assert.equal(missingIssuer.difal.pendingLines,1);
-  assert.equal(missingIssuer.rows[0].difal.reason,'MISSING_ISSUER_UF');
+  assert.equal(missingIssuer.difal.pendingLines,0);
+  assert.equal(missingIssuer.rows[0].difal.reason,'OUTGOING_DISABLED');
+  assert.equal(parsePurchaseMatrix([header,input],0,{type:'SALES',difalVersion:DIFAL_CPF_ONLY_VERSION}).difal.pendingLines,1);
   input[9]='XX';
   const missingRecipient=parsePurchaseMatrix([header,input],0,{type:'SALES',issuerUf:'MG'});
   assert.equal(missingRecipient.rows[0].recipientUf,'');
-  assert.equal(missingRecipient.rows[0].difal.reason,'MISSING_RECIPIENT_UF');
-  assert.equal(missingRecipient.difal.pendingLines,1);
+  assert.equal(missingRecipient.rows[0].difal.reason,'OUTGOING_DISABLED');
+  assert.equal(missingRecipient.difal.pendingLines,0);
+  assert.equal(parsePurchaseMatrix([header,input],0,{type:'SALES',issuerUf:'MG',difalVersion:DIFAL_CPF_ONLY_VERSION}).difal.pendingLines,1);
   const purchase=parsePurchaseMatrix([header,input]);
   for (const key of ['difal','operation']) assert.equal(key in purchase.rows[0],false);
   assert.equal(purchase.rows[0].natureCode,'6108'); assert.equal(purchase.rows[0].natureOperation,'VENDA');
@@ -409,7 +413,7 @@ test('legacy resumed sales preserve the original classification and upload field
   assert.equal(parsed.difal,null);
 });
 
-test('5102 inclui todas as competências e linhas repetidas do mesmo CPF; retomada V1 permanece imutável', () => {
+test('5102 conserva receita e competências com saída zero; V5 e retomada V1 permanecem reproduzíveis', () => {
   const inputs = Array.from({length:12}, (_, month) => {
     const input = row('123.456.789-00','Comprador sintético','1','100,00');
     input[7]=`15/${String(month+1).padStart(2,'0')}/2025`;
@@ -419,9 +423,12 @@ test('5102 inclui todas as competências e linhas repetidas do mesmo CPF; retoma
   });
   const current = parsePurchaseMatrix([header,...inputs,inputs[0]],0,{type:'SALES',issuerUf:'MG'});
   assert.deepEqual(current.errors,[]); assert.equal(current.period.months,12); assert.equal(current.period.observedMonths,12);
-  assert.equal(current.difal.version,DIFAL_VERSION); assert.equal(current.difal.eligibleLines,13);
-  assert.equal(current.difal.baseCents,13*9400); assert.equal(current.difal.amountCents,13*940);
-  assert(current.rows.every(row=>row.operation==='VENDA' && row.difal.amountCents===940));
+  assert.equal(current.difal.version,DIFAL_VERSION); assert.equal(current.difal.eligibleLines,0);
+  assert.equal(current.difal.baseCents,0); assert.equal(current.difal.amountCents,0);
+  assert(current.rows.every(row=>row.operation==='VENDA' && row.difal.amountCents===0));
+  assert.equal(current.totalCents,13*9400);
+  const v5=parsePurchaseMatrix([header,...inputs,inputs[0]],0,{type:'SALES',issuerUf:'MG',difalVersion:DIFAL_CPF_ONLY_VERSION});
+  assert.equal(v5.difal.amountCents,13*940);assert.equal(v5.difal.eligibleLines,13);
   const legacy = parsePurchaseMatrix([header,...inputs],0,{type:'SALES',issuerUf:'MG',difalVersion:'DIFAL_ESTIMATE_V1'});
   assert.equal(legacy.totalCents,12*9400); assert.equal(legacy.difal.amountCents,0);
   assert(legacy.rows.every(row=>row.operation==='OUTRAS'));

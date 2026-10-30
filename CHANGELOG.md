@@ -1,5 +1,15 @@
 # Histórico de alterações
 
+## [0.54.2] — 2026-10-30
+
+- Desativa o DIFAL de saída na regra gerencial atual, inclusive em vendas interestaduais para CPF, mantendo receita, classificação das vendas e antecipação de compras independentes.
+- Versiona o cálculo de origem como `DIFAL_ESTIMATE_V6`, preserva as versões V1–V5 para auditoria e invalida resumos antigos pelo contrato atual.
+- Zera a saída no motor, na DRE mensal/consolidada e nas exportações, mesmo com opções ou referências antigas positivas, recalculando os totais correspondentes.
+- Atualiza as mensagens dos cartões e relatórios e mantém a seleção de saída desativada, sem confundir imposto não aplicado com inexistência de vendas interestaduais.
+- Cria revisões atuais vinculadas pelo motor `1.18.0-no-outgoing-difal` e lote `OUTGOING_DIFAL_DISABLED_2026_10_V13`, conservando os snapshots anteriores e as verificações de origem, autorização e competência.
+- Confirma o recibo da mesma versão e workspace em exclusões concorrentes, sem transformar outros erros em sucesso nem remover fontes ou outras versões.
+- Acrescenta regressões com CPF interestadual, referência antiga de R$ 17.431,97, entrada preservada, DRE, CSV/PDF, histórico e navegador com dados sintéticos.
+
 ## [0.54.1] — 2026-10-30
 
 - Confere a DRE atual ao abri-la e cria uma revisão dos cálculos antigos com os relatórios de origem, corrigindo a divergência entre o resumo de saídas atualizado e a DRE salva.

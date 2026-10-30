@@ -1,16 +1,18 @@
 import {classifyOperationNature, normalizeOperationNature} from './operation-catalog.ts';
 import {normalizeCnpj} from './domain.ts';
-/** Estimated managerial DIFAL, not a legal rate lookup. Keep this module browser-safe. */
-export const DIFAL_VERSION = 'DIFAL_ESTIMATE_V5';
+/** Managerial outgoing DIFAL is disabled for current calculations. Keep this module browser-safe. */
+export const DIFAL_VERSION = 'DIFAL_ESTIMATE_V6';
+/** Historical interstate CPF rule, retained only to reproduce frozen estimates. */
+export const DIFAL_CPF_ONLY_VERSION = 'DIFAL_ESTIMATE_V5';
 /** Historical CPF/CNPJ rule, retained only to validate immutable snapshots. */
 export const DIFAL_CPF_CNPJ_VERSION = 'DIFAL_ESTIMATE_V4';
 export const DIFAL_CATALOG_VERSION = 'DIFAL_ESTIMATE_V3';
 export const DIFAL_PREVIOUS_VERSION = 'DIFAL_ESTIMATE_V2';
 export const DIFAL_LEGACY_VERSION = 'DIFAL_ESTIMATE_V1';
-export type DifalVersion = typeof DIFAL_VERSION | typeof DIFAL_CPF_CNPJ_VERSION | typeof DIFAL_CATALOG_VERSION | typeof DIFAL_PREVIOUS_VERSION | typeof DIFAL_LEGACY_VERSION;
+export type DifalVersion = typeof DIFAL_VERSION | typeof DIFAL_CPF_ONLY_VERSION | typeof DIFAL_CPF_CNPJ_VERSION | typeof DIFAL_CATALOG_VERSION | typeof DIFAL_PREVIOUS_VERSION | typeof DIFAL_LEGACY_VERSION;
 export type DifalOrigin = 'IMPORTED' | 'DERIVED_FROM_SNAPSHOT' | 'UNAVAILABLE';
 export function isDifalVersion(value: unknown): value is DifalVersion {
-  return value === DIFAL_VERSION || value === DIFAL_CPF_CNPJ_VERSION || value === DIFAL_CATALOG_VERSION || value === DIFAL_PREVIOUS_VERSION || value === DIFAL_LEGACY_VERSION;
+  return value === DIFAL_VERSION || value === DIFAL_CPF_ONLY_VERSION || value === DIFAL_CPF_CNPJ_VERSION || value === DIFAL_CATALOG_VERSION || value === DIFAL_PREVIOUS_VERSION || value === DIFAL_LEGACY_VERSION;
 }
 export const DIFAL_RATE_PERCENT = 10;
 /** Explicit conservative sale-purpose configuration; an initial 6 alone is never sufficient. */
@@ -20,7 +22,7 @@ const LEGACY_CFOPS = ['6101', '6102', '6103', '6104', '6105', '6106', '6107', '6
 export const DIFAL_ELIGIBLE_CFOPS = ['5102', ...LEGACY_CFOPS] as const;
 function eligibleNature(code: string, version: DifalVersion): boolean {
   if (!isDifalVersion(version)) throw new TypeError('Versão do DIFAL desconhecida.');
-  if (version === DIFAL_VERSION || version === DIFAL_CPF_CNPJ_VERSION || version === DIFAL_CATALOG_VERSION) return classifyOperationNature(code) === 'VENDA';
+  if (version === DIFAL_VERSION || version === DIFAL_CPF_ONLY_VERSION || version === DIFAL_CPF_CNPJ_VERSION || version === DIFAL_CATALOG_VERSION) return classifyOperationNature(code) === 'VENDA';
   return (version === DIFAL_LEGACY_VERSION ? LEGACY_CFOPS : DIFAL_ELIGIBLE_CFOPS).some(value => value === code);
 }
 export const BRAZIL_UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'] as const;
@@ -38,7 +40,7 @@ function normalizedOperationText(value: unknown) {
 }
 export function salesOperation(natureCode: unknown, description: unknown, configuredSales = true, version: DifalVersion = DIFAL_VERSION): SalesOperation {
   const code = normalizeNatureCode(natureCode);
-  if (version === DIFAL_VERSION || version === DIFAL_CPF_CNPJ_VERSION || version === DIFAL_CATALOG_VERSION) {
+  if (version === DIFAL_VERSION || version === DIFAL_CPF_ONLY_VERSION || version === DIFAL_CPF_CNPJ_VERSION || version === DIFAL_CATALOG_VERSION) {
     const operation = classifyOperationNature(code);
     return operation === 'VENDA' ? 'VENDA' : operation === 'SERVICO_VENDA' ? 'SERVICO' : operation === 'DEVOLUCAO_COMPRA' ? 'DEVOLUCAO' : 'OUTRAS';
   }
@@ -55,13 +57,14 @@ export function salesOperation(natureCode: unknown, description: unknown, config
   return 'OUTRAS';
 }
 
-export type DifalReason = 'ELIGIBLE' | 'NOT_SALE' | 'INELIGIBLE_NATURE' | 'NOT_CPF' | 'NOT_CPF_OR_CNPJ' | 'MISSING_ISSUER_UF' | 'MISSING_RECIPIENT_UF' | 'SAME_UF' | 'INVALID_TOTAL';
+export type DifalReason = 'OUTGOING_DISABLED' | 'ELIGIBLE' | 'NOT_SALE' | 'INELIGIBLE_NATURE' | 'NOT_CPF' | 'NOT_CPF_OR_CNPJ' | 'MISSING_ISSUER_UF' | 'MISSING_RECIPIENT_UF' | 'SAME_UF' | 'INVALID_TOTAL';
 export type DifalResult = {eligible: boolean; baseCents: number; amountCents: number; reason: DifalReason};
 export type DifalInput = {totalCents: unknown; natureCode?: unknown; description?: unknown; operation?: unknown; document?: unknown; issuerUf?: unknown; recipientUf?: unknown};
 export function calculateDifal(input: DifalInput, version: DifalVersion = DIFAL_VERSION): DifalResult {
   if (!isDifalVersion(version)) throw new TypeError('Versão do DIFAL desconhecida.');
   const rejected = (reason: DifalReason): DifalResult => ({eligible: false, baseCents: 0, amountCents: 0, reason});
   if (typeof input.totalCents !== 'number' || !Number.isSafeInteger(input.totalCents) || input.totalCents < 0) return rejected('INVALID_TOTAL');
+  if (version === DIFAL_VERSION) return rejected('OUTGOING_DISABLED');
   if (salesOperation(input.natureCode, input.description, true, version) !== 'VENDA' || (input.operation !== undefined && input.operation !== 'VENDA')) return rejected('NOT_SALE');
   if (!eligibleNature(normalizeNatureCode(input.natureCode), version)) return rejected('INELIGIBLE_NATURE');
   const document = String(input.document ?? '').trim().replace(/[.\/\-\s]/g, '');

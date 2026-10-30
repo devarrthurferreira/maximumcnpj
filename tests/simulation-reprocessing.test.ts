@@ -20,6 +20,11 @@ function fixture(){
  Object.defineProperty(source,'monthlyReports',{enumerable:true,get(){const count=original.reportMonths,p=annualizeReports(source.fields,count);return Array.from({length:count},(_,index)=>({sourceMonth:`2025-${String(index+1).padStart(2,'0')}`,month:index+1,fields:Object.fromEntries(Object.entries(source.fields).map(([key,total])=>[key,index<count-1?p.monthlyGroupsCents[key]:Number(total)-p.monthlyGroupsCents[key]*(count-1)])),salesLines:2,purchaseLines:1,anticipation:{...anticipation,pendingLines:0},difal:source.sales.difal?{...source.sales.difal,amountCents:index<count-1?Math.floor(source.sales.difal.amountCents/count):source.sales.difal.amountCents-Math.floor(source.sales.difal.amountCents/count)*(count-1)}:null}));}});
  return {original,source};
 }
+const currentPolicy = (value:any) => {
+  const policy=upgradeDifalPolicy(value);
+  return {...policy,operations:{pure:{...policy.operations.pure,exit:false},hybrid:{...policy.operations.hybrid,exit:false}}};
+};
+
 const difalPolicy=(enabled:Record<string,boolean>={})=>({version:'DIFAL_SCENARIOS_V1',enabled:{pure:true,hybrid:true,presumed:true,actual:true,...enabled}});
 const anticipation={version:'ICMS_ANTICIPATION_V3',ratePercent:7.32,issuerUf:'MG',eligibleLines:0,baseCents:0,amountCents:0,pendingLines:1};
 
@@ -29,11 +34,11 @@ test('recálculo atualiza política e direções somente na versão vinculada, p
  assert.equal(Object.hasOwn(original.draft,'difalPolicy'),false,'O original sem política permanece sem o campo.');
  original.source.difalPolicy={...defaultDifalPolicy(),enabled:{pure:false,hybrid:true,presumed:false,actual:false},
   operations:{pure:{entry:false,exit:false},hybrid:{entry:false,exit:true}}};
- assert.deepEqual(planReprocessing(original,source,'ws').input.draft.difalPolicy,original.source.difalPolicy,'Sem escolha própria, a revisão conserva a opção da empresa congelada na fonte.');
+ assert.deepEqual(planReprocessing(original,source,'ws').input.draft.difalPolicy,currentPolicy(original.source.difalPolicy),'A revisão conserva entrada e desativa saída, sem modificar a política congelada.');
 
  original.draft.difalPolicy=difalPolicy({pure:false,presumed:false});
  const before=structuredClone(original),planned=planReprocessing(original,source,'ws');
- assert.deepEqual(planned.input.draft.difalPolicy,upgradeDifalPolicy(before.draft.difalPolicy));assert.deepEqual(original,before);
+ assert.deepEqual(planned.input.draft.difalPolicy,currentPolicy(before.draft.difalPolicy));assert.deepEqual(original,before);
  planned.input.draft.difalPolicy.enabled.hybrid=false;
  assert.equal(original.draft.difalPolicy.enabled.hybrid,true,'A revisão não compartilha o objeto de opções do original.');
  for(const invalid of [null,{...difalPolicy(),version:'UNKNOWN'},difalPolicy({pure:'false' as any}),{...difalPolicy(),extra:true}]){
@@ -55,7 +60,7 @@ test('pendências de UF só bloqueiam impostos potencialmente usados por algum r
  original.draft.difalPolicy.enabled.presumed=true;
  assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Lucro Presumido legado não habilita DIFAL na revisão atual.');
  original.draft.difalPolicy.enabled.pure=true;
- assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='DIFAL_SOURCE_MISSING');
+ assert.doesNotThrow(()=>planReprocessing(original,{...current,monthlyReports:current.monthlyReports.map((row:any)=>({...row,anticipation:{...row.anticipation,pendingLines:0}}))},'ws'),'Saída desativada dispensa a estimativa de saída.');
  original.draft.difalPolicy.enabled.pure=false;
  current.monthlyReports[0].difal={...source.sales.difal,pendingLines:0};
  assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Lucro Presumido não aplica antecipação de compras.');
@@ -80,7 +85,7 @@ test('revisão exige somente a evidência da direção selecionada para Puro ou 
   operations:{pure:{entry:true,exit:false},hybrid:{entry:false,exit:true}}};
  const originalBefore=structuredClone(original);
  const entryPlan=planReprocessing(original,current,'ws');
- assert.deepEqual(entryPlan.input.draft.difalPolicy,original.draft.difalPolicy);
+ assert.deepEqual(entryPlan.input.draft.difalPolicy,currentPolicy(original.draft.difalPolicy));
  assert.deepEqual(original,originalBefore);
  current.monthlyReports[0].difal=null;
  assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Somente entrada dispensa a estimativa de saída.');
@@ -89,10 +94,10 @@ test('revisão exige somente a evidência da direção selecionada para Puro ou 
  current.monthlyReports[0].anticipation={...anticipation};
  assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING');
  original.draft.difalPolicy.enabled={pure:false,hybrid:true,presumed:false,actual:false};
- assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='DIFAL_SOURCE_MISSING');
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Saída desativada não exige fonte de imposto.');
  current.monthlyReports[0].difal={...source.sales.difal,pendingLines:0};
  const exitPlan=planReprocessing(original,current,'ws');
- assert.deepEqual(exitPlan.input.draft.difalPolicy.operations,{pure:{entry:true,exit:false},hybrid:{entry:false,exit:true}});
+ assert.deepEqual(exitPlan.input.draft.difalPolicy.operations,{pure:{entry:true,exit:false},hybrid:{entry:false,exit:false}});
  delete current.monthlyReports[0].anticipation;
  assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Somente saída dispensa a estimativa de entrada.');
  original.draft.difalPolicy.operations.hybrid.exit=false;
@@ -120,7 +125,7 @@ test('UF pendente no mês bloqueado não impede o mês aplicável com RBT12 móv
  assert.deepEqual(buildRbt12Schedule(planned.context.rbt12Extraction,current.monthlyReports.map((row:any)=>row.sourceMonth)).rows.map(row=>row.rbt12Cents),[359_999_999,360_000_000]);
  assert.deepEqual(original,before);
  current.monthlyReports[0].difal.pendingLines=1;
- assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='DIFAL_UF_PENDING'&&error.message.includes('2025-01'));
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'UF de saída não impede a revisão com saída desativada.');
  current.monthlyReports[0].difal.pendingLines=0;current.monthlyReports[0].anticipation.pendingLines=1;
  assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING'&&error.message.includes('2025-01'));
 });
@@ -198,14 +203,12 @@ test('recálculo conserva ajustes de vendas negativos, admite devoluções super
  }
 });
 
-test('totais/baseline divergentes, compras negativas, período trocado e DIFAL parcial não recebem OK',()=>{
+test('totais/baseline divergentes, compras negativas e período trocado não recebem OK',()=>{
  for(const [code,change]of[
   ['REPROCESS_INPUT_TOTAL',(o:any,s:any)=>o.draft.values.salesRevenue=159],
   ['REPROCESS_BASELINE',(o:any,s:any)=>o.baselineMonthlyGroups.salesCpfCents=149],
   ['REPROCESS_ADJUSTMENT',(o:any,s:any)=>{o.monthlyGroups.purchasesNonOptantCents=0;o.draft.values.regularPurchases=0;s.fields.purchasesNonOptantCents=500;}],
   ['REPROCESS_PERIOD',(o:any,s:any)=>{o.reportPeriod={startMonth:'2026-01',endMonth:'2026-01',months:1};s.period={startMonth:'2026-02',endMonth:'2026-02',months:1};}],
-  ['DIFAL_UF_PENDING',(o:any,s:any)=>s.sales.difal.pendingLines=1],
-  ['DIFAL_SOURCE_MISSING',(o:any,s:any)=>delete s.sales.difal],
   ['RBT12_REQUIRED',(o:any,s:any)=>delete o.rbt12Manual.confirmedBy],
  ]as const){const {original,source}=fixture();change(original,source);assert.throws(()=>planReprocessing(original,source,'ws'),(e:any)=>e.code===code,code);}
 });
