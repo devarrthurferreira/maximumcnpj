@@ -182,6 +182,14 @@ def selected_tax_story(total, report_type, scope, width, styles):
     p = lambda value, style='body': purchase_paragraph(value, styles, style)
     reports = lambda count: f'{number(count)} relatório' + ('s' if count != 1 else '')
     sales = report_type == 'SALES'
+    if sales and total.get('version') == DIFAL_VERSION:
+        for estimate in (total, total['sourceEstimate'], total['unconfiguredEstimate']):
+            _check(all(estimate.get(key) == 0 for key in ('baseCents', 'amountCents', 'eligibleLines', 'pendingLines', 'unavailableReports')))
+        return [p(f'DIFAL de saída {scope}', 'heading'),
+                p('Não possui DIFAL de saída. Valor considerado na análise: R$ 0,00.'),
+                p('O DIFAL de saída está desativado nesta regra de análise para todas as empresas desta parte, '
+                  'inclusive nas vendas a CPF de outro estado. Os totais de vendas permanecem preservados; '
+                  'o DIFAL de entrada é apurado separadamente.', 'small')]
     title = 'DIFAL sobre vendas (10%)' if sales else 'DIFAL de entrada — Antecipação de ICMS (7,32%)'
     direction = 'saída' if sales else 'entrada'
     story = [p(f'{title} {scope}', 'heading')]
@@ -226,7 +234,7 @@ def selected_tax_story(total, report_type, scope, width, styles):
                 (.30, .30, .20, .20), width, styles), Spacer(1, 4)]
         if source['unavailableReports']:
             story.append(p(f'{reports(source["unavailableReports"])} sem estimativa disponível nos dados salvos.', 'small'))
-    story.append(p('Estimativa gerencial separada dos totais de compras e vendas. A seleção de entrada e saída é independente. '
+    story.append(p('Estimativa gerencial separada dos totais de compras e vendas. '
                    'As regras de regime e sublimite são aplicadas por competência na DRE.', 'small'))
     return story
 

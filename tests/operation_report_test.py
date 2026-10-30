@@ -60,7 +60,7 @@ class OperationReportTests(unittest.TestCase):
         lines[0].update(operationVersion=OPERATION_CATALOG_VERSION, natureOperation='VENDA')
         meta = reconcile_purchase_snapshot(job, lines, items, WORKSPACE)
         self.assertEqual(meta['natureTotals'], [{'natureCode': '6301', 'operation': 'VENDA', 'lines': 1, 'totalCents': 15000}])
-        self.assertEqual(meta['difal']['amountCents'], 1500)
+        self.assertEqual(meta['difal']['amountCents'], 0)
         self.assertIn('Receita de vendas', story_text(meta))
         self.assertNotIn('purchaseSelection', meta)
 

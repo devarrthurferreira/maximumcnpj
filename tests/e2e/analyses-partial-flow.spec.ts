@@ -37,9 +37,11 @@ test('Análises começa na empresa, escolhe setor, regimes, DIFAL e oferece RBT1
   await page.locator('#analysis-difal-yes').check();
   for(const id of ['pure','hybrid']){
     await expect(page.locator(`[data-analysis-difal="${id}"] input[type=checkbox]`)).toHaveCount(3);
-    await expect(page.locator(`[data-analysis-difal="${id}"]`)).toContainText('Incluir DIFAL neste regime');
+    await expect(page.locator(`[data-analysis-difal="${id}"]`)).toContainText('Incluir DIFAL de entrada neste regime');
     await expect(page.locator(`[data-analysis-difal="${id}"]`)).toContainText('ENTRADA - antecipação das compras');
-    await expect(page.locator(`[data-analysis-difal="${id}"]`)).toContainText('SAÍDAS - vendas');
+    await expect(page.locator(`[data-analysis-difal="${id}"]`)).toContainText('SAÍDA - desativada');
+    const outgoing=page.locator(`[data-analysis-difal="${id}"] [data-analysis-difal-operation="exit"]`);
+    await expect(outgoing).toBeDisabled();await expect(outgoing).not.toBeChecked();
   }
   await page.locator('[data-analysis-difal-regime=hybrid][data-analysis-difal-operation=entry]').uncheck();
   await page.locator('#analysis-wizard-next').click();await expect(wizard).toHaveAttribute('data-wizard-step','rbt12');

@@ -1,4 +1,12 @@
-# Maximum CNPJ · v0.54.1
+# Maximum CNPJ · v0.54.2
+
+## DIFAL de saída desativado — v0.54.2
+
+Por regra expressa da análise gerencial da Maximum, o **DIFAL de saída é zero, inclusive nas vendas interestaduais para CPF**. A regra atual `DIFAL_ESTIMATE_V6` não aplica saída para CPF, CNPJ ou outra identificação; não depende de opções antigas marcadas, alíquota manual ou UF. Isso não remove as vendas, não altera sua classificação nem modifica o cálculo independente da antecipação de ICMS sobre compras. O período continua sendo janeiro a setembro, com as competências fiscais disponíveis.
+
+A leitura concluída, o relatório de vendas, a DRE mensal/consolidada e suas exportações usam essa regra. A interface informa **Não possui DIFAL de saída** e mantém a saída indisponível para seleção. A mensagem identifica a regra da análise; não afirma que inexiste venda interestadual ou que esta seja uma orientação tributária geral. O metadado de taxa das versões anteriores permanece reconhecido pelo contrato de auditoria, sem gerar base, linhas elegíveis, pendências ou valor de saída na V6.
+
+A DRE atual é recalculada com impostos, receita líquida e resultado consistentes. O motor passa a `1.18.0-no-outgoing-difal` (e variante `-available-months`), e as revisões a `OUTGOING_DIFAL_DISABLED_2026_10_V13`. Reabrir um resultado antigo como atual gera uma revisão vinculada com a saída zerada. As versões históricas, inclusive `DIFAL_ESTIMATE_V5`, mantêm os valores originalmente capturados; arquivos fiscais e dados contábeis não são apagados. Exclusões concorrentes reconhecem somente o recibo da mesma versão e workspace, evitando erro de chave duplicada sem apagar fontes ou outras versões. A indisponibilidade de documentos, falhas de leitura e inconsistências de receita continuam explícitas: desativar um tributo não transforma erro de origem em leitura concluída.
 
 ## DIFAL de saída zerado também na DRE atual — v0.54.1
 

@@ -87,9 +87,12 @@ async function financialTaxes(name:string,id:string,job:Doc,deriveLegacy = false
       'Antecipação de ICMS divergente dos dados da compra. Emissão bloqueada.',409,'ANTICIPATION_SNAPSHOT');
     }
   }
-  // Historical rows may support a current estimate without changing their import contract.
-  // Missing fields make the whole estimate unavailable; an explicitly empty UF is a pending estimate.
-  const canDerive=(derivePurchase||deriveSales)&&rows.length===job.expectedRows&&
+  // Current outgoing DIFAL is disabled over a reconciled file, even when an old
+  // import lacks eligibility fields. This does not bypass the historical or
+  // operation checks above, nor the financial/period checks of its caller.
+  const canDeriveSales=deriveSales&&rows.length===job.expectedRows&&
+    (job.issuerUf===undefined||typeof job.issuerUf==='string'&&job.issuerUf===normalizeUf(job.issuerUf));
+  const canDerivePurchase=derivePurchase&&rows.length===job.expectedRows&&
     (job.issuerUf===undefined||typeof job.issuerUf==='string'&&job.issuerUf===normalizeUf(job.issuerUf))&&
     rows.every(row=>typeof row.natureCode==='string'&&/^\d{4}$/.test(row.natureCode)&&
       typeof row.recipientUf==='string'&&row.recipientUf===normalizeUf(row.recipientUf));
@@ -102,10 +105,10 @@ async function financialTaxes(name:string,id:string,job:Doc,deriveLegacy = false
     if(historicalAnticipation)need(sameTaxSummary(historicalAnticipation,job.purchaseInput?.anticipation),
       'Resumo da antecipação de ICMS divergente do snapshot. Emissão bloqueada.',409,'ANTICIPATION_SNAPSHOT');
   }
-  return {difal:deriveSales?(canDerive?summarizeDifal(rows.map(row=>({...row,totalCents:row.totalCents,operation:undefined})),job.issuerUf,DIFAL_VERSION):null):historicalDifal,
-    difalOrigin:deriveSales?(canDerive?'DERIVED_FROM_SNAPSHOT':'UNAVAILABLE'):salesTax?'IMPORTED':'UNAVAILABLE',
-    anticipation:derivePurchase?(canDerive?summarizeAnticipation(rows.map(row=>({...row,totalCents:row.totalCents})),job.issuerUf,ANTICIPATION_VERSION):null):historicalAnticipation,
-    anticipationOrigin:derivePurchase?(canDerive?'DERIVED_FROM_SNAPSHOT':'UNAVAILABLE'):purchaseTax?'IMPORTED':'UNAVAILABLE'};
+  return {difal:deriveSales?(canDeriveSales?summarizeDifal(rows.map(row=>({...row,totalCents:row.totalCents,operation:undefined})),job.issuerUf,DIFAL_VERSION):null):historicalDifal,
+    difalOrigin:deriveSales?(canDeriveSales?'DERIVED_FROM_SNAPSHOT':'UNAVAILABLE'):salesTax?'IMPORTED':'UNAVAILABLE',
+    anticipation:derivePurchase?(canDerivePurchase?summarizeAnticipation(rows.map(row=>({...row,totalCents:row.totalCents})),job.issuerUf,ANTICIPATION_VERSION):null):historicalAnticipation,
+    anticipationOrigin:derivePurchase?(canDerivePurchase?'DERIVED_FROM_SNAPSHOT':'UNAVAILABLE'):purchaseTax?'IMPORTED':'UNAVAILABLE'};
 }
 /** Derive today's estimate from already reconciled frozen rows for a new scenario. */
 export async function currentSalesDifal(summary: Awaited<ReturnType<typeof reconciledPurchaseSummary>>): Promise<DifalSummary | null> {

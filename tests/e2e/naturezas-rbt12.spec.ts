@@ -26,7 +26,7 @@ async function statement(page:Page,clientId:string,extractionId:string,result:an
   await page.locator('#rbt12-pdf').setInputFiles({name:'extrato-23-meses-sintetico.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic-transport-only')});
 }
 
-test('compras CPF/CNPJ e vendas somente CPF geram DIFAL no relatório, CSV, DRE mensal e histórico',async({page,browser,baseURL},info)=>{
+test('compras CPF/CNPJ preservam antecipação e vendas CPF/CNPJ mantêm saída zero no relatório, CSV e DRE',async({page,browser,baseURL},info)=>{
   test.setTimeout(120_000);page.setDefaultTimeout(15_000);
   expect(process.env.MONGODB_URI,'Use MongoDB descartável').toBeTruthy();
   const origin=new URL(baseURL!).origin,errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
@@ -93,16 +93,17 @@ test('compras CPF/CNPJ e vendas somente CPF geram DIFAL no relatório, CSV, DRE 
       const detailed=await page.context().newPage();
       try{
         await detailed.goto((await page.locator('.purchase-guided-detail').getAttribute('href'))!);
-        await expect(detailed.locator('#purchase-report-view [data-difal-amount]')).toContainText('1.800,00');
+        await expect(detailed.locator('#purchase-report-view [data-difal-amount]')).toContainText('0,00');
+        await expect(detailed.locator('#purchase-report-view .purchase-difal')).toContainText('Não possui DIFAL de saída');
         await detailed.locator('#purchase-view-filter').selectOption('lines');
         const legalEntity=detailed.locator('#purchase-result-list tbody tr').filter({hasText:'Comprador CNPJ sintético'});
-        await expect(legalEntity).toContainText('4.000,00');await expect(legalEntity).toContainText('Não se aplica');
+        await expect(legalEntity).toContainText('4.000,00');await expect(legalEntity.locator('[data-tax-cell-amount]')).toContainText('0,00');
         const downloading=detailed.waitForEvent('download');await detailed.locator('#purchase-csv').click();const download=await downloading,stream=await download.createReadStream(),parts:Buffer[]=[];
         for await(const part of stream!)parts.push(Buffer.from(part));const workbook=XLSX.read(Buffer.concat(parts).toString('utf8'),{type:'string',raw:true});
         const csvRows=XLSX.utils.sheet_to_json<string[]>(workbook.Sheets[workbook.SheetNames[0]],{header:1,raw:true}),headers=csvRows[0],at=(row:string[],header:string)=>row[headers.indexOf(header)];
         const cnpj=csvRows.slice(1).find(row=>at(row,'Documento do comprador (A)')==='11222333000181')!;
-        expect(at(cnpj,'Base DIFAL (R$)')).toBe('0,00');expect(at(cnpj,'DIFAL estimado (R$)')).toBe('0,00');expect(at(cnpj,'Situação DIFAL')).toBe('NOT_CPF');expect(at(cnpj,'Versão DIFAL')).toBe('DIFAL_ESTIMATE_V5');
-        expect(csvRows.slice(1).reduce((sum,row)=>sum+Number(String(at(row,'DIFAL estimado (R$)')||'0').replace(',','.')),0)).toBeCloseTo(1800,2);
+        expect(at(cnpj,'Base DIFAL (R$)')).toBe('0,00');expect(at(cnpj,'DIFAL estimado (R$)')).toBe('0,00');expect(at(cnpj,'Situação DIFAL')).toBe('OUTGOING_DISABLED');expect(at(cnpj,'Versão DIFAL')).toBe('DIFAL_ESTIMATE_V6');
+        expect(csvRows.slice(1).reduce((sum,row)=>sum+Number(String(at(row,'DIFAL estimado (R$)')||'0').replace(',','.')),0)).toBe(0);
       }finally{await detailed.close();}
     }
     await page.locator('[data-guided-continue]').click();
@@ -117,7 +118,7 @@ test('compras CPF/CNPJ e vendas somente CPF geram DIFAL no relatório, CSV, DRE 
   await expect(page.locator('label[for="rbt12"]')).toHaveText('RBT12 do PA 12/2025');await expect(page.locator('#rbt12')).toHaveValue('210000.00');
   await expect(page.locator('#salesCpfCents')).toHaveValue('5000.00');await expect(page.locator('#salesNonOptantCents')).toHaveValue('4000.00');await expect(page.locator('#serviceRevenue')).toHaveValue('500.00');await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('3200.00');
   await expect(page.locator('#month-context')).toContainText('78.000,00');
-  await expect(page.locator('[data-difal-monthly]')).toContainText('600,00');await expect(page.locator('[data-anticipation-monthly]')).toContainText('219,60');
+  await expect(page.locator('[data-difal-monthly]')).toContainText('0,00');await expect(page.locator('[data-anticipation-monthly]')).toContainText('219,60');
   await expect(page.locator('#rbt12-schedule > details')).toHaveAttribute('open','');await expect(page.locator('#rbt12-schedule .projection-table-wrap tbody tr')).toHaveCount(9);await expect(page.locator('#rbt12-schedule')).toContainText('90.000,00');
   await page.locator('.sim-report-details>summary').click();await page.locator('.sim-operation-audit>summary').click();
   await expect(page.locator('.sim-operation-audit')).toContainText('21.700,00');await expect(page.locator('.sim-operation-audit')).toContainText('7.500,00');await expect(page.locator('.sim-operation-audit')).toContainText('1.500,00');
@@ -131,11 +132,11 @@ test('compras CPF/CNPJ e vendas somente CPF geram DIFAL no relatório, CSV, DRE 
   expect(saved.analysisPeriod.version).toBe('JAN_SEP_V1');expect(saved.reportMonths).toBe(9);
   expect(saved.source.operationAudit).toMatchObject({salesReturnsCents:150_000,purchaseServicesCents:50_000,excludedSalesCents:150_000,excludedPurchaseCents:20_000});
   expect(saved.result.annualRevenue).toBe(21_700);
-  expect(saved.draft.difalPolicy).toEqual({version:'DIFAL_SCENARIOS_V2',enabled:{pure:true,hybrid:true,presumed:false,actual:false},operations:{pure:{entry:true,exit:true},hybrid:{entry:true,exit:true}}});
-  expect(saved.difalProjection.annualCents).toBe(180_000);
-  expect(saved.difalProjection.sourceVersion).toBe('DIFAL_ESTIMATE_V5');
+  expect(saved.draft.difalPolicy).toEqual({version:'DIFAL_SCENARIOS_V2',enabled:{pure:true,hybrid:true,presumed:false,actual:false},operations:{pure:{entry:true,exit:false},hybrid:{entry:true,exit:false}}});
+  expect(saved.difalProjection.annualCents).toBe(0);
+  expect(saved.difalProjection.sourceVersion).toBe('DIFAL_ESTIMATE_V6');
   expect(saved.anticipationProjection.sourceVersion).toBe('ICMS_ANTICIPATION_V4');
-  expect(saved.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([-1800,-1800,0,0]);
+  expect(saved.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,0,0,0]);
   expect(saved.result.monthlyResults.map((row:any)=>row.engineInput.rbt12)).toEqual(Array.from({length:9},(_,index)=>78_000+index*12_000));
   expect(saved.result.regimes.filter((regime:any)=>['pure','hybrid'].includes(regime.id)).map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([-512.4,-512.4]);
   expect(saved.result.regimes.filter((regime:any)=>['presumed','actual'].includes(regime.id)).map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([0,0]);
@@ -167,8 +168,8 @@ test('compras CPF/CNPJ e vendas somente CPF geram DIFAL no relatório, CSV, DRE 
     const childSaving=reopened.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/simulations'&&response.request().method()==='POST');
     await reopened.locator('#generate-simulation').click();const childResponse=await childSaving;expect(childResponse.ok(),await childResponse.text()).toBe(true);const child=await childResponse.json();
     expect(child.parentSimulationId).toBe(saved._id);expect(child.draft.difalPolicy.enabled).toEqual({pure:false,hybrid:true,presumed:false,actual:false});
-    expect(child.draft.difalPolicy.operations.hybrid).toEqual({entry:false,exit:true});
-    expect(child.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,-1800,0,0]);
+    expect(child.draft.difalPolicy.operations.hybrid).toEqual({entry:false,exit:false});
+    expect(child.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,0,0,0]);
     expect(child.result.regimes.map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([0,0,0,0]);
     expect(child.difalProjection).toEqual(saved.difalProjection);expect(child.source.fields).toEqual(saved.source.fields);
     await reopened.goto(`/simulator.html?simulation=${child._id}`);

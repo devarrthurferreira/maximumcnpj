@@ -132,8 +132,8 @@ test('Recálculo reconstrói serviços, devoluções e DIFAL sobre linhas congel
       assert.deepEqual(rebuilt.fields, {salesOptantCents: 40000, salesNonOptantCents: 0, salesCpfCents: 20000,
         serviceRevenueCents: 12000, purchasesOptantCents: 0, purchasesNonOptantCents: 9000});
       assert.equal(rebuilt.sales.totalCents, 72000);
-      assert.equal(rebuilt.sales.difal?.amountCents, 2000); assert.equal(rebuilt.sales.difal?.pendingLines, 0);
-      assert.equal(rebuilt.sales.difal?.version, 'DIFAL_ESTIMATE_V5');
+      assert.equal(rebuilt.sales.difal?.amountCents, 0); assert.equal(rebuilt.sales.difal?.pendingLines, 0);
+      assert.equal(rebuilt.sales.difal?.version, 'DIFAL_ESTIMATE_V6');
       assert.equal(rebuilt.reprocessingSource.originalSalesTotalCents, 72000);
       assert.equal(rebuilt.reprocessingSource.salesBalanceChangeCents, 0);
       assert.equal(rebuilt.reprocessingSource.missingOperationEvidenceLines, 0, 'Linha neutra sem evidência não bloqueia a receita.');
@@ -145,19 +145,19 @@ test('Recálculo reconstrói serviços, devoluções e DIFAL sobre linhas congel
       assert.deepEqual(await (await collection('lookupItems')).find(scope({jobId: sales._id})).toArray(), archivedItems);
       assert.deepEqual(original, archivedSnapshot); assert.equal(providerCalls, 1);
     });
-    await t.test('ausência de UF histórica fica pendente; cadastro atual não é utilizado', async () => {
+    await t.test('ausência de UF histórica não cria pendência da saída desativada; cadastro atual não é utilizado', async () => {
       await jobs.updateOne(scope({_id: sales._id}), {$unset: {issuerUf: ''}});
       try {
         const rebuilt = await rebuildSimulationSource(original);
-        assert.equal(rebuilt.sales.difal?.pendingLines, 1); assert.equal(rebuilt.sales.difal?.amountCents, 0);
+        assert.equal(rebuilt.sales.difal?.pendingLines, 0); assert.equal(rebuilt.sales.difal?.amountCents, 0);
         assert.equal(rebuilt.reprocessingSource.issuerUfSource, 'UNAVAILABLE');
         const withFrozenUf = structuredClone(original); withFrozenUf.source.sales.difal = current.sales.difal;
         const fromFrozen = await rebuildSimulationSource(withFrozenUf);
-        assert.equal(fromFrozen.sales.difal?.amountCents, 2000);
+        assert.equal(fromFrozen.sales.difal?.amountCents, 0);
         assert.equal(fromFrozen.reprocessingSource.issuerUfSource, 'ORIGINAL_SIMULATION');
       } finally {await jobs.updateOne(scope({_id: sales._id}), {$set: {issuerUf: 'MG'}});}
       await lines.updateOne(scope({jobId: sales._id, index: 2}), {$unset: {recipientUf: ''}});
-      try {assert.equal((await rebuildSimulationSource(original)).sales.difal?.pendingLines, 1);}
+      try {assert.equal((await rebuildSimulationSource(original)).sales.difal?.pendingLines, 0);}
       finally {await lines.updateOne(scope({jobId: sales._id, index: 2}), {$set: {recipientUf: 'SP'}});}
     });
     await t.test('devolução de compra na venda é excluída da receita e preserva o total do relatório', async () => {

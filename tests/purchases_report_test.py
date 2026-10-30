@@ -427,7 +427,7 @@ class PurchaseMongoTests(unittest.TestCase):
         self.db.lookupJobs.insert_one(job)
         self.db.purchaseLines.insert_many(lines)
         meta = purchase_metadata(self.db, job, WORKSPACE)
-        self.assertEqual(meta['difal']['amountCents'], 1500)
+        self.assertEqual(meta['difal']['amountCents'], 0)
         self.assertEqual(meta['totalCents'], 15000)
         self.assertTrue(render_purchase_pdf(meta).startswith(b'%PDF'))
         self.db.purchaseLines.update_one({'_id': lines[0]['_id']}, {'$set': {'difal.amountCents': 1499}})
@@ -529,8 +529,13 @@ class PurchaseMongoTests(unittest.TestCase):
                 with pymupdf.open(stream=render_purchase_pdf(meta), filetype='pdf') as pdf:
                     text = '\n'.join(page.get_text() for page in pdf)
                 self.assertIn(amount_text, text)
-                self.assertIn('Calculado a partir dos dados salvos no relatório de origem', text)
-                self.assertIn('CPF ou CNPJ válido' if key == 'anticipation' else 'somente CPF', text)
+                if key == 'anticipation':
+                    self.assertIn('Calculado a partir dos dados salvos no relatório de origem', text)
+                    self.assertIn('CPF ou CNPJ válido', text)
+                else:
+                    self.assertIn('Regra atual aplicada aos dados salvos no relatório de origem', text)
+                    self.assertIn('Não possui DIFAL de saída', text)
+                    self.assertNotIn('10%', text)
                 self.assertEqual(self.db.lookupJobs.find_one({'_id': job['_id']}), frozen_job)
                 self.assertEqual(self.db.purchaseLines.find_one({'_id': lines[0]['_id']}), frozen_row)
                 self.db.purchaseLines.update_one({'_id': lines[0]['_id']}, {'$set': {f'{key}.amountCents': amount + 1}})

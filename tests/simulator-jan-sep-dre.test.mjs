@@ -31,7 +31,7 @@ function commercial(reports){
     purchases:{totalCents:purchasesCents,percentDenominatorCents:purchasesCents,
       byTaxStatus:[['OPTANTE',.25],['NAO_OPTANTE',.625],['CPF',.125],['NAO_CONFIRMADO',0],['OUTROS',0]].map(([key,share])=>({key,totalCents:purchasesCents*share,percent:share*100}))}};
 }
-function fixture({rbt12=3300000,rent=100,adjustment=0,legacy=false,selectedMonths=null,interstateCpfMonths=null,policy=null}={}){
+function fixture({rbt12=3300000,rent=100,adjustment=0,legacy=false,selectedMonths=null,interstateCpfMonths=null,policy=null,difalVersion=undefined}={}){
   const imported={startMonth:'2026-01',endMonth:'2026-12',months:12},originalPeriod=buildAnalysisPeriod(imported,imported),analysisPeriod=selectedMonths?selectAnalysisPeriod(originalPeriod,selectedMonths):originalPeriod;
   const reports=analysisPeriod.includedMonths.map(sourceMonth=>{
     const month=Number(sourceMonth.slice(5)),gross=1000000+month*10000,services=200000,returns=50000+month*100;
@@ -47,7 +47,7 @@ function fixture({rbt12=3300000,rent=100,adjustment=0,legacy=false,selectedMonth
         {document:'12345678901',natureCode:'5102',recipientUf:'MG',totalCents:gross/4},
         {document:'11144477735',natureCode:'5102',recipientUf:interstateCpfMonths.includes(month)?'SP':'MG',totalCents:gross/4},
         {document:'12345678901',natureCode:'9000',recipientUf:'SP',totalCents:services},
-      ],'MG');
+      ],'MG',difalVersion);
     }
     return report;
   });
@@ -117,7 +117,7 @@ test('CNPJ interestadual e CPF no mesmo estado mantêm saída zero de janeiro a 
     assert.equal(input.calendar.months.length,9);
     assert.equal(input.difalProjection.annualCents,0);
     for(const report of input.source.monthlyReports){
-      assert.equal(report.difal.version,'DIFAL_ESTIMATE_V5');assert.equal(report.difal.eligibleLines,0);
+      assert.equal(report.difal.version,'DIFAL_ESTIMATE_V6');assert.equal(report.difal.eligibleLines,0);
       assert.equal(report.difal.pendingLines,0);assert.equal(report.difal.amountCents,0);
       assert(report.fields.salesNonOptantCents>0&&report.fields.salesCpfCents>0);
     }
@@ -152,10 +152,12 @@ test('CNPJ interestadual e CPF no mesmo estado mantêm saída zero de janeiro a 
   }
 });
 
-test('somente CPF de outra UF acrescenta saída nas competências elegíveis e nos totais, preservando a entrada',()=>{
-  const input=fixture({interstateCpfMonths:[3,9],policy:defaultDifalPolicy()}),zero=fixture({interstateCpfMonths:[],policy:defaultDifalPolicy()});
-  const expectedMonths=input.source.monthlyReports.map(report=>[3,9].includes(report.month)?report.operationAudit.grossSalesCents/4/10/100:0),expectedTotal=sum(expectedMonths);
-  assert.equal(input.difalProjection.eligibleLines,2);near(input.difalProjection.annualCents/100,expectedTotal);
+test('CPF de outra UF e estimativas V5 positivas permanecem com saída zero em todas as competências, preservando a entrada',()=>{
+ for(const difalVersion of [undefined,'DIFAL_ESTIMATE_V5']){
+  const input=fixture({interstateCpfMonths:[3,9],policy:defaultDifalPolicy(),difalVersion}),zero=fixture({interstateCpfMonths:[],policy:defaultDifalPolicy()});
+  const expectedMonths=Array(9).fill(0),expectedTotal=0;
+  if(difalVersion)assert.equal(input.source.monthlyReports.filter(report=>report.difal.amountCents>0).length,2,'A fonte antiga positiva continua preservada.');
+  assert.equal(input.difalProjection.eligibleLines,0);near(input.difalProjection.annualCents/100,expectedTotal);
   for(const regime of input.result.regimes){
     const affected=['pure','hybrid'].includes(regime.id),baseline=zero.result.regimes.find(item=>item.id===regime.id),expected=affected?expectedTotal:0;
     near(regime.dre.difal,-expected);near(regime.dre.icmsAnticipation,baseline.dre.icmsAnticipation);
@@ -169,6 +171,7 @@ test('somente CPF de outra UF acrescenta saída nas competências elegíveis e n
       near(row(input.presentation,'difal').monthlyValues[regime.id][index],-monthAmount);
     }
   }
+ }
 });
 
 test('DRE completa aparece imediatamente e preserva todas as contas de janeiro a setembro',()=>{

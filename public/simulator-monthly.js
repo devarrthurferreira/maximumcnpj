@@ -4,7 +4,7 @@ import {parseIcmsOperations} from './simulator-icms.js';
 import {resolveRegimeSelection,requiresSimplesReference} from './regime-selection.js';
 import {JAN_SEP_MODEL_VERSION,assertCompleteAnalysisPeriod} from './analysis-period.js';
 
-export const MONTHLY_MODEL_VERSION='1.17.0-dre-sales-difal-sync';
+export const MONTHLY_MODEL_VERSION='1.18.0-no-outgoing-difal';
 export const MONTHLY_VERSION='REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS=Object.freeze([...REPORT_GROUPS,'serviceRevenueCents']);
 const sum=values=>values.reduce((a,b)=>a+b,0);
@@ -35,11 +35,10 @@ export function monthlyProjection(reports){
 }
 export function monthlyDifal(reports,sourceJobId){
   monthlyProjection(reports);
-  if(reports.some(row=>!row.difal))return null;
-  const totals=Object.fromEntries(['amountCents','baseCents','eligibleLines','pendingLines'].map(key=>[key,sum(reports.map(row=>row.difal[key]))]));
-  return {version:'DIFAL_MONTHS_V1',sourceJobId,sourceVersion:reports[0].difal.version,sourceAmountCents:totals.amountCents,sourceBaseCents:totals.baseCents,
-    annualCents:totals.amountCents,ratePercent:10,issuerUf:reports[0].difal.issuerUf,reportMonths:reports.length,eligibleLines:totals.eligibleLines,pendingLines:totals.pendingLines,
-    months:reports.map(row=>({sourceMonth:row.sourceMonth,month:row.month,...row.difal}))};
+  return {version:'DIFAL_MONTHS_V1',sourceJobId,sourceVersion:'DIFAL_ESTIMATE_V6',outgoingDisabled:true,sourceAmountCents:0,sourceBaseCents:0,
+    annualCents:0,ratePercent:10,issuerUf:reports[0].difal?.issuerUf||'',reportMonths:reports.length,eligibleLines:0,pendingLines:0,
+    months:reports.map(row=>({sourceMonth:row.sourceMonth,month:row.month,version:'DIFAL_ESTIMATE_V6',ratePercent:10,
+      issuerUf:row.difal?.issuerUf||'',amountCents:0,baseCents:0,eligibleLines:0,pendingLines:0}))};
 }
 export function baselineMonth(row,expenses={}){
   return {sourceMonth:row.sourceMonth,groups:Object.fromEntries(REPORT_GROUPS.map(key=>[key,row.fields[key]/100])),
@@ -106,8 +105,8 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
   const revenueContext={version:REVENUE_CONTEXT_VERSION,method:'ACTUAL_REPORT_MONTHS',revenueCents,sourceMonths:reports.map(row=>row.sourceMonth),
     ...(positiveRevenueCents===revenueCents?{}:{positiveRevenueCents})};
   const monthlyResults=prepared.map(({row,index,groups,values})=>{
-    const d={...draft,...(rbt12Schedule?{rbt12:rbt12Schedule.rows[index].rbt12Cents/100}:{}),values},difal=row.difal?{version:'DIFAL_DRE_V1',monthlyCents:row.difal.amountCents,annualCents:row.difal.amountCents*12,
-      sourceAmountCents:row.difal.amountCents,reportMonths:1,pendingLines:row.difal.pendingLines}:null;
+    const d={...draft,...(rbt12Schedule?{rbt12:rbt12Schedule.rows[index].rbt12Cents/100}:{}),values},difal={version:'DIFAL_DRE_V1',monthlyCents:0,annualCents:0,
+      sourceAmountCents:0,reportMonths:1,pendingLines:0};
     const anticipation=row.anticipation?{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:row.anticipation.amountCents,annualCents:row.anticipation.amountCents*12,
       sourceAmountCents:row.anticipation.amountCents,sourceBaseCents:row.anticipation.baseCents,reportMonths:1,pendingLines:row.anticipation.pendingLines}:null;
     const raw=calculateSimulation(d,difal,anticipation,revenueContext,row.icmsOperations??null),engineInput=draftToInput(d,difal,anticipation,revenueContext,row.icmsOperations??null);
@@ -152,7 +151,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     const choices=regime.difalApplication.months;
     const simple=['pure','hybrid'].includes(regime.id),operations=regime.difalApplication.operations;
     memory.push({id:`difal.option.${regime.id}`,section:`DIFAL · ${regime.name}`,label:'Opção de DIFAL do cenário',formula:'Escolha somente no Simples Puro e Híbrido, preservada em todas as competências; bloqueios automáticos são avaliados por mês.',value:!simple?'Não aplicável':regime.difalApplication.enabled?'Incluir':'Excluir',unit:'text'},
-      {id:`difal.operations.${regime.id}`,section:`DIFAL · ${regime.name}`,label:'Operações de DIFAL selecionadas',formula:'Entrada e saída são opções independentes por cenário; a seleção não altera os relatórios de origem.',value:!simple?'Não aplicável':['entry','exit'].filter(operation=>operations[operation]).map(operation=>operation==='entry'?'Entrada':'Saída').join(' e ')||'Nenhuma',unit:'text'},
+      {id:`difal.operations.${regime.id}`,section:`DIFAL · ${regime.name}`,label:'Operações de DIFAL selecionadas',formula:'A seleção controla a antecipação das compras; o DIFAL de saída permanece desativado e a origem é preservada.',value:!simple?'Não aplicável':['entry','exit'].filter(operation=>operations[operation]).map(operation=>operation==='entry'?'Entrada':'Saída').join(' e ')||'Nenhuma',unit:'text'},
       {id:`difal.status.${regime.id}`,section:`DIFAL · ${regime.name}`,label:'Aplicação por competência',formula:'Cada mês usa sua RBT12 e conserva o motivo de inclusão, exclusão ou bloqueio.',value:choices.map(item=>`${item.sourceMonth}: ${item.message}`).join(' '),unit:'text'});
   }
   const warningGroups=new Map();
@@ -164,7 +163,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     group.sourceMonths.push(row.sourceMonth);warningGroups.set(key,group);
   }
   const warnings=[...warningGroups.values()].map(({sourceMonths,...item})=>({...item,detail:`${sourceMonths.join(', ')}: ${item.detail}`}));
-  warnings.push({code:'actual-months',severity:'info',title:'Valores por competência',detail:`Compras, vendas e serviços seguem cada mês da coluna H.${hasSimples?` DIFAL e antecipação respeitam as opções de cada regime. ${first.rbt12Source==='NOT_PROVIDED'?'RBT12 não informada; os cenários do Simples permanecem sem cálculo confirmado.':rbt12Schedule?'RBT12 móvel composta pelas 12 receitas anteriores de cada competência, exclusivamente do quadro 2.2.':'RBT12 fixa informada para o cenário.'}`:''} ${analysisPeriod?'O consolidado é a soma efetiva de janeiro a setembro. Outubro a dezembro permanecem fora do cálculo; quando informada, a referência de RBT12 conserva doze meses.':'Total anual é a soma dos meses importados. Meses fora do período não têm dados.'} Não há compensação automática de créditos entre competências.`});
+  warnings.push({code:'actual-months',severity:'info',title:'Valores por competência',detail:`Compras, vendas e serviços seguem cada mês da coluna H.${hasSimples?` O DIFAL de saída permanece desativado. A antecipação das compras respeita as opções de cada regime. ${first.rbt12Source==='NOT_PROVIDED'?'RBT12 não informada; os cenários do Simples permanecem sem cálculo confirmado.':rbt12Schedule?'RBT12 móvel composta pelas 12 receitas anteriores de cada competência, exclusivamente do quadro 2.2.':'RBT12 fixa informada para o cenário.'}`:''} ${analysisPeriod?'O consolidado é a soma efetiva de janeiro a setembro. Outubro a dezembro permanecem fora do cálculo; quando informada, a referência de RBT12 conserva doze meses.':'Total anual é a soma dos meses importados. Meses fora do período não têm dados.'} Não há compensação automática de créditos entre competências.`});
   warnings.push({code:'monthly-model-scope',severity:'info',title:'Escopo do cálculo por competência',detail:'O consolidado soma os resultados dos meses informados. Compras/CMV simplificam o custo; o modelo não controla estoques, ajustes fiscais do Lucro Real, compensação de prejuízos ou apuração trimestral. A comparação depende das premissas e do enquadramento.'});
   let simplesDiagnostic;
   if(hasSimples){

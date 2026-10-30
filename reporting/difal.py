@@ -8,12 +8,13 @@ import unicodedata
 from .operation_catalog import OPERATION_CATALOG_GROUPS, classify_operation_nature
 from .tax_documents import is_cpf_or_cnpj
 
-DIFAL_VERSION = 'DIFAL_ESTIMATE_V5'
+DIFAL_VERSION = 'DIFAL_ESTIMATE_V6'
+DIFAL_CPF_ONLY_VERSION = 'DIFAL_ESTIMATE_V5'
 DIFAL_CPF_CNPJ_VERSION = 'DIFAL_ESTIMATE_V4'
 DIFAL_CPF_VERSION = 'DIFAL_ESTIMATE_V3'
 DIFAL_PREVIOUS_VERSION = 'DIFAL_ESTIMATE_V2'
 DIFAL_LEGACY_VERSION = 'DIFAL_ESTIMATE_V1'
-DIFAL_VERSIONS = (DIFAL_LEGACY_VERSION, DIFAL_PREVIOUS_VERSION, DIFAL_CPF_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_VERSION)
+DIFAL_VERSIONS = (DIFAL_LEGACY_VERSION, DIFAL_PREVIOUS_VERSION, DIFAL_CPF_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_CPF_ONLY_VERSION, DIFAL_VERSION)
 DIFAL_RATE_PERCENT = 10
 DIFAL_LEGACY_CFOPS = frozenset(('6101', '6102', '6103', '6104', '6105', '6106', '6107', '6108'))
 DIFAL_CFOPS = DIFAL_LEGACY_CFOPS | {'5102'}
@@ -31,7 +32,7 @@ def normalize_uf(value):
 def eligible_cfops(version):
     if version not in DIFAL_VERSIONS:
         raise ValueError('Versão do DIFAL desconhecida.')
-    if version in (DIFAL_CPF_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_VERSION):
+    if version in (DIFAL_CPF_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_CPF_ONLY_VERSION, DIFAL_VERSION):
         return OPERATION_CATALOG_GROUPS['VENDA']
     return DIFAL_LEGACY_CFOPS if version == DIFAL_LEGACY_VERSION else DIFAL_CFOPS
 
@@ -39,7 +40,7 @@ def eligible_cfops(version):
 def sales_operation(nature_code, description, version=DIFAL_VERSION):
     """Mirror the versioned Node/browser classification for stored sales rows."""
     code = re.sub(r'[^0-9]', '', str(nature_code or ''))[:4]
-    if version in (DIFAL_CPF_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_VERSION):
+    if version in (DIFAL_CPF_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_CPF_ONLY_VERSION, DIFAL_VERSION):
         # Column D of the supplied nature catalog controls the operation. Product
         # descriptions neither include an unknown code nor exclude a catalog sale.
         return {'VENDA': 'VENDA', 'SERVICO_VENDA': 'SERVICO',
@@ -66,7 +67,7 @@ def sales_operation(nature_code, description, version=DIFAL_VERSION):
 
 
 def calculate_difal(row, issuer_uf, version=DIFAL_VERSION):
-    """Integer cents and half-up rounding, matching the server's 10% estimate."""
+    """Current analysis has no outgoing DIFAL; older rules remain reproducible."""
     cfops = eligible_cfops(version)
     def excluded(reason):
         return {'eligible': False, 'baseCents': 0, 'amountCents': 0, 'reason': reason}
@@ -75,14 +76,16 @@ def calculate_difal(row, issuer_uf, version=DIFAL_VERSION):
             isinstance(total, float) and (not math.isfinite(total) or not total.is_integer()) or
             not 0 <= total <= 9_007_199_254_740_991):
         return excluded('INVALID_TOTAL')
+    if version == DIFAL_VERSION:
+        return excluded('OUTGOING_DISABLED')
     code = re.sub(r'[^0-9]', '', str(row.get('natureCode') or ''))[:4]
-    operation_matches = row.get('operation') == 'VENDA' or (version in (DIFAL_CPF_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_VERSION) and 'operation' not in row)
+    operation_matches = row.get('operation') == 'VENDA' or (version in (DIFAL_CPF_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_CPF_ONLY_VERSION) and 'operation' not in row)
     if not operation_matches or sales_operation(code, row.get('description'), version) != 'VENDA':
         return excluded('NOT_SALE')
     if code not in cfops:
         return excluded('INELIGIBLE_NATURE')
     document = str(row.get('document') or '')
-    if version in (DIFAL_CPF_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_VERSION):
+    if version in (DIFAL_CPF_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_CPF_ONLY_VERSION):
         document = re.sub(r'[./\-\s]', '', document.strip())
     if version == DIFAL_CPF_CNPJ_VERSION and not is_cpf_or_cnpj(document):
         return excluded('NOT_CPF_OR_CNPJ')

@@ -123,8 +123,11 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
   const clientId=(await post('/api/v4/clients/import',{rows:[{code,name:`Empresa sintética crédito ICMS ${code}`,uf:'MG'}]})).items[0].id;
   await page.goto('/generations.html');await page.locator('#generation-search').fill(code);
   await page.locator(`[data-select-company="${clientId}"]`).click();
-  // Entry remains selected in the two Simples scenarios. Sales DIFAL is excluded.
-  for(const id of ['pure','hybrid'])await page.locator(`#generation-difal-exit-${id}`).uncheck();
+  // Entry remains selected in the two Simples scenarios. Sales DIFAL stays disabled.
+  for(const id of ['pure','hybrid']){
+    await expect(page.locator(`#generation-difal-exit-${id}`)).not.toBeChecked();
+    await expect(page.locator(`#generation-difal-exit-${id}`)).toBeDisabled();
+  }
   const creating=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/generations'&&response.request().method()==='POST');
   await page.locator('#generation-create').click();expect((await creating).ok()).toBe(true);
   const purchases:SourceRow[]=[

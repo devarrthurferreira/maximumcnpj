@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {renderOperationAudit,renderRbt12Schedule,renderAnticipationSource,buildDifalApplicationView,difalApplicationSummary,renderDifalAppliedSource} from '../public/simulator-source-view.js';
 import {difalDirectionSelection} from '../public/difal-policy.js';
-import {defaultDifalPolicy} from '../public/simulator-engine.js';
+import {defaultDifalPolicy,OUTGOING_DIFAL_MESSAGE} from '../public/simulator-engine.js';
+import {legacyOutgoingDreFixture} from './fixtures/dre-outgoing-legacy.mjs';
 import {renderSection22} from '../public/simulator-extrato-view.js';
 import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
 import {section22Year2025} from './fixtures/section22.ts';
@@ -161,131 +162,69 @@ test('direction selection distinguishes absent policy from invalid policy and ke
   assert.deepEqual(legacy,before);
 });
 
-test('deselecting both sales directions zeros the summary while preserving purchases and raw estimates',()=>{
-  const policy=entryOnlyPolicy(),reports=difalReports(),before=structuredClone({policy,reports});
-  const exit=sourceView('exit',policy,reports),entry=sourceView('entry',policy,reports);
-  assert.deepEqual(exit.values.map(row=>[row.current,row.total,row.excluded]),[[0,0,true],[0,0,true]]);
-  assert.match(difalApplicationSummary(exit),/R\$\s0,00/);
-  assert.deepEqual(entry.values.map(row=>[row.current,row.total,row.excluded]),[[36.6,109.8,false],[36.6,109.8,false]]);
-  const html=renderDifalAppliedSource({view:exit,sourceHtml:'<section><strong data-difal-monthly>R$ 100,00</strong><strong data-difal-amount>R$ 300,00</strong></section>'});
+test('saída permanece desativada com opções antigas marcadas, entrada positiva e origem preservada na auditoria',()=>{
+  const policy=defaultDifalPolicy(),reports=difalReports();for(const id of ['pure','hybrid'])policy.operations[id].exit=true;
+  const before=structuredClone({policy,reports}),exit=sourceView('exit',policy,reports),entry=sourceView('entry',policy,reports);
+  assert.deepEqual(exit.values.map(row=>[row.current,row.total]),[[0,0],[0,0]]);
+  assert.deepEqual(entry.values.map(row=>[row.current,row.total]),[[36.6,109.8],[36.6,109.8]]);
+  const html=renderDifalAppliedSource({view:exit,sourceHtml:'<strong data-difal-monthly>R$ 100,00</strong><strong data-difal-amount>R$ 300,00</strong>'});
   const [applied,audit]=html.split('<details class="sim-difal-source-audit"');
-  assert.match(applied,/data-difal-application-status>Não incluído/);
-  assert.match(applied,/data-difal-monthly>R\$\s0,00/);
-  assert.doesNotMatch(applied,/100,00|300,00/);
-  assert.match(audit,/data-difal-source-monthly>R\$ 100,00/);
-  assert.match(audit,/data-difal-source-amount>R\$ 300,00/);
-  assert.doesNotMatch(audit.split('>')[0],/open/);
+  assert.match(applied,/data-difal-application-status>Desativado/);assert(applied.includes(OUTGOING_DIFAL_MESSAGE));
+  assert.doesNotMatch(applied,/100,00|300,00|Não possui vendas/);
+  assert.match(audit,/data-difal-source-monthly>R\$ 100,00/);assert.match(audit,/data-difal-source-amount>R\$ 300,00/);
   assert.deepEqual({policy,reports},before);
 });
 
-test('mixed scenario directions show individual amounts without summing alternatives',()=>{
-  const policy=defaultDifalPolicy();policy.operations.pure.exit=false;policy.operations.hybrid.entry=false;
+test('escolhas continuam distinguindo a entrada por regime sem permitir reativar a saída',()=>{
+  const policy=defaultDifalPolicy();policy.operations.pure.exit=true;policy.operations.hybrid.entry=false;policy.operations.hybrid.exit=true;
   const exit=sourceView('exit',policy),entry=sourceView('entry',policy);
-  assert.deepEqual(exit.values.map(row=>[row.id,row.current,row.total]),[['pure',0,0],['hybrid',100,300]]);
-  assert.deepEqual(entry.values.map(row=>[row.id,row.current,row.total]),[['pure',36.6,109.8],['hybrid',0,0]]);
-  assert.equal(difalApplicationSummary(exit),'Por cenário');assert.equal(difalApplicationSummary(entry),'Por cenário');
-  const html=renderDifalAppliedSource({view:exit});
-  assert.match(html,/data-difal-applied-regime="pure"/);assert.match(html,/data-difal-applied-regime="hybrid"/);
-  assert.match(html,/Os cenários são alternativas; seus valores não são somados/);
-  assert.match(html,/sim-difal-selection-label">Simples híbrido/);
+  assert.deepEqual(exit.values.map(row=>[row.current,row.total]),[[0,0],[0,0]]);
+  assert.deepEqual(entry.values.map(row=>[row.current,row.total]),[[36.6,109.8],[0,0]]);
+  assert.match(difalApplicationSummary(exit),/R\$\s0,00/);assert.equal(difalApplicationSummary(entry),'Por cenário');
+  assert.match(renderDifalAppliedSource({view:exit}),/Saída desativada/);
 });
 
-const noSalesEstimate=()=>({version:'DIFAL_ESTIMATE_V5',ratePercent:10,issuerUf:'MG',amountCents:0,baseCents:0,eligibleLines:0,pendingLines:0});
-const noSalesMessage='Não possui vendas interestaduais para CPF elegíveis. DIFAL de saída: R$ 0,00.';
-
-test('saída V5 sem elegíveis confirma zero no período e mantém a antecipação de compras independente',()=>{
-  const reports=difalReports();for(const report of reports)report.difal=noSalesEstimate();
-  const before=structuredClone(reports),policy=defaultDifalPolicy();
-  const exit=sourceView('exit',policy,reports),entry=sourceView('entry',policy,reports);
-  assert.deepEqual(exit.values.map(item=>[item.current,item.total]),[[0,0],[0,0]]);
-  assert.deepEqual(entry.values.map(item=>[item.current,item.total]),[[36.6,109.8],[36.6,109.8]]);
-  const html=renderDifalAppliedSource({view:exit});
-  assert(html.includes(noSalesMessage));assert.match(html,/data-difal-empty-scope="period"/);
-  assert.match(html,/<strong>Período importado:<\/strong>/);
-  assert.doesNotMatch(renderDifalAppliedSource({view:entry}),/data-difal-empty|Não possui vendas/);
-  assert.deepEqual(reports,before);
-});
-
-test('mês sem saída elegível não oculta DIFAL positivo das outras competências',()=>{
-  const reports=difalReports();reports[0].difal=noSalesEstimate();
-  reports[1].difal={...noSalesEstimate(),eligibleLines:1,baseCents:200000,amountCents:20000};
-  const january=sourceView('exit',defaultDifalPolicy(),reports),february=sourceView('exit',defaultDifalPolicy(),reports,{row:reports[1]});
-  assert.deepEqual(january.values.map(item=>[item.current,item.total]),[[0,200],[0,200]]);
-  const html=renderDifalAppliedSource({view:january});
-  assert(html.includes(noSalesMessage));assert.match(html,/data-difal-empty-scope="month"/);
-  assert.match(html,/<strong>Mês 01\/2025:<\/strong>/);assert.match(html,/R\$\s200,00/);
-  assert.doesNotMatch(renderDifalAppliedSource({view:february}),/data-difal-empty|Não possui vendas/);
-});
-
-test('zero por exclusão, regra antiga, UF desconhecida ou linha pendente não comprova ausência de vendas elegíveis',()=>{
-  const unconfirmed=[
-    undefined,{version:'DIFAL_ESTIMATE_V4'}, {version:undefined}, {issuerUf:''}, {issuerUf:'XX'},
-    {pendingLines:1}, {eligibleLines:1}, {eligibleLines:0,amountCents:1000}, {amountCents:null},
-  ];
-  for(const patch of unconfirmed){
-    const reports=difalReports();for(const report of reports)report.difal=patch?{...noSalesEstimate(),...patch}:undefined;
-    // A user's exclusion can yield zero independently of the source evidence.
-    for(const policy of [defaultDifalPolicy(),entryOnlyPolicy()]){
-      const html=renderDifalAppliedSource({view:sourceView('exit',policy,reports)});
-      assert.doesNotMatch(html,/data-difal-empty|Não possui vendas/,JSON.stringify(patch));
-    }
-  }
-  const projection=buildDifalApplicationView({direction:'exit',policy:defaultDifalPolicy(),rbt12:100000,currentCents:0,totalCents:0,sourceEstimate:noSalesEstimate()});
-  assert.match(renderDifalAppliedSource({view:projection}),/data-difal-empty-scope="period"/);
-});
-
-test('versão salva só confirma ausência com sua própria fonte V5 e células zeradas, sem reescrever histórico',()=>{
-  const reports=difalReports();for(const report of reports)report.difal=noSalesEstimate();
-  const policy=defaultDifalPolicy(),regimes=['pure','hybrid'].map(id=>({id,name:id,available:true,dre:{difal:0},difalApplication:{enabled:true,operations:policy.operations[id]}}));
-  const snapshot={source:{monthlyReports:reports},draft:{difalPolicy:policy},result:{method:'REPORT_MONTHS_V1',regimes,
-    monthlyResults:reports.map(report=>({month:report.month,sourceMonth:report.sourceMonth,result:{regimes:structuredClone(regimes)}}))}};
-  const before=structuredClone(snapshot);
-  const saved=sourceView('exit',policy,difalReports(),{snapshot});
-  assert.match(renderDifalAppliedSource({view:saved}),/data-difal-empty-scope="period"/);
-  assert.deepEqual(snapshot,before);
-
-  for(const change of ['oldRule','positiveDre','missingSource']){
-    const stale=structuredClone(snapshot);
-    if(change==='oldRule')for(const report of stale.source.monthlyReports)report.difal.version='DIFAL_ESTIMATE_V4';
-    if(change==='positiveDre'){
-      for(const regime of stale.result.regimes)regime.dre.difal=-200;
-      for(const item of stale.result.monthlyResults)for(const regime of item.result.regimes)regime.dre.difal=-100;
-    }
-    if(change==='missingSource')delete stale.source;
-    const captured=structuredClone(stale),view=sourceView('exit',policy,reports,{snapshot:stale});
-    assert.doesNotMatch(renderDifalAppliedSource({view}),/data-difal-empty|Não possui vendas/,change);
-    if(change==='positiveDre')assert.deepEqual(view.values.map(item=>[item.current,item.total]),[[100,200],[100,200]]);
-    assert.deepEqual(stale,captured);
+test('saída desativada independe de UF, CPF, estimativa antiga ou falta de estimativa, sem afirmar ausência de vendas',()=>{
+  const estimates=[undefined,{version:'DIFAL_ESTIMATE_V5',issuerUf:'MG',amountCents:10000,baseCents:100000,eligibleLines:1,pendingLines:0},
+    {version:'DIFAL_ESTIMATE_V5',issuerUf:'',amountCents:0,baseCents:0,eligibleLines:0,pendingLines:2},
+    {version:'DIFAL_ESTIMATE_V6',issuerUf:'',amountCents:0,baseCents:0,eligibleLines:0,pendingLines:0}];
+  for(const estimate of estimates){
+    const reports=difalReports();for(const row of reports)row.difal=estimate;
+    const before=structuredClone(reports),view=sourceView('exit',defaultDifalPolicy(),reports),html=renderDifalAppliedSource({view});
+    assert.deepEqual(view.values.map(row=>[row.current,row.total,row.pending]),[[0,0,false],[0,0,false]]);
+    assert(html.includes(OUTGOING_DIFAL_MESSAGE));assert.doesNotMatch(html,/Não possui vendas|10%|UFs pendentes/);
+    assert.deepEqual(reports,before);
   }
 });
 
-test('source display honors each month sublimit and leaves unimported months unavailable',()=>{
+test('histórico real 1.17 mantém saída positiva; marcador de versão nova só explica células capturadas zeradas',()=>{
+  const historical=legacyOutgoingDreFixture(),before=structuredClone(historical),policy=defaultDifalPolicy();
+  const old=sourceView('exit',policy,[],{snapshot:historical});
+  assert(old.values.every(row=>row.current>0&&row.total===3780));assert(!old.outgoingDisabled);
+  assert.doesNotMatch(renderDifalAppliedSource({view:old}),/data-difal-disabled/);assert.deepEqual(historical,before);
+  const regimes=['pure','hybrid'].map(id=>({id,name:id,available:false,dre:{difal:0}}));
+  const snapshot={result:{outgoingDifalDisabled:true,regimes},monthlyDre:{regimes:regimes.map(row=>({id:row.id,rows:[{key:'difal',months:[0]}]}))}};
+  const saved=sourceView('exit',policy,[],{snapshot});
+  assert(saved.values.every(row=>row.current===0&&row.total===0&&!row.pending));
+  assert(renderDifalAppliedSource({view:saved}).includes(OUTGOING_DIFAL_MESSAGE));
+  snapshot.result.regimes[0].dre.difal=-100;
+  assert(!sourceView('exit',policy,[],{snapshot}).outgoingDisabled,'Uma célula capturada positiva nunca é sobrescrita pela apresentação.');
+});
+
+test('sublimite e ICMS fora do DAS continuam bloqueando a entrada; saída segue zero e mês ausente não ganha dados',()=>{
   const reports=difalReports(),policy=defaultDifalPolicy();
-  const view=sourceView('exit',policy,reports,{row:reports[1],rbt12ByMonth:{'2025-01':100000,'2025-02':3600000}});
-  assert.deepEqual(view.values.map(row=>[row.current,row.total,row.blocked]),[[0,100,true],[0,100,true]]);
-  assert.match(renderDifalAppliedSource({view}),/Bloqueio por competência/);
-  const missing=sourceView('exit',entryOnlyPolicy(),reports,{row:null});
-  assert.deepEqual(missing.values.map(row=>[row.current,row.total]),[[null,0],[null,0]]);
-  assert.equal(difalApplicationSummary(missing),'Indisponível');
-  assert.doesNotMatch(renderDifalAppliedSource({view:missing}),/Conforme a versão salva/);
-});
-
-test('ICMS fora do DAS atualiza a prévia de entrada e saída sem alterar escolhas ou fontes',()=>{
-  const reports=difalReports(),policy=defaultDifalPolicy(),before=structuredClone({reports,policy});
-  for(const direction of ['entry','exit']){
-    const inside=sourceView(direction,policy,reports);
-    assert(inside.values.every(row=>row.current>0&&!row.blocked));
-    const outside=sourceView(direction,policy,reports,{icmsOutside:true});
-    assert(outside.values.every(row=>row.current===0&&row.total===0&&row.blocked));
-    assert.match(renderDifalAppliedSource({view:outside}),/fora do DAS/);
+  for(const outside of [false,true]){
+    const extra={row:reports[1],rbt12ByMonth:{'2025-01':100000,'2025-02':3600000},icmsOutside:outside};
+    const exit=sourceView('exit',policy,reports,extra),entry=sourceView('entry',policy,reports,extra);
+    assert(exit.values.every(row=>row.current===0&&row.total===0&&!row.blocked));
+    assert(entry.values.every(row=>row.current===0&&row.total===(outside?0:36.6)&&row.blocked));
   }
-  const excluded=sourceView('exit',entryOnlyPolicy(),reports,{icmsOutside:true});
-  assert(excluded.values.every(row=>row.excluded&&!row.blocked&&row.current===0));
-  assert.deepEqual({reports,policy},before);
+  const missing=sourceView('exit',policy,reports,{row:null});
+  assert(missing.values.every(row=>row.current===null&&row.total===0));assert.equal(difalApplicationSummary(missing),'Indisponível');
 });
 
 test('histórico com regime parcialmente calculado não apresenta a soma parcial de DIFAL como total confirmado',()=>{
-  const policy=defaultDifalPolicy();
+  const policy=defaultDifalPolicy();for(const id of ['pure','hybrid'])policy.operations[id].exit=true;
   const regimes=['pure','hybrid'].map(id=>({id,name:id,available:false,status:'Conferir fevereiro',dre:{difal:-100,icmsAnticipation:-36.6},difalApplication:{enabled:true,operations:policy.operations[id]}}));
   const first=regimes.map(row=>({...row,available:true,status:'Disponível',difalApplication:{...row.difalApplication,reason:'ENABLED'}}));
   const second=regimes.map(row=>({...row,dre:{difal:0,icmsAnticipation:0},difalApplication:{...row.difalApplication,blocked:true,reason:'SUBLIMIT'}}));
@@ -311,19 +250,14 @@ test('histórico com regime parcialmente calculado não apresenta a soma parcial
   assert(original.result.regimes.every(row=>row.dre.difal===-100));
 });
 
-test('missing or fully pending source cannot appear as a confirmed zero unless the direction is excluded',()=>{
-  const reports=difalReports();delete reports[0].difal;delete reports[1].difal;
-  const missing=sourceView('exit',defaultDifalPolicy(),reports);
-  assert.equal(difalApplicationSummary(missing),'Indisponível');
-  assert.equal(renderDifalAppliedSource({view:missing,sourceHtml:'<p>DIFAL indisponível</p>'}),'<p>DIFAL indisponível</p>');
-  for(const row of reports)row.difal={amountCents:0,eligibleLines:0,pendingLines:1};
-  const pending=sourceView('exit',defaultDifalPolicy(),reports);
+test('antecipação sem fonte ou totalmente pendente continua indisponível, sem fabricar zero',()=>{
+  const reports=difalReports();for(const row of reports)delete row.anticipation;
+  assert.equal(difalApplicationSummary(sourceView('entry',defaultDifalPolicy(),reports)),'Indisponível');
+  for(const row of reports)row.anticipation={amountCents:0,eligibleLines:0,pendingLines:1};
+  const pending=sourceView('entry',defaultDifalPolicy(),reports);
   assert.equal(difalApplicationSummary(pending),'Pendente');assert.equal(difalApplicationSummary(pending,'total'),'Pendente');
-  assert.deepEqual(pending.values.map(row=>row.current),[null,null]);
-  const off=sourceView('exit',entryOnlyPolicy(),reports);
-  assert.match(difalApplicationSummary(off),/R\$\s0,00/);assert(off.values.every(row=>!row.pending&&row.excluded));
-  const legacy=buildDifalApplicationView({direction:'exit',policy:defaultDifalPolicy(),rbt12:100000,currentCents:0,totalCents:0,sourceEstimate:{pendingLines:2,eligibleLines:0}});
-  assert.equal(difalApplicationSummary(legacy),'Pendente');
+  const policy=defaultDifalPolicy();policy.enabled.pure=false;policy.enabled.hybrid=false;
+  const off=sourceView('entry',policy,reports);assert(off.values.every(row=>row.current===0&&row.excluded&&!row.pending));
 });
 
 test('saved entry-only display reads directional choices and frozen DRE amounts without recalculating',()=>{

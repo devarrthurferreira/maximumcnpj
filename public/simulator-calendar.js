@@ -8,7 +8,8 @@ export const DRE_ROWS = Object.freeze([['services','Receita de serviços'],['sal
 export function dreRows(result) {
   const present = key => result?.regimes?.some(regime => regime.dre && Object.hasOwn(regime.dre, key));
   const optional = ['difal','icmsAnticipation'];
-  return optional.every(present) ? DRE_ROWS : DRE_ROWS.filter(([key]) => !optional.includes(key) || present(key));
+  const rows=optional.every(present) ? DRE_ROWS : DRE_ROWS.filter(([key]) => !optional.includes(key) || present(key));
+  return result?.outgoingDifalDisabled?rows.map(([key,label])=>[key,key==='difal'?'− DIFAL de saída — desativado':label]):rows;
 }
 export function buildMonthlyDre(result, year, reference=null, reportPeriod=null) {
   if (!Number.isInteger(year) || year<2000 || year>2100 || !Array.isArray(result?.regimes)) throw new Error('Calendário da DRE inválido.');
@@ -32,7 +33,7 @@ export function buildMonthlyDre(result, year, reference=null, reportPeriod=null)
     sourceSection:'2.2',parserVersion:reference.parserVersion,id:reference.id||reference.extractionId,
     pa:reference.pa,rbt12Cents:reference.rbt12Cents,basis:reference.rbt12Basis
   }:null;
-  const rows = dreRows({regimes});
+  const rows = dreRows({...result,regimes});
   return {version:analysisPeriod?'DRE_CALENDAR_V4':actual?'DRE_CALENDAR_V3':rows.some(([key])=>['difal','icmsAnticipation'].includes(key)) ? CALENDAR_VERSION : 'DRE_CALENDAR_V1',year,unit:'BRL',method:!hasSimples?(actual?'REPORT_MONTHS_NO_RBT12':'AVERAGE_X12_NO_RBT12'):missingRbt12?(actual?'REPORT_MONTHS_WITHOUT_RBT12':'AVERAGE_X12_WITHOUT_RBT12'):actual?(rbt12Schedule?'REPORT_MONTHS_ROLLING_RBT12':'REPORT_MONTHS_FIXED_RBT12'):manual?'AVERAGE_X12_FIXED_MANUAL_RBT12':'AVERAGE_X12_FIXED_STATEMENT_RBT12',
     ...(selection?{regimeSelection:selection}:{}),
     ...(missingRbt12?{rbt12Source:'NOT_PROVIDED'}:{}),

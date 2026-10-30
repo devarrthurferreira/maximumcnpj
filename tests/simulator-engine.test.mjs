@@ -95,7 +95,7 @@ test('historical explicit CBS rates reproduce the four reviewed spreadsheet resu
 
 test('new CBS default applies 11.3% to debits and regular credits while preserving the inside-DAS credit', () => {
   assert.equal(DEFAULT_RATES.cbs, .113);
-  assert.equal(MODEL_VERSION, '1.17.0-dre-sales-difal-sync');
+  assert.equal(MODEL_VERSION, '1.18.0-no-outgoing-difal');
   const input = zero();
   Object.assign(input, {salesRevenue:10000, rbt12:120000, simplePurchases:2000, simpleRegularPurchases:500, regularPurchases:3000});
   input.credits.simple.base = 1500;
@@ -582,11 +582,11 @@ test('all DRE subtotals reconcile without duplicated CMV, personnel or ICMS cred
   }
 });
 
-test('DIFAL reduz receita e lucro uma vez somente no Simples, sem alterar IRPJ e CSLL dos outros regimes', () => {
+test('DIFAL de saída permanece zero com input manual positivo, sem alterar receita, lucro ou demais tributos', () => {
   const input=example(), baseline=calculateTax(input), result=calculateTax({...input,difalMonthly:100});
   close(result.annualRevenue,baseline.annualRevenue);assert.deepEqual(result.credits,baseline.credits);
   for(const regime of result.regimes){
-    const old=baseline.regimes.find(item=>item.id===regime.id),d=regime.dre,charge=['pure','hybrid'].includes(regime.id)?1200:0;
+    const old=baseline.regimes.find(item=>item.id===regime.id),d=regime.dre,charge=0;
     close(d.difal,-charge);close(d.netRevenue,old.dre.netRevenue-charge);close(d.preTax,old.dre.preTax-charge);
     close(d.netRevenue,d.revenue+d.das+d.cbsDebit+d.ibsDebit+d.icmsNet+d.iss+d.difal);
     close(regime.totalTaxes,-d.das-d.cbsDebit-d.ibsDebit-d.icmsNet-d.iss-d.difal-d.payroll-d.irpj-d.csll-d.cbsUsed-d.ibsUsed);
@@ -600,17 +600,17 @@ test('DIFAL reduz receita e lucro uma vez somente no Simples, sem alterar IRPJ e
   close(result.regimes[3].dre.irpj,baseline.regimes[3].dre.irpj);
   const loss=calculateTax({...input,difalMonthly:1000000});
   close(loss.regimes[3].dre.irpj,baseline.regimes[3].dre.irpj);close(loss.regimes[3].dre.csll,baseline.regimes[3].dre.csll);
-  assert.equal(Object.hasOwn(baseline.regimes[0].dre,'difal'),false);
+  assert.equal(baseline.regimes[0].dre.difal,0);assert.equal(result.outgoingDifalDisabled,true);
   assert.equal(calculateTax({...input,difalMonthly:0}).regimes[0].dre.difal,0);
 });
 
-test('DIFAL context is distinct from editable draft, retains missing-source state and identifies partial estimates',()=>{
+test('DIFAL legado positivo ou pendente não reativa saída; inputs inválidos continuam rejeitados',()=>{
  const draft=createEmptyDraft();for(const key of Object.keys(draft.values))draft.values[key]=EXAMPLE_INPUT[key];
  const difal=projectDifal({version:'DIFAL_ESTIMATE_V1',ratePercent:10,issuerUf:'MG',eligibleLines:1,baseCents:10000,amountCents:1000,pendingLines:2},3,'source-job');
  const before=structuredClone(draft), result=calculateSimulation(draft,difal);
- assert.equal(draftToInput(draft,difal).difalMonthly,3.33);
- close(result.regimes[0].dre.difal,-39.96);assert(result.warnings.some(warning=>warning.code==='difal-partial'));
- assert.equal(result.memory.find(row=>row.id==='difal.source').value,10);assert.deepEqual(draft,before);
+ assert.equal(draftToInput(draft,difal).difalMonthly,0);
+ close(result.regimes[0].dre.difal,0);assert(result.warnings.some(warning=>warning.code==='outgoing-difal-disabled'));assert(!result.warnings.some(warning=>warning.code==='difal-partial'));
+ assert.equal(result.memory.find(row=>row.id==='difal.source').value,0);assert.deepEqual(draft,before);
  assert.equal(draftToInput({...draft,difalMonthly:999}),null);
  assert.equal(draftToInput(draft,{...difal,annualCents:1}),null);
  assert.equal(draftToInput(draft,{...difal,monthlyCents:-1}),null);
@@ -679,7 +679,8 @@ test('política DIFAL é estrita, clonada em ordem fixa e omissão permanece aus
  }
  const draft=createEmptyDraft();for(const key of Object.keys(draft.values))draft.values[key]=EXAMPLE_INPUT[key];draft.rbt12=180000;
  const before=structuredClone(draft);assert.equal(Object.hasOwn(draftToInput(draft),'difalPolicy'),false);assert.deepEqual(draft,before);
- const selected={...draft,difalPolicy:input};assert.deepEqual(draftToInput(selected).difalPolicy,parseDifalPolicy(input));
+ const selected={...draft,difalPolicy:input},applied=upgradeDifalPolicy(input);for(const id of ['pure','hybrid'])applied.operations[id].exit=false;
+ assert.deepEqual(draftToInput(selected).difalPolicy,applied);
  assert.equal(draftToInput({...draft,difalPolicy:{...expected,enabled:{...expected.enabled,pure:0}}}),null);
 });
 test('opção independente dos dois regimes Simples remove DIFAL e antecipação uma única vez sem afetar os demais',()=>{
@@ -689,7 +690,7 @@ test('opção independente dos dois regimes Simples remove DIFAL e antecipação
   const policy=defaultDifalPolicy();policy.enabled[id]=false;const before=structuredClone({input,policy});
   const result=calculateTax({...input,difalPolicy:policy}),regime=result.regimes.find(row=>row.id===id),old=baseline.regimes.find(row=>row.id===id);
   assert.equal(regime.dre.difal,0);assert.equal(regime.dre.icmsAnticipation,0);assert.equal(regime.difalApplication.reason,'USER_EXCLUDED');
-  const removed=1200+(['pure','hybrid'].includes(id)?8784:0);close(regime.dre.preTax,old.dre.preTax+removed);
+  const removed=['pure','hybrid'].includes(id)?8784:0;close(regime.dre.preTax,old.dre.preTax+removed);
   if(id!=='actual'){close(regime.dre.netProfit,old.dre.netProfit+removed);close(regime.totalTaxes,old.totalTaxes-removed);}
   for(const other of ids.filter(value=>value!==id))assert.deepEqual(result.regimes.find(row=>row.id===other),baseline.regimes.find(row=>row.id===other));
   assert.equal(result.memory.find(row=>row.id===`difal.option.${id}`).value,'Excluir');
@@ -715,7 +716,7 @@ test('bloqueio DIFAL usa RBT12 no limite inclusive e ICMS fora do DAS somente no
   for(const regime of result.regimes){
    const simple=['pure','hybrid'].includes(regime.id),blocked=simple&&(rbt12>=3600000||icmsOutside);
    assert.equal(regime.difalApplication.blocked,blocked);
-   close(regime.dre.difal,simple&&!blocked?-1200:0);close(regime.dre.icmsAnticipation,simple&&!blocked?-8784:0);
+   close(regime.dre.difal,0);close(regime.dre.icmsAnticipation,simple&&!blocked?-8784:0);
    if(blocked)assert.match(regime.difalApplication.message,/Zerado automaticamente/);
   }
  }
@@ -723,12 +724,12 @@ test('bloqueio DIFAL usa RBT12 no limite inclusive e ICMS fora do DAS somente no
  assert.equal(resolveDifalApplication({policy,regimeId:'pure',rbt12:3600000}).reason,'SUBLIMIT');
  assert.equal(resolveDifalApplication({regimeId:'actual',rbt12:5000000,icmsOutside:true}).salesDifal,false);
  assert.equal(resolveDifalApplication({regimeId:'actual',rbt12:5000000}).purchaseAnticipation,false);
- const noSource=calculateTax({...example(),difalPolicy:policy});assert(!Object.hasOwn(noSource.regimes[0].dre,'difal'));
+ const noSource=calculateTax({...example(),difalPolicy:policy});assert.equal(noSource.regimes[0].dre.difal,0);
 });
 
 test('V2 valida direções independentes e exclui LP/LR; migração de V1 preserva sua evidência original',()=>{
  const current=defaultDifalPolicy();
- assert.deepEqual(current,{version:'DIFAL_SCENARIOS_V2',enabled:{pure:true,hybrid:true,presumed:false,actual:false},operations:{pure:{entry:true,exit:true},hybrid:{entry:true,exit:true}}});
+ assert.deepEqual(current,{version:'DIFAL_SCENARIOS_V2',enabled:{pure:true,hybrid:true,presumed:false,actual:false},operations:{pure:{entry:true,exit:false},hybrid:{entry:true,exit:false}}});
  const copy=parseDifalPolicy(current);copy.operations.pure.entry=false;assert.equal(current.operations.pure.entry,true);
  assert.notEqual(defaultDifalPolicy().operations.hybrid,current.operations.hybrid);
  const {operations,...missing}=current;
@@ -744,9 +745,9 @@ test('V2 valida direções independentes e exclui LP/LR; migração de V1 preser
  }
  const legacy={version:'DIFAL_SCENARIOS_V1',enabled:{pure:false,hybrid:true,presumed:true,actual:true}},before=structuredClone(legacy);
  assert.deepEqual(parseDifalPolicy(legacy),before);
- const upgraded=upgradeDifalPolicy(legacy);assert.deepEqual(upgraded,{...current,enabled:{...current.enabled,pure:false}});
+ const upgraded=upgradeDifalPolicy(legacy);assert.deepEqual(upgraded,{...current,enabled:{...current.enabled,pure:false},operations:{pure:{entry:true,exit:true},hybrid:{entry:true,exit:true}}});
  const calculated=calculateTax({...example(),difalMonthly:100,difalPolicy:legacy});
- assert.deepEqual(calculated.difalPolicy,upgraded);assert.deepEqual(legacy,before);
+ assert.deepEqual(calculated.difalPolicy,{...current,enabled:{...current.enabled,pure:false}});assert.deepEqual(legacy,before);
  for(const id of ['presumed','actual']){
   const regime=calculated.regimes.find(row=>row.id===id);assert.equal(regime.dre.difal,0);
   assert.equal(regime.difalApplication.reason,'NOT_APPLICABLE');assert.equal(regime.difalApplication.enabled,false);
@@ -769,7 +770,7 @@ test('matriz de cenários, entrada/saída e sublimite aplica cada dedução uma 
   for(const [index,id]of ids.entries()){
    const regime=result.regimes[index],reference=baseline.regimes[index],simple=index<2;
    const allowed=simple&&policy.enabled[id]&&rbt12<3600000&&!icmsOutside;
-   const outgoing=allowed&&policy.operations[id].exit?1200:0,incoming=allowed&&policy.operations[id].entry?8784:0;
+   const outgoing=0,incoming=allowed&&policy.operations[id].entry?8784:0;
    const charge=reference.available?outgoing+incoming:0;
    close(regime.dre.difal,reference.available?-outgoing:0);close(regime.dre.icmsAnticipation,reference.available?-incoming:0);
    close(regime.dre.netRevenue,reference.dre.netRevenue-charge);close(regime.dre.preTax,reference.dre.preTax-charge);
@@ -779,7 +780,7 @@ test('matriz de cenários, entrada/saída e sublimite aplica cada dedução uma 
    if(!simple)assert.equal(regime.difalApplication.reason,'NOT_APPLICABLE');
    else if(rbt12<3600000&&!icmsOutside&&policy.enabled[id]&&!policy.operations[id].entry&&!policy.operations[id].exit)assert.equal(regime.difalApplication.reason,'NO_OPERATIONS');
   }
-  assert.deepEqual(result.difalPolicy,policy);assert.deepEqual(policy,before);
+  const applied=structuredClone(policy);for(const id of ['pure','hybrid'])applied.operations[id].exit=false;assert.deepEqual(result.difalPolicy,applied);assert.deepEqual(policy,before);
  }
 });
 

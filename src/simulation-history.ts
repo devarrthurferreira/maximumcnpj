@@ -169,10 +169,16 @@ async function removeSimulationSnapshot(actor:LookupActor,simulationId:string,an
   });
   if (deleted) {
     // Save the receipt before removal, so retries can finish an interrupted deletion without retaining fiscal data.
-    await (await collection('audit')).updateOne(scope({_id: deletionAuditId(simulationId)}), {$setOnInsert: {
-      ...scope(), actor: deleted.deletedBy.id, action: 'simulation.delete', target: simulationId, createdAt: deleted.deletedAt,
-      ...(analysisReceipt?{analysisId:analysisReceipt.target}:{})
-    }}, {upsert: true});
+    try {
+      await (await collection('audit')).updateOne(scope({_id: deletionAuditId(simulationId)}), {$setOnInsert: {
+        ...scope(), actor: deleted.deletedBy.id, action: 'simulation.delete', target: simulationId, createdAt: deleted.deletedAt,
+        ...(analysisReceipt?{analysisId:analysisReceipt.target}:{})
+      }}, {upsert: true});
+    } catch (error:any) {
+      // Concurrent retries can both reach the first upsert. Accept only the
+      // receipt for this exact workspace, action and snapshot; other failures remain visible.
+      if(error?.code!==11000||!await deletionReceipt(simulationId))throw error;
+    }
   } else need(await deletionReceipt(simulationId), 'Simulação não encontrada.', 404, 'NOT_FOUND');
   await c.deleteOne(scope({_id: simulationId,...ownership}));
   const reprocessingItems = await collection('simulationReprocessItems');

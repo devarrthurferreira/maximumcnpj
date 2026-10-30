@@ -25,21 +25,21 @@ from reporting.dre_data import dre_metadata, validate_dre_snapshot
 
 @lru_cache(maxsize=1)
 def snapshots():
-    # Only the imported exit estimate changes. The real monthly engine builds
-    # both complete snapshots; Python must never repair their tax calculations.
+    # The preceding revision was captured with the real 1.17 engine. Build only
+    # the corrected version with the current engine; Python does not repair tax.
     script = """
-import {drePdfFixture} from './tests/fixtures/dre-pdf.mjs';
+import {legacyOutgoingDreFixture} from './tests/fixtures/dre-outgoing-legacy.mjs';
 import {calculateMonthlySimulation} from './public/simulator-monthly.js';
 import {buildMonthlyDre} from './public/simulator-calendar.js';
 import {buildDrePresentation} from './public/simulator-dre.js';
 import {buildDreCsv} from './public/simulator-dre-export.js';
 import {REPROCESS_VERSION} from './public/simulation-reprocess-contract.js';
-const previous=drePdfFixture(),corrected=structuredClone(previous);
+const previous=legacyOutgoingDreFixture(),corrected=structuredClone(previous);
 corrected._id='96969696-9696-4696-8696-969696969607';
 corrected.parentSimulationId=previous._id;
 corrected.reprocessing={version:REPROCESS_VERSION,originalId:previous._id,completedAt:'2026-10-30T14:00:00Z'};
 for(const row of corrected.source.monthlyReports){
-  row.difal={...row.difal,version:'DIFAL_ESTIMATE_V5',baseCents:0,amountCents:0,eligibleLines:0,pendingLines:0};
+  row.difal={...row.difal,version:'DIFAL_ESTIMATE_V6',baseCents:0,amountCents:0,eligibleLines:0,pendingLines:0};
 }
 Object.assign(corrected,calculateMonthlySimulation(corrected.draft,corrected.source.monthlyReports,
   corrected.monthlyInputs,corrected.source.sales.jobId,null,corrected.analysisPeriod));
@@ -82,6 +82,9 @@ def assert_statement(test, content, snapshot):
 class DreDifalZeroTests(unittest.TestCase):
     def test_zero_exit_updates_months_subtotals_taxes_and_profit_without_changing_entry(self):
         previous, corrected = pair()
+        self.assertTrue(previous['modelVersion'].startswith('1.17.0-'))
+        self.assertTrue(corrected['modelVersion'].startswith('1.18.0-'))
+        self.assertTrue(corrected['result']['outgoingDifalDisabled'])
         self.assertEqual(corrected['source']['sales']['difal']['amountCents'], 0)
         self.assertEqual(corrected['difalProjection']['annualCents'], 0)
         self.assertEqual(corrected['anticipationProjection'], previous['anticipationProjection'])
@@ -127,19 +130,24 @@ class DreDifalZeroTests(unittest.TestCase):
     def test_real_pdf_and_csv_export_zero_exit_positive_entry_and_revised_profit(self):
         previous, corrected = pair()
         frozen = copy.deepcopy(corrected)
-        annex = assert_statement(self, render(corrected), corrected)
+        pdf = render(corrected)
+        annex = assert_statement(self, pdf, corrected)
+        with pymupdf.open(stream=pdf, filetype='pdf') as document:
+            full_text = ' '.join(' '.join(page.get_text().split()) for page in document)
+        self.assertTrue('Não possui DIFAL de saída' in full_text)
+        self.assertFalse('DIFAL sobre vendas (10%)' in full_text)
         rows = re.findall(r'DIFAL sobre vendas ([\d.,\s-]+)(?=Antecipação de ICMS)', annex)
         self.assertEqual(len(rows), 12, 'All four regimes and three monthly table pages retain the zero row.')
         self.assertTrue(all(set(row.split()) == {'0,00'} for row in rows))
         self.assertIn('Antecipação de ICMS -43,92 -87,84 -131,76 -1.976,40', annex)
         self.assertEqual(corrected, frozen)
         csv_rows = list(csv.reader(io.StringIO(snapshots()['csv']['corrected']), delimiter=';'))
-        exit_rows = [row for row in csv_rows if len(row) > 5 and row[0] == 'DRE' and row[2].lstrip("'") == '− DIFAL sobre vendas (10%)']
+        exit_rows = [row for row in csv_rows if len(row) > 5 and row[0] == 'DRE' and row[2].lstrip("'") == '− DIFAL de saída — desativado']
         entry_rows = [row for row in csv_rows if len(row) > 5 and row[0] == 'DRE' and row[2].lstrip("'") == '− Antecipação de ICMS']
         self.assertEqual(len(exit_rows), 1)
         self.assertEqual(exit_rows[0][5:9], ['0,00'] * 4)
         self.assertEqual(entry_rows[0][5:9], ['-1976,40', '-1976,40', '0,00', '0,00'])
-        monthly_exit = [row for row in csv_rows if len(row) > 6 and row[1] == 'DRE' and row[3].lstrip("'") == '− DIFAL sobre vendas (10%)']
+        monthly_exit = [row for row in csv_rows if len(row) > 6 and row[1] == 'DRE' and row[3].lstrip("'") == '− DIFAL de saída — desativado']
         self.assertEqual(len(monthly_exit), 4)
         self.assertTrue(all(row[6:16] == ['0,00'] * 10 for row in monthly_exit))
         profit = next(row for row in csv_rows if len(row) > 5 and row[0] == 'DRE' and row[2] == 'Resultado líquido')

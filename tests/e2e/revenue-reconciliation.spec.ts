@@ -18,7 +18,7 @@ async function mount(page:Page,{sales=true,revenue=closing()}:{sales?:boolean;re
   const groups=[{status:sales?'CPF':'NAO_OPTANTE',count:1,lines:totals.lines,totalCents:totals.totalCents,countPercent:100,valuePercent:100,unconfirmedCount:0,unconfirmedCents:0}];
   const summary:any={job:activeJob,calculationVersion:'NET_V2',difalPolicy:policy,totals,reportingGroups:groups,revenueReconciliation:revenue,
     components:{grossCents:sales?135000:65000,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents:sales?135000:65000},
-    ...(sales?{difal:{version:'DIFAL_ESTIMATE_V4',ratePercent:10,issuerUf:'MG',eligibleLines:1,baseCents:100000,amountCents:10000,pendingLines:0}}:{
+    ...(sales?{difal:{version:'DIFAL_ESTIMATE_V6',ratePercent:10,issuerUf:'MG',eligibleLines:0,baseCents:0,amountCents:0,pendingLines:0}}:{
       anticipation:{version:'ICMS_ANTICIPATION_V3',ratePercent:7.32,issuerUf:'MG',eligibleLines:1,baseCents:50000,amountCents:3660,pendingLines:0},
       purchaseSelection:{version:'PURCHASE_NATURES_V1',available:true,reportTotalCents:65000,reportLines:2,excludedTotalCents:15000,excludedLines:1,totals,reportingGroups:groups,natureTotals:[]}})};
   const generation:any={_id:generationId,requiredReports:['PURCHASES','SALES'],status:'COMPLETED',companyCount:1,completedCount:1,missingCount:0,inProgressCount:0,createdAt:'2026-10-23T12:00:00Z',companies:[{...company,difalPolicy:policy,status:'COMPLETED',purchase:job(false),sales:job(true),purchaseJobId,salesJobId}]};
@@ -49,7 +49,7 @@ for(const sales of [false,true])for(const guided of [false,true])test(`fechament
   expect(await panel.evaluate(element=>element===element.parentElement?.lastElementChild)).toBe(true);
   await expect(panel.locator('details')).not.toHaveAttribute('open','');await expect(panel.locator('[data-revenue-value="revenueAfterReturnsCents"]')).toBeVisible();
   await expect(page.locator('#purchase-report-view .purchase-hero')).toContainText(sales?'1.150,00':'500,00');
-  if(sales){await expect(page.getByRole('heading',{name:'Total original do arquivo de vendas',exact:true})).toBeVisible();await expect(page.locator('#purchase-report-view [data-difal-amount]')).toContainText('0,00');}
+  if(sales){await expect(page.getByRole('heading',{name:'Total original do arquivo de vendas',exact:true})).toBeVisible();await expect(page.locator('#purchase-report-view [data-difal-amount]')).toContainText('0,00');await expect(page.locator('#purchase-report-view')).toContainText('Não possui DIFAL de saída');}
   else await expect(page.locator('#purchase-report-view [data-anticipation-amount]')).toContainText('36,60');
   await panel.locator('summary').click();await expect(panel.locator('[data-revenue-component="grossSalesCents"]')).toContainText('1.000,00');await expect(panel.locator('[data-revenue-component="serviceSalesCents"]')).toContainText('200,00');
   expect(writes).toEqual([]);

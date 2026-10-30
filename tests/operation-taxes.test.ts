@@ -5,21 +5,22 @@ import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {OPERATION_CATALOG_GROUPS} from '../src/operation-catalog.ts';
-import {calculateDifal,summarizeDifal,DIFAL_VERSION,DIFAL_CPF_CNPJ_VERSION,DIFAL_CATALOG_VERSION} from '../src/difal.ts';
+import {calculateDifal,summarizeDifal,DIFAL_VERSION,DIFAL_CPF_ONLY_VERSION,DIFAL_CPF_CNPJ_VERSION,DIFAL_CATALOG_VERSION} from '../src/difal.ts';
 import {calculateAnticipation,summarizeAnticipation,ANTICIPATION_VERSION,ANTICIPATION_CPF_CNPJ_VERSION,ANTICIPATION_PREVIOUS_VERSION,ANTICIPATION_LEGACY_VERSION} from '../src/icms-anticipation.ts';
 
 const sale={totalCents:100_005,document:'12345678901',issuerUf:'MG',recipientUf:'SP'};
-test('DIFAL V5 usa catálogo VENDA e UF real; V1/V2/V3/V4 permanecem congelados',()=>{
-  for(const nature of OPERATION_CATALOG_GROUPS.VENDA)assert.deepEqual(calculateDifal({...sale,natureCode:nature+'002',description:'Texto não altera catálogo'}),
+const historicalDifal = (input: Parameters<typeof calculateDifal>[0], version: Parameters<typeof calculateDifal>[1] = DIFAL_CPF_ONLY_VERSION) => calculateDifal(input, version);
+test('DIFAL V5 usa catálogo VENDA e UF real; e preserva regras V1/V2/V3/V4',()=>{
+  for(const nature of OPERATION_CATALOG_GROUPS.VENDA)assert.deepEqual(historicalDifal({...sale,natureCode:nature+'002',description:'Texto não altera catálogo'}),
     {eligible:true,baseCents:100_005,amountCents:10_001,reason:'ELIGIBLE'});
-  assert.equal(calculateDifal({...sale,natureCode:'5405'}).eligible,true);
-  assert.equal(calculateDifal({...sale,natureCode:'5405',description:'Venda'},'DIFAL_ESTIMATE_V2').eligible,false);
-  assert.equal(calculateDifal({...sale,natureCode:'5102'},'DIFAL_ESTIMATE_V1').eligible,false);
-  assert.equal(calculateDifal({...sale,natureCode:'5102'},'DIFAL_ESTIMATE_V2').eligible,true);
-  for(const code of ['9000002','8000102','6949','1202','6202','9999'])assert.equal(calculateDifal({...sale,natureCode:code,description:'Venda'}).eligible,false);
-  assert.equal(calculateDifal({...sale,natureCode:'6102',recipientUf:'MG'}).reason,'SAME_UF');
-  assert.equal(calculateDifal({...sale,natureCode:'6102',document:'12345678000199'}).reason,'NOT_CPF');
-  assert.equal(summarizeDifal([{...sale,natureCode:'6102',recipientUf:''}],'MG').pendingLines,1);
+  assert.equal(historicalDifal({...sale,natureCode:'5405'}).eligible,true);
+  assert.equal(historicalDifal({...sale,natureCode:'5405',description:'Venda'},'DIFAL_ESTIMATE_V2').eligible,false);
+  assert.equal(historicalDifal({...sale,natureCode:'5102'},'DIFAL_ESTIMATE_V1').eligible,false);
+  assert.equal(historicalDifal({...sale,natureCode:'5102'},'DIFAL_ESTIMATE_V2').eligible,true);
+  for(const code of ['9000002','8000102','6949','1202','6202','9999'])assert.equal(historicalDifal({...sale,natureCode:code,description:'Venda'}).eligible,false);
+  assert.equal(historicalDifal({...sale,natureCode:'6102',recipientUf:'MG'}).reason,'SAME_UF');
+  assert.equal(historicalDifal({...sale,natureCode:'6102',document:'12345678000199'}).reason,'NOT_CPF');
+  assert.equal(summarizeDifal([{...sale,natureCode:'6102',recipientUf:''}],'MG',DIFAL_CPF_ONLY_VERSION).pendingLines,1);
 });
 test('antecipação V4 usa somente COMPRAS, 7,32% por linha e pendências explícitas',()=>{
   for(const nature of OPERATION_CATALOG_GROUPS.COMPRAS)assert.deepEqual(calculateAnticipation({...sale,natureCode:nature}),
@@ -70,29 +71,29 @@ test('DIFAL V5 só inclui CPF de outra UF; entradas e V4 conservam CPF/CNPJ',()=
   for(const document of ['123.456.789-01','00.000.000/0001-91','12.abc.345/01de-35']) {
     const cpf=/^\d{11}$/.test(document.replace(/[./\-]/g,''));
     for(const status of ['OPTANTE','NAO_OPTANTE','NAO_CONFIRMADO',undefined]) {
-      assert.equal(calculateDifal({...sale,natureCode:'5405002',document,status}).amountCents,cpf?10001:0);
-      assert.equal(calculateDifal({...sale,natureCode:'5405002',document,status},DIFAL_CPF_CNPJ_VERSION).amountCents,10001);
+      assert.equal(historicalDifal({...sale,natureCode:'5405002',document,status}).amountCents,cpf?10001:0);
+      assert.equal(historicalDifal({...sale,natureCode:'5405002',document,status},DIFAL_CPF_CNPJ_VERSION).amountCents,10001);
       assert.equal(calculateAnticipation({...sale,natureCode:'2102002',document,status}).amountCents,7320);
     }
-    assert.equal(calculateDifal({...sale,natureCode:'6102',document,recipientUf:''}).reason,cpf?'MISSING_RECIPIENT_UF':'NOT_CPF');
+    assert.equal(historicalDifal({...sale,natureCode:'6102',document,recipientUf:''}).reason,cpf?'MISSING_RECIPIENT_UF':'NOT_CPF');
     assert.equal(calculateAnticipation({...sale,natureCode:'1102',document,issuerUf:''}).reason,'MISSING_ISSUER_UF');
   }
   for(const document of ['00000000000192','12ABC34501DE36','123456789012','ABC','',undefined]) {
-    assert.equal(calculateDifal({...sale,natureCode:'6102',document}).reason,'NOT_CPF');
+    assert.equal(historicalDifal({...sale,natureCode:'6102',document}).reason,'NOT_CPF');
     assert.equal(calculateAnticipation({...sale,natureCode:'1102',document}).reason,'NOT_CPF_OR_CNPJ');
   }
   for(const version of ['DIFAL_ESTIMATE_V1','DIFAL_ESTIMATE_V2',DIFAL_CATALOG_VERSION] as const) {
-    assert.equal(calculateDifal({...sale,natureCode:'6102',document:'00000000000191'},version).reason,'NOT_CPF');
+    assert.equal(historicalDifal({...sale,natureCode:'6102',document:'00000000000191'},version).reason,'NOT_CPF');
   }
-  assert.equal(calculateDifal({...sale,natureCode:'5405',description:'Remessa'},DIFAL_CATALOG_VERSION).eligible,true);
+  assert.equal(historicalDifal({...sale,natureCode:'5405',description:'Remessa'},DIFAL_CATALOG_VERSION).eligible,true);
   const zero=summarizeDifal([{...sale,natureCode:'6102',document:'00000000000191',recipientUf:''},{...sale,natureCode:'6102',recipientUf:'MG'}],'MG');
   assert.deepEqual(zero,{version:DIFAL_VERSION,ratePercent:10,issuerUf:'MG',eligibleLines:0,baseCents:0,amountCents:0,pendingLines:0});
   assert.equal(summarizeAnticipation([{...sale,natureCode:'1102',document:'00000000000191'}],'MG').version,ANTICIPATION_VERSION);
 });
 
-test('Node e Python concordam no DIFAL CPF atual e nas quatro versões históricas',()=>{
+test('Node e Python concordam na saída desativada atual e nas cinco versões históricas',()=>{
   const cases=[];
-  for(const version of [DIFAL_VERSION,DIFAL_CPF_CNPJ_VERSION,DIFAL_CATALOG_VERSION,'DIFAL_ESTIMATE_V2','DIFAL_ESTIMATE_V1'] as const)
+  for(const version of [DIFAL_VERSION,DIFAL_CPF_ONLY_VERSION,DIFAL_CPF_CNPJ_VERSION,DIFAL_CATALOG_VERSION,'DIFAL_ESTIMATE_V2','DIFAL_ESTIMATE_V1'] as const)
     for(const natureCode of ['6102','5102001','5405','9000','8000','6202'])
       for(const document of ['12345678901','123.456.789-01','11222333000181','12ABC34501DE35','11222333000182','123456789012',''])
         for(const [issuerUf,recipientUf] of [['MG','SP'],['MG',''],['','SP'],['MG','MG']])

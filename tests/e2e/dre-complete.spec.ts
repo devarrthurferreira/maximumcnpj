@@ -88,7 +88,7 @@ test('evolução compara competências reais e informa ausência sem gravar ou a
   await page.locator('#dre-month').selectOption('1');await expect(page.locator('#dre-month')).toBeFocused();
   await expect(page.locator('[data-dre-change="revenue"] strong')).toHaveText('+R$ 500,00');
   await expect(page.locator('[data-dre-change="revenue"]')).toContainText('+50% sobre o valor do mês anterior');
-  await expect(page.locator('[data-dre-change="difal"] strong')).toHaveText('+R$ 50,00');
+  await expect(page.locator('[data-dre-change="difal"] strong')).toHaveText('R$ 0,00');
   await expect(page.locator('[data-dre-change="netMargin"] strong')).toContainText('p.p.');
   await page.locator('#dre-month').selectOption('2');
   await expect(page.locator('[data-dre-change="revenue"] strong')).toHaveText('-R$ 1.500,00');
@@ -130,7 +130,7 @@ test('DRE única conserva composição, escolhas, exportação e impressão anua
   await page.locator('#dre-regime').selectOption('pure');
   await expect(page.locator('#dre-show-percent')).not.toBeChecked();await expect(page.locator('.dre-complete details[open]')).toHaveCount(0);
   await page.locator('#dre-show-percent').check();await expect(page.locator('.dre-complete [data-dre-row="revenue"] .dre-percent').first()).toHaveText('100%');
-  await expect(page.locator('.dre-complete [data-dre-row="difal"] .dre-percent').first()).toHaveText('-2,4%');
+  await expect(page.locator('.dre-complete [data-dre-row="difal"] .dre-percent').first()).toHaveText('0%');
   await page.locator('.sim-charts-details summary').click();
   await page.getByRole('button',{name:'Mensal',exact:true}).click();await page.locator('#dre-regime').selectOption('actual');
   await expect(page.locator('.sim-charts-details')).toHaveAttribute('open','');await expect(page.locator('.dre-complete > .dre-table-wrap > table')).toHaveCount(1);
@@ -190,16 +190,16 @@ test('serviços e DIFAL conciliam entre tela e CSV após reabrir histórico sem 
     if(visit) await page.reload();
     await expect(page.locator('.dre-complete > .dre-table-wrap > table')).toHaveCount(1);
     await expect(page.locator('#simulation-result details[open],dialog[open]')).toHaveCount(0);
-    for(const [key,amount] of [['services','30.000,00'],['difal','3.600,00']]){
+    for(const [key,amount] of [['services','30.000,00'],['difal','0,00']]){
       const cells=page.locator(`.dre-complete [data-dre-row="${key}"] td`);
       await expect(cells).toHaveCount(4);
-      for(const [index,cell] of (await cells.allTextContents()).entries()) expect(cell).toContain(key==='difal'&&index>1?'0,00':amount);
+      for(const cell of await cells.allTextContents()) expect(cell).toContain(amount);
     }
     await page.locator('#dre-report-period').selectOption('annual');
     const annual=(await downloadText(page,'#export-dre-csv')).text;
-    const annualDifal=annual.split('\r\n').filter(line=>line.includes('DIFAL sobre vendas (10%)'));
+    const annualDifal=annual.split('\r\n').filter(line=>line.includes('DIFAL de saída — desativado'));
     expect(annualDifal).toHaveLength(1);
-    expect(annualDifal[0].split(';').slice(5,9)).toEqual(['-3600,00','-3600,00','0,00','0,00']);
+    expect(annualDifal[0].split(';').slice(5,9)).toEqual(Array(4).fill('0,00'));
     const annualServices=annual.split('\r\n').filter(line=>line.startsWith('"DRE";')&&line.includes('"Receita de serviços"'));
     expect(annualServices).toHaveLength(1);
     expect(annualServices[0].split(';').slice(5,9)).toEqual(Array(4).fill('30000,00'));
@@ -207,16 +207,16 @@ test('serviços e DIFAL conciliam entre tela e CSV após reabrir histórico sem 
     await page.getByRole('button',{name:'12 meses',exact:true}).click();
     await page.locator('#dre-report-period').selectOption('monthly');
     const monthly=(await downloadText(page,'#export-dre-csv')).text;
-    const monthlyDifal=monthly.split('\r\n').filter(line=>line.includes('DIFAL sobre vendas (10%)'));
+    const monthlyDifal=monthly.split('\r\n').filter(line=>line.includes('DIFAL de saída — desativado'));
     expect(monthlyDifal).toHaveLength(4);
     const monthlyServices=monthly.split('\r\n').filter(line=>line.includes(';"DRE";')&&line.includes('"Receita de serviços"'));
     expect(monthlyServices).toHaveLength(4);
     for(const line of monthlyServices) expect(line.split(';').slice(6,19)).toEqual([...Array(12).fill('2500,00'),'30000,00']);
-    for(const [index,line] of monthlyDifal.entries()) expect(line.split(';').slice(6,19)).toEqual(index<2?[...Array(12).fill('-300,00'),'-3600,00']:Array(13).fill('0,00'));
+    for(const line of monthlyDifal) expect(line.split(';').slice(6,19)).toEqual(Array(13).fill('0,00'));
     for(const regime of saved.result.regimes){
       await page.locator('#dre-regime').selectOption(regime.id);
       await expect(page.locator('.dre-complete > .dre-table-wrap > table')).toHaveCount(1);
-      for(const [key,amount,total] of [['services','2.500,00','30.000,00'],['difal', ['pure','hybrid'].includes(regime.id)?'300,00':'0,00', ['pure','hybrid'].includes(regime.id)?'3.600,00':'0,00']]){
+      for(const [key,amount,total] of [['services','2.500,00','30.000,00'],['difal','0,00','0,00']]){
         const cells=page.locator(`.dre-complete [data-dre-row="${key}"] td`);
         await expect(cells).toHaveCount(13);
         for(const cell of (await cells.allTextContents()).slice(0,12)) expect(cell).toContain(amount);
@@ -231,10 +231,11 @@ test('serviços e DIFAL conciliam entre tela e CSV após reabrir histórico sem 
   expect(writes).toEqual([]);
 });
 
-test('DRE legada sem DIFAL não inventa valores e receita zero não recebe percentuais',async({page})=>{
+test('DRE atual mantém saída zerada sem fonte DIFAL e receita zero não recebe percentuais',async({page})=>{
   const saved=fixture();saved.draft.values={serviceRevenue:0,salesRevenue:0,simplePurchases:0,regularPurchases:0,salaries:100,benefits:0,adminExpenses:0,rent:0,cardExpenses:0};saved.result=calculateSimulation(saved.draft);saved.monthlyDre=buildMonthlyDre(saved.result,2027);saved.result.regimes[1].available=false;saved.monthlyDre.regimes[1].available=false;
   await open(page,saved);await page.locator('#dre-show-percent').check();
-  await expect(page.locator('.dre-complete [data-dre-row="difal"]')).toHaveCount(0);
+  await expect(page.locator('.dre-complete [data-dre-row="difal"]')).toHaveCount(1);
+  await expect(page.locator('.dre-complete [data-dre-row="difal"] td').first()).toContainText('R$ 0,00');
   const amounts=await page.locator('.dre-complete > .dre-table-wrap .dre-percent').allTextContents();expect(amounts.length).toBeGreaterThan(0);expect(amounts.every(value=>value==='—')).toBe(true);
   await expect(page.locator('.dre-complete [data-dre-row="revenue"] td').nth(1)).toHaveText('——');
   await expect(page.locator('.dre-result-card')).toHaveClass(/is-loss/);

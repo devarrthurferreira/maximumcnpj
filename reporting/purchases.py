@@ -258,16 +258,15 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
         _check(isinstance(issuer_uf, str) and issuer_uf == normalize_uf(issuer_uf))
         anticipation = {'version': job['anticipationVersion'], 'ratePercent': ANTICIPATION_RATE_PERCENT,
                         'issuerUf': issuer_uf, 'eligibleLines': 0, 'baseCents': 0, 'amountCents': 0, 'pendingLines': 0}
-    # Older NET_V2 imports may already contain the required frozen operation
-    # fields. Derive a read-only estimate only when every row has those fields;
-    # an absent field makes the whole estimate unavailable, never a partial zero.
+    # Historical estimates are reconciled with their own rule before presenting
+    # the current analysis. Outgoing DIFAL is disabled independently of UF or
+    # operation fields; entry still requires every original calculation field.
     issuer_metadata_valid = ('issuerUf' not in job or
         isinstance(job['issuerUf'], str) and job['issuerUf'] == normalize_uf(job['issuerUf']))
     if operation_version is not None:
         _check(issuer_metadata_valid)
     derive_difal = sales and job.get('difalVersion') != DIFAL_VERSION and version == 'NET_V2' and issuer_metadata_valid
     derive_anticipation = not sales and job.get('anticipationVersion') != ANTICIPATION_VERSION and version == 'NET_V2' and issuer_metadata_valid
-    difal_derivation_complete = derive_difal
     derivation_complete = derive_anticipation
     derived_difal = {'version': DIFAL_VERSION, 'ratePercent': DIFAL_RATE_PERCENT,
         'issuerUf': normalize_uf(job.get('issuerUf')), 'eligibleLines': 0, 'baseCents': 0,
@@ -349,23 +348,18 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
                 anticipation[key] = _integer(anticipation[key] + expected_anticipation[key])
             anticipation['eligibleLines'] += int(expected_anticipation['eligible'])
             anticipation['pendingLines'] += int(expected_anticipation['reason'] in ANTICIPATION_PENDING_REASONS)
-        if derive_difal or derive_anticipation:
+        if derive_anticipation:
             has_fields = (isinstance(row.get('natureCode'), str) and
                           re.fullmatch(r'[0-9]{4}', row['natureCode']) is not None and
                           isinstance(row.get('recipientUf'), str) and row['recipientUf'] == normalize_uf(row['recipientUf']))
-            for deriving, target, calculate, reasons in (
-                    (derive_difal, derived_difal, calculate_difal, PENDING_REASONS),
-                    (derive_anticipation, derived_anticipation, calculate_anticipation, ANTICIPATION_PENDING_REASONS)):
-                if not deriving or not has_fields:
-                    continue
+            if has_fields:
                 # A historical operation label was validated above under its
                 # original rule; the current tax view uses today's catalog.
-                calculated = calculate({key: value for key, value in row.items() if key != 'operation'}, target['issuerUf'])
+                calculated = calculate_anticipation({key: value for key, value in row.items() if key != 'operation'}, derived_anticipation['issuerUf'])
                 for key in ('baseCents', 'amountCents'):
-                    target[key] = _integer(target[key] + calculated[key])
-                target['eligibleLines'] += int(calculated['eligible'])
-                target['pendingLines'] += int(calculated['reason'] in reasons)
-            difal_derivation_complete = difal_derivation_complete and has_fields
+                    derived_anticipation[key] = _integer(derived_anticipation[key] + calculated[key])
+                derived_anticipation['eligibleLines'] += int(calculated['eligible'])
+                derived_anticipation['pendingLines'] += int(calculated['reason'] in ANTICIPATION_PENDING_REASONS)
             derivation_complete = derivation_complete and has_fields
         operation = row.get('operation') if sales else None
         if sales:
@@ -502,8 +496,8 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
     difal_origin = 'IMPORTED' if difal is not None else 'UNAVAILABLE'
     anticipation_origin = 'IMPORTED' if anticipation is not None else 'UNAVAILABLE'
     if derive_difal:
-        difal = derived_difal if difal_derivation_complete else None
-        difal_origin = 'DERIVED_FROM_SNAPSHOT' if difal_derivation_complete else 'UNAVAILABLE'
+        difal = derived_difal
+        difal_origin = 'DERIVED_FROM_SNAPSHOT'
     if derive_anticipation:
         anticipation = derived_anticipation if derivation_complete else None
         anticipation_origin = 'DERIVED_FROM_SNAPSHOT' if derivation_complete else 'UNAVAILABLE'
@@ -793,6 +787,16 @@ def revenue_story(closing, width, styles, title='Fechamento da receita'):
 def difal_story(difal, width, styles, origin=None, policy=None):
     """Keep the estimate separate from invoice totals and preserve missing-data states."""
     p = lambda value, style='body': purchase_paragraph(value, styles, style)
+    if difal is not None and difal.get('version') == DIFAL_VERSION:
+        _check(all(difal.get(key) == 0 for key in ('baseCents', 'amountCents', 'eligibleLines', 'pendingLines')))
+        story = [p('DIFAL de saída', 'heading'),
+                 p('Não possui DIFAL de saída. Valor considerado na análise: R$ 0,00.'),
+                 p('O DIFAL de saída está desativado nesta regra de análise, inclusive para vendas a CPF de outro estado. '
+                   'Os valores e a classificação das vendas permanecem preservados. O DIFAL de entrada é apurado separadamente.', 'small')]
+        if origin == 'DERIVED_FROM_SNAPSHOT':
+            story.append(p('Regra atual aplicada aos dados salvos no relatório de origem, após conferir a regra original, '
+                           'sem modificar o lote ou as suas linhas.', 'small'))
+        return story
     story = [p('DIFAL sobre vendas (10%)', 'heading')]
     choice = direction_selection(policy, 'exit')
     if choice is not None and not choice['enabled']:

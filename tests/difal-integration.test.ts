@@ -10,7 +10,7 @@ import { importCatalog } from '../src/lookup-catalog.ts';
 import { createLookup, uploadLookup, finalizeLookup, processLookup, recheckLookup } from '../src/lookup-jobs.ts';
 import { SALES_MODE } from '../src/purchase-domain.ts';
 import { purchaseSummary, purchaseRows, purchaseExport, currentSalesDocumentDifal } from '../src/purchase-store.ts';
-import { DIFAL_VERSION, DIFAL_CPF_CNPJ_VERSION } from '../src/difal.ts';
+import { DIFAL_VERSION, DIFAL_CPF_ONLY_VERSION, DIFAL_CPF_CNPJ_VERSION } from '../src/difal.ts';
 import { createGeneration, attachGenerationSale, attachGenerationPurchase, getGeneration, deleteGeneration } from '../src/generation-store.ts';
 import { generationSimulator } from '../src/simulator-store.ts';
 import { digits } from '../src/domain.ts';
@@ -19,6 +19,8 @@ import { reprocessSimulations, reprocessedSimulationId, REPROCESS_VERSION } from
 import { projectDifal } from '../public/simulator-projection.js';
 import { calculateSimulation, draftToInput } from '../public/simulator-engine.js';
 import { buildMonthlyDre } from '../public/simulator-calendar.js';
+import { buildAnalysisPeriod } from '../public/analysis-period.js';
+import { digest } from '../src/security.ts';
 
 test('DIFAL MongoDB: origem imutável, CPF, reconciliação, reimportação, legado e geração idempotente', {skip: !process.env.MONGODB_URI, timeout: 120000}, async () => {
   const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
@@ -56,22 +58,22 @@ test('DIFAL MongoDB: origem imutável, CPF, reconciliação, reimportação, leg
     await processLookup(actor, job._id, transport);
     assert.equal(providerCalls, 1, 'CPF nunca é consultado no provedor CNPJ.');
     const summary = await purchaseSummary(job._id, true, SALES_MODE);
-    assert.deepEqual(summary.difal, {version: DIFAL_VERSION, ratePercent: 10, issuerUf: 'MG', eligibleLines: 4, baseCents: 115010, amountCents: 11502, pendingLines: 1});
+    assert.deepEqual(summary.difal, {version: DIFAL_VERSION, ratePercent: 10, issuerUf: 'MG', eligibleLines: 0, baseCents: 0, amountCents: 0, pendingLines: 0});
     assert.equal(summary.components?.accessoryCents, 990);
     assert.equal(summary.totals.totalCents, 175010, 'DIFAL não aumenta o saldo financeiro nem inclui despesa Z.');
     const detail = await purchaseRows(job._id, 'ALL', 1, true, SALES_MODE);
-    assert.deepEqual(detail.items.map((row: any) => row.difal.amountCents), [1500, 0, 0, 0, 10000, 0, 0, 0, 1, 1]);
+    assert.deepEqual(detail.items.map((row: any) => row.difal.amountCents), Array(10).fill(0));
     const grouped = await purchaseRows(job._id, 'CPF', 1, false, SALES_MODE);
-    assert.equal(grouped.items[0].difal.amountCents, 11502); assert.equal(grouped.items[0].difal.pendingLines, 1);
+    assert.equal(grouped.items[0].difal.amountCents, 0); assert.equal(grouped.items[0].difal.pendingLines, 0);
     const csv = await purchaseExport(job._id, 'ALL', 1, SALES_MODE);
-    assert(csv.content.includes('"MG";"SP";"10";"150,00";"15,00";"ELIGIBLE"'));
-    assert(csv.content.includes('"MG";"";"10";"";"";"Pendente — UF do destinatário ausente"'));
+    assert(csv.content.includes('"MG";"SP";"0";"0,00";"0,00";"OUTGOING_DISABLED"'));
+    assert(csv.content.includes('"MG";"";"0";"0,00";"0,00";"OUTGOING_DISABLED"'));
     await assert.rejects(uploadLookup(actor, job._id, {offset: 0, rows: [sale({totalCents: 100000})]}));
     const lines = await collection('purchaseLines'), target = scope({jobId: job._id, index: 0});
     const saved = await lines.findOne(target);
-    for (const altered of [{difal: {...saved!.difal, amountCents: 1}}, {recipientUf: 'MG'}, {operation: 'OUTRAS'}]) {
+    for (const altered of [{difal: {...saved!.difal, amountCents: 1}}, {recipientUf: 'sp'}, {operation: 'OUTRAS'}]) {
       await lines.updateOne(target, {$set: altered});
-      await assert.rejects(purchaseSummary(job._id, true, SALES_MODE), (error: any) => error.code === 'DIFAL_SNAPSHOT');
+      await assert.rejects(purchaseSummary(job._id, true, SALES_MODE), (error: any) => error.code === (Object.hasOwn(altered,'recipientUf')?'OPERATION_SNAPSHOT':'DIFAL_SNAPSHOT'));
       await lines.updateOne(target, {$set: {difal: saved!.difal, recipientUf: saved!.recipientUf, operation: saved!.operation}});
     }
     await (await collection('lookupJobs')).updateOne(scope({_id: job._id}), {$inc: {'purchaseInput.difal.amountCents': 1}});
@@ -85,19 +87,19 @@ test('DIFAL MongoDB: origem imutável, CPF, reconciliação, reimportação, leg
     assert.equal(providerCalls, 2);
     const updated = await createLookup(actor, {...input, importId: randomUUID(), expectedRows: 1, issuerUf: 'MG'}, SALES_MODE);
     await uploadLookup(actor, updated._id, {offset: 0, rows: [sale({totalCents: 100000})]}); await finalizeLookup(actor, updated._id);
-    assert.equal((await purchaseSummary(updated._id, true, SALES_MODE)).difal?.amountCents, 10000);
-    assert.equal((await purchaseSummary(job._id, true, SALES_MODE)).difal?.amountCents, 11502);
+    assert.equal((await purchaseSummary(updated._id, true, SALES_MODE)).difal?.amountCents, 0);
+    assert.equal((await purchaseSummary(job._id, true, SALES_MODE)).difal?.amountCents, 0);
     const missing = await createLookup(actor, {...input, importId: randomUUID(), expectedRows: 1, issuerUf: ''}, SALES_MODE);
     await uploadLookup(actor, missing._id, {offset: 0, rows: [sale()]}); await finalizeLookup(actor, missing._id);
-    assert.equal((await purchaseSummary(missing._id, true, SALES_MODE)).difal?.pendingLines, 1);
+    assert.equal((await purchaseSummary(missing._id, true, SALES_MODE)).difal?.pendingLines, 0);
     const legacy = await createLookup(actor, {...input, importId: randomUUID(), expectedRows: 2}, SALES_MODE);
     await (await collection('lookupJobs')).updateOne(scope({_id: legacy._id}), {$unset: {operationVersion:'',difalVersion: '', issuerUf: ''}});
     await uploadLookup(actor, legacy._id, {offset: 0, rows: rows.slice(0, 2)});
     await uploadLookup(actor, legacy._id, {offset: 0, rows: rows.slice(0, 2)});
     await finalizeLookup(actor, legacy._id); await (await collection('providerControl')).deleteMany({}); await processLookup(actor, legacy._id, transport);
-    assert.equal((await purchaseSummary(legacy._id, true, SALES_MODE)).difal, null);
+    assert.equal((await purchaseSummary(legacy._id, true, SALES_MODE)).difal?.amountCents, 0);
     assert.equal((await lines.findOne(scope({jobId: legacy._id, index: 0})))!.operation, 'OUTRAS');
-    assert((await purchaseExport(legacy._id, 'ALL', 1, SALES_MODE)).content.includes('Indisponível — reimporte'));
+    assert((await purchaseExport(legacy._id, 'ALL', 1, SALES_MODE)).content.includes('OUTGOING_DISABLED'));
     const legacyRecheck = await recheckLookup(actor, legacy._id);
     assert.equal(legacyRecheck.difalVersion, undefined); assert.equal(legacyRecheck.issuerUf, undefined);
     const generation = await createGeneration(actor, {generationId: randomUUID(), clientIds: [clientId]});
@@ -113,6 +115,31 @@ test('DIFAL MongoDB: origem imutável, CPF, reconciliação, reimportação, leg
     const simulator = await generationSimulator(generation._id, clientId);
     assert.deepEqual(simulator.sales.difal, (await purchaseSummary(attached.job._id, true, SALES_MODE)).difal);
     assert.equal(simulator.purchases.difal, undefined);
+    const archivedCpf=await createLookup(actor,{...input,importId:randomUUID(),expectedRows:1,issuerUf:'MG'},SALES_MODE);
+    const jobs=await collection('lookupJobs');
+    await jobs.updateOne(scope({_id:archivedCpf._id}),{$set:{difalVersion:DIFAL_CPF_ONLY_VERSION}});
+    await uploadLookup(actor,archivedCpf._id,{offset:0,rows:[sale({totalCents:17431970})]});await finalizeLookup(actor,archivedCpf._id);
+    const frozenJob=(await jobs.findOne(scope({_id:archivedCpf._id})))!,frozenLines=await lines.find(scope({jobId:archivedCpf._id})).toArray();
+    assert.equal(frozenJob.purchaseInput.difal.amountCents,1743197,'V5 preserva a cobrança histórica de R$ 17.431,97.');
+    assert.equal(frozenLines[0].difal.baseCents,17431970);assert.equal(frozenLines[0].difal.reason,'ELIGIBLE');
+    const current=await purchaseSummary(archivedCpf._id,true,SALES_MODE);
+    assert.equal(current.totals.totalCents,17431970);assert.equal(current.difal?.version,DIFAL_VERSION);
+    assert.equal(current.difal?.amountCents,0);assert.equal(current.difal?.baseCents,0);
+    assert.equal(current.difal?.eligibleLines,0);assert.equal(current.difal?.pendingLines,0);
+    const oldSignature=digest(JSON.stringify([frozenJob._id,frozenJob.clientId,frozenJob.generationId,frozenJob.completedAt,
+      frozenJob.difalVersion,frozenJob.issuerUf,frozenJob.expectedRows,frozenJob.reportPeriod,frozenJob.purchaseInput,DIFAL_CPF_ONLY_VERSION,'JAN_SEP_V1']));
+    const cache=await collection('documentDifalEstimates'),oldEstimate={...scope(),_id:oldSignature,createdAt:new Date(),value:{
+      jobId:frozenJob._id,clientId, difal:frozenJob.purchaseInput.difal,period:buildAnalysisPeriod(current.period,current.period)}};
+    await cache.insertOne(oldEstimate);
+    assert.equal((await currentSalesDocumentDifal(archivedCpf._id)).difal.amountCents,0,'Cache da V5 não pode reativar a saída atual.');
+    assert.equal(await cache.countDocuments(scope({'value.jobId':archivedCpf._id})),2);
+    assert.deepEqual(await cache.findOne(scope({_id:oldSignature})),oldEstimate);
+    const currentRows=await purchaseRows(archivedCpf._id,'ALL',1,true,SALES_MODE);
+    assert.equal(currentRows.items[0].difal.reason,'OUTGOING_DISABLED');assert.equal(currentRows.items[0].totalCents,17431970);
+    const currentCsv=(await purchaseExport(archivedCpf._id,'ALL',1,SALES_MODE)).content;
+    assert(currentCsv.includes('"0,00";"0,00";"OUTGOING_DISABLED"'));assert(!currentCsv.includes('"17431,97"'));
+    assert.deepEqual(await jobs.findOne(scope({_id:archivedCpf._id})),frozenJob);
+    assert.deepEqual(await lines.find(scope({jobId:archivedCpf._id})).toArray(),frozenLines);
     process.env.WORKSPACE_ID = 'different_workspace'; await assert.rejects(purchaseSummary(job._id, true, SALES_MODE)); process.env.WORKSPACE_ID = 'difal_test';
   } finally {
     await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
@@ -143,13 +170,13 @@ test('5102 histórico V1: todas as competências, prefill atual, nova DRE, expor
       fileName:'compras-sinteticas.csv',expectedRows:rows.length})).job;
     await uploadLookup(actor,purchases._id,{offset:0,rows:rows.map(row=>({...row,natureCode:'1102'}))}); await finalizeLookup(actor,purchases._id);
     const archived=await purchaseSummary(sales._id,true,SALES_MODE);
-    assert.equal(archived.difal?.version,DIFAL_VERSION); assert.equal(archived.difal?.amountCents,11280);
+    assert.equal(archived.difal?.version,DIFAL_VERSION); assert.equal(archived.difal?.amountCents,0);
     assert.equal(archived.difalOrigin,'DERIVED_FROM_SNAPSHOT');assert.equal(archived.job.purchaseInput.difal.amountCents,0);
     const oldJob=await (await collection('lookupJobs')).findOne(scope({_id:sales._id}));
     const oldRows=await (await collection('purchaseLines')).find(scope({jobId:sales._id})).sort({index:1}).toArray();
     const source=await generationSimulator(generation._id,clientId);
-    assert.equal(source.reportMonths,12); assert.equal(source.sales.difal?.eligibleLines,12);
-    assert.equal(source.sales.difal?.baseCents,112800); assert.equal(source.sales.difal?.amountCents,11280);
+    assert.equal(source.reportMonths,12); assert.equal(source.sales.difal?.eligibleLines,0);
+    assert.equal(source.sales.difal?.baseCents,0); assert.equal(source.sales.difal?.amountCents,0);
     const monthlyGroups={salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:94,purchasesOptantCents:0,purchasesNonOptantCents:94};
     const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:100000,values:{serviceRevenue:0,salesRevenue:94,
       simplePurchases:0,regularPurchases:94,salaries:1,benefits:2,adminExpenses:3,rent:4,cardExpenses:5}};
@@ -176,10 +203,10 @@ test('5102 histórico V1: todas as competências, prefill atual, nova DRE, expor
     const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,oldChild._id));
     assert.equal(child.parentSimulationId,oldChild._id);
     assert.equal(child.difalProjection.sourceVersion,DIFAL_VERSION);
-    assert(child.difalProjection.months.every((row:any)=>row.amountCents===940)); assert.equal(child.difalProjection.annualCents,11280);
+    assert(child.difalProjection.months.every((row:any)=>row.amountCents===0)); assert.equal(child.difalProjection.annualCents,0);
     for (const regime of child.result.regimes) {
-      const expectedDifal = ['pure', 'hybrid'].includes(regime.id) ? -112.8 : 0;
-      assert(Math.abs(regime.dre.difal - expectedDifal) < 1e-9, `${regime.id}: DIFAL somente no Simples puro e híbrido.`);
+      const expectedDifal = 0;
+      assert(Math.abs(regime.dre.difal - expectedDifal) < 1e-9, `${regime.id}: DIFAL de saída está desativado em todos os regimes.`);
     }
     assert.deepEqual(child.draft,original.draft); assert.deepEqual(child.rbt12Manual,original.rbt12Manual);
     await reprocessSimulations(actor,{}); assert.equal(await simulations.countDocuments(scope()),3);
@@ -187,13 +214,13 @@ test('5102 histórico V1: todas as competências, prefill atual, nova DRE, expor
     assert.deepEqual(await simulations.findOne(scope({_id:oldChild._id})),oldChild);
     assert.deepEqual(await (await collection('lookupJobs')).findOne(scope({_id:sales._id})),oldJob);
     assert.deepEqual(await (await collection('purchaseLines')).find(scope({jobId:sales._id})).sort({index:1}).toArray(),oldRows);
-    assert.equal((await purchaseSummary(sales._id,true,SALES_MODE)).difal?.amountCents,11280);
+    assert.equal((await purchaseSummary(sales._id,true,SALES_MODE)).difal?.amountCents,0);
     assert((await purchaseExport(sales._id,'ALL',1,SALES_MODE)).content.includes(DIFAL_VERSION));
     const fresh=await createLookup(actor,{clientId,importId:randomUUID(),fileName:'vendas-corrigidas.csv',
       expectedRows:rows.length,issuerUf:'MG'},SALES_MODE);
     await uploadLookup(actor,fresh._id,{offset:0,rows}); await finalizeLookup(actor,fresh._id);
-    assert.equal((await purchaseSummary(fresh._id,true,SALES_MODE)).difal?.amountCents,11280);
-    assert((await purchaseExport(fresh._id,'ALL',1,SALES_MODE)).content.includes(`"94,00";"9,40";"ELIGIBLE";"${DIFAL_VERSION}"`));
+    assert.equal((await purchaseSummary(fresh._id,true,SALES_MODE)).difal?.amountCents,0);
+    assert((await purchaseExport(fresh._id,'ALL',1,SALES_MODE)).content.includes(`"0,00";"0,00";"OUTGOING_DISABLED";"${DIFAL_VERSION}"`));
   } finally {
     await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
     if(oldDb===undefined)delete process.env.MONGODB_DB;else process.env.MONGODB_DB=oldDb;
@@ -241,7 +268,7 @@ test('Serviços 9000: totais por enquadramento, separação de mercadorias e pre
     assert.deepEqual(summary.serviceGroups, [{status: 'OPTANTE', totalCents: 10001}, {status: 'NAO_OPTANTE', totalCents: 160016}, {status: 'CPF', totalCents: 40004}]);
     assert.equal(summary.servicesTotalCents, 210021); assert.equal(summary.totals.totalCents, 279521);
     assert.equal(summary.operationTotals.find(value => value.operation === 'SERVICO')?.lines, 6);
-    assert.equal(summary.difal?.baseCents, 40000, 'CNPJ, serviços e devoluções permanecem fora da base DIFAL.');
+    assert.equal(summary.difal?.baseCents, 0, 'A saída desativada não altera os totais de mercadorias, serviços ou devoluções.');
     const source = await generationSimulator(generation._id, clientId);
     assert.deepEqual(source.revenueSplit, {version: 'SALES_SERVICES_V1'});
     assert.deepEqual(source.fields, {salesOptantCents: 10000, salesNonOptantCents: 20500, salesCpfCents: 39000, serviceRevenueCents: 210021,
@@ -308,7 +335,7 @@ test('cartão DIFAL Jan–Set corrige V4 sem alterar origem, confirma zero e usa
     const before=await snapshot(),result=await currentSalesDocumentDifal(jobId);
     assert.equal(before.job!.purchaseInput.difal.amountCents,160000);
     assert.equal(before.job!.purchaseInput.difal.pendingLines,2);
-    assert.deepEqual(result.difal,{version:DIFAL_VERSION,ratePercent:10,issuerUf:'MG',eligibleLines:2,baseCents:500000,amountCents:50000,pendingLines:1});
+    assert.deepEqual(result.difal,{version:DIFAL_VERSION,ratePercent:10,issuerUf:'MG',eligibleLines:0,baseCents:0,amountCents:0,pendingLines:0});
     assert.equal(result.period.sourceYear,2026);assert.equal(result.period.months,9);
     assert.deepEqual(result.period.excludedMonths,['2026-10']);assert.equal(result.jobId,jobId);
     assert.deepEqual(await snapshot(),before,'O cache fica separado; relatório e linhas originais permanecem idênticos.');
@@ -382,7 +409,7 @@ test('cache DIFAL mantém escopo, concorrência e exclusão da geração',
       });
       try{
         const [first,second]=await Promise.all([currentSalesDocumentDifal(source.jobId),currentSalesDocumentDifal(source.jobId)]);
-        assert.deepEqual(first,second);assert.equal(first.difal.amountCents,1000);assert.equal(writes,2);
+        assert.deepEqual(first,second);assert.equal(first.difal.amountCents,0);assert.equal(writes,2);
         assert.equal(await cache.countDocuments(scope({'value.jobId':source.jobId})),1);
         assert.deepEqual({job:await jobs.findOne(scope({_id:source.jobId})),lines:await lines.find(scope({jobId:source.jobId})).toArray()},before);
       }finally{releaseWinner();patch.mock.restore();}

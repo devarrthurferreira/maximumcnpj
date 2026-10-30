@@ -6,14 +6,14 @@ const $=q=>document.querySelector(q),esc=v=>String(v??'').replace(/[&<>"']/g,c=>
 const n=v=>Number(v||0).toLocaleString('pt-BR'),dt=v=>v?new Date(v).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}):'—';
 const S={user:null,clients:[],selected:new Set(),generation:null,analysis:null,page:1,seq:0,busy:false,pendingId:null,pendingClientIds:null,reports:new Set(['PURCHASES','SALES']),pendingReports:null,difalPolicies:new Map(),difalExpanded:new Set(),pendingDifalPolicies:null,historyItems:[],deleteTarget:null,deleteTrigger:null,deleting:false,revenueObserver:null};
 const DIFAL_REGIMES=[['pure','Simples puro'],['hybrid','Simples híbrido']];
-const DIFAL_OPERATIONS=[['entry','DIFAL de entrada','Compras · antecipação de ICMS'],['exit','DIFAL de saída','Vendas']];
+const DIFAL_OPERATIONS=[['entry','DIFAL de entrada','Compras · antecipação de ICMS'],['exit','DIFAL de saída','Desativado · R$ 0,00']];
 function companyDifalPolicy(clientId){
  if(!S.difalPolicies.has(clientId))S.difalPolicies.set(clientId,defaultDifalPolicy());
  return S.difalPolicies.get(clientId);
 }
 function difalChoices(clientId=''){
  const prefix=clientId?`${esc(clientId)}-`:'';
- return `<section class="generation-difal-options" aria-labelledby="generation-difal-heading-${prefix}"><h2 id="generation-difal-heading-${prefix}">DIFAL nos cenários</h2><p>Deseja gerar DIFAL para o Simples puro, híbrido ou ambos? Marque entrada, saída ou as duas operações em cada cenário. Para não incluir DIFAL, desmarque o cenário.</p><fieldset class="generation-difal-choices"><legend class="sr-only">Cenários com DIFAL</legend>${DIFAL_REGIMES.map(([id,name])=>`<article class="generation-difal-scenario"><label class="generation-difal-target" for="generation-difal-${prefix}${id}"><input type="checkbox" id="generation-difal-${prefix}${id}" data-generation-difal-client="${esc(clientId)}" data-generation-difal-regime="${id}" checked aria-label="Incluir DIFAL no ${name}"><strong>${name}</strong></label><fieldset class="generation-difal-operations"><legend>Onde incluir no ${name}?</legend>${DIFAL_OPERATIONS.map(([operation,label,description])=>`<label for="generation-difal-${operation}-${prefix}${id}"><input type="checkbox" id="generation-difal-${operation}-${prefix}${id}" data-generation-difal-client="${esc(clientId)}" data-generation-difal-operation-regime="${id}" data-generation-difal-operation="${operation}" checked aria-label="${label} no ${name}"><span><strong>${label}</strong><small>${description}</small></span></label>`).join('')}</fieldset></article>`).join('')}</fieldset><p class="generation-difal-note">Nesta simulação, o DIFAL é aplicado somente ao Simples puro e híbrido. Os valores ficam zerados nos meses com RBT12 a partir de R$ 3,6 milhões ou ICMS fora do DAS, mesmo com as opções marcadas. Você poderá revisar a escolha no simulador.</p></section>`;
+ return `<section class="generation-difal-options" aria-labelledby="generation-difal-heading-${prefix}"><h2 id="generation-difal-heading-${prefix}">DIFAL nos cenários</h2><p>Deseja gerar DIFAL para o Simples puro, híbrido ou ambos? Escolha se deseja a antecipação de compras em cada cenário. O DIFAL de saída permanece zerado, inclusive nas vendas interestaduais para CPF. Para não incluir DIFAL, desmarque o cenário.</p><fieldset class="generation-difal-choices"><legend class="sr-only">Cenários com DIFAL</legend>${DIFAL_REGIMES.map(([id,name])=>`<article class="generation-difal-scenario"><label class="generation-difal-target" for="generation-difal-${prefix}${id}"><input type="checkbox" id="generation-difal-${prefix}${id}" data-generation-difal-client="${esc(clientId)}" data-generation-difal-regime="${id}" checked aria-label="Incluir DIFAL no ${name}"><strong>${name}</strong></label><fieldset class="generation-difal-operations"><legend>Onde incluir no ${name}?</legend>${DIFAL_OPERATIONS.map(([operation,label,description])=>`<label for="generation-difal-${operation}-${prefix}${id}"><input type="checkbox" id="generation-difal-${operation}-${prefix}${id}" data-generation-difal-client="${esc(clientId)}" data-generation-difal-operation-regime="${id}" data-generation-difal-operation="${operation}" ${operation==='entry'?'checked':'disabled'} aria-label="${label} no ${name}"><span><strong>${label}</strong><small>${description}</small></span></label>`).join('')}</fieldset></article>`).join('')}</fieldset><p class="generation-difal-note">Nesta simulação, somente o DIFAL de entrada pode ser incluído no Simples puro e híbrido. Não possui DIFAL de saída. Os valores ficam zerados nos meses com RBT12 a partir de R$ 3,6 milhões ou ICMS fora do DAS, mesmo com as opções marcadas. Você poderá revisar a escolha no simulador.</p></section>`;
 }
 function restoreCompanyDifal(){
  document.querySelectorAll('[data-generation-difal-regime]').forEach(input=>{
@@ -23,8 +23,8 @@ function restoreCompanyDifal(){
  });
  document.querySelectorAll('[data-generation-difal-operation]').forEach(input=>{
   const clientId=input.dataset.generationDifalClient||[...S.selected][0],policy=companyDifalPolicy(clientId),regime=input.dataset.generationDifalOperationRegime,operation=input.dataset.generationDifalOperation;
-  input.checked=policy.operations[regime][operation];input.disabled=S.busy||!!S.pendingId||!policy.enabled[regime];
-  input.onchange=()=>{if(S.busy||S.pendingId||!policy.enabled[regime])return;policy.operations[regime][operation]=input.checked;};
+  input.checked=operation==='entry'&&policy.operations[regime].entry;input.disabled=operation==='exit'||S.busy||!!S.pendingId||!policy.enabled[regime];
+  input.onchange=()=>{if(operation==='exit'||S.busy||S.pendingId||!policy.enabled[regime])return;policy.operations[regime].entry=input.checked;};
  });
 }
 function drawMultipleDifal(){
@@ -184,7 +184,7 @@ function companyTaxSelection(company){
  if(!Object.hasOwn(company,'difalPolicy'))return '';
  return `<section class="generation-tax-selection" aria-label="DIFAL escolhido para esta empresa"><strong>DIFAL escolhido para esta empresa</strong>${[['entry','Entrada · compras'],['exit','Saída · vendas']].map(([direction,label])=>{
   const selected=difalDirectionSelection(company.difalPolicy,direction);
-  return `<p data-generation-tax-direction="${direction}"><span>${label}:</span> ${selected.enabled?esc(selected.regimeNames.join(' e ')):'não incluir'}</p>`;
+  return `<p data-generation-tax-direction="${direction}"><span>${label}:</span> ${direction==='exit'?'R$ 0,00 · saída desativada nesta análise':selected.enabled?esc(selected.regimeNames.join(' e ')):'não incluir'}</p>`;
  }).join('')}<small>A DRE também verifica os bloqueios de cada competência.</small></section>`;
 }
 function companyRevenueClosing(g,company){

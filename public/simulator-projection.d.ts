@@ -8,7 +8,7 @@ export type ReportFields = Record<ReportGroup, number> & {serviceRevenueCents?: 
 export type DifalProjection = {
   version: 'DIFAL_DRE_V1'; sourceJobId: string; sourceVersion: string; sourceAmountCents: number; sourceBaseCents: number;
   reportMonths: number; ratePercent: 10; pendingLines: number; eligibleLines: number; issuerUf: string;
-  monthlyCents: number; annualCents: number;
+  monthlyCents: number; annualCents: number; outgoingDisabled?:boolean;
 };
 export type ReportProjection = {
   version: string; method: string; unit: 'CENTS'; reportMonths: number; projectionMonths: 12; rounding: string;

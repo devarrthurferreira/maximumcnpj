@@ -60,7 +60,7 @@ test('Antecipação compras V4: CPF e CNPJ, exclusão 8000, UF, snapshot, CSV, r
    const months=await monthlyReportSource(purchases,sales,undefined,'MG');
    assert.deepEqual(months![0].anticipation,purchases.anticipation);
    assert.equal(months![0].anticipation.amountCents,0);
-   assert.equal(months![0].difal.amountCents,10000);
+   assert.equal(months![0].difal.amountCents,0);
    await jobs.updateOne(scope({_id:purchase._id}),{$unset:{anticipationVersion:'',issuerUf:'','purchaseInput.anticipation':''}});
    await lines.updateMany(scope({jobId:purchase._id}),{$unset:{anticipation:''}});
    const derived=await purchaseSummary(purchase._id),derivedMonths=await monthlyReportSource(derived,sales,undefined,'MG');
@@ -163,7 +163,7 @@ test('Antecipação compras V4: CPF e CNPJ, exclusão 8000, UF, snapshot, CSV, r
  }
 });
 
-test('relatórios históricos exibem CPF/CNPJ nas compras e somente CPF nas vendas depois de validar os impostos originais',
+test('relatórios históricos mantêm compras e exibem saída desativada depois de validar os impostos originais',
  {skip:!process.env.MONGODB_URI,timeout:120000},async t=>{
  const oldDb=process.env.MONGODB_DB,oldWs=process.env.WORKSPACE_ID;
  process.env.MONGODB_DB='maximum_tax_current_'+randomUUID().replaceAll('-','');process.env.WORKSPACE_ID='tax_current_test';resetLookupIndexes();
@@ -178,7 +178,7 @@ test('relatórios históricos exibem CPF/CNPJ nas compras e somente CPF nas vend
   for(const [mode,version] of [[SALES_MODE,DIFAL_CATALOG_VERSION],[SALES_MODE,DIFAL_PREVIOUS_VERSION],[PURCHASE_MODE,ANTICIPATION_PREVIOUS_VERSION],[PURCHASE_MODE,ANTICIPATION_LEGACY_VERSION],[PURCHASE_MODE,ANTICIPATION_CPF_CNPJ_VERSION]] as const){
    await t.test(`${mode} ${version}`,async()=>{
     const sales=mode===SALES_MODE,tax=sales?'difal':'anticipation',versionField=tax+'Version',originField=tax+'Origin';
-    const currentVersion=sales?DIFAL_VERSION:ANTICIPATION_VERSION,currentAmount=sales?11:3;
+    const currentVersion=sales?DIFAL_VERSION:ANTICIPATION_VERSION,currentAmount=sales?0:3;
     const inputs=[row(7),row(7,{document:cnpj}),row(7,{document:'12.abc.345/01de-35'}),
      row(100,{document:'00000000000192'}),row(100,{document:'123456789012'}),row(100,{document:''}),
      row(100,{document:cnpj,recipientUf:'MG'}),row(100,{document:cnpj,recipientUf:''}),row(100)]
@@ -193,14 +193,14 @@ test('relatórios históricos exibem CPF/CNPJ nas compras e somente CPF nas vend
     await (await collection('clients')).updateOne(scope({_id:clientId}),{$set:{uf:'SP'}});
     const summary=await purchaseSummary(job._id,true,mode);
     assert.equal(summary[originField],'DERIVED_FROM_SNAPSHOT');assert.equal(summary[tax]?.version,currentVersion);
-    assert.equal(summary[tax]?.amountCents,currentAmount);assert.equal(summary[tax]?.baseCents,sales?107:21);assert.equal(summary[tax]?.pendingLines,sales?0:1);
+    assert.equal(summary[tax]?.amountCents,currentAmount);assert.equal(summary[tax]?.baseCents,sales?0:21);assert.equal(summary[tax]?.pendingLines,sales?0:1);
     assert.equal(summary.job[versionField],version);assert.equal(summary.job.purchaseInput[tax].version,version);
     assert.equal(summary.job.purchaseInput[tax].amountCents,before.job!.purchaseInput[tax].amountCents);
     if(version!==ANTICIPATION_LEGACY_VERSION&&version!==ANTICIPATION_CPF_CNPJ_VERSION)assert.equal(before.rows[1][tax].reason,'NOT_CPF');
     if(version===DIFAL_PREVIOUS_VERSION)assert.equal(before.rows[8].operation,'OUTRAS','Classificação histórica pode diferir do catálogo atual.');
     const detail=await purchaseRows(job._id,'ALL',1,true,mode),grouped=await purchaseRows(job._id,'ALL',1,false,mode);
     assert(detail.items.every((entry:any)=>entry[originField]==='DERIVED_FROM_SNAPSHOT'));
-    assert.deepEqual(detail.items.map((entry:any)=>entry[tax].reason),sales?['ELIGIBLE','NOT_CPF','NOT_CPF','NOT_CPF','NOT_CPF','NOT_CPF','NOT_CPF','NOT_CPF','ELIGIBLE']:['ELIGIBLE','ELIGIBLE','ELIGIBLE','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','SAME_UF','MISSING_RECIPIENT_UF','SERVICE_PURCHASE_EXCLUDED']);
+    assert.deepEqual(detail.items.map((entry:any)=>entry[tax].reason),sales?Array(9).fill('OUTGOING_DISABLED'):['ELIGIBLE','ELIGIBLE','ELIGIBLE','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','SAME_UF','MISSING_RECIPIENT_UF','SERVICE_PURCHASE_EXCLUDED']);
     if(!sales){assert.equal(summary.purchaseSelection.totals.totalCents,621);assert.equal(before.rows[8].anticipation.amountCents,7);}
     assert.equal(grouped.items.reduce((sum:number,entry:any)=>sum+entry[tax].amountCents,0),currentAmount);
     assert.equal(grouped.items.find((entry:any)=>entry.document==='12ABC34501DE35')[tax].amountCents,sales?0:1,'CNPJ alfanumérico com status não confirmado mantém a base fiscal gerencial.');

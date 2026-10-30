@@ -142,7 +142,8 @@ test('Dashboard shows five charts, scales every monetary view and expands every 
   await page.locator('#simulation-notices summary').click();
   await expect(page.locator('.sim-notices-content')).toContainText('RBT12 informada');await expect(page.locator('.sim-notices-content')).toContainText('Não confirmados incluídos');
   await expect(page.locator('.sim-notices-content')).toContainText('Custos e despesas superiores à receita');
-  await expect(page.locator('.sim-notices-content article')).toHaveCount(10);
+  await expect(page.locator('.sim-notices-content')).toContainText('DIFAL de saída');
+  await expect(page.locator('.sim-notices-content article')).toHaveCount(11);
   const annual=await page.locator('.sim-chart-profit .sim-chart-row-head strong').allTextContents();
   await page.getByRole('button',{name:'Mensal',exact:true}).click();await expect(page.locator('.sim-dre h2')).toHaveText('DRE mensal');
   await expect(page.getByRole('button',{name:'Mensal',exact:true})).toBeFocused();

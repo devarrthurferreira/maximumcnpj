@@ -378,9 +378,10 @@ function selectedDifalRegimes(selection) {return selection.selected.filter(id=>i
 function difalChoice(policy,selection) {return selectedDifalRegimes(selection).some(id=>policy.enabled[id])?'yes':'no';}
 function captureDifalPolicy(prefix,base) {
   const panel=$('#'+prefix+'-difal-panel'),policy=clone(base||defaultDifalPolicy());
+  for(const id of ['pure','hybrid'])policy.operations[id].exit=false;
   if(!panel)return parseDifalPolicy(policy);
   panel.querySelectorAll('[data-analysis-difal-enabled]').forEach(input=>policy.enabled[input.dataset.analysisDifalEnabled]=input.checked);
-  panel.querySelectorAll('[data-analysis-difal-operation]').forEach(input=>policy.operations[input.dataset.analysisDifalRegime][input.dataset.analysisDifalOperation]=input.checked);
+  panel.querySelectorAll('[data-analysis-difal-operation="entry"]').forEach(input=>policy.operations[input.dataset.analysisDifalRegime].entry=input.checked);
   return parseDifalPolicy(policy);
 }
 function refreshDifalControls(prefix,policy,selection,choice=difalChoice(policy,selection)) {
@@ -390,8 +391,8 @@ function refreshDifalControls(prefix,policy,selection,choice=difalChoice(policy,
     input.checked=policy.enabled[input.dataset.analysisDifalEnabled];input.disabled=choice!=='yes';
   });
   panel.querySelectorAll('[data-analysis-difal-operation]').forEach(input=>{
-    const id=input.dataset.analysisDifalRegime;
-    input.checked=policy.operations[id][input.dataset.analysisDifalOperation];input.disabled=choice!=='yes'||!policy.enabled[id];
+    const id=input.dataset.analysisDifalRegime,outgoing=input.dataset.analysisDifalOperation==='exit';
+    input.checked=!outgoing&&policy.operations[id].entry;input.disabled=outgoing||choice!=='yes'||!policy.enabled[id];
   });
   const details=$('#'+prefix+'-difal-details');if(details)details.hidden=choice!=='yes';
   const summary=$('#'+prefix+'-difal-summary');if(summary)summary.textContent=difalChoiceSummary(selection,policy,choice);
@@ -439,12 +440,12 @@ function validateDifalChoice(prefix,selection,policy,{required=false}={}) {
   if(!selectedDifalRegimes(selection).length)return;
   if(required&&!['yes','no'].includes(prefix==='new'?S.newDifalChoice:S.fiscalDifalChoice)){
     const field=$('#'+prefix+'-difal-yes');revealWizardField(field);field?.focus();
-    throw new Error('Informe se esta análise terá DIFAL: escolha Sim ou Não.');
+    throw new Error('Informe se esta análise terá DIFAL de entrada: escolha Sim ou Não.');
   }
-  if(difalChoice(policy,selection)==='yes'&&!selectedDifalRegimes(selection).some(id=>policy.enabled[id]&&(policy.operations[id].entry||policy.operations[id].exit))){
+  if(difalChoice(policy,selection)==='yes'&&!selectedDifalRegimes(selection).some(id=>policy.enabled[id]&&policy.operations[id].entry)){
     const details=$('#'+prefix+'-difal-details');if(details){details.hidden=false;details.open=true;}
     const field=$('#'+prefix+'-difal-panel [data-analysis-difal-operation]:not(:disabled)');revealWizardField(field);field?.focus();
-    throw new Error('Escolha entrada ou saída para incluir DIFAL, ou marque Não para gerar sem DIFAL.');
+    throw new Error('Escolha entrada para incluir a antecipação de compras, ou marque Não para gerar sem DIFAL. A saída permanece zerada.');
   }
 }
 function bindCompanyResults() {

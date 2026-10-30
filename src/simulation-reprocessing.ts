@@ -91,6 +91,7 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   // their exact legacy policy, while the new draft records the current directions.
   try { draft.difalPolicy = upgradeDifalPolicy(Object.hasOwn(draft, 'difalPolicy') ? draft.difalPolicy : original.source?.difalPolicy); }
   catch (error) { throw new AppError(409, 'REPROCESS_ADJUSTMENT', error instanceof Error ? error.message : 'Opções de DIFAL inválidas.'); }
+  for(const id of ['pure','hybrid'])draft.difalPolicy.operations[id].exit=false;
   const oldSplit = original.source?.revenueSplit?.version === 'SALES_SERVICES_V1';
   if(!oldSplit)pending(!Object.hasOwn(original.source,'revenueSplit') &&
     !Object.hasOwn(original.source.fields || {},'serviceRevenueCents') && original.baselineServiceRevenue == null &&
@@ -351,7 +352,7 @@ async function reprocessItem(actor: LookupActor, originalId: string, loadedOrigi
   const child = await createReprocessedSimulation(actor, plan.input, plan.context);
   await promoteReprocessedAnalysis(actor,original._id,child);
   const migration = plan.context.serviceRevenueMigration;
-  return {childId:child._id,status:'OK',code:'UPDATED',message:'Nova versão com a premissa de CBS de 11,3% e DIFAL de entrada e saída somente no Simples puro e híbrido, conforme as escolhas. Original preservado.' +
+  return {childId:child._id,status:'OK',code:'UPDATED',message:'Nova versão com DIFAL de saída zerado, inclusive nas vendas interestaduais para CPF. A antecipação de compras e o histórico original foram preservados.' +
     (migration && migration.priorMonthlyServiceCents > 0 ? ' ' + migration.warning : '')};
 }
 

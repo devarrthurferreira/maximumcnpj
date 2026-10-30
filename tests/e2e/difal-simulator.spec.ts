@@ -1,7 +1,7 @@
-import {buildMonthlyDre} from '../../public/simulator-calendar.js';
+import {legacyOutgoingDreFixture,legacyWithoutOutgoingDreFixture} from '../fixtures/dre-outgoing-legacy.mjs';
 import {test,expect,type Page} from '@playwright/test';
 import {annualizeReports,projectDifal} from '../../public/simulator-projection.js';
-import {calculateSimulation,createEmptyDraft,draftToInput,MODEL_VERSION,TAX_SOURCES,CALCULATOR_SOURCE_COMMIT} from '../../public/simulator-engine.js';
+import {calculateSimulation,createEmptyDraft,draftToInput,MODEL_VERSION,OUTGOING_DIFAL_MESSAGE,TAX_SOURCES,CALCULATOR_SOURCE_COMMIT} from '../../public/simulator-engine.js';
 
 const generation='61080000-0000-4000-8000-000000000001',client='61080000-0000-4000-8000-000000000002';
 const url=`/simulator.html?generation=${generation}&client=${client}`;
@@ -26,69 +26,77 @@ function savedSnapshot(report=source()):any {
     rbt12Source:'MANUAL',createdAt:'2026-10-09T15:00:00Z',createdBy:{id:'difal-simulator',name:'Teste'}};
 }
 
-test('DIFAL conserva o total elegível importado ao ajustar período, despesas e vendas mensais',async({page},info)=>{
-  await setup(page);await page.goto(url);
+test('DIFAL de saída permanece zerado ao ajustar período, despesas e vendas mensais',async({page},info)=>{
+  const report=source();await setup(page,report);await page.goto(url);
   const card=page.locator('#simulator-difal');
-  await expect(card).toContainText('DIFAL de saída — vendas');
-  await expect(card.locator('[data-difal-amount]')).toContainText('180,00');
-  await expect(card.locator('[data-difal-source-amount]')).toContainText('15,00');
-  await expect(card.locator('[data-difal-source-amount]')).toBeHidden();
-  await expect(card).toContainText('150,00');await expect(page.locator('#salesCpfCents')).toHaveValue('1000.00');
-  await expect(card.locator('[data-difal-source-adjusted]')).toHaveCount(0);
+  await expect(card).toContainText('DIFAL de saída');
+  await expect(card.locator('[data-difal-disabled]').first()).toHaveText(OUTGOING_DIFAL_MESSAGE);
+  await expect(card.locator('[data-difal-amount]')).toContainText('0,00');
+  await expect(page.locator('#salesCpfCents')).toHaveValue('1000.00');
+  for(const id of ['pure','hybrid']){
+    await expect(page.locator('#difal-exit-'+id)).not.toBeChecked();
+    await expect(page.locator('#difal-exit-'+id)).toBeDisabled();
+  }
   await page.locator('#period-months').selectOption('2');
-  await expect(page.locator('#salesCpfCents')).toHaveValue('500.00');await expect(card.locator('[data-difal-source-amount]')).toContainText('15,00');
-  await expect(card.locator('[data-difal-monthly]')).toContainText('7,50');await expect(card.locator('[data-difal-annual]')).toContainText('90,00');
+  await expect(page.locator('#salesCpfCents')).toHaveValue('500.00');
+  await expect(card.locator('[data-difal-monthly]')).toContainText('0,00');
+  await expect(card.locator('[data-difal-annual]')).toContainText('0,00');
   await page.locator('#purchasesOptantCents').fill('200');await page.locator('#serviceRevenue').fill('100');
-  await expect(card.locator('[data-difal-source-adjusted]')).toHaveCount(0);
   await page.locator('#salesCpfCents').fill('1000');
-  await expect(card.locator('[data-difal-source-adjusted]')).toContainText('corrija e reimporte');
-  await expect(card.locator('[data-difal-source-amount]')).toContainText('15,00');
-  await page.reload();await expect(card.locator('[data-difal-source-adjusted]')).toBeHidden();
-  await card.locator('[data-difal-audit]>summary').click();await expect(card.locator('[data-difal-source-adjusted]')).toBeVisible();
+  await expect(card.locator('[data-difal-amount]')).toContainText('0,00');
+  await page.reload();await expect(card.locator('[data-difal-amount]')).toContainText('0,00');
   page.once('dialog',dialog=>dialog.accept());await page.locator('#restore-reports').click();
-  await expect(card.locator('[data-difal-source-adjusted]')).toHaveCount(0);
-  await expect(card.locator('[data-difal-source-amount]')).toContainText('15,00');
-  await card.locator('[data-difal-audit]>summary').click();
+  await expect(card.locator('[data-difal-amount]')).toContainText('0,00');
+  expect(report.sales.difal.amountCents).toBe(1500); // The old source is evidence, never overwritten.
+  await expect(card).not.toContainText('10%');
   await page.setViewportSize({width:320,height:850});await card.scrollIntoViewIfNeeded();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
-  const screenshot=info.outputPath('difal-simulator-mobile.png');await card.screenshot({path:screenshot});await info.attach('DIFAL no simulador',{path:screenshot,contentType:'image/png'});
+  const screenshot=info.outputPath('difal-disabled-simulator-mobile.png');await card.screenshot({path:screenshot});await info.attach('DIFAL de saída desativado',{path:screenshot,contentType:'image/png'});
 });
 
-test('UF pendente aparece como estimativa parcial e nova importação atualiza o DIFAL',async({page})=>{
+test('UF pendente, fonte antiga positiva e ausência de resumo não reativam o DIFAL de saída',async({page})=>{
   const report=source();report.sales.difal.pendingLines=2;
   await setup(page,report);await page.goto(url);
-  await expect(page.locator('[data-difal-source-pending]')).toContainText('2 linhas dependem de UF');
-  await expect(page.locator('[data-difal-application-status]')).toContainText('Estimativa parcial');
+  const card=page.locator('#simulator-difal');
+  await expect(card.locator('[data-difal-application-status]')).toContainText('Desativado');
+  await expect(card.locator('[data-difal-amount]')).toContainText('0,00');
+  await expect(card).not.toContainText(/parcial|depende.*UF/);
   report.sales.difal={...report.sales.difal,baseCents:100000,amountCents:10000,pendingLines:0};
   report.sales.jobId='61080000-0000-4000-8000-000000000006';await page.reload();
-  await expect(page.locator('[data-difal-source-amount]')).toContainText('100,00');await expect(page.locator('[data-difal-source-pending]')).toHaveCount(0);
-  await expect(page.locator('[data-difal-annual]')).toContainText('1.200,00');
+  await expect(card.locator('[data-difal-annual]')).toContainText('0,00');
   delete report.sales.difal;await page.reload();
-  await expect(page.locator('#simulator-difal')).toContainText('DIFAL indisponível');await expect(page.locator('[data-difal-amount]')).toHaveCount(0);
+  await expect(card.locator('[data-difal-disabled]').first()).toHaveText(OUTGOING_DIFAL_MESSAGE);
+  await expect(card.locator('[data-difal-amount]')).toContainText('0,00');
 });
 
-test('histórico conserva o DIFAL capturado e resultados sem reler relatórios ou recalcular tributos',async({page})=>{
-  const snapshot=savedSnapshot();snapshot.result.regimes[0].annualProfit=123456.78;
-  // This snapshot predates scenario options; the current engine adds metadata that did not exist then.
-  delete snapshot.result.difalPolicy;
-  for(const regime of snapshot.result.regimes)delete regime.difalApplication;
-  snapshot.result.memory=snapshot.result.memory.filter(row=>!row.id.startsWith('difal.'));
+test('histórico sem DIFAL na DRE conserva a referência capturada sem reler a origem',async({page})=>{
+  const legacy=legacyWithoutOutgoingDreFixture(),snapshot=savedSnapshot();
+  snapshot.draft=legacy.draft;snapshot.result=legacy.result;snapshot.modelVersion=legacy.result.version;
+  delete snapshot.engineInput;
+  snapshot.monthlyGroups={salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:12000,purchasesOptantCents:1000,purchasesNonOptantCents:2000};
+  snapshot.source.fields=Object.fromEntries(Object.entries(snapshot.monthlyGroups).map(([key,value])=>[key,Number(value)*100]));
+  snapshot.source.sales.totalCents=1200000;snapshot.source.purchases.totalCents=300000;
+  snapshot.projection=annualizeReports(snapshot.source.fields,1);
+  const captured=structuredClone(snapshot);
   await setup(page);let sourceReads=0;
   await page.route('**/api/v4/generations/*/simulator?*',r=>{sourceReads++;return r.fulfill({status:500,json:{message:'Não reler a origem'}});});
   await page.route('**/api/v4/simulations/'+snapshot._id,r=>r.fulfill({json:snapshot}));
-  await page.goto('/simulator.html?simulation='+snapshot._id);
+  await page.goto('/simulator.html?simulation='+snapshot._id+'&historical=1');
   await expect(page.locator('[data-difal-amount]')).toContainText('15,00');
-  await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');
-  await expect(page.locator('.sim-dre')).not.toContainText('DIFAL');await expect(page.locator('#simulator-difal')).toContainText('versão histórica');await expect(page.locator('[data-difal-monthly]')).toHaveCount(0);
+  await expect(page.locator('.sim-regime').first()).toContainText('128.160,00');
+  await expect(page.locator('.sim-dre [data-dre-row="difal"]')).toHaveCount(0);
+  await expect(page.locator('#simulator-difal')).toContainText('versão histórica');
+  await expect(page.locator('[data-difal-monthly]')).toHaveCount(0);
   await page.getByRole('button',{name:'Mensal',exact:true}).click();await expect(page.locator('[data-difal-amount]')).toContainText('15,00');
-  expect(sourceReads).toBe(0);
+  expect(sourceReads).toBe(0);expect(snapshot).toEqual(captured);
   delete snapshot.source.sales.difal;await page.reload();
-  await expect(page.locator('#simulator-difal')).toBeEmpty();await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');
+  await expect(page.locator('#simulator-difal')).toBeEmpty();
+  await expect(page.locator('.sim-regime').first()).toContainText('128.160,00');
   expect(sourceReads).toBe(0);
 });
 
 
-test('DIFAL projetado entra na DRE anual e mensal sem alterar a receita importada',async({page})=>{
+test('DIFAL desativado fica zerado na DRE anual e mensal sem alterar a receita importada',async({page})=>{
   const report=source();await setup(page,report);
   let posted:any;
   await page.route('**/api/v4/simulations',route=>{
@@ -99,24 +107,32 @@ test('DIFAL projetado entra na DRE anual e mensal sem alterar a receita importad
   await page.locator('#rbt12-manual').click();await page.locator('#rbt12').fill('15600');await page.locator('#rbt12-manual-confirm').check();
   for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill('0');
   await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
-  const annual=page.locator('.sim-dre tbody tr').filter({hasText:'DIFAL sobre vendas'});
-  await expect(annual).toHaveCount(1);for(const [index,cell] of (await annual.locator('td').allTextContents()).entries())expect(cell).toContain(index<2?'90,00':'0,00');
+  const annual=page.locator('.sim-dre tbody tr').filter({hasText:'DIFAL de saída — desativado'});
+  await expect(annual).toHaveCount(1);for(const cell of await annual.locator('td').allTextContents())expect(cell).toContain('0,00');
   await expect(page.locator('#annual-revenue')).toContainText('7.800,00');expect(posted.draft.values.salesRevenue).toBe(650);
+  for(const regime of ['pure','hybrid'])expect(posted.draft.difalPolicy.operations[regime].exit).toBe(false);
   await page.getByRole('button',{name:'Mensal',exact:true}).click();const monthly=page.locator('[data-dre-row="difal"]');
-  await expect(monthly.locator('td')).toHaveCount(2);await expect(monthly.locator('td').first()).toContainText('7,50');await expect(monthly.locator('td').last()).toContainText('90,00');
+  await expect(monthly.locator('td')).toHaveCount(2);await expect(monthly.locator('td').first()).toContainText('0,00');await expect(monthly.locator('td').last()).toContainText('0,00');
 });
 
-test('histórico novo conserva a projeção DIFAL salva em vez de recalcular a estimativa',async({page})=>{
-  const report=source(),saved=savedSnapshot(report),difal=projectDifal(report.sales.difal,1,report.sales.jobId)!;
-  saved.difalProjection=difal;saved.result=calculateSimulation(saved.draft,difal);saved.engineInput=draftToInput(saved.draft,difal);
-  saved.result.regimes[0].annualProfit=123456.78;
-  saved.monthlyDre=buildMonthlyDre(saved.result,saved.draft.year);expect(saved.monthlyDre.version).toBe('DRE_CALENDAR_V2');
-  const capturedDifal=saved.monthlyDre.regimes[0].rows.find((row:any)=>row.key==='difal');capturedDifal.months[0]=-999;capturedDifal.annual=-999;
-  await setup(page);await page.route('**/api/v4/simulations/'+saved._id,r=>r.fulfill({json:saved}));
-  await page.goto('/simulator.html?simulation='+saved._id);
-  await expect(page.locator('[data-difal-monthly]')).toContainText('Por cenário');await expect(page.locator('[data-difal-annual]')).toContainText('180,00');
-  await expect(page.locator('[data-difal-applied-regime="pure"] [data-difal-applied-month]')).toContainText('999,00');
-  await expect(page.locator('[data-difal-applied-regime="hybrid"] [data-difal-applied-month]')).toContainText('15,00');
-  await expect(page.locator('.sim-dre')).toContainText('DIFAL sobre vendas');await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');
-  await page.getByRole('button',{name:'Mensal',exact:true}).click();await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('999,00');
+test('histórico 1.17 mantém valores positivos da saída e células mensais capturadas',async({page})=>{
+  const saved=legacyOutgoingDreFixture(),captured=structuredClone(saved);
+  await setup(page);let sourceReads=0;
+  await page.route('**/api/v4/generations/*/simulator?*',r=>{sourceReads++;return r.fulfill({status:500,json:{message:'Não reler a origem'}});});
+  await page.route('**/api/v4/simulations/'+saved._id,r=>r.fulfill({json:saved}));
+  await page.goto('/simulator.html?simulation='+saved._id+'&historical=1');
+  await expect(page.locator('#simulator-difal [data-difal-annual]')).toContainText('3.780,00');
+  await expect(page.locator('[data-difal-applied-regime="pure"] [data-difal-applied-month]')).toContainText('84,00');
+  await expect(page.locator('[data-difal-applied-regime="hybrid"] [data-difal-applied-month]')).toContainText('84,00');
+  await expect(page.locator('.sim-dre')).toContainText('DIFAL sobre vendas (10%)');
+  await expect(page.locator('#simulator-difal [data-difal-disabled]')).toHaveCount(0);
+  await expect(page.locator('[data-difal-option="pure"] .sim-difal-scope')).toHaveText('entrada e saída');
+  await page.getByRole('button',{name:'Mensal',exact:true}).click();
+  await page.locator('#dre-regime').selectOption('pure');
+  await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('84,00');
+  await page.getByRole('button',{name:'Um mês por vez',exact:true}).click();
+  await page.locator('#dre-month').selectOption('1');
+  await expect(page.locator('[data-difal-applied-regime="pure"] [data-difal-applied-month]')).toContainText('168,00');
+  await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('168,00');
+  expect(sourceReads).toBe(0);expect(saved).toEqual(captured);
 });
