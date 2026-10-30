@@ -5,6 +5,7 @@ import {difalDirectionSelection} from './difal-policy.js';
 import {renderRevenueReconciliation} from './revenue-reconciliation-view.js';
 import {formatCnpj,REPORTING_LABELS} from './domain.js';
 import {assertMatchingPurchaseCompetences} from './purchase-model.js';
+import {estimatePayloadBytes} from './import-payload-size.js';
 import {BRAZIL_UFS as brazilianUfs, calculateDifal, DIFAL_VERSION, DIFAL_CPF_CNPJ_VERSION, isDifalVersion, isPendingDifal, normalizeUf, summarizeDifal} from './difal.js';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.js';
 import {PURCHASE_SELECTION_VERSION, selectPurchaseLine} from './purchase-selection.js';
@@ -390,7 +391,8 @@ async function upload() {
   const pending = S.pending, button = $('#purchase-confirm');
   setBusy(true); button.disabled = true;
   try {
-    await api(S.generation ? `/api/v4/generations/${S.generation}/${sales ? 'sales' : 'purchases'}` : path(), 'POST', {importId:pending.importId, clientId:pending.clientId, fileName:pending.fileName, expectedRows:pending.rows.length, type:reportType, issuerUf:pending.issuerUf});
+    pending.expectedPayloadBytes ??= estimatePayloadBytes(pending.rows);
+    await api(S.generation ? `/api/v4/generations/${S.generation}/${sales ? 'sales' : 'purchases'}` : path(), 'POST', {importId:pending.importId, clientId:pending.clientId, fileName:pending.fileName, expectedRows:pending.rows.length, expectedPayloadBytes:pending.expectedPayloadBytes, type:reportType, issuerUf:pending.issuerUf});
     while (pending.offset < pending.rows.length) {
       const d = await api(path(`/${pending.importId}/rows`), 'POST', {offset:pending.offset, rows:pending.rows.slice(pending.offset, pending.offset + 250)});
       const nextOffset = Math.min(pending.rows.length, pending.offset + 250);

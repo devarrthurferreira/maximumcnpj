@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { collection, scope, workspace, audit } from './store.ts';
+import { jobCollection } from './mongo-storage.ts';
 import { need, digest, integer } from './security.ts';
 import { statistics } from './domain.ts';
 import { compareNames } from './lookup-domain.ts';
@@ -49,8 +50,7 @@ async function releaseSlot(owner: string, id: string) {
   await (await collection('providerControl')).updateOne({_id: id, owner},
     {$set: {leaseUntil: new Date(0)}, $unset: {owner: ''}});
 }
-async function sharedUpsert(name: string, filter: Record<string, unknown>, update: any) {
-  const records = await collection(name);
+async function sharedUpsert(records:Awaited<ReturnType<typeof collection>>, filter: Record<string, unknown>, update: any) {
   try { await records.updateOne(filter, update, {upsert: true}); }
   catch (error: any) {
     if (error.code !== 11000) throw error;
@@ -67,7 +67,7 @@ export async function lookupProgress(id: string, page = 1, filter = 'ALL', summa
   const job = await getJob(id);
   integer(page, 1, 100000);
   need(['ALL', 'OPTANTE', 'NAO_OPTANTE', 'NAO_CONFIRMADO', 'PENDING'].includes(filter), 'Filtro de acompanhamento inválido.');
-  const items = await collection('lookupItems'), base = scope({jobId: id});
+  const items = await jobCollection('lookupItems',job), base = scope({jobId: id});
   const query: any = {...base};
   if (filter === 'PENDING') query.state = {$ne: 'DONE'};
   else if (filter !== 'ALL') { query.state = 'DONE'; query.status = filter; }
@@ -117,7 +117,8 @@ export async function processLookupBatch(actor: LookupActor, id: string, transpo
     if (job.status === 'COMPLETED') return job;
     need(job.status === 'PROCESSING', 'Finalize o envio antes de consultar.', 409);
     const {concurrency, intervalMs} = lookupPolicy();
-    const items = await collection('lookupItems'), deadline = Date.now() + LOOKUP_BATCH_MS;
+    const items = await jobCollection('lookupItems',job), states = await jobCollection('cnpjStates',job),
+      entities = await collection('cnpjEntities'), deadline = Date.now() + LOOKUP_BATCH_MS;
     const queue = await items.find(scope({jobId: id, state: {$in: ['PENDING', 'RETRY']}, $or: [{nextAt: {$exists: false}}, {nextAt: {$lte: new Date()}}]}))
       .sort({cnpj: 1}).limit(LOOKUP_BATCH_SIZE).toArray();
     if (queue.length) await initializeSlots(concurrency);
@@ -158,14 +159,14 @@ export async function processLookupBatch(actor: LookupActor, id: string, transpo
             const fingerprint = digest(JSON.stringify(data)), stateId = `${workspace()}:${item.cnpj}:${fingerprint}`;
             const entityId = `${workspace()}:${item.cnpj}`;
             const persisted = await Promise.allSettled([
-              sharedUpsert('cnpjStates', scope({_id: stateId}), {$setOnInsert: {...scope(), ...data, fingerprint, firstSeenAt: checkedAt}}),
-              sharedUpsert('cnpjEntities', scope({_id: entityId, cnpj: item.cnpj}), {$setOnInsert: {...scope(), cnpj: item.cnpj, createdAt: checkedAt}})
+              sharedUpsert(states, scope({_id: stateId}), {$setOnInsert: {...scope(), ...data, fingerprint, firstSeenAt: checkedAt}}),
+              sharedUpsert(entities, scope({_id: entityId, cnpj: item.cnpj}), {$setOnInsert: {...scope(), cnpj: item.cnpj, createdAt: checkedAt}})
             ]);
             const failed = persisted.find((result): result is PromiseRejectedResult => result.status === 'rejected');
             if (failed) throw failed.reason;
             // Neither the latest entity nor a completed item may point at an unsaved state.
-            await (await collection('cnpjEntities')).updateOne(scope({_id: entityId, $or: [{lastCheckedAt: {$exists: false}}, {lastCheckedAt: {$lte: checkedAt}}]}),
-              {$set: {stateId, name: data.name, lastCheckedAt: checkedAt}});
+            await entities.updateOne(scope({_id: entityId, $or: [{lastCheckedAt: {$exists: false}}, {lastCheckedAt: {$lte: checkedAt}}]}),
+              {$set: {stateId, storageSlot:job.storageSlot??1, name: data.name, lastCheckedAt: checkedAt}});
             await items.updateOne(scope({_id: item._id}), {$set: {state: retry ? 'RETRY' : 'DONE', stateId, status: data.status, reason: data.reason, checkedAt,
               nameMatch: compareNames(item.submittedName, data.name, data.tradeName), source: data.source, sourceReferenceDate: null,
               ...(retry ? {nextAt: new Date(Date.now() + 5000)} : {})}, $inc: {attempts: 1}, ...(!retry ? {$unset: {nextAt: ''}} : {})});

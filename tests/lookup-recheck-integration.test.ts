@@ -89,14 +89,14 @@ test('MongoDB: reconsulta idempotente, retomada de cópia, permissões e snapsho
     });
     await t.test('cópia interrompida retoma o mesmo ID; lease impede tentativa simultânea; cancelamento é definitivo', async () => {
       const id = source.job._id, importId = randomUUID();
-      const itemCollection = await collection('lookupItems'), prototype = Object.getPrototypeOf(itemCollection), aggregate = prototype.aggregate;
+      const itemCollection = await collection('lookupItems'), prototype = Object.getPrototypeOf(itemCollection), bulkWrite = prototype.bulkWrite;
       let notifyStarted!: () => void, release!: () => void;
       const started = new Promise<void>(resolve => {notifyStarted = resolve;}), blocked = new Promise<void>(resolve => {release = resolve;});
-      const patch = t.mock.method(prototype, 'aggregate', function(this: any, ...args: any[]) {
-        if (this.collectionName === 'lookupItems' && args[0].some((stage: any) => stage.$merge)) {
-          return {toArray: async () => {notifyStarted(); await blocked; throw new Error('Interrupção sintética da cópia');}};
+      const patch = t.mock.method(prototype, 'bulkWrite', async function(this: any, ...args: any[]) {
+        if (this.collectionName === 'lookupItems' && args[0].some((operation: any) => operation.updateOne?.update?.$setOnInsert?.jobId===importId)) {
+          notifyStarted(); await blocked; throw new Error('Interrupção sintética da cópia');
         }
-        return aggregate.apply(this, args);
+        return bulkWrite.apply(this, args);
       });
       const pending = recheckLookup(actor, id, {importId}).then(() => null, error => error);
       try {
@@ -116,6 +116,44 @@ test('MongoDB: reconsulta idempotente, retomada de cópia, permissões e snapsho
       await cancelLookup(actor, importId);
       await assert.rejects(recheckLookup(actor, id, {importId}), code('RECHECK_CANCELLED'));
       assert.equal((await getJob(id)).status, 'COMPLETED');
+    });
+    await t.test('perder a lease da origem depois de copiar impede publicar a reconsulta',async()=>{
+      const id=source.job._id,importId=randomUUID(),jobs=await collection('lookupJobs'),prototype=Object.getPrototypeOf(jobs),countDocuments=prototype.countDocuments;
+      let changed=false;
+      const patch=t.mock.method(prototype,'countDocuments',async function(this:any,...args:any[]){
+        const count=await countDocuments.apply(this,args);
+        if(!changed&&this.collectionName==='lookupItems'&&args[0]?.jobId===importId){
+          changed=true;
+          await jobs.updateOne(scope({_id:id}),{$set:{leaseOwner:'synthetic-replacement-owner',leaseUntil:new Date(Date.now()+120000)}});
+        }
+        return count;
+      });
+      try{
+        await assert.rejects(recheckLookup(actor,id,{importId}),code('JOB_BUSY'));
+        assert(changed);assert.equal((await getJob(importId)).status,'UPLOADING');
+        assert.equal(await(await collection('purchaseLines')).countDocuments(scope({jobId:importId})),3);
+      }finally{
+        patch.mock.restore();
+        await jobs.updateOne(scope({_id:id,leaseOwner:'synthetic-replacement-owner'}),{$unset:{leaseOwner:'',leaseUntil:''}});
+      }
+      assert.equal((await recheckLookup(actor,id,{importId})).status,'PROCESSING');
+    });
+    await t.test('cancelamento depois de expirar a lease do destino não é sobrescrito na publicação',async()=>{
+      const id=source.job._id,importId=randomUUID(),jobs=await collection('lookupJobs'),prototype=Object.getPrototypeOf(jobs),updateOne=prototype.updateOne;
+      let cancelled=false;
+      const patch=t.mock.method(prototype,'updateOne',async function(this:any,...args:any[]){
+        if(!cancelled&&this.collectionName==='lookupJobs'&&args[0]?._id===importId&&args[1]?.$set?.status==='PROCESSING'){
+          cancelled=true;
+          await updateOne.call(jobs,scope({_id:importId}),{$set:{leaseUntil:new Date(0)}});
+          await cancelLookup(actor,importId);
+        }
+        return updateOne.apply(this,args);
+      });
+      try{await assert.rejects(recheckLookup(actor,id,{importId}),code('JOB_BUSY'));}
+      finally{patch.mock.restore();}
+      assert(cancelled);assert.equal((await getJob(importId)).status,'CANCELLED');
+      await assert.rejects(recheckLookup(actor,id,{importId}),code('RECHECK_CANCELLED'));
+      assert.equal((await getJob(id)).status,'COMPLETED');
     });
     await t.test('ID reservado não admite troca de autor, origem, upload comum ou workspace', async () => {
       const id = source.job._id, importId = randomUUID();

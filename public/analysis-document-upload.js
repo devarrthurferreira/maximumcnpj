@@ -4,6 +4,7 @@ import {DIFAL_VERSION,normalizeUf} from './difal.js';
 import {ANTICIPATION_VERSION} from './icms-anticipation.js';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.js';
 import {assertMatchingPurchaseCompetences} from './purchase-model.js';
+import {estimatePayloadBytes} from './import-payload-size.js';
 
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const types=['PURCHASES','SALES'];
@@ -109,9 +110,10 @@ export async function uploadFiscalDocument({file,review,type,generationId,client
   let job=active||pending.job;
   if(!job||job.status==='UPLOADING'&&!isReadyToFinalize(job)){
     if(!Array.isArray(pending.rows)||!pending.rows.length)throw new Error('Selecione novamente o arquivo original para retomar este envio.');
+    pending.expectedPayloadBytes??=estimatePayloadBytes(pending.rows);
     onProgress('Salvando o documento…');
     const attached=await request('/api/v4/generations/'+generationId+'/'+(type==='SALES'?'sales':'purchases'),'POST',{
-      importId:pending.importId,clientId,fileName:pending.fileName,expectedRows:pending.rows.length,type,issuerUf:pending.issuerUf});
+      importId:pending.importId,clientId,fileName:pending.fileName,expectedRows:pending.rows.length,expectedPayloadBytes:pending.expectedPayloadBytes,type,issuerUf:pending.issuerUf});
     job=own(attached.job);pending.job=job;onPending(pending);
     if(job.status==='UPLOADING'){
       // A reselected file starts at zero so the API verifies hashes of previously saved chunks.

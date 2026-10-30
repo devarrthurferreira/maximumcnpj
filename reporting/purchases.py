@@ -22,6 +22,7 @@ from .brand import draw_brand_header
 from .difal_policy import report_difal_policy, direction_selection
 from .revenue import RevenueEvidence, report_revenue_reconciliation, unavailable_revenue
 from .core import VERSION, display_date, number, percent, require, utcnow, snapshot_source
+from .storage import job_database
 from .difal import DIFAL_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_VERSIONS, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
 from .operation_catalog import OPERATION_CATALOG_VERSION, classify_operation_nature, normalize_operation_nature
 from .tax_documents import is_canonical_cnpj as _valid_cnpj
@@ -528,14 +529,15 @@ def reconcile_purchase_snapshot(job, lines, items, workspace):
 def reconciled_purchase_metadata(db, job, workspace):
     """Read only the selected job and join states by workspace, exact identity and state ID."""
     policy = report_difal_policy(db, job, workspace)
+    payload = job_database(db, job, workspace)
     query = {'workspaceId': workspace, 'jobId': job['_id']}
-    lines = db.purchaseLines.find(query, {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'index': 1, 'document': 1,
+    lines = payload.purchaseLines.find(query, {'_id': 0, 'workspaceId': 1, 'jobId': 1, 'index': 1, 'document': 1,
                                         'documentKind': 1, 'cnpj': 1, 'quantity': 1, 'operation': 1, 'balanceCents': 1, 'totalCents': 1, 'valid': 1, 'kind': 1,
                                         'natureCode': 1, 'description': 1, 'recipientUf': 1, 'difal': 1, 'serviceDate': 1,
                                         'natureOperation': 1, 'operationVersion': 1, 'anticipation': 1,
                                         **{key: 1 for key in COMPONENT_FIELDS}})
     lines = lines.limit(50_001).batch_size(500).max_time_ms(20000)
-    items = db.lookupItems.aggregate([
+    items = payload.lookupItems.aggregate([
         {'$match': query},
         {'$lookup': {'from': 'cnpjStates', 'let': {'ref': '$stateId', 'identity': '$cnpj'},
                      'pipeline': [{'$match': {'workspaceId': workspace, '$expr': {'$and': [

@@ -8,6 +8,7 @@ import { PURCHASE_SELECTION_VERSION, selectPurchaseLine, summarizePurchaseSelect
 import { normalizeCnpj, safeCell } from './domain.ts';
 import { documentKind } from './lookup-domain.ts';
 import { collection, scope, audit } from './store.ts';
+import { jobCollection } from './mongo-storage.ts';
 import type { Doc } from './store.ts';
 import { getJob } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
@@ -27,7 +28,7 @@ async function financialGroups(name: string, id: string, job: Doc) {
   const net = calculationVersion(job) === 'NET_V2';
   const numeric = {$and: (net ? FINANCIAL_FIELDS : ['totalCents']).map(validLineCents)};
   const valid = net ? {$cond: [numeric, {$eq: ['$totalCents', {$subtract: [{$add: [{$subtract: ['$grossCents', '$discountCents']}, '$freightCents']}, '$abatementCents']}]}, false]} : numeric;
-  const groups = await (await collection(name)).aggregate([
+  const groups = await (await jobCollection(name,job)).aggregate([
     {$match: scope({jobId: id})}, {$sort: {index: 1}},
     {$group: {_id: documentIdentity(), valid: {$first: '$valid'}, name: {$first: '$name'}, documentKind: {$first: '$documentKind'},
       lines: {$sum: 1}, invalidAmounts: {$sum: {$cond: [valid, 0, 1]}}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}},
@@ -42,7 +43,7 @@ function componentTotals(groups: any[]) {
 }
 async function financialPeriod(name: string, id: string, job: Doc) {
   if (calculationVersion(job) !== 'NET_V2') return null;
-  const rows = await (await collection(name)).find(scope({jobId: id})).project({serviceDate: 1}).sort({index: 1}).maxTimeMS(20000).toArray();
+  const rows = await (await jobCollection(name,job)).find(scope({jobId: id})).project({serviceDate: 1}).sort({index: 1}).maxTimeMS(20000).toArray();
   need(rows.length === job.expectedRows, 'Período fiscal incompleto. Reimporte o relatório.', 409, 'REPORT_PERIOD');
   return reportPeriod(rows.map(row => row.serviceDate));
 }
@@ -67,7 +68,7 @@ async function financialTaxes(name:string,id:string,job:Doc,deriveLegacy = false
   const deriveSales=deriveLegacy&&job.mode===SALES_MODE&&job.difalVersion!==DIFAL_VERSION&&calculationVersion(job)==='NET_V2';
   if(salesTax)need(isDifalVersion(job.difalVersion),'Versão do DIFAL desconhecida. Reimporte as vendas.',409,'DIFAL_VERSION');
   if(!catalog&&!salesTax&&!purchaseTax&&!derivePurchase&&!deriveSales)return {difal:null,difalOrigin:'UNAVAILABLE',anticipation:null,anticipationOrigin:'UNAVAILABLE'};
-  const rows=await (await collection(name)).find(scope({jobId:id})).project({totalCents:1,natureCode:1,description:1,operation:1,document:1,recipientUf:1,
+  const rows=await (await jobCollection(name,job)).find(scope({jobId:id})).project({totalCents:1,natureCode:1,description:1,operation:1,document:1,recipientUf:1,
     ...(catalog?{natureOperation:1,operationVersion:1}:{}),...(salesTax?{difal:1}:{}),...(purchaseTax?{anticipation:1}:{})}).maxTimeMS(20000).toArray();
   if(catalog)validateOperationSnapshot(job,rows,(derivePurchase||deriveSales)&&!salesTax&&!purchaseTax);
   if(salesTax||purchaseTax)need(rows.length===job.expectedRows&&typeof job.issuerUf==='string'&&job.issuerUf===normalizeUf(job.issuerUf),
@@ -140,7 +141,7 @@ export async function currentSalesDocumentDifal(id: string) {
   try { period = buildAnalysisPeriod(checked.period, checked.period); }
   catch { throw new AppError(409, 'DIFAL_PERIOD', 'Não foi possível identificar uma única janela de janeiro a setembro. Confira o ano e as datas do relatório.'); }
   need(period.complete, 'O arquivo não contém competências entre janeiro e setembro.', 409, 'DIFAL_PERIOD');
-  const rows = await (await collection('purchaseLines')).find(scope({jobId: id}))
+  const rows = await (await jobCollection('purchaseLines',job)).find(scope({jobId: id}))
     .project({index: 1, serviceDate: 1, totalCents: 1, document: 1, natureCode: 1, description: 1, recipientUf: 1})
     .sort({index: 1}).maxTimeMS(20000).toArray();
   need(rows.length === checked.totals.lines && rows.every((row,index) => row.index === index &&
@@ -212,13 +213,13 @@ function stableFinancialValue(value:any):string {
 }
 function financialCopy(line:Doc) {return Object.fromEntries(FINANCIAL_COPY_FIELDS.filter(field=>Object.hasOwn(line,field)).map(field=>[field,line[field]]));}
 async function checkCopiedFinancialRows(job:Doc,source:Doc[]) {
-  const saved=await (await collection('purchaseLines')).find(scope({jobId:job._id,index:{$gte:source[0].index,$lte:source[source.length-1].index}}))
+  const saved=await (await jobCollection('purchaseLines',job)).find(scope({jobId:job._id,index:{$gte:source[0].index,$lte:source[source.length-1].index}}))
     .project<Doc>(financialCopyProjection).sort({index:1}).maxTimeMS(20000).toArray();
   need(saved.length===source.length&&saved.every((line,index)=>stableFinancialValue(line)===stableFinancialValue(financialCopy(source[index]))),
     'A cópia financeira diverge do documento enviado. Os dados foram preservados para conferência.',409,'PURCHASE_TOTAL');
 }
 async function financialSourceBatch(job:Doc,offset:number) {
-  const source=await (await collection('lookupStage')).find(scope({jobId:job._id,index:{$gte:offset,$lt:Math.min(job.expectedRows,offset+FINALIZATION_BATCH)}}))
+  const source=await (await jobCollection('lookupStage',job)).find(scope({jobId:job._id,index:{$gte:offset,$lt:Math.min(job.expectedRows,offset+FINALIZATION_BATCH)}}))
     .project<Doc>(financialCopyProjection).sort({index:1}).maxTimeMS(20000).toArray();
   need(source.length===Math.min(FINALIZATION_BATCH,job.expectedRows-offset)&&source.every((line,index)=>line.index===offset+index),
     'Envio incompleto ou expirado. Reenvie a planilha.',409,'INCOMPLETE');
@@ -248,7 +249,7 @@ function finalizationProgress(job:Doc):FinalizationProgress {
 /** Each request owns a job lease and copies a bounded, retry-safe portion of the source. */
 export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
   need(isFinancialMode(job.mode), 'Tipo de relatório inválido.');
-  const id=job._id,stage=await collection('lookupStage'),rows=await collection('purchaseLines'),items=await collection('lookupItems');
+  const id=job._id,stage=await jobCollection('lookupStage',job),rows=await jobCollection('purchaseLines',job),items=await jobCollection('lookupItems',job);
   const count=await stage.countDocuments(scope({jobId:id}));
   need(count===job.expectedRows&&job.uploaded===count,'Envio incompleto ou expirado. Reenvie a planilha.',409,'INCOMPLETE');
   const progress=finalizationProgress(job),large=count>FINALIZATION_ROWS_PER_REQUEST;
@@ -330,7 +331,7 @@ export async function reconciledPurchaseSummary(id: string, requireComplete = tr
     JSON.stringify(period?.missingMonths) === JSON.stringify(job.reportPeriod.missingMonths),
     'Período fiscal divergente do snapshot. Emissão bloqueada.', 409, 'REPORT_PERIOD');
   if (components) need(FINANCIAL_FIELDS.every(field => job.purchaseInput.components?.[field] === components[field]), 'Componentes divergentes do snapshot. Emissão bloqueada.', 409, 'PURCHASE_TOTAL');
-  const items = await (await collection('lookupItems')).aggregate([
+  const items = await (await jobCollection('lookupItems',job)).aggregate([
     {$match: scope({jobId: id})},
     {$lookup: {from: 'cnpjStates', let: {state: '$stateId', identity: '$cnpj'}, pipeline: [{$match: {$expr: {$and: [{$eq: ['$_id', '$$state']}, {$eq: ['$cnpj', '$$identity']}, {$eq: ['$workspaceId', scope().workspaceId]}]}}}, {$project: {status: 1}}], as: 'sourceState'}},
     {$project: {cnpj: 1, clientId: 1, kind: 1, state: 1, stateId: 1, status: 1, occurrences: 1, totalCents: 1, sourceState: 1, source: 1}}
@@ -372,7 +373,7 @@ export async function reconciledPurchaseSummary(id: string, requireComplete = tr
   const sources = [...new Set(items.map(item =>
     (typeof item.source === 'string' && item.source.trim()) ||
     (typeof job.source === 'string' && job.source.trim()) || 'Minha Receita'))].sort();
-  const operationTotals = mode === SALES_MODE ? await (await collection('purchaseLines')).aggregate([
+  const operationTotals = mode === SALES_MODE ? await (await jobCollection('purchaseLines',job)).aggregate([
     {$match: scope({jobId: id})}, {$group: {_id: {$ifNull: ['$operation', 'OUTRAS']}, lines: {$sum: 1}, totalCents: {$sum: '$totalCents'}, balanceCents: {$sum: {$ifNull: ['$balanceCents', '$totalCents']}}}}, {$sort: {_id: 1}}
   ], {maxTimeMS: 20000}).toArray() : [];
   // Use the already reconciled provider snapshots to keep services separate even
@@ -392,7 +393,7 @@ export async function reconciledPurchaseSummary(id: string, requireComplete = tr
   // scenarios, retries and rechecks. Only this explicit view filters purchases.
   let purchaseSelection: PurchaseSelectionSummary | undefined;
   if (mode === PURCHASE_MODE) {
-    const sourceRows = await (await collection('purchaseLines')).find(scope({jobId: id}))
+    const sourceRows = await (await jobCollection('purchaseLines',job)).find(scope({jobId: id}))
       .project({index: 1, document: 1, documentKind: 1, valid: 1, cnpj: 1, natureCode: 1, totalCents: 1, ...Object.fromEntries(COMPONENT_FIELDS.map(field => [field, 1]))})
       .sort({index: 1}).maxTimeMS(20000).toArray();
     need(sourceRows.length === lines && sourceRows.every((row, index) => row.index === index) &&
@@ -455,8 +456,9 @@ export async function purchaseHistory(clientId: string, page: number, mode: Fina
   const jobs = await collection('lookupJobs');
   return {items: await jobs.find(query).sort({createdAt: -1, _id: 1}).skip((page - 1) * 30).limit(30).toArray(), total: await jobs.countDocuments(query), page};
 }
-type FinancialTaxView = {anticipation?:AnticipationSummary|null;anticipationOrigin?:AnticipationOrigin;difal?:DifalSummary|null;difalOrigin?:DifalOrigin;purchaseSelection?:PurchaseSelectionSummary};
+type FinancialTaxView = {job?:Doc;anticipation?:AnticipationSummary|null;anticipationOrigin?:AnticipationOrigin;difal?:DifalSummary|null;difalOrigin?:DifalOrigin;purchaseSelection?:PurchaseSelectionSummary};
 async function financialPage(id: string, status: string, page: number, pageSize: number, grouped = false, mode: FinancialMode = PURCHASE_MODE, view:FinancialTaxView = {}) {
+  const lines=await jobCollection('purchaseLines',view.job||id);
   const tax=mode===SALES_MODE?'difal':'anticipation', taxOrigin=(mode===SALES_MODE?view.difalOrigin:view.anticipationOrigin)||'UNAVAILABLE';
   const taxSummary=mode===SALES_MODE?view.difal:view.anticipation;
   const match: any = scope({jobId: id});
@@ -492,14 +494,14 @@ async function financialPage(id: string, status: string, page: number, pageSize:
     {$match: {$expr: {$and: [{$eq: ['$_id', '$$state']}, {$eq: ['$cnpj', '$$identity']}, {$eq: ['$workspaceId', scope().workspaceId]}]}}}
   ], as: 'details'}}, {$set: {details: {$arrayElemAt: ['$details', 0]}}});
   pageStages.push({$project: {workspaceId: 0, lookup: 0}});
-  const [result] = await (await collection('purchaseLines')).aggregate([
+  const [result] = await lines.aggregate([
     ...stages, {$facet: {items: pageStages, count: [{$count: 'total'}]}}
   ], {allowDiskUse: true, maxTimeMS: 20000}).toArray();
   const items=result?.items||[], derivedGroups=new Map<string,Record<string,any>[]>();
   if(grouped&&(taxOrigin==='DERIVED_FROM_SNAPSHOT'||mode===PURCHASE_MODE&&view.purchaseSelection?.available)&&items.length){
     // Read only the documents in this page. Sum the rounded estimate of each frozen
     // line, never an estimate recalculated from a document's combined amount.
-    const sourceRows=await (await collection('purchaseLines')).aggregate([
+    const sourceRows=await lines.aggregate([
       {$match:{...scope({jobId:id}),$expr:{$in:[documentIdentity(),items.map((row:any)=>row._id)]}}},
       {$project:{identity:documentIdentity(),document:1,totalCents:1,natureCode:1,recipientUf:1,description:1}}
     ],{maxTimeMS:20000}).toArray();

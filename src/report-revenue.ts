@@ -1,4 +1,5 @@
 import {collection, scope, type Doc} from './store.ts';
+import {jobCollection} from './mongo-storage.ts';
 import {need} from './security.ts';
 import {assertGenerationNotDeleted} from './generation-deletion.ts';
 import {PURCHASE_MODE, SALES_MODE, reportPeriod, exactCents, exactSignedCents, type FinancialMode} from './purchase-domain.ts';
@@ -87,7 +88,7 @@ async function revenueFromPair(purchases:Summary, sales:Summary, ids:RevenueMeta
   if (purchases.calculationVersion !== 'NET_V2' || sales.calculationVersion !== 'NET_V2') return unavailableRevenueReconciliation(
     'Os relatórios precisam conservar a base Q − Y + AA − AB para este fechamento.', ids);
   const read = async (summary:Summary) => {
-    const rows = await (await collection('purchaseLines')).find(scope({jobId:summary.job._id}))
+    const rows = await (await jobCollection('purchaseLines',summary.job)).find(scope({jobId:summary.job._id}))
       .project({index:1, serviceDate:1, natureCode:1, totalCents:1, balanceCents:1}).sort({index:1}).maxTimeMS(20000).toArray();
     need(rows.length === summary.totals.lines && rows.every((row,index) => row.index === index) &&
       rows.reduce((total,row) => exactCents(total + exactCents(row.totalCents)), 0) === summary.job.purchaseInput.totalCents &&

@@ -1,5 +1,6 @@
 import {isDeepStrictEqual} from 'node:util';
-import {collection, scope} from './store.ts';
+import {scope} from './store.ts';
+import {jobCollection} from './mongo-storage.ts';
 import type {Doc} from './store.ts';
 import {need} from './security.ts';
 import {reconciledPurchaseSummary as purchaseSummary} from './purchase-store.ts';
@@ -127,7 +128,7 @@ export async function rebuildSimulationSource(snapshot: Doc): Promise<Source & {
     purchaseSummary(old.purchases.jobId, true, PURCHASE_MODE), purchaseSummary(old.sales.jobId, true, SALES_MODE)
   ]);
   const original = await originalSource(snapshot, purchases, sales);
-  const rows=await (await collection('purchaseLines')).find(scope({jobId:sales.job._id})).sort({index:1}).maxTimeMS(20000).toArray();
+  const rows=await (await jobCollection('purchaseLines',sales.job)).find(scope({jobId:sales.job._id})).sort({index:1}).maxTimeMS(20000).toArray();
   check(rows.length === sales.totals.lines && new Set(rows.map(row => row.index)).size === rows.length &&
     rows.every((row, index) => row.index === index), 'As linhas originais ficaram incompletas durante o recálculo.');
   const rawTotal = exactCents(rows.reduce((sum, row) => exactCents(sum + exactCents(row.totalCents)), 0));

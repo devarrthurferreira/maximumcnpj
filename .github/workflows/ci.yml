@@ -8,7 +8,7 @@ jobs:
   verify:
     # Playwright 1.55.1 supports Ubuntu 24.04; ubuntu-latest may select 26.04.
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     services:
       mongo:
         image: mongo:7.0
@@ -16,9 +16,23 @@ jobs:
         options: >-
           --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
           --health-interval 10s --health-timeout 5s --health-retries 5
+      mongo2:
+        image: mongo:7.0
+        ports: ['27018:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+      mongo3:
+        image: mongo:7.0
+        ports: ['27019:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       ORT_DISABLE_TELEMETRY: '1'
       MONGODB_URI: mongodb://127.0.0.1:27017
+      MONGODB_TEST_URI_2: mongodb://127.0.0.1:27018
+      MONGODB_TEST_URI_3: mongodb://127.0.0.1:27019
       MONGODB_DB: maximum_e2e
       WORKSPACE_ID: ci
       ADMIN_NAME: CI Administrator
@@ -55,6 +69,8 @@ jobs:
           SIMPLES_TEST_OCR: '1'
       - name: Regras e HTTP
         run: npm test
+      - name: Armazenamento sequencial em três MongoDB descartáveis
+        run: npm run test:mongo-storage
       - name: Integração legada com MongoDB
         run: npm run test:integration
       - name: Consultas com API simulada e compartilhamento de registros

@@ -1,12 +1,13 @@
 import { normalizeUf } from './difal.ts';
 import { randomUUID } from 'node:crypto';
 import { collection, scope, audit } from './store.ts';
+import {jobDatabase} from './mongo-storage.ts';
 import type { Doc } from './store.ts';
 import { AppError, need, text, integer } from './security.ts';
 import { VERSION, MAX_ROWS } from './domain.ts';
 import { write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
-import { createLookup } from './lookup-jobs.ts';
+import { createLookup,validateExpectedPayloadBytes } from './lookup-jobs.ts';
 import { PURCHASE_MODE, SALES_MODE } from './purchase-domain.ts';
 import { assertGenerationNotDeleted, generationDeletion, reserveGenerationDeletion, reserveDeletedLookups } from './generation-deletion.ts';
 import { parseDifalPolicy } from '../public/simulator-engine.js';
@@ -237,8 +238,14 @@ async function purgeGenerationReceipt(receipt: Doc, owner?: string) {
   }
   // The receipt retains only owned IDs, so interrupted purges can safely resume.
   if (jobIds.length) {
-    for (const name of ['lookupStage', 'purchaseLines', 'lookupItems']) {
-      await (await collection(name)).deleteMany(scope({jobId: {$in: jobIds}}));
+    // Headers remain in the control database until every destination is purged.
+    // Resolve them directly: deletion receipts intentionally make getJob reject.
+    const jobs=await(await collection('lookupJobs')).find(scope({_id:{$in:jobIds},generationId:id})).toArray();
+    const destinations=new Set(await Promise.all(jobs.map(job=>jobDatabase(job))));
+    for(const db of destinations){
+      for (const name of ['lookupStage', 'purchaseLines', 'lookupItems']) {
+        await db.collection(name).deleteMany(scope({jobId: {$in: jobIds}}));
+      }
     }
     await (await collection('documentDifalEstimates')).deleteMany(scope({'value.jobId': {$in: jobIds}}));
     await (await collection('chunks')).deleteMany(scope({_id: {$regex: '^lookup:(?:' + jobIds.join('|') + '):'}}));
@@ -301,7 +308,8 @@ async function attachGenerationReport(actor: LookupActor, id: string, input: any
   const slot = type === 'PURCHASES' ? 'purchaseJobId' : 'salesJobId';
   const historySlot = type === 'PURCHASES' ? 'purchaseJobIds' : 'salesJobIds';
   const conflict = type === 'PURCHASES' ? 'GENERATION_PURCHASE_EXISTS' : 'GENERATION_SALES_EXISTS';
-  const fileName = text(input.fileName, 200), expectedRows = integer(input.expectedRows, 1, MAX_ROWS), issuerUf = normalizeUf(input.issuerUf);
+  const fileName = text(input.fileName, 200), expectedRows = integer(input.expectedRows, 1, MAX_ROWS), issuerUf = normalizeUf(input.issuerUf),
+    expectedPayloadBytes=validateExpectedPayloadBytes(input.expectedPayloadBytes);
   return withGeneration(id, async (generation, owner) => {
     const company = generation.companies.find((item: GenerationCompany) => item.clientId === clientId) as GenerationCompany | undefined;
     need(company, 'Esta empresa não pertence à geração.', 409, 'GENERATION_CLIENT');
@@ -320,7 +328,8 @@ async function attachGenerationReport(actor: LookupActor, id: string, input: any
     }
     need(!company[historySlot].includes(importId) || company[slot] === importId,
       'Este identificador pertence a um relatório anterior. Inicie uma nova importação.', 409, conflict);
-    const lookupInput = {clientId, importId, fileName, expectedRows, ...(input.issuerUf !== undefined ? {issuerUf} : {})};
+    const lookupInput = {clientId, importId, fileName, expectedRows, ...(input.issuerUf !== undefined ? {issuerUf} : {}),
+      ...(expectedPayloadBytes===undefined?{}:{expectedPayloadBytes})};
     let job: Doc;
     try { job = await createLookup(actor, lookupInput, mode); }
     catch (error: any) {

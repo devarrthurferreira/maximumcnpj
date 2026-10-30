@@ -1,5 +1,16 @@
 # Histórico de alterações
 
+## [0.54.0] — 2026-10-30
+
+- Adiciona `MONGODB_URI_2`/`MONGODB_DB_2` e `MONGODB_URI_3`/`MONGODB_DB_3` para até três clusters, mantendo compatibilidade sem conexões adicionais.
+- Reserva capacidade e fixa o destino de cada nova importação antes das linhas, com seleção sequencial 1 → 2 → 3 e margem padrão de 85%; mantém controle, identidade, sessões e revisões no primário.
+- Mede a cota Atlas com `atlasSize` (BSON descomprimido + índices do cluster); distingue falha de medição, indisponibilidade, limite e orçamento de um database local.
+- Preserva o histórico e os joins locais de linhas, itens e estados cadastrais; adapta consulta, DIFAL, conciliação, reprocessamento, reconsulta e exclusão ao destino salvo.
+- Mantém a localização em retomadas e cópias idempotentes; rede, credenciais, conflitos e gravações parciais não provocam duplicação em outro banco.
+- Adapta relatórios Python, PDF e CSV para origens em bancos distintos, conservando autenticação, permissões e recibos de exclusão centrais.
+- Exibe ocupação e estado dos destinos no dashboard, sem expor conexões, e soma as consultas dos bancos utilizados sem ocultar falhas.
+- Documenta variáveis, redeploy, clusters Free separados, reserva do primário e os limites da expansão; inclui testes sintéticos com três MongoDB descartáveis.
+
 ## [0.53.0] — 2026-10-30
 
 - Restringe DIFAL de vendas a CPF de outra UF, com ausência confirmada exibida como R$ 0,00 e mensagem explícita; mantém pendências de evidência distintas de zero e não altera a antecipação de compras.
