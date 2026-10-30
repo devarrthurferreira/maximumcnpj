@@ -6,7 +6,7 @@ Abrir a **DRE atual da empresa** confere a versão salva e atualiza os cálculos
 
 A atualização é restrita à simulação solicitada, autenticada e permitida a administradores e operadores. Ela cria uma revisão vinculada, preserva a versão anterior e retoma o mesmo resultado em novas tentativas. Uma DRE já conferida evita reler as coleções financeiras; versões antigas são reconstruídas pelas fontes guardadas, inclusive quando distribuídas entre os MongoDB. Origem indisponível, UF pendente e dados inconsistentes não viram ausência de DIFAL: uma falha na atualização fica explícita, com nova tentativa e acesso à versão histórica.
 
-Os acessos pelo histórico usam a versão capturada na época, identificada como histórica. O PDF sempre corresponde à versão que está aberta. O motor passa a `1.17.0-dre-sales-difal-sync`, com sua variante de competências disponíveis, e o lote de revisões a `DIFAL_DRE_SYNC_2026_10_V12`, permitindo conferir novamente versões geradas pelas regras anteriores. As análises continuam utilizando as competências disponíveis entre janeiro e setembro.
+Os acessos pelo histórico usam a versão capturada na época, identificada como histórica. Isso inclui o atalho **Abrir versão salva** logo após o salvamento e os registros de atividade do dashboard. O PDF sempre corresponde à versão que está aberta. O motor passa a `1.17.0-dre-sales-difal-sync`, com sua variante de competências disponíveis, e o lote de revisões a `DIFAL_DRE_SYNC_2026_10_V12`, permitindo conferir novamente versões geradas pelas regras anteriores. As análises continuam utilizando as competências disponíveis entre janeiro e setembro.
 
 ## MongoDB 1 → 2 → 3 para armazenamento dos relatórios — v0.54.0
 
