@@ -6,7 +6,7 @@ const status={UPLOADING:'Importando',PROCESSING:'Em processamento',COMPLETED:'Co
 export function formatBytes(value){if(value===null||value===undefined)return 'Indisponível';if(value===0)return '0 B';const unit=Math.min(3,Math.floor(Math.log(value)/Math.log(1024)));return `${(value/1024**unit).toLocaleString('pt-BR',{maximumFractionDigits:2})} ${['B','KiB','MiB','GiB'][unit]}`;}
 export function activityHref(item){
  const id=encodeURIComponent(item._id);
- if(item.kind==='SIMULATION')return `/simulator.html?simulation=${id}`;
+ if(item.kind==='SIMULATION')return `/simulator.html?simulation=${id}&historical=1`;
  if(['FISCAL','ACCOUNTING','CONFIG'].includes(item.kind))return `/analyses.html?id=${encodeURIComponent(item.analysisId)}${item.kind==='CONFIG'?'':`&sector=${item.kind==='ACCOUNTING'?'accounting':'fiscal'}`}`;
  if(item.kind==='LEGACY')return `/legacy.html#batch/${id}`;
  if(item.kind==='PURCHASES'||item.kind==='SALES')return `/purchases.html?${new URLSearchParams({job:item._id,client:item.clientId||'',...(item.generationId?{generation:item.generationId}:{}),...(item.kind==='SALES'?{type:'SALES'}:{})})}`;

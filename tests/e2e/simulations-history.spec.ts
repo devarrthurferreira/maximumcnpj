@@ -9,7 +9,7 @@ test('Simulation history searches, filters, paginates and exposes direct detail 
  await session(page);const queries:URLSearchParams[]=[];const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/api/v4/simulations?*',r=>{const params=new URL(r.request().url()).searchParams;queries.push(params);const filtered=!!params.get('search');return r.fulfill({json:{items:[{...item,year:Number(params.get('year')||2027)}],total:filtered?1:21,page:Number(params.get('page')),pageSize:20}});});
  await page.goto('/simulations.html');await expect(page.getByRole('heading',{name:'21 versões salvas'})).toBeVisible();await expect(page.locator('[data-navigation="simulations"]')).toHaveAttribute('aria-current','page');
- await expect(page.getByRole('link',{name:'Rever simulação'})).toHaveAttribute('href','/simulator.html?simulation='+item._id);await expect(page.locator('.history-item')).toContainText('VALORES AJUSTADOS');
+ await expect(page.getByRole('link',{name:'Rever simulação'})).toHaveAttribute('href','/simulator.html?simulation='+item._id+'&historical=1');await expect(page.locator('.history-item')).toContainText('VALORES AJUSTADOS');
  await page.getByRole('button',{name:'Próxima',exact:true}).click();await expect(page.locator('.history-pager')).toContainText('Página 2 de 2');expect(queries.at(-1)?.get('page')).toBe('2');
  await page.getByLabel('Buscar simulações').fill('936');await page.getByRole('button',{name:'Buscar',exact:true}).click();await expect(page.getByRole('heading',{name:'1 versão salva'})).toBeVisible();expect(queries.at(-1)?.get('search')).toBe('936');expect(queries.at(-1)?.get('page')).toBe('1');
  await page.getByLabel('Ano do cenário').selectOption('2028');await expect(page.locator('.history-tags')).toContainText('2028');expect(queries.at(-1)?.get('year')).toBe('2028');
@@ -114,12 +114,12 @@ test('Histórico diferencia competências, projeção legada e revisão sem alte
  await page.goto('/simulations.html');
  const original=page.locator(`[data-simulation-id="${originalId}"]`),child=page.locator(`[data-simulation-id="${childId}"]`),unknown=page.locator(`[data-simulation-id="${unknownId}"]`);
  await expect(original).toContainText('Receita anual projetada');await expect(original).toContainText('Referência mensal × 12');
- await expect(original.getByRole('link',{name:'Abrir versão atualizada'})).toHaveAttribute('href',`/simulator.html?simulation=${childId}`);
- await expect(original.getByRole('link',{name:'Rever esta versão'})).toHaveAttribute('href',`/simulator.html?simulation=${originalId}`);
+ await expect(original.getByRole('link',{name:'Abrir versão atualizada'})).toHaveAttribute('href',`/simulator.html?simulation=${childId}&current=1`);
+ await expect(original.getByRole('link',{name:'Rever esta versão'})).toHaveAttribute('href',`/simulator.html?simulation=${originalId}&historical=1`);
  await expect(child).toContainText('POR COMPETÊNCIA');await expect(child).toContainText('REVISÃO AUTOMÁTICA');
  await expect(child).toContainText('Receita do período');await expect(child).toContainText('Soma de 3 competências · sem média');
  await expect(child).toContainText('01/2025 a 03/2025');await expect(child).toContainText('91.234,56');await expect(child).toContainText('1.234,56');
- await expect(child).not.toContainText('× 12');await expect(child.getByRole('link',{name:'Ver original'})).toHaveAttribute('href',`/simulator.html?simulation=${originalId}`);
+ await expect(child).not.toContainText('× 12');await expect(child.getByRole('link',{name:'Ver original'})).toHaveAttribute('href',`/simulator.html?simulation=${originalId}&historical=1`);
  await expect(unknown).toContainText('Receita registrada');await expect(unknown).toContainText('Conforme simulação salva');await expect(unknown).toContainText('12.345,67');
  await expect(unknown).not.toContainText('× 12');await expect(unknown).toContainText('Versão anterior excluída');await expect(unknown.getByRole('link',{name:'Ver versão anterior'})).toHaveCount(0);
  await page.setViewportSize({width:320,height:800});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);

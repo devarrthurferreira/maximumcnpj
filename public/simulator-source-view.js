@@ -1,6 +1,7 @@
 import {resolveDifalApplication} from './simulator-engine.js';
 import {difalDirectionSelection} from './difal-policy.js';
 import {resolveRegimeSelection} from './regime-selection.js';
+import {normalizeUf} from './difal.js';
 
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=cents=>Number.isSafeInteger(cents)?(cents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):'—';
@@ -9,6 +10,12 @@ const operationLabels={VENDA:'Venda',COMPRAS:'Compra',DEVOLUCAO_VENDA:'Devoluç�
 const appliedMoney=value=>typeof value==='number'&&Number.isFinite(value)?value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):'Indisponível';
 const difalRegimes=[['pure','Simples puro'],['hybrid','Simples híbrido']];
 const summed=values=>values.every(value=>typeof value==='number'&&Number.isFinite(value))?values.reduce((sum,value)=>sum+Math.round(value*100),0)/100:null;
+const confirmedNoEligibleSales=estimate=>estimate?.version==='DIFAL_ESTIMATE_V5'&&estimate.eligibleLines===0&&estimate.amountCents===0&&estimate.pendingLines===0&&!!normalizeUf(estimate.issuerUf);
+const emptySalesScope=(direction,current,period,values,currentMonth)=>{
+  if(direction!=='exit'||!values.length)return null;
+  if(period.length&&period.every(confirmedNoEligibleSales)&&values.every(item=>item.total===0&&(item.current===0||item.current===null)))return 'period';
+  return currentMonth&&confirmedNoEligibleSales(current)&&values.every(item=>item.current===0)?'month':null;
+};
 
 /** Amounts in BRL. Editing uses the selected source estimate; history reads saved DRE cells only. */
 export function buildDifalApplicationView({direction,policy,reports=[],row=null,rbt12ByMonth={},rbt12=null,currentCents=null,totalCents=null,sourceEstimate=null,icmsOutside=false,snapshot=null,monthIndex=0}) {
@@ -42,7 +49,13 @@ export function buildDifalApplicationView({direction,policy,reports=[],row=null,
       return {id,name:regime?.name||id,current,total,excluded,
         blocked:!!application?.blocked&&!excluded,pending,preview:false,message:excluded?`${caption} não incluído por escolha nesta versão.`:pending?(currentPending?currentRegime?.status:regime?.status)||'Cálculo pendente: o total do período não foi confirmado.':application?.message||'Valores preservados da versão salva.'};
     });
-    return {direction,caption,values,historical:true,currentMonth:selected?.sourceMonth||row?.sourceMonth||null};
+    const currentMonth=selected?.sourceMonth||row?.sourceMonth||null;
+    // A refreshed source must never relabel a positive amount captured in an older DRE.
+    const capturedReports=monthly?snapshot.source?.monthlyReports||[]:[];
+    const capturedCurrent=monthly?capturedReports.find(item=>item.sourceMonth===currentMonth)?.difal:snapshot.source?.sales?.difal;
+    const capturedPeriod=monthly?capturedReports.map(item=>item.difal):[snapshot.source?.sales?.difal];
+    return {direction,caption,values,historical:true,currentMonth,
+      emptySalesScope:emptySalesScope(direction,capturedCurrent,capturedPeriod,values,currentMonth)};
   }
   const selection=difalDirectionSelection(policy,direction);
   if(!selection)return null;
@@ -60,7 +73,9 @@ export function buildDifalApplicationView({direction,policy,reports=[],row=null,
     const period=reports.length?reports.map(item=>apply(id,item[sourceKey],rbt12ByMonth[item.sourceMonth])):[apply(id,{...sourceEstimate,amountCents:totalCents},rbt12)];
     return {id,name,...current,current:current.value,total:summed(period.map(item=>item.value)),pending:!!current.pending||period.some(item=>item.pending),preview:!!current.preview||period.some(item=>item.preview)};
   });
-  return {direction,caption,values,historical:false,selection,currentMonth:row?.sourceMonth||null};
+  const currentMonth=row?.sourceMonth||null;
+  return {direction,caption,values,historical:false,selection,currentMonth,
+    emptySalesScope:emptySalesScope(direction,reports.length?row?.difal:sourceEstimate,reports.length?reports.map(item=>item.difal):[sourceEstimate],values,currentMonth)};
 }
 
 export function difalApplicationSummary(view,period='current') {
@@ -80,7 +95,8 @@ export function renderDifalAppliedSource({view,sourceHtml='',auditOpen=false}) {
   if(view.values.every(row=>row.current===null&&row.total===null&&!row.pending&&!row.excluded))return sourceHtml;
   const allExcluded=view.values.every(row=>row.excluded),blocked=view.values.some(row=>row.blocked),pending=view.values.some(row=>row.pending),preview=view.values.some(row=>row.preview);
   const status=allExcluded?'Não incluído':view.historical?'Valores da versão salva':blocked?'Bloqueio por competência':pending?'Estimativa parcial':preview?'Prévia selecionada':'Aplicação por cenário';
-  return `<section class="sim-difal-card sim-difal-application${allExcluded?' is-excluded':''}" data-difal-application-direction="${view.direction}" aria-labelledby="sim-${prefix}-title"><header class="sim-difal-header"><div><span class="eyebrow">${view.historical?'APLICAÇÃO SALVA NA DRE':'ESCOLHA DESTA SIMULAÇÃO'}</span><h3 id="sim-${prefix}-title">${view.caption}${exit?' — vendas':' — antecipação de compras'}</h3></div><span class="sim-state-badge" data-difal-application-status>${status}</span></header><div class="sim-difal-metrics"><article class="sim-difal-current"><span>${view.currentMonth?esc(month(view.currentMonth)):'Valor mensal por cenário'}</span><strong data-${prefix}-monthly>${difalApplicationSummary(view)}</strong><small>${allExcluded?'Desativado nos cenários Simples':'Aplicação conforme cada cenário abaixo'}</small></article><article><span>Total do período por cenário</span><strong data-${prefix}-${exit?'annual':'total'}${exit?' data-difal-amount':''}>${difalApplicationSummary(view,'total')}</strong><small>Os cenários são alternativas; seus valores não são somados.</small></article><article><span>Seleção</span><strong class="sim-difal-selection-label">${allExcluded?'Não incluir':view.historical?'Conforme a versão salva':view.selection?.label||'Não incluir'}</strong><small>${view.historical?'O histórico conserva os valores originalmente salvos.':'Entrada e saída são independentes.'}</small></article></div><div class="sim-difal-applied-regimes">${view.values.map(item=>`<article data-${prefix}-applied-regime="${esc(item.id)}"><h4>${esc(item.name)}</h4><dl><div><dt>Mês</dt><dd data-${prefix}-applied-month>${appliedMoney(item.current)}</dd></div><div><dt>Período</dt><dd data-${prefix}-applied-total>${appliedMoney(item.total)}</dd></div></dl><p>${esc(item.message)}</p></article>`).join('')}</div><p class="sim-difal-explanation">${allExcluded?`${view.caption} desativado. Nenhum valor desta direção é incluído nos cenários acima.`:view.historical?'Esta apresentação lê os valores salvos da DRE e não recalcula impostos.':'A prévia considera as opções selecionadas e os bloqueios conhecidos de cada competência.'}</p>${audit?`<details class="sim-difal-source-audit" data-${prefix}-audit ${auditOpen?'open':''}><summary>Conferir estimativa original do relatório <span aria-hidden="true">+</span></summary><p class="sim-help">Valores brutos de origem, antes das escolhas dos cenários. Estes valores não substituem a aplicação mostrada acima.</p>${audit}</details>`:''}</section>`;
+  const emptySales=view.emptySalesScope?`<p class="sim-difal-explanation" data-difal-empty data-difal-empty-scope="${view.emptySalesScope}" role="status"><strong>${view.emptySalesScope==='period'?'Período importado':`Mês ${esc(month(view.currentMonth))}`}:</strong> Não possui vendas interestaduais para CPF elegíveis. DIFAL de saída: R$ 0,00.</p>`:'';
+  return `<section class="sim-difal-card sim-difal-application${allExcluded?' is-excluded':''}" data-difal-application-direction="${view.direction}" aria-labelledby="sim-${prefix}-title"><header class="sim-difal-header"><div><span class="eyebrow">${view.historical?'APLICAÇÃO SALVA NA DRE':'ESCOLHA DESTA SIMULAÇÃO'}</span><h3 id="sim-${prefix}-title">${view.caption}${exit?' — vendas':' — antecipação de compras'}</h3></div><span class="sim-state-badge" data-difal-application-status>${status}</span></header><div class="sim-difal-metrics"><article class="sim-difal-current"><span>${view.currentMonth?esc(month(view.currentMonth)):'Valor mensal por cenário'}</span><strong data-${prefix}-monthly>${difalApplicationSummary(view)}</strong><small>${allExcluded?'Desativado nos cenários Simples':'Aplicação conforme cada cenário abaixo'}</small></article><article><span>Total do período por cenário</span><strong data-${prefix}-${exit?'annual':'total'}${exit?' data-difal-amount':''}>${difalApplicationSummary(view,'total')}</strong><small>Os cenários são alternativas; seus valores não são somados.</small></article><article><span>Seleção</span><strong class="sim-difal-selection-label">${allExcluded?'Não incluir':view.historical?'Conforme a versão salva':view.selection?.label||'Não incluir'}</strong><small>${view.historical?'O histórico conserva os valores originalmente salvos.':'Entrada e saída são independentes.'}</small></article></div>${emptySales}<div class="sim-difal-applied-regimes">${view.values.map(item=>`<article data-${prefix}-applied-regime="${esc(item.id)}"><h4>${esc(item.name)}</h4><dl><div><dt>Mês</dt><dd data-${prefix}-applied-month>${appliedMoney(item.current)}</dd></div><div><dt>Período</dt><dd data-${prefix}-applied-total>${appliedMoney(item.total)}</dd></div></dl><p>${esc(item.message)}</p></article>`).join('')}</div><p class="sim-difal-explanation">${allExcluded?`${view.caption} desativado. Nenhum valor desta direção é incluído nos cenários acima.`:view.historical?'Esta apresentação lê os valores salvos da DRE e não recalcula impostos.':'A prévia considera as opções selecionadas e os bloqueios conhecidos de cada competência.'}</p>${audit?`<details class="sim-difal-source-audit" data-${prefix}-audit ${auditOpen?'open':''}><summary>Conferir estimativa original do relatório <span aria-hidden="true">+</span></summary><p class="sim-help">Valores brutos de origem, antes das escolhas dos cenários. Estes valores não substituem a aplicação mostrada acima.</p>${audit}</details>`:''}</section>`;
 }
 
 /** Show the captured source reconciliation, independently of manual scenario adjustments. */

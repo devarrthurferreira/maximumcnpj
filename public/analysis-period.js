@@ -1,5 +1,5 @@
 export const JAN_SEP_POLICY='JAN_SEP_V1';
-export const JAN_SEP_MODEL_VERSION='1.16.0-cpf-sales-difal-available-months';
+export const JAN_SEP_MODEL_VERSION='1.17.0-dre-sales-difal-sync-available-months';
 
 const check=(condition,message)=>{if(!condition)throw new TypeError(message);};
 export function analysisMonthsForYear(sourceYear){

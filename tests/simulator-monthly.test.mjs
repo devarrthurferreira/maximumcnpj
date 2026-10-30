@@ -18,7 +18,7 @@ test('CBS de 11,3% fica capturada em cada competência e soma apenas os meses Ja
  const range={startMonth:'2025-01',endMonth:'2025-09',months:9};
  const period=selectAnalysisPeriod(buildAnalysisPeriod(range,range),rows.map(row=>row.sourceMonth));
  const out=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales',null,period);
- assert.equal(out.result.version,'1.16.0-cpf-sales-difal-available-months');
+ assert.equal(out.result.version,'1.17.0-dre-sales-difal-sync-available-months');
  assert.equal(out.result.version,JAN_SEP_MODEL_VERSION);assert.notEqual(JAN_SEP_MODEL_VERSION,MONTHLY_MODEL_VERSION);
  assert.deepEqual(out.engineInput.months.map(row=>row.sourceMonth),['2025-01','2025-04','2025-09']);
  for(const month of out.engineInput.months){

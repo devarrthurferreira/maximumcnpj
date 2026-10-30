@@ -18,7 +18,7 @@ test('resultado atual não é contado como uma análise pronta para gerar novame
   const current=analysisGuidance(analysis);
   assert.equal(current.state,'current');assert.equal(current.label,'Resultado atual');assert.equal(current.canGenerate,false);
   assert.equal(current.confirmedCount,2);assert.equal(current.primaryAction.action,'result');
-  assert.equal(current.primaryAction.href,'/simulator.html?simulation=saved-result');
+  assert.equal(current.primaryAction.href,'/simulator.html?simulation=saved-result&current=1');
   analysis.currentSimulation.stale=true;
   const stale=analysisGuidance(analysis);
   assert.equal(stale.state,'ready');assert.equal(stale.canGenerate,true);assert.equal(stale.primaryAction.label,'Atualizar resultado');

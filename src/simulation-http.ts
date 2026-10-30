@@ -3,7 +3,7 @@ import {createLegacySimulation} from './analysis-store.ts';
 import { need, integer } from './security.ts';
 import { rateLimit, workspace } from './store.ts';
 import type { LookupActor } from './lookup-db.ts';
-import {reprocessSimulations, simulationReprocessingStatus} from './simulation-reprocessing.ts';
+import {reprocessSimulations, simulationReprocessingStatus, refreshSimulation} from './simulation-reprocessing.ts';
 
 export async function routeSimulations(actor: LookupActor, method: string, url: URL, input: unknown) {
   const path = url.pathname.replace('/api/v4/simulations', '');
@@ -16,6 +16,11 @@ export async function routeSimulations(actor: LookupActor, method: string, url: 
     year: url.searchParams.get('year') || undefined
   });
   if (!path && method === 'POST') return createLegacySimulation(actor, input);
+  const refresh = path.match(/^\/([a-f0-9-]{36})\/refresh$/);
+  if (refresh && method === 'POST') {
+    await rateLimit(`simulation-refresh:${workspace()}:${actor._id}`,30,1);
+    return refreshSimulation(actor,refresh[1],input);
+  }
   const match = path.match(/^\/([a-f0-9-]{36})$/);
   if (match && method === 'GET') return getSimulation(match[1]);
   if (match && method === 'DELETE') return deleteSimulation(actor, match[1]);

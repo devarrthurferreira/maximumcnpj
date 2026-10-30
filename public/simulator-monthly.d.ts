@@ -1,4 +1,4 @@
-export const MONTHLY_MODEL_VERSION: '1.16.0-cpf-sales-difal';
+export const MONTHLY_MODEL_VERSION: '1.17.0-dre-sales-difal-sync';
 import type {ReportFields} from './simulator-projection.js';
 import type {Rbt12Schedule} from './simulator-rbt12.js';
 import type {AnalysisPeriod} from './analysis-period.js';

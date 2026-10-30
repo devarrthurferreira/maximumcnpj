@@ -149,7 +149,7 @@ export function analysisGuidance(analysis,{sector=null,configDirty=false,fiscalD
     issues.unshift({code:'UNSAVED_FIELDS',sector:active,message:'Salve as alterações que ainda estão nos campos antes de gerar.',action:'save-'+active,label:'Salvar trabalho '+names[active]});
   }
   let primaryAction;
-  if(currentResult)primaryAction={action:'result',label:savedVerification?'Ver DRE salva':'Ver DRE atual',message:savedVerification?'Última versão gerada com os dados salvos. Abra o Fiscal para conferir novamente os documentos.':'O resultado corresponde aos dados salvos e conferidos.',href:'/simulator.html?'+new URLSearchParams({simulation:current.id})};
+  if(currentResult)primaryAction={action:'result',label:savedVerification?'Ver DRE salva':'Ver DRE atual',message:savedVerification?'Última versão gerada com os dados salvos. Abra o Fiscal para conferir novamente os documentos.':'O resultado corresponde aos dados salvos e conferidos.',href:'/simulator.html?'+new URLSearchParams({simulation:current.id,current:'1'})};
   else if(ready)primaryAction={action:'generate',label:current?'Atualizar resultado':'Gerar análise',message:'Os dois setores estão conferidos. A próxima etapa usa os dados que já foram salvos.'};
   else {
     const next=issues.find(issue=>issue.code==='UNSAVED_CONFIG')||

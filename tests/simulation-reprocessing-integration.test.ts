@@ -1,4 +1,5 @@
-import {calculateMonthlySimulation} from '../public/simulator-monthly.js';
+import {calculateMonthlySimulation, MONTHLY_MODEL_VERSION} from '../public/simulator-monthly.js';
+import {JAN_SEP_POLICY, JAN_SEP_MODEL_VERSION} from '../public/analysis-period.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -8,9 +9,11 @@ import {collection, database, scope, closeDatabase} from '../src/store.ts';
 import {resetLookupIndexes} from '../src/lookup-db.ts';
 import {importCatalog} from '../src/lookup-catalog.ts';
 import {createGeneration, attachGenerationPurchase, attachGenerationSale} from '../src/generation-store.ts';
-import {uploadLookup, finalizeLookup} from '../src/lookup-jobs.ts';
+import {uploadLookup, finalizeLookup, processLookup} from '../src/lookup-jobs.ts';
 import {createSimulation, getSimulation, deleteSimulation} from '../src/simulation-history.ts';
-import {reprocessSimulations, simulationReprocessingStatus, reprocessedSimulationId, SERVICE_REVENUE_MIGRATION_REVISION} from '../src/simulation-reprocessing.ts';
+import {reprocessSimulations, simulationReprocessingStatus, reprocessedSimulationId, refreshSimulation, REPROCESS_VERSION, SERVICE_REVENUE_MIGRATION_REVISION} from '../src/simulation-reprocessing.ts';
+import {DIFAL_CPF_CNPJ_VERSION, summarizeDifal} from '../src/difal.ts';
+import {currentSalesDocumentDifal} from '../src/purchase-store.ts';
 import {annualizeReports, projectScenario} from '../public/simulator-projection.js';
 import {calculateSimulation, calculateTax, draftToInput, defaultDifalPolicy, upgradeDifalPolicy} from '../public/simulator-engine.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
@@ -35,7 +38,8 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
  const rows=(totalCents:number,natureCode:string)=>({document:'12345678900',name:'Pessoa sintética',quantity:'1',
   serviceDate:'2026-08-15',natureCode,description:natureCode.startsWith('9000')?'Serviço sintético':'Mercadoria sintética',
   recipientUf:'SP',totalCents,grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0});
- async function fixture(recipientUf='SP'){
+ let providerCalls=0;
+ async function fixture(recipientUf='SP',salesDocument='12345678900'){
   const clientId=(await importCatalog(actor,[{code:'990',name:'Empresa sintética',uf:'MG'}])).items[0].id;
   const generation=await createGeneration(actor,{generationId:randomUUID(),clientIds:[clientId]});
   for(const [attach,fileName,entries] of [
@@ -43,9 +47,13 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    [attachGenerationSale,'vendas-sinteticas.csv',[rows(10000,'6102'),rows(5000,'900001')]]
   ] as const){
    const {job}=await attach(actor,generation._id,{clientId,importId:randomUUID(),fileName,expectedRows:entries.length,issuerUf:'MG'});
-   await uploadLookup(actor,job._id,{offset:0,rows:entries.map(row=>({...row,recipientUf}))});await finalizeLookup(actor,job._id);
+   await uploadLookup(actor,job._id,{offset:0,rows:entries.map(row=>({...row,recipientUf,
+    ...(attach===attachGenerationSale?{document:salesDocument}:{})}))});await finalizeLookup(actor,job._id);
+   if(attach===attachGenerationSale && salesDocument.length===14)await processLookup(actor,job._id,(async()=>{
+    providerCalls++;return Response.json({cnpj:salesDocument,razao_social:'Empresa sintética',opcao_pelo_simples:false,opcao_pelo_mei:false,uf:recipientUf});
+   }) as typeof fetch);
   }
-  const monthlyGroups={salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:110,purchasesOptantCents:0,purchasesNonOptantCents:12};
+  const monthlyGroups={salesOptantCents:0,salesNonOptantCents:salesDocument.length===14?110:0,salesCpfCents:salesDocument.length===14?0:110,purchasesOptantCents:0,purchasesNonOptantCents:12};
   const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:100000,values:{serviceRevenue:50,salesRevenue:110,
    simplePurchases:0,regularPurchases:12,salaries:1,benefits:2,adminExpenses:3,rent:4,cardExpenses:5}};
   return {generationId:generation._id,clientId,reportMonths:1,periodConfirmed:true,monthlyGroups,draft,monthlyInputs:[{sourceMonth:'2026-08',groups:monthlyGroups,values:Object.fromEntries(['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,(draft.values as any)[key]]))}],
@@ -78,6 +86,122 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
   assert.equal(status.hasMore,false,'O lote finito deve concluir sem polling indefinido.');return status;
  }
  try{
+  for(const periodPolicy of [undefined,JAN_SEP_POLICY])await t.test(`abrir análise salva reconcilia CNPJ V4 com zero atual, preserva original e promove uma única filha: ${periodPolicy||'mensal'}`,async t=>{
+   switchWorkspace('refresh-cnpj-'+(periodPolicy||'monthly'));
+   const input=await fixture('SP','00000000000191');
+   const original=await save({...input,...(periodPolicy?{periodPolicy}:{})},periodPolicy?811:810,false,record=>{
+    const oldDifal=summarizeDifal([{...rows(10000,'6102'),document:'00000000000191'}],'MG',DIFAL_CPF_CNPJ_VERSION);
+    record.source.sales.difal=structuredClone(oldDifal);record.source.monthlyReports[0].difal=structuredClone(oldDifal);
+    const computed=calculateMonthlySimulation(record.draft,record.source.monthlyReports,record.monthlyInputs,record.source.sales.jobId,null,record.source.analysisPeriod);
+    Object.assign(record,computed);
+    record.modelVersion='1.15.0-archived-cnpj-difal';record.result.version=record.modelVersion;
+    record.monthlyDre=buildMonthlyDre(record.result,record.draft.year,record.rbt12Manual,record.source.period);
+   });
+   const simulations=await collection('simulations'),analyses=await collection('analyses');
+   const opened=await openAnalysis(actor,{clientId:input.clientId,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid','presumed','actual']}});
+   await simulations.updateOne(scope({_id:original._id}),{$set:{analysisId:opened.analysis.id,analysisRevision:opened.analysis.revision,analysisPublication:'PUBLISHED'}});
+   await analyses.updateOne(scope({_id:opened.analysis.id}),{$set:{activated:true,currentSimulation:{id:original._id,
+    analysisRevision:opened.analysis.revision,createdAt:original.createdAt,modelVersion:original.modelVersion,legacy:false}}});
+   const frozen=await simulations.findOne(scope({_id:original._id})),beforeAnalysis=(await analyses.findOne(scope({_id:opened.analysis.id})))!;
+   const jobs=await collection('lookupJobs'),lines=await collection('purchaseLines');
+   const sourceBefore={jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({jobId:1,index:1}).toArray()};
+   assert.equal((await currentSalesDocumentDifal(original.source.sales.jobId)).difal.amountCents,0,'O cartão já usa CPF e confirma ausência.');
+   assert.equal((await getSimulation(original._id)).result.regimes.find((r:any)=>r.id==='pure').dre.difal,-10,'O resultado congelado reproduz a divergência antiga.');
+   const callsBefore=providerCalls;
+   const [first,concurrent]=await Promise.all([refreshSimulation(actor,original._id,{}),refreshSimulation(operator,original._id,{})]);
+   const child=first.simulation;
+   assert.equal(first.updated,true);assert.equal(first.originalId,original._id);assert.equal(concurrent.simulation._id,child._id);
+   assert.equal(child.parentSimulationId,original._id);assert.equal(child.reprocessing.originalId,original._id);
+   assert.equal(child.modelVersion,periodPolicy?JAN_SEP_MODEL_VERSION:MONTHLY_MODEL_VERSION);
+   assert.equal(child.source.sales.difal.version,'DIFAL_ESTIMATE_V5');assert.equal(child.source.sales.difal.amountCents,0);
+   assert.equal(child.difalProjection.sourceAmountCents,0);assert.equal(child.difalProjection.pendingLines,0);
+   for(const regime of child.result.regimes)assert.equal(regime.dre.difal,0);
+   for(const month of child.result.monthlyResults)for(const regime of month.result.regimes)assert.equal(regime.dre.difal,0);
+   assert.equal(child.result.regimes.find((r:any)=>r.id==='pure').dre.icmsAnticipation,-.73,'A entrada continua calculada separadamente.');
+   assert.deepEqual(child.rbt12Manual,original.rbt12Manual);assert.deepEqual(child.monthlyInputs,original.monthlyInputs);
+   assert.deepEqual(child.source.analysisPeriod,original.source.analysisPeriod);
+   assert.equal(await simulations.countDocuments(scope({parentSimulationId:original._id})),1);
+   const afterAnalysis=(await analyses.findOne(scope({_id:opened.analysis.id})))!;
+   assert.equal(afterAnalysis.currentSimulation.id,child._id);
+   for(const field of ['fiscal','accounting','config','revision'])assert.deepEqual(afterAnalysis[field],beforeAnalysis[field]);
+   assert.deepEqual(await simulations.findOne(scope({_id:original._id})),frozen);
+   assert.deepEqual({jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({jobId:1,index:1}).toArray()},sourceBefore);
+   assert.equal(providerCalls,callsBefore,'A atualização não consulta CNPJ novamente.');
+   const heavy=new Set(['purchaseLines','lookupItems','cnpjStates','lookupStage']);
+   const mocks=['find','findOne','aggregate'].map(method=>{
+    const actual=(Collection.prototype as any)[method];
+    return t.mock.method(Collection.prototype as any,method,function(this:Collection,...args:any[]){
+     assert(!heavy.has(this.collectionName),`Reabertura não deve ler ${this.collectionName}.`);return actual.apply(this,args);
+    });
+   });
+   try{
+    const retry=await refreshSimulation(operator,original._id,{}),current=await refreshSimulation(actor,child._id,{});
+    assert.equal(retry.simulation._id,child._id);assert.equal(retry.updated,true);
+    assert.deepEqual(current.simulation,child);assert.equal(current.updated,false);assert.equal(current.originalId,child._id);
+   }finally{for(const mock of mocks)mock.mock.restore();}
+  });
+
+  await t.test('refresh mantém CPF interestadual, UF pendente e edição concorrente da análise',async t=>{
+   switchWorkspace('refresh-cpf');const input=await fixture(),original=await save(input,820,false,record=>{
+    record.modelVersion='LEGACY_REFRESH';record.result.version=record.modelVersion;
+   });
+   const opened=await openAnalysis(actor,{clientId:input.clientId,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid','presumed','actual']}});
+   const analyses=await collection('analyses'),simulations=await collection('simulations');
+   await simulations.updateOne(scope({_id:original._id}),{$set:{analysisId:opened.analysis.id,analysisRevision:opened.analysis.revision,analysisPublication:'PUBLISHED'}});
+   await analyses.updateOne(scope({_id:opened.analysis.id}),{$set:{activated:true,currentSimulation:{id:original._id,analysisRevision:opened.analysis.revision,
+    createdAt:original.createdAt,modelVersion:original.modelVersion,legacy:false}},$inc:{revision:1}});
+   const edited=await analyses.findOne(scope({_id:opened.analysis.id}));
+   await assert.rejects(refreshSimulation(actor,original._id,{}),code('ANALYSIS_RESULT_CHANGED'));
+   assert.equal(await simulations.countDocuments(scope({parentSimulationId:original._id})),0,'Edição anterior bloqueia antes de criar uma versão desnecessária.');
+   assert.deepEqual(await analyses.findOne(scope({_id:opened.analysis.id})),edited,'A revisão não sobrescreve alterações feitas depois do resultado salvo.');
+   switchWorkspace('refresh-edit-race');const raceInput=await fixture(),raceOriginal=await save(raceInput,822,false,record=>{
+    record.modelVersion='LEGACY_REFRESH';record.result.version=record.modelVersion;
+   });
+   const raceAnalysis=await openAnalysis(actor,{clientId:raceInput.clientId,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid','presumed','actual']}});
+   await simulations.updateOne(scope({_id:raceOriginal._id}),{$set:{analysisId:raceAnalysis.analysis.id,analysisRevision:raceAnalysis.analysis.revision,analysisPublication:'PUBLISHED'}});
+   await analyses.updateOne(scope({_id:raceAnalysis.analysis.id}),{$set:{activated:true,currentSimulation:{id:raceOriginal._id,analysisRevision:raceAnalysis.analysis.revision,
+    createdAt:raceOriginal.createdAt,modelVersion:raceOriginal.modelVersion,legacy:false}}});
+   const childId=reprocessedSimulationId(scope().workspaceId,raceOriginal._id),insertOne=Collection.prototype.insertOne;
+   const raced=t.mock.method(Collection.prototype,'insertOne',async function(this:Collection,record:any,options:any){
+    const inserted=await insertOne.call(this,record,options);
+    if(this.collectionName==='simulations' && record._id===childId)
+     await analyses.updateOne(scope({_id:raceAnalysis.analysis.id}),{$inc:{revision:1}});
+    return inserted;
+   });
+   try{await assert.rejects(refreshSimulation(actor,raceOriginal._id,{}),code('ANALYSIS_RESULT_CHANGED'));}
+   finally{raced.mock.restore();}
+   assert.equal((await analyses.findOne(scope({_id:raceAnalysis.analysis.id})))!.currentSimulation.id,raceOriginal._id);
+   assert.equal((await getSimulation(childId)).result.regimes.find((r:any)=>r.id==='pure').dre.difal,-10,
+    'A filha preservada no histórico mantém o DIFAL do CPF interestadual, sem apresentá-la como corrente.');
+   switchWorkspace('refresh-pending');const pendingInput=await fixture(''),pending=await save(pendingInput,821,false,record=>{
+    record.modelVersion='LEGACY_REFRESH';record.result.version=record.modelVersion;
+   });
+   await assert.rejects(refreshSimulation(actor,pending._id,{}),code('DIFAL_UF_PENDING'));
+   assert.equal(await simulations.countDocuments(scope({parentSimulationId:pending._id})),0);
+   assert.deepEqual(await simulations.findOne(scope({_id:pending._id})),pending,'Ausência de UF não pode virar zero confirmado.');
+  });
+
+  await t.test('refresh não recria filha excluída nem aceita fonte antiga sob rótulo de motor atual',async()=>{
+   switchWorkspace('refresh-source-version');const input=await fixture('SP','00000000000191');
+   const original=await save(input,830,false,record=>{
+    const legacy=summarizeDifal([{...rows(10000,'6102'),document:'00000000000191'}],'MG',DIFAL_CPF_CNPJ_VERSION);
+    record.source.sales.difal=legacy;record.source.monthlyReports[0].difal=legacy;
+    Object.assign(record,calculateMonthlySimulation(record.draft,record.source.monthlyReports,record.monthlyInputs,record.source.sales.jobId));
+    record.monthlyDre=buildMonthlyDre(record.result,record.draft.year,record.rbt12Manual,record.source.period);
+   });
+   assert.equal(original.modelVersion,MONTHLY_MODEL_VERSION);
+   const refreshed=await refreshSimulation(actor,original._id,{});
+   assert.equal(refreshed.updated,true);assert.equal(refreshed.simulation.source.sales.difal.amountCents,0);
+   const staleLabel=await save(input,831,false,record=>{record.modelVersion='LEGACY_MODEL_LABEL';});
+   const repairedLabel=await refreshSimulation(actor,staleLabel._id,{});
+   assert.equal(repairedLabel.updated,true);assert.equal(repairedLabel.simulation.modelVersion,MONTHLY_MODEL_VERSION);
+   assert.deepEqual(await(await collection('simulations')).findOne(scope({_id:staleLabel._id})),staleLabel);
+   await deleteSimulation(actor,refreshed.simulation._id);
+   await assert.rejects(refreshSimulation(operator,original._id,{}),code('SIMULATION_DELETED'));
+   assert.equal(await (await collection('simulations')).countDocuments(scope({parentSimulationId:original._id})),0);
+   assert.deepEqual(await (await collection('simulations')).findOne(scope({_id:original._id})),original);
+  });
+
   await t.test('lote limitado preserva originais, deltas e RBT12 congelada; distingue atual e pendências',async()=>{
    switchWorkspace('batch');const input=await fixture();
    const policy={version:'DIFAL_SCENARIOS_V1',enabled:{pure:false,hybrid:true,presumed:true,actual:false}};
@@ -167,16 +291,16 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const simulations=await collection('simulations'),batches=await collection('simulationReprocessBatches'),items=await collection('simulationReprocessItems');
    await simulations.insertOne(oldChild);await batches.insertOne(oldBatch);await items.insertOne(oldItem);
    const before=await simulationReprocessingStatus();
-   assert.equal(before.version,'DIFAL_CPF_2026_10_V11');assert.equal(before.total,0);assert.equal(before.inventoryComplete,false);
+   assert.equal(before.version,REPROCESS_VERSION);assert.equal(before.total,0);assert.equal(before.inventoryComplete,false);
    assert.equal((await getSimulation(original._id)).engineInput.rates.cbs,.0911);
    assert.equal((await getSimulation(oldChild._id)).engineInput.rates.cbs,.0911);
    await reprocessSimulations(actor,{});const done=await finish();
-   assert.equal(done.version,'DIFAL_CPF_2026_10_V11');assert.equal(done.total,1);
+   assert.equal(done.version,REPROCESS_VERSION);assert.equal(done.total,1);
    assert.deepEqual(done.counts,{queued:0,processing:0,ok:1,pending:0,failed:0});
    const childId=reprocessedSimulationId(scope().workspaceId,oldChild._id),child=await getSimulation(childId);
    assert.notEqual(childId,oldChild._id);assert.equal(child.parentSimulationId,oldChild._id);
    assert.equal(done.items[0].originalId,oldChild._id,'A família usa a revisão automática mais recente.');
-   assert.equal(child.reprocessing.version,'DIFAL_CPF_2026_10_V11');
+   assert.equal(child.reprocessing.version,REPROCESS_VERSION);
    assert.equal(child.engineInput.months[0].input.rates.cbs,.113);
    assert.equal(child.engineInput.months[0].input.credits.regular.cbsRate,.113);
    assert.equal(child.engineInput.months[0].input.credits.simpleRegular.cbsRate,.113);
@@ -223,7 +347,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.equal((await getAnalysis(opened.analysis.id,{summary:true})).analysis.currentSimulation.id,childId);
    assert.deepEqual(await simulations.find(scope({_id:{$in:frozen.map(old=>old._id)}})).sort({_id:1}).toArray(),frozen);
    await reprocessSimulations(operator,{});assert.equal((await simulationReprocessingStatus()).total,1);
-   assert.equal(await simulations.countDocuments(scope({'reprocessing.version':'DIFAL_CPF_2026_10_V11'})),1);
+   assert.equal(await simulations.countDocuments(scope({'reprocessing.version':REPROCESS_VERSION})),1);
    if(selected==='orphan')assert.equal((await getSimulation(chosen._id)).parentSimulationDeleted,true);
   });
 
@@ -257,7 +381,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const original=await save({...input,draft:{...input.draft,difalPolicy:policy}},80);
    const jobs=await collection('lookupJobs'),lines=await collection('purchaseLines');
    const sourcesBefore={jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({_id:1}).toArray()};
-   const done=await reprocessSimulations(actor,{});assert.equal(done.version,'DIFAL_CPF_2026_10_V11');
+   const done=await reprocessSimulations(actor,{});assert.equal(done.version,REPROCESS_VERSION);
    assert.deepEqual(done.counts,{queued:0,processing:0,ok:1,pending:0,failed:0});
    const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id));
    assert.deepEqual(child.draft.difalPolicy,policy);assert.deepEqual(child.result.difalPolicy,policy);
@@ -394,8 +518,12 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    for(const bad of [[],false,{source:{}},{simulationId:original._id},{retryFailed:false},{retryFailed:'true'},{result:{}},{serviceRevenueMigrationRevision:SERVICE_REVENUE_MIGRATION_REVISION}])
     await assert.rejects(reprocessSimulations(actor,bad),code('VALIDATION'));
    await assert.rejects(reprocessSimulations(viewer,{}),code('FORBIDDEN'));
+   for(const bad of [[],false,{source:{}},{simulationId:original._id},{result:{}},{amountCents:0}])
+    await assert.rejects(refreshSimulation(actor,original._id,bad),code('VALIDATION'));
+   await assert.rejects(refreshSimulation(viewer,original._id,{}),code('FORBIDDEN'));
    assert.equal((await simulationReprocessingStatus()).total,0);
    switchWorkspace('outside');assert.equal((await reprocessSimulations(actor,{})).total,0);
+   await assert.rejects(refreshSimulation(actor,original._id,{}),code('NOT_FOUND'));
    assert.equal(await (await collection('simulations')).countDocuments(scope()),0);
    switchWorkspace('http');assert.equal((await simulationReprocessingStatus()).total,0,'O lote de outro workspace não aparece.');
    server=http.createServer(handler);await new Promise<void>(resolve=>server!.listen(0,'127.0.0.1',resolve));
@@ -407,6 +535,20 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
     return {Cookie:`${cookie}=${raw}`,Origin:base,'Content-Type':'application/json'};
    };
    const viewerHeaders=await session(viewer),operatorHeaders=await session(operator),url=base+'/api/v4/simulations/reprocess';
+   const snapshotUrl=base+'/api/v4/simulations/'+original._id,refreshUrl=snapshotUrl+'/refresh';
+   const archived=await(await fetch(snapshotUrl,{headers:viewerHeaders})).json();
+   assert.equal((await fetch(refreshUrl,{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:'{}'})).status,401);
+   assert.equal((await fetch(refreshUrl,{method:'POST',headers:viewerHeaders,body:'{}'})).status,403);
+   assert.equal((await fetch(refreshUrl,{method:'POST',headers:{...operatorHeaders,Origin:'https://evil.example'},body:'{}'})).status,403);
+   assert.equal((await fetch(refreshUrl,{method:'POST',headers:operatorHeaders,body:'{"source":{}}'})).status,400);
+   const refreshed=await fetch(refreshUrl,{method:'POST',headers:operatorHeaders,body:'{}'});
+   assert.equal(refreshed.status,200);assert.equal(refreshed.headers.get('cache-control'),'no-store');
+   const response=await refreshed.json();assert.equal(response.updated,true);assert.equal(response.originalId,original._id);
+   assert.equal(response.simulation.parentSimulationId,original._id);assert.equal(response.simulation.clientId,input.clientId);
+   assert.equal(response.simulation.generationId,input.generationId);
+   assert.deepEqual(await(await fetch(snapshotUrl,{headers:viewerHeaders})).json(),archived,'GET do original mantém o arquivo histórico imutável.');
+   const again=await(await fetch(refreshUrl,{method:'POST',headers:operatorHeaders,body:'{}'})).json();
+   assert.equal(again.simulation._id,response.simulation._id);
    assert.equal((await fetch(url)).status,401);
    assert.equal((await fetch(url,{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:'{}'})).status,401);
    const read=await fetch(url,{headers:viewerHeaders});assert.equal(read.status,200);assert.equal(read.headers.get('cache-control'),'no-store');
@@ -418,6 +560,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.equal((await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id))).createdBy.id,operator._id);
    await (await collection('users')).updateOne(scope({_id:operator._id}),{$set:{active:false}});
    assert.equal((await fetch(url,{method:'POST',headers:operatorHeaders,body:'{}'})).status,401);
+   assert.equal((await fetch(refreshUrl,{method:'POST',headers:operatorHeaders,body:'{}'})).status,401);
   });
  }finally{
   if(server)await new Promise<void>(resolve=>server!.close(()=>resolve()));
