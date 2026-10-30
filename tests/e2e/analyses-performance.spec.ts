@@ -75,7 +75,7 @@ async function fiscalDocuments(page:Page){
 async function openDetails(page:Page,id:string){
   const detail=page.locator('#'+id);if(await detail.getAttribute('open')===null)await detail.locator(':scope > summary').click();
 }
-const salary=(page:Page)=>page.locator('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]');
+const salary=(page:Page)=>page.locator('[data-accounting-average="salariesCents"]');
 function observe(page:Page,id:string){
   const counts={source:0,generation:0,patches:0};page.on('request',request=>{
     const url=new URL(request.url());
@@ -184,75 +184,54 @@ test('Geração realmente excluída permite salvar RBT12 e recuperar importaçã
   expect(errors).toEqual([]);
 });
 
-test('Digitação em nove competências conserva os nós, atualiza o resumo sob demanda e salva centavos exatos',async({page,baseURL,analysisAccount})=>{
-  test.setTimeout(60_000);page.setDefaultTimeout(12_000);
+test('Digitação na média conserva o campo, agrupa atualização por frame e salva centavos exatos nos nove meses',async({page,baseURL,analysisAccount})=>{
   let analysis=await create(page.request,baseURL!,analysisAccount);
   const months=Array.from({length:9},(_,index)=>month('2025-0'+(index+1)));
   analysis=await patch(page.request,baseURL!,analysis,'accounting',{months});const counts=observe(page,analysis.id);
   await page.goto('/analyses.html?id='+analysis.id+'&sector=accounting');await expect(salary(page)).toBeVisible();
-  await page.locator('#analysis-accounting-summary-panel > summary').click();
-  await expect(page.locator('#analysis-accounting-summary-panel')).toHaveJSProperty('open',false);
   await salary(page).fill('1');
   await page.evaluate(()=>{
-    const ids=['analysis-guidance','analysis-generation','analysis-accounting-summary','analysis-wizard-progress'];
+    const ids=['analysis-guidance','analysis-generation','analysis-wizard-progress'];
     (window as any).__stableNodes=ids.map(id=>({id,node:document.getElementById(id),child:document.getElementById(id)?.firstElementChild}));
-    (window as any).__input=document.querySelector('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]');
+    (window as any).__input=document.querySelector('[data-accounting-average="salariesCents"]');
   });
   await salary(page).pressSequentially('2345');await expect(salary(page)).toHaveValue('12345');
   expect(await page.evaluate(()=>(window as any).__stableNodes.every((item:any)=>item.node===document.getElementById(item.id)&&item.child===item.node.firstElementChild))).toBe(true);
   expect(await page.evaluate(()=>(window as any).__input===document.activeElement)).toBe(true);
   expect(counts.source).toBe(0);expect(counts.patches).toBe(0);
-  await openDetails(page,'analysis-accounting-summary-panel');
-  await expect(page.locator('[data-accounting-summary-total]')).toContainText('13.145,00');
+  await expect(page.locator('[data-accounting-summary-total]')).toContainText('111.105,00');
   const replacements=await page.evaluate(async()=>{
     const host=document.getElementById('analysis-accounting-summary')!,input=(window as any).__input as HTMLInputElement;
     let replacements=0;const observer=new MutationObserver(records=>{replacements+=records.filter(record=>record.type==='childList').length;});observer.observe(host,{childList:true});
     for(let value=100;value<200;value++){input.value=String(value);input.dispatchEvent(new Event('input',{bubbles:true}));}
     await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));observer.disconnect();return replacements;
   });
-  expect(replacements).toBe(1);await expect(page.locator('[data-accounting-summary-total]')).toContainText('999,00');
+  expect(replacements).toBe(1);await expect(page.locator('[data-accounting-summary-total]')).toContainText('1.791,00');
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+analysis.id+'/accounting'&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="save"]').click();expect((await saving).ok()).toBe(true);
   const saved=(await api(page.request,baseURL!,'GET','/api/v4/analyses/'+analysis.id)).analysis;
-  expect(saved.accounting.data.months).toEqual([{...months[0],salariesCents:19_900},...months.slice(1)]);
+  expect(saved.accounting.data.months).toEqual(months.map(row=>({...row,salariesCents:19_900})));
   expect(counts.source).toBe(0);expect(counts.patches).toBe(1);
 });
 
-test('Contábil identifica meses antes da conclusão Fiscal sem reconciliar fontes nem remontar campos em edição',async({page,baseURL,analysisAccount})=>{
-  test.setTimeout(60_000);page.setDefaultTimeout(12_000);
+test('Contábil reconhece ano fiscal sem reconciliar fonte nem remontar a média em edição',async({page,baseURL,analysisAccount})=>{
   let analysis=await create(page.request,baseURL!,analysisAccount);
-  analysis=await withDocuments(page.request,baseURL!,analysis,{complete:false,months:[month('2025-01')]});
-  const summary=(await api(page.request,baseURL!,'GET','/api/v4/analyses/'+analysis.id+'?summary=1')).analysis;
-  expect(summary.fiscal.status).toBe('DRAFT');expect(summary.readiness.months).toEqual([]);
+  analysis=await withDocuments(page.request,baseURL!,analysis,{complete:false,months:[month('2026-01')]});
   const counts=observe(page,analysis.id);let release!:()=>void;const barrier=new Promise<void>(resolve=>release=resolve);
   const pattern='**/api/v4/generations/'+analysis.fiscal.data.generationId;
   const held=async(route:Route)=>{const response=await route.fetch();await barrier;await route.fulfill({response});};
   await page.route(pattern,held);
   try{
     await page.goto('/analyses.html?id='+analysis.id+'&sector=accounting');await expect(salary(page)).toBeVisible();
-    await salary(page).fill('321.09');await openDetails(page,'analysis-accounting-tools');
-    await expect(page.locator('#analysis-accounting-period')).toContainText('O ano será identificado nos documentos');
-    await expect(page.locator('#analysis-accounting-source-months')).toContainText('Janeiro a setembro de 2025');
-    await page.locator('#analysis-new-source-year').fill('2025');await openDetails(page,'analysis-accounting-paste-panel');
-    const pasted='2025-02\t50\t0\t0\t0\t0';await page.locator('#analysis-accounting-paste').fill(pasted);
-    await page.evaluate(()=>{
-      const textarea=document.getElementById('analysis-accounting-paste') as HTMLTextAreaElement;textarea.focus();textarea.setSelectionRange(4,7);
-      (window as any).__editing={textarea,year:document.getElementById('analysis-new-source-year'),salary:document.querySelector('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]')};
-    });
-    release();await expect(page.locator('#analysis-add-fiscal-months')).toHaveCount(0);await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
-    await expect(page.locator('#analysis-accounting-source-months')).toContainText('Janeiro a setembro de 2025');
-    await expect(page.locator('#analysis-accounting-source-months')).toContainText('9 competências');
-    expect(await page.evaluate(()=>{
-      const saved=(window as any).__editing;return saved.textarea===document.activeElement&&saved.textarea===document.getElementById('analysis-accounting-paste')&&
-        saved.year===document.getElementById('analysis-new-source-year')&&saved.salary===document.querySelector('[data-accounting-month="2025-01"] [data-accounting-field="salariesCents"]')&&
-        saved.textarea.selectionStart===4&&saved.textarea.selectionEnd===7;
-    })).toBe(true);
-    await expect(page.locator('#analysis-accounting-paste')).toHaveValue(pasted);await expect(page.locator('#analysis-new-source-year')).toHaveValue('2025');
+    await expect(page.locator('#analysis-new-source-year')).toHaveValue('2026');await salary(page).fill('321.09');
+    const input=await salary(page).elementHandle();
+    release();await expect(page.locator('#analysis-new-source-year')).toHaveValue('2025');
     await expect(page.locator('#analysis-new-source-year')).toHaveAttribute('readonly','');
-    await expect(salary(page)).toHaveValue('321.09');expect(counts).toEqual({source:0,generation:1,patches:0});
+    await expect(salary(page)).toHaveValue('321.09');await expect(salary(page)).toBeFocused();
+    expect(await input!.evaluate(node=>node===document.querySelector('[data-accounting-average="salariesCents"]'))).toBe(true);
     await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
-    await expect(page.locator('[data-accounting-month="2025-02"] [data-accounting-field="salariesCents"]')).toHaveValue('');
-    await expect(salary(page)).toHaveValue('321.09');expect(counts).toEqual({source:0,generation:1,patches:0});
+    expect(counts).toEqual({source:0,generation:1,patches:0});
+    expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+analysis.id)).analysis.accounting.data.months).toEqual(analysis.accounting.data.months);
   }finally{release();await page.unroute(pattern,held);}
 });
 
@@ -271,8 +250,8 @@ test('Cobertura fiscal parcial identifica meses excluídos; a fonte verificada m
   const held=async(route:Route)=>{const response=await route.fetch();await barrier;await route.fulfill({response});};
   await page.route(pattern,held);
   try{
-    await page.goto('/analyses.html?id='+analysis.id+'&sector=accounting');await openDetails(page,'analysis-accounting-tools');
-    await expect(page.locator('#analysis-accounting-source-months')).toContainText('Janeiro a setembro de 2025');
+    await page.goto('/analyses.html?id='+analysis.id+'&sector=accounting');
+    await expect(page.locator('#analysis-new-source-year')).toHaveValue('2025');
     await expect(page.locator('#analysis-add-fiscal-months')).toHaveCount(0);await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
     const period=page.locator('#analysis-accounting-period');
     await expect(period).toContainText('3/9 meses cobertos');
@@ -282,10 +261,10 @@ test('Cobertura fiscal parcial identifica meses excluídos; a fonte verificada m
     await expect(page.locator('#analysis-generate')).toBeDisabled();expect(counts.source).toBe(0);
     await salary(page).fill('432.10');await switchSector(page,'fiscal');
     await expect(page.locator('#analysis-fiscal-evidence')).toContainText('Conferindo documentos fiscais');
-    await switchSector(page,'accounting');await openDetails(page,'analysis-accounting-tools');
+    await switchSector(page,'accounting');
     await salary(page).focus();await page.evaluate(()=>{(window as any).__activeAccountingInput=document.activeElement;});
     release();await expect(page.locator('#analysis-add-fiscal-months')).toHaveCount(0);await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
-    await expect(page.locator('#analysis-accounting-source-months')).toContainText('Janeiro a setembro de 2025');
+    await expect(page.locator('#analysis-new-source-year')).toHaveValue('2025');
     await expect(period).toContainText('9/9 meses cobertos');
     await expect(period.locator('.analysis-period-months .is-missing')).toHaveCount(0);
     await expect(salary(page)).toHaveValue('432.10');
@@ -294,53 +273,27 @@ test('Cobertura fiscal parcial identifica meses excluídos; a fonte verificada m
   }finally{release();await page.unroute(pattern,held);}
 });
 
-test('Ano fiscal tardio bloqueia a prévia antiga e mantém acessível um valor inválido do outro ano',async({page,baseURL,analysisAccount})=>{
-  test.setTimeout(75_000);page.setDefaultTimeout(12_000);
+test('Ano fiscal tardio preserva valor inválido, impede salvar e aceita correção numérica sem perder a média',async({page,baseURL,analysisAccount})=>{
   let analysis=await create(page.request,baseURL!,analysisAccount);
   analysis=await withDocuments(page.request,baseURL!,analysis,{complete:false,months:[month('2026-01')]});
-  const savedMonths=structuredClone(analysis.accounting.data.months),counts=observe(page,analysis.id),errors:string[]=[];
-  page.on('pageerror',error=>errors.push(error.message));
-  let release!:()=>void,barrier=new Promise<void>(resolve=>release=resolve);
+  const counts=observe(page,analysis.id),errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  let release!:()=>void;const barrier=new Promise<void>(resolve=>release=resolve);
   const pattern='**/api/v4/generations/'+analysis.fiscal.data.generationId;
-  const held=async(route:Route)=>{const pending=barrier,response=await route.fetch();await pending;await route.fulfill({response});};
-  const input=page.locator('[data-accounting-month="2026-01"] [data-accounting-field="salariesCents"]');
+  const held=async(route:Route)=>{const response=await route.fetch();await barrier;await route.fulfill({response});};
   await page.route(pattern,held);
   try{
-    await page.goto('/analyses.html?id='+analysis.id+'&sector=accounting');await expect(input).toBeVisible();
-    await openDetails(page,'analysis-accounting-tools');await openDetails(page,'analysis-accounting-paste-panel');
-    const pasted='2026-02\t50\t0\t0\t0\t0';await page.locator('#analysis-accounting-paste').fill(pasted);
-    await page.locator('#analysis-preview-accounting-paste').click();
-    await expect(page.locator('#analysis-paste-replace-confirm')).not.toBeChecked();
-    await page.locator('#analysis-paste-replace-confirm').check();
-    await expect(page.locator('#analysis-apply-accounting-paste')).toBeEnabled();
-    await expect(page.locator('#analysis-accounting-paste-preview')).toContainText('Fevereiro / 2026');
+    await page.goto('/analyses.html?id='+analysis.id+'&sector=accounting');await expect(salary(page)).toBeVisible();
+    await salary(page).fill('1234.567');const original=await salary(page).elementHandle();
     release();await expect(page.locator('#analysis-new-source-year')).toHaveValue('2025');
-    await expect(page.locator('#analysis-new-source-year')).toHaveAttribute('readonly','');
-    await page.locator('#analysis-apply-accounting-paste').click();
-    await expect(page.locator('#analysis-accounting-paste-error')).toContainText('mesmo ano dos documentos');
-    await expect(page.locator('#analysis-accounting-paste')).toHaveValue(pasted);
-    await expect(page.locator('[data-accounting-month="2026-02"] [data-accounting-field="salariesCents"]')).toHaveValue('');
-    expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+analysis.id)).analysis.accounting.data.months).toEqual(savedMonths);
-    expect(counts.patches).toBe(0);
-    await page.locator('#analysis-clear-accounting-paste').click();
-
-    // A fresh slow response arrives while the old year's numeric input is unfinished.
-    barrier=new Promise<void>(resolve=>release=resolve);
-    await page.reload();await expect(input).toBeVisible();await input.fill('1234.567');
-    expect(await input.evaluate(element=>(element as HTMLInputElement).validity.valid)).toBe(false);
-    const original=await input.elementHandle();
-    release();await expect(page.locator('[data-accounting-month="2026-01"] [data-accounting-period-note]')).toHaveText('Fora do período desta análise');
-    await expect(input).toBeVisible();await expect(input).toHaveValue('1234.567');await expect(input).toBeFocused();
-    expect(await original!.evaluate(node=>node===document.querySelector('[data-accounting-month="2026-01"] [data-accounting-field="salariesCents"]'))).toBe(true);
+    await expect(salary(page)).toHaveValue('1234.567');await expect(salary(page)).toBeFocused();
+    expect(await original!.evaluate(node=>node===document.querySelector('[data-accounting-average="salariesCents"]'))).toBe(true);
     await page.locator('#analysis-wizard button[value="save"]').click();
-    await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('até duas casas decimais');
-    await expect(input).toBeVisible();await expect(input).toBeFocused();expect(counts.patches).toBe(0);
-    await input.fill('1234.56');
+    await expect(page.locator('#analysis-error')).toContainText('até duas casas decimais');expect(counts.patches).toBe(0);
+    await salary(page).fill('1234.56');
     const saving=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+analysis.id+'/accounting'&&response.request().method()==='PATCH');
-    await page.locator('#analysis-wizard button[value="save"]').click();
-    const response=await saving;expect(response.ok(),await response.text()).toBe(true);
+    await page.locator('#analysis-wizard button[value="save"]').click();const response=await saving;expect(response.ok(),await response.text()).toBe(true);
     const saved=(await response.json()).analysis;
-    expect(saved.accounting.data.months.filter((row:any)=>row.salariesCents!==null)).toEqual([{...savedMonths[0],salariesCents:123456}]);
-    expect(counts).toEqual({source:0,generation:2,patches:1});expect(errors).toEqual([]);
+    expect(saved.accounting.data.months).toHaveLength(9);expect(saved.accounting.data.months.every((row:any)=>row.salariesCents===123456&&row.sourceMonth.startsWith('2025'))).toBe(true);
+    expect(counts).toEqual({source:0,generation:1,patches:1});expect(errors).toEqual([]);
   }finally{release();await page.unroute(pattern,held);}
 });

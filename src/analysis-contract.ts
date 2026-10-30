@@ -3,14 +3,16 @@ import {parseRegimeSelection, requiresSimplesReference} from '../public/regime-s
 import type {RegimeSelection} from '../public/regime-selection.js';
 import {parseDifalPolicy, upgradeDifalPolicy} from '../public/simulator-engine.js';
 import type {DifalPolicy} from '../public/simulator-engine.js';
-import {JAN_SEP_POLICY,isAnalysisMonth} from '../public/analysis-period.js';
+import {JAN_SEP_POLICY,isAnalysisMonth,analysisMonthsForYear} from '../public/analysis-period.js';
 
 export const ANALYSIS_VERSION = 'ANALYSIS_SECTORS_V1';
 export const ANALYSIS_GROUPS = ['salesOptantCents','salesNonOptantCents','salesCpfCents','purchasesOptantCents','purchasesNonOptantCents'] as const;
 export const ACCOUNTING_FIELDS = ['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents'] as const;
 export type AccountingField = typeof ACCOUNTING_FIELDS[number];
 export type AccountingMonth = {sourceMonth:string} & Record<AccountingField, number|null>;
-export type AccountingData = {months:AccountingMonth[]};
+export const ACCOUNTING_AVERAGE_VERSION = 'MONTHLY_AVERAGE_V1';
+export type AccountingAverage = {version:typeof ACCOUNTING_AVERAGE_VERSION;values:Record<AccountingField,number|null>};
+export type AccountingData = {months:AccountingMonth[];monthlyAverage?:AccountingAverage};
 export type FiscalOverride = {sourceMonth:string;groups:Record<typeof ANALYSIS_GROUPS[number],number>;serviceRevenue:number};
 export type FiscalData = {
   generationId:string|null;salesAnnex:1|2;serviceAnnex:3|4|5;icmsOutside:boolean;difalPolicy:DifalPolicy;
@@ -59,18 +61,38 @@ function uniqueMonths<T extends {sourceMonth:string}>(rows:T[]):T[] {
   return rows.sort((a,b)=>a.sourceMonth.localeCompare(b.sourceMonth));
 }
 export function parseAccountingData(value:unknown,complete=false,options:{periodPolicy?:typeof JAN_SEP_POLICY;sourceYear?:number}={}):AccountingData {
-  analysisObject(value,['months']);
+  analysisObject(value,['months'],['monthlyAverage']);
   need(Array.isArray(value.months) && value.months.length<=12,'Informe até 12 competências explicitamente.');
   const months=uniqueMonths(value.months.map((row:unknown)=>{
     analysisObject(row,['sourceMonth',...ACCOUNTING_FIELDS]);
     return {sourceMonth:month(row.sourceMonth),...Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,cents(row[key])]))} as AccountingMonth;
   }));
-  const selected=options.periodPolicy===JAN_SEP_POLICY?months.filter(row=>isAnalysisMonth(row.sourceMonth,options.sourceYear)&&ACCOUNTING_FIELDS.some(key=>row[key]!==null)):months;
+  let data:AccountingData={months};
+  if(Object.hasOwn(value,'monthlyAverage')){
+    analysisObject(value.monthlyAverage,['version','values']);
+    need(value.monthlyAverage.version===ACCOUNTING_AVERAGE_VERSION,'A média mensal precisa identificar sua versão.');
+    analysisObject(value.monthlyAverage.values,ACCOUNTING_FIELDS);
+    const values=Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,cents(value.monthlyAverage.values[key])])) as AccountingAverage['values'];
+    const sourceYear=Number(months[0]?.sourceMonth.slice(0,4));
+    need(Number.isInteger(sourceYear)&&sourceYear>=2000&&sourceYear<=2099,'Informe o ano de janeiro a setembro da média mensal.');
+    const expected=analysisMonthsForYear(sourceYear);
+    need(months.length===9&&months.every((row,index)=>row.sourceMonth===expected[index]&&ACCOUNTING_FIELDS.every(key=>row[key]===values[key])),
+      'A média mensal deve se repetir igualmente em todos os nove meses, de janeiro a setembro.',422,'ANALYSIS_ACCOUNTING_AVERAGE');
+    data=accountingForYear({months,monthlyAverage:{version:ACCOUNTING_AVERAGE_VERSION,values}},options.sourceYear);
+  }
+  const selected=options.periodPolicy===JAN_SEP_POLICY?data.months.filter(row=>isAnalysisMonth(row.sourceMonth,options.sourceYear)&&ACCOUNTING_FIELDS.some(key=>row[key]!==null)):data.months;
   need(!complete||options.periodPolicy!==JAN_SEP_POLICY||options.sourceYear!==undefined||new Set(selected.map(row=>row.sourceMonth.slice(0,4))).size<=1,
     'Prepare janeiro a setembro de um único ano para concluir o Contábil.',422,'ANALYSIS_ACCOUNTING_INCOMPLETE');
   need(!complete || (selected.length>0 && selected.every(row=>ACCOUNTING_FIELDS.every(key=>row[key]!==null))),
     'Preencha todas as despesas de cada competência. Informe 0 explicitamente quando não houver valor.',422,'ANALYSIS_ACCOUNTING_INCOMPLETE');
-  return {months};
+  return data;
+}
+/** A saved monthly average belongs to the analysis, even before Fiscal identifies its source year.
+ * Derivation never mutates stored rows or historical revisions. Legacy monthly inputs retain their dates. */
+export function accountingForYear(data:AccountingData,sourceYear?:number):AccountingData {
+  if(!data.monthlyAverage)return data;
+  const year=sourceYear??Number(data.months[0]?.sourceMonth.slice(0,4));
+  return {...data,months:analysisMonthsForYear(year).map(sourceMonth=>({sourceMonth,...data.monthlyAverage!.values}))};
 }
 export function defaultFiscalData(selection:RegimeSelection):FiscalData {
   return {generationId:null,salesAnnex:1,serviceAnnex:3,icmsOutside:false,difalPolicy:upgradeDifalPolicy(),

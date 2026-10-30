@@ -92,8 +92,8 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
     await reopened.goto(`/simulator.html?simulation=${saved._id}`);
     await expect(reopened.locator('[data-difal-monthly]')).toContainText('0,00');
     await expect(reopened.locator('[data-anticipation-monthly]')).toContainText('36,60');
-    const complete=reopened.locator('#dre-demonstrativo [data-simulation-detail="dre"]');
-    await complete.locator(':scope > summary').click();await expect(complete.locator('[data-simulation-lazy="dre"]')).toHaveAttribute('data-loaded','true');
+    const complete=reopened.locator('#dre-demonstrativo');
+    await expect(complete.locator('[data-dre-row="netProfit"]')).toBeVisible();
     await reopened.locator('#dre-regime').selectOption('pure');
     await expect(complete.locator('[data-dre-row="difal"] td').first()).toContainText('0,00');
     await expect(complete.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('36,60');

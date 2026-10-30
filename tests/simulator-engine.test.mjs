@@ -95,7 +95,7 @@ test('historical explicit CBS rates reproduce the four reviewed spreadsheet resu
 
 test('new CBS default applies 11.3% to debits and regular credits while preserving the inside-DAS credit', () => {
   assert.equal(DEFAULT_RATES.cbs, .113);
-  assert.equal(MODEL_VERSION, '1.15.0-optional-rbt12');
+  assert.equal(MODEL_VERSION, '1.16.0-cpf-sales-difal');
   const input = zero();
   Object.assign(input, {salesRevenue:10000, rbt12:120000, simplePurchases:2000, simpleRegularPurchases:500, regularPurchases:3000});
   input.credits.simple.base = 1500;

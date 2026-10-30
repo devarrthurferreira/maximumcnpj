@@ -5,11 +5,11 @@ import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {OPERATION_CATALOG_GROUPS} from '../src/operation-catalog.ts';
-import {calculateDifal,summarizeDifal,DIFAL_VERSION,DIFAL_CATALOG_VERSION} from '../src/difal.ts';
+import {calculateDifal,summarizeDifal,DIFAL_VERSION,DIFAL_CPF_CNPJ_VERSION,DIFAL_CATALOG_VERSION} from '../src/difal.ts';
 import {calculateAnticipation,summarizeAnticipation,ANTICIPATION_VERSION,ANTICIPATION_CPF_CNPJ_VERSION,ANTICIPATION_PREVIOUS_VERSION,ANTICIPATION_LEGACY_VERSION} from '../src/icms-anticipation.ts';
 
 const sale={totalCents:100_005,document:'12345678901',issuerUf:'MG',recipientUf:'SP'};
-test('DIFAL V4 usa catálogo VENDA e UF real; V1/V2/V3 permanecem congelados',()=>{
+test('DIFAL V5 usa catálogo VENDA e UF real; V1/V2/V3/V4 permanecem congelados',()=>{
   for(const nature of OPERATION_CATALOG_GROUPS.VENDA)assert.deepEqual(calculateDifal({...sale,natureCode:nature+'002',description:'Texto não altera catálogo'}),
     {eligible:true,baseCents:100_005,amountCents:10_001,reason:'ELIGIBLE'});
   assert.equal(calculateDifal({...sale,natureCode:'5405'}).eligible,true);
@@ -18,7 +18,7 @@ test('DIFAL V4 usa catálogo VENDA e UF real; V1/V2/V3 permanecem congelados',()
   assert.equal(calculateDifal({...sale,natureCode:'5102'},'DIFAL_ESTIMATE_V2').eligible,true);
   for(const code of ['9000002','8000102','6949','1202','6202','9999'])assert.equal(calculateDifal({...sale,natureCode:code,description:'Venda'}).eligible,false);
   assert.equal(calculateDifal({...sale,natureCode:'6102',recipientUf:'MG'}).reason,'SAME_UF');
-  assert.equal(calculateDifal({...sale,natureCode:'6102',document:'12345678000199'}).reason,'NOT_CPF_OR_CNPJ');
+  assert.equal(calculateDifal({...sale,natureCode:'6102',document:'12345678000199'}).reason,'NOT_CPF');
   assert.equal(summarizeDifal([{...sale,natureCode:'6102',recipientUf:''}],'MG').pendingLines,1);
 });
 test('antecipação V4 usa somente COMPRAS, 7,32% por linha e pendências explícitas',()=>{
@@ -66,25 +66,44 @@ test('antecipação V2 calcula somente CPF; V1 explícita preserva PJ e ausênci
 });
 
 
-test('regras atuais aceitam CPF e CNPJ válido numérico ou alfanumérico, sem considerar enquadramento',()=>{
+test('DIFAL V5 só inclui CPF de outra UF; entradas e V4 conservam CPF/CNPJ',()=>{
   for(const document of ['123.456.789-01','00.000.000/0001-91','12.abc.345/01de-35']) {
+    const cpf=/^\d{11}$/.test(document.replace(/[./\-]/g,''));
     for(const status of ['OPTANTE','NAO_OPTANTE','NAO_CONFIRMADO',undefined]) {
-      assert.equal(calculateDifal({...sale,natureCode:'5405002',document,status}).amountCents,10001);
+      assert.equal(calculateDifal({...sale,natureCode:'5405002',document,status}).amountCents,cpf?10001:0);
+      assert.equal(calculateDifal({...sale,natureCode:'5405002',document,status},DIFAL_CPF_CNPJ_VERSION).amountCents,10001);
       assert.equal(calculateAnticipation({...sale,natureCode:'2102002',document,status}).amountCents,7320);
     }
-    assert.equal(calculateDifal({...sale,natureCode:'6102',document,recipientUf:''}).reason,'MISSING_RECIPIENT_UF');
+    assert.equal(calculateDifal({...sale,natureCode:'6102',document,recipientUf:''}).reason,cpf?'MISSING_RECIPIENT_UF':'NOT_CPF');
     assert.equal(calculateAnticipation({...sale,natureCode:'1102',document,issuerUf:''}).reason,'MISSING_ISSUER_UF');
   }
   for(const document of ['00000000000192','12ABC34501DE36','123456789012','ABC','',undefined]) {
-    assert.equal(calculateDifal({...sale,natureCode:'6102',document}).reason,'NOT_CPF_OR_CNPJ');
+    assert.equal(calculateDifal({...sale,natureCode:'6102',document}).reason,'NOT_CPF');
     assert.equal(calculateAnticipation({...sale,natureCode:'1102',document}).reason,'NOT_CPF_OR_CNPJ');
   }
   for(const version of ['DIFAL_ESTIMATE_V1','DIFAL_ESTIMATE_V2',DIFAL_CATALOG_VERSION] as const) {
     assert.equal(calculateDifal({...sale,natureCode:'6102',document:'00000000000191'},version).reason,'NOT_CPF');
   }
-  assert.equal(calculateDifal({...sale,natureCode:'5405',description:'Remessa'},DIFAL_CATALOG_VERSION).eligible,true,'V3 conserva catálogo independente da descrição.');
-  assert.equal(summarizeDifal([{...sale,natureCode:'6102',document:'00000000000191'}],'MG').version,DIFAL_VERSION);
+  assert.equal(calculateDifal({...sale,natureCode:'5405',description:'Remessa'},DIFAL_CATALOG_VERSION).eligible,true);
+  const zero=summarizeDifal([{...sale,natureCode:'6102',document:'00000000000191',recipientUf:''},{...sale,natureCode:'6102',recipientUf:'MG'}],'MG');
+  assert.deepEqual(zero,{version:DIFAL_VERSION,ratePercent:10,issuerUf:'MG',eligibleLines:0,baseCents:0,amountCents:0,pendingLines:0});
   assert.equal(summarizeAnticipation([{...sale,natureCode:'1102',document:'00000000000191'}],'MG').version,ANTICIPATION_VERSION);
+});
+
+test('Node e Python concordam no DIFAL CPF atual e nas quatro versões históricas',()=>{
+  const cases=[];
+  for(const version of [DIFAL_VERSION,DIFAL_CPF_CNPJ_VERSION,DIFAL_CATALOG_VERSION,'DIFAL_ESTIMATE_V2','DIFAL_ESTIMATE_V1'] as const)
+    for(const natureCode of ['6102','5102001','5405','9000','8000','6202'])
+      for(const document of ['12345678901','123.456.789-01','11222333000181','12ABC34501DE35','11222333000182','123456789012',''])
+        for(const [issuerUf,recipientUf] of [['MG','SP'],['MG',''],['','SP'],['MG','MG']])
+          cases.push({input:{...sale,natureCode,document:version==='DIFAL_ESTIMATE_V1'||version==='DIFAL_ESTIMATE_V2'?document.replace(/[./\-]/g,''):document,issuerUf,recipientUf,operation:'VENDA'},version});
+  const directory=mkdtempSync(join(tmpdir(),'maximum-difal-parity-')),fixture=join(directory,'cases.json');
+  try {
+    writeFileSync(fixture,JSON.stringify(cases.map(({input,version})=>({input,version,expected:calculateDifal(input,version)}))));
+    const source='import json,sys\nfrom reporting.difal import calculate_difal\nwith open(sys.argv[1]) as source: cases=json.load(source)\nfor case in cases:\n actual=calculate_difal(case["input"],case["input"]["issuerUf"],case["version"])\n assert actual==case["expected"], (case,actual)\nprint(len(cases))';
+    const count=Number(execFileSync('python',['-c',source,fixture],{encoding:'utf8',timeout:15000}));
+    assert.equal(count,cases.length);
+  } finally {rmSync(directory,{recursive:true,force:true});}
 });
 
 test('Node e Python concordam na antecipação atual e em todas as versões históricas',()=>{

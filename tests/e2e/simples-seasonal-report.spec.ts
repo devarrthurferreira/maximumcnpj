@@ -22,9 +22,7 @@ async function save(page:Page){
   return response.json();
 }
 async function openCompleteDre(page:Page){
-  const detail=page.locator('[data-simulation-detail="dre"]');
-  if(await detail.getAttribute('open')===null)await detail.locator(':scope > summary').click();
-  await expect(detail.locator('[data-simulation-lazy="dre"]')).toHaveAttribute('data-loaded','true');
+  await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
 }
 
 test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório completo e revisão de ICMS/ISS',async({page,browser,baseURL},info)=>{
@@ -86,7 +84,7 @@ test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório compl
   expect(saved.result.regimes.find((row:any)=>row.id==='pure').dre.netProfit).toBeCloseTo(2_906_400,6);
   await expect(page.locator('[data-period="annual"]')).toHaveAttribute('aria-pressed','true');
   await expect(page.locator('#dre-report-period')).toHaveValue('complete');
-  await expect(page.locator('[data-dre-summary-row="revenue"]')).toContainText('3.300.000,00');
+  await expect(page.locator('[data-dre-row="revenue"]')).toContainText('3.300.000,00');
   await openCompleteDre(page);
   await expect(page.locator('[data-simples-diagnostic="READY"]')).toContainText('3.300.000,00');
   await expect(page.locator('[data-report-coverage]')).toContainText('9 de 9 competências');
@@ -112,9 +110,9 @@ test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório compl
   }
   await page.locator('[data-period="monthly"]').click();
   await page.locator('#dre-regime').selectOption('pure');await page.locator('#dre-month').selectOption('0');
-  await expect(page.locator('[data-dre-summary-row="revenue"]')).toContainText('550.000,00');
+  await expect(page.locator('[data-dre-row="revenue"]')).toContainText('550.000,00');
   await page.locator('#dre-month').selectOption('1');
-  await expect(page.locator('[data-dre-summary-row="revenue"]')).toContainText('343.750,00');
+  await expect(page.locator('[data-dre-row="revenue"]')).toContainText('343.750,00');
   await page.locator('[data-period="annual"]').click();
   await page.setViewportSize({width:320,height:900});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);

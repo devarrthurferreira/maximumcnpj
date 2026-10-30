@@ -23,13 +23,19 @@ test('competência incompleta leva ao campo correto e alterações exigem nova s
  await page.locator('#rent').fill('100');await page.locator('#generate-simulation').click();
  await expect(page.locator('#simulation-save-status')).toContainText('salva');expect(posts).toBe(1);
  await expect(page.locator('[data-dre-regime-result]')).toHaveCount(4);
- await expect(page.locator('[data-simulation-detail="dre"]')).not.toHaveAttribute('open','');
- await expect(page.locator('[data-simulation-lazy="dre"]')).toBeEmpty();
+ await expect(page.locator('[data-simulation-detail="dre"]')).toHaveCount(0);
+ await expect(page.locator('#dre-demonstrativo [data-dre-row="salaries"]')).toBeVisible();
+ for(const key of ['services','das','cmvSimple','salaries','benefits','payroll','administrative','rent','cards','irpj','csll','netProfit']){
+  await expect(page.locator(`#dre-demonstrativo [data-dre-row="${key}"]`)).toBeVisible();
+ }
+ await expect(page.locator('#dre-demonstrativo h2')).toHaveText('DRE completa');
+ await expect(page.locator('#dre-demonstrativo [data-revenue-reconciliation="dre"]')).toBeVisible();
+ await expect(page.locator('#dre-demonstrativo [data-icms-reconciliation="dre"]')).toBeVisible();
  const originalViewport=page.viewportSize()||await page.evaluate(()=>({width:innerWidth,height:innerHeight}));
  try{
   for(const width of [1440,390]){
    await page.setViewportSize({width,height:1000});
-   await page.locator('#dre-demonstrativo').screenshot({path:info.outputPath(`dre-resumida-4-regimes-${width}.png`)});
+   await page.locator('#dre-demonstrativo').screenshot({path:info.outputPath(`dre-completa-4-regimes-${width}.png`)});
   }
  }finally{await page.setViewportSize(originalViewport);}
  await page.locator('#rent').fill('200');
@@ -163,18 +169,18 @@ test('compras, vendas e DIFAL por mês: edição isolada, rascunho, DRE, CSV, JS
  await page.locator('#rbt12-manual').click();await page.locator('#rbt12').fill('500000');await page.locator('#rbt12-manual-confirm').check();
  await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('salva');
  await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');await expect(page.locator('#dre-report-period')).toHaveValue('complete');
- await expect(page.locator('[data-dre-summary-row="revenue"]')).toContainText('13.086,00');await page.getByRole('button',{name:'Mensal',exact:true}).click();
+ await expect(page.locator('[data-dre-row="revenue"]')).toContainText('13.086,00');await page.getByRole('button',{name:'Mensal',exact:true}).click();
  await page.locator('#report-competence').selectOption('8');await expect(page.locator('#simulation-save-status')).toContainText('salva');
  await expect(page.locator('#dre-month')).toHaveValue('8');
- await expect(page.locator('[data-dre-summary-row="revenue"]')).toContainText('1.858,00');
- await page.locator('#dre-month').selectOption('0');await expect(page.locator('[data-dre-summary-row="revenue"]')).toContainText('1.050,00');
+ await expect(page.locator('[data-dre-row="revenue"]')).toContainText('1.858,00');
+ await page.locator('#dre-month').selectOption('0');await expect(page.locator('[data-dre-row="revenue"]')).toContainText('1.050,00');
  expect(posts).toBe(1);expect(saved.result.annualRevenue).toBe(13086);expect(saved.difalProjection.annualCents).toBe(126000);
  await expect(page.locator('#dre-month option')).toHaveCount(9);
- await expect(page.locator('[data-dre-summary-row="revenue"]')).toContainText('1.050,00');
- await expect(page.locator('[data-simulation-detail="dre"]')).not.toHaveAttribute('open','');
- await expect(page.locator('[data-dre-row]')).toHaveCount(0);
- await page.locator('[data-simulation-detail="dre"] > summary').click();
- await expect(page.locator('[data-simulation-lazy="dre"]')).toHaveAttribute('data-loaded','true');
+ await expect(page.locator('[data-dre-row="revenue"]')).toContainText('1.050,00');
+ await expect(page.locator('[data-simulation-detail="dre"]')).toHaveCount(0);
+ await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
+ await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
+ await expect(page.locator('#dre-demonstrativo [data-dre-row="salaries"]')).toBeVisible();
  await page.locator('#dre-demonstrativo').evaluate(el=>el.scrollIntoView({block:'start'}));
  await page.screenshot({path:info.outputPath('dre-visual-desktop.png')});
  await page.getByRole('button',{name:'9 meses',exact:true}).click();
@@ -190,14 +196,14 @@ test('compras, vendas e DIFAL por mês: edição isolada, rascunho, DRE, CSV, JS
  await page.goto(`/simulator.html?simulation=${saved._id}`);await expect(page.locator('#simulation-snapshot')).toBeVisible();expect(posts).toBe(1);
  await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');await expect(page.locator('#dre-report-period')).toHaveValue('complete');
  await page.locator('[data-period="monthly"]').click();await expect(page.locator('#dre-month option')).toHaveCount(9);
- await page.locator('[data-simulation-detail="dre"] > summary').click();
+ await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
  await page.locator('#dre-month').selectOption('8');await expect(page.locator('[data-difal-monthly]')).toContainText('180,00');
  await page.getByRole('button',{name:'Um mês por vez',exact:true}).click();
- await expect(page.locator('[data-dre-summary-row="revenue"]')).toContainText('1.858,00');
- await expect(page.locator('#dre-month')).toHaveValue('8');await expect(page.locator('.sim-calendar h2')).toHaveText('DRE resumida');await expect(page.locator('#dre-period-note')).toContainText('Setembro / 2027');
+ await expect(page.locator('[data-dre-row="revenue"]')).toContainText('1.858,00');
+ await expect(page.locator('#dre-month')).toHaveValue('8');await expect(page.locator('.sim-calendar h2')).toHaveText('DRE completa');await expect(page.locator('#dre-period-note')).toContainText('Setembro / 2027');
  await expect(page.locator('.dre-calendar-screen [data-dre-row="sales"] td').first()).toContainText('1.800,00');
  await page.locator('#dre-month').selectOption('0');await expect(page.locator('#dre-month')).toHaveValue('0');
- await expect(page.locator('[data-dre-summary-row="revenue"]')).toContainText('1.050,00');expect(posts).toBe(1);
+ await expect(page.locator('[data-dre-row="revenue"]')).toContainText('1.050,00');expect(posts).toBe(1);
  await page.locator('[data-dre-jump="netProfit"]').click();await expect(page.locator('.dre-calendar-screen [data-dre-row="netProfit"]')).toBeFocused();
  await expect(page.locator('.dre-calendar-screen [data-dre-row="netProfit"]')).toBeInViewport();
  for(const width of [390,320]){

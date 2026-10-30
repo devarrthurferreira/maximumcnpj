@@ -22,7 +22,7 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
-export const MODEL_VERSION = '1.15.0-optional-rbt12';
+export const MODEL_VERSION = '1.16.0-cpf-sales-difal';
 export const SIMPLES_DIAGNOSTIC_VERSION = 'SIMPLES_DIAGNOSTIC_V1';
 export const REVENUE_CONTEXT_VERSION = 'SIMPLES_REVENUE_CONTEXT_V1';
 export const ICMS_ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_DRE_V1';

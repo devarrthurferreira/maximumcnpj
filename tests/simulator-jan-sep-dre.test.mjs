@@ -95,13 +95,18 @@ test('resumo concilia lucro e tributos; créditos informativos não criam segund
   assert.equal(row(input.presentation,'difal').values.pure,0);assert.equal(row(input.presentation,'icmsAnticipation').values.hybrid,0);
 });
 
-test('resumo é padrão e DRE completa materializa valores mensais de janeiro a setembro',()=>{
+test('DRE completa aparece imediatamente e preserva todas as contas de janeiro a setembro',()=>{
   const input=fixture(),html=renderAnnualDre(input);
-  assert.match(html,/DRE resumida/);assert.equal((html.match(/data-dre-regime-result=/g)||[]).length,4);
-  assert.match(html,/data-dre-summary-row="revenue"/);assert.match(html,/data-dre-summary-row="netProfit"/);
-  assert.match(html,/data-simulation-lazy="dre"><\/div>/);assert.doesNotMatch(html,/data-dre-row=/);
-  assert.doesNotMatch(html,/Créditos tributários utilizados/);assert.match(html,/B2B · CNPJ/);assert.match(html,/B2C · CPF/);
+  assert.match(html,/DRE completa/);assert.doesNotMatch(html,/DRE resumida/);assert.equal((html.match(/data-dre-regime-result=/g)||[]).length,4);
+  assert.match(html,/data-dre-row="revenue"/);assert.match(html,/data-dre-row="netProfit"/);
+  assert.doesNotMatch(html,/data-simulation-lazy="dre"|data-simulation-detail="dre"/);
+  for(const key of ['services','das','cmvSimple','salaries','benefits','rent','cards','incomeTaxes','netProfit'])assert.match(html,new RegExp(`data-dre-row="${key}"`));
+  assert.match(html,/Créditos tributários utilizados/);assert.match(html,/B2B · CNPJ/);assert.match(html,/B2C · CPF/);
   const monthly=renderCompleteMonthlyDre({...input,month:8,regimeId:'pure'});
+  assert.match(monthly,/data-dre-row="salaries"/);assert.doesNotMatch(monthly,/data-simulation-lazy="dre"/);
+  const allMonths=renderCompleteMonthlyDre({...input,month:8,regimeId:'pure',monthView:false});
+  const salaryCells=allMonths.match(/data-dre-row="salaries">([\s\S]*?)<\/tr>/)?.[1];
+  assert.equal((salaryCells.match(/<td /g)||[]).length,10);assert.match(salaryCells,/2.700,00/);
   const options=monthly.match(/<select id="dre-month">([\s\S]*?)<\/select>/)?.[1];
   assert.equal((options.match(/<option /g)||[]).length,9);assert.match(options,/Setembro/);assert.doesNotMatch(options,/Outubro|Novembro|Dezembro/);
   const detail=renderDreCompleteDetails({...input,monthly:true,month:8,monthView:false,regimeId:'pure'});
@@ -129,7 +134,7 @@ test('CSV e impressão completos usam nove meses, detalham tudo e preservam perc
 test('ajustes da DRE não alteram a composição documental nem escondem prejuízo ou pendências',()=>{
   const adjusted=fixture({adjustment:100}),html=renderAnnualDre(adjusted);
   near(row(adjusted.presentation,'revenueManualAdjustment').values.actual,100);
-  assert.match(html,/data-dre-summary-row="revenueManualAdjustment"/);assert.match(html,/ajustes manuais estão refletidos na DRE/);
+  assert.match(html,/data-dre-row="revenueManualAdjustment"/);assert.match(html,/ajustes manuais estão refletidos na DRE/);
   assert.equal(adjusted.presentation.commercialComposition.revenue.totalCents,adjusted.source.commercialComposition.revenue.totalCents);
   const loss=renderAnnualDre(fixture({rent:20000}));assert.match(loss,/Prejuízo estimado/);assert.match(loss,/class="dre-regime-result is-loss/);
   const pending=fixture({rbt12:4000000});assert.equal(buildDreExecutiveSummary(pending.presentation,{id:'pure',mode:'annual'}).result,null);

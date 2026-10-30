@@ -1,6 +1,6 @@
 {
   "name": "maximum-cnpj",
-  "version": "0.52.0",
+  "version": "0.53.0",
   "private": true,
   "type": "module",
   "description": "Consultas CNPJ, histórico por empresa e relatórios Python com Node.js e MongoDB",
@@ -12,7 +12,7 @@
     "build": "tsc && node scripts/assets.mjs",
     "start": "node --env-file-if-exists=.env dist/server.js",
     "check": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/domain.test.ts tests/security.test.ts tests/service-errors.test.ts tests/purchase-finalization.test.mjs tests/imported.test.ts tests/http.test.ts tests/deployment.test.mjs tests/lookup.test.ts tests/lookup-performance.test.ts tests/lookup-http.test.ts tests/team.test.ts tests/purchase.test.ts tests/purchase-parser.test.mjs tests/purchase-model.test.mjs tests/simulator-engine.test.mjs tests/simulator-icms.test.mjs tests/report-competence.test.ts tests/simulator-projection.test.mjs tests/simulator-monthly.test.mjs tests/simulation-extrato.test.ts tests/simulator-calendar.test.mjs tests/simulator-dre.test.mjs tests/simulator-dre-export.test.mjs tests/simulator-dre-download.test.mjs tests/blob-documents.test.ts tests/operation-catalog.test.ts tests/operation-taxes.test.ts tests/simulator-rbt12.test.mjs tests/operation-monthly-source.test.ts tests/simulator-source-view.test.mjs tests/purchase-selection.test.ts tests/revenue-reconciliation.test.mjs tests/regime-selection.test.mjs tests/analysis-accounting-import.test.mjs tests/analysis-accounting-repeat.test.mjs tests/analyses-guidance.test.mjs tests/analysis-document-difal.test.mjs tests/analyses-wizard.test.mjs tests/analysis-period.test.ts tests/simulation-commercial-composition.test.ts tests/simulator-commercial-view.test.mjs tests/simulator-jan-sep-dre.test.mjs tests/dashboard.test.ts",
+    "test": "node --experimental-strip-types --test tests/domain.test.ts tests/security.test.ts tests/service-errors.test.ts tests/purchase-finalization.test.mjs tests/imported.test.ts tests/http.test.ts tests/deployment.test.mjs tests/lookup.test.ts tests/lookup-performance.test.ts tests/lookup-http.test.ts tests/team.test.ts tests/purchase.test.ts tests/purchase-parser.test.mjs tests/purchase-model.test.mjs tests/simulator-engine.test.mjs tests/simulator-icms.test.mjs tests/report-competence.test.ts tests/simulator-projection.test.mjs tests/simulator-monthly.test.mjs tests/simulation-extrato.test.ts tests/simulator-calendar.test.mjs tests/simulator-dre.test.mjs tests/simulator-dre-export.test.mjs tests/simulator-dre-download.test.mjs tests/blob-documents.test.ts tests/operation-catalog.test.ts tests/operation-taxes.test.ts tests/simulator-rbt12.test.mjs tests/operation-monthly-source.test.ts tests/simulator-source-view.test.mjs tests/purchase-selection.test.ts tests/revenue-reconciliation.test.mjs tests/regime-selection.test.mjs tests/analysis-accounting-import.test.mjs tests/analysis-accounting-repeat.test.mjs tests/analyses-guidance.test.mjs tests/analysis-document-difal.test.mjs tests/analyses-wizard.test.mjs tests/analysis-period.test.ts tests/simulation-commercial-composition.test.ts tests/simulator-commercial-view.test.mjs tests/simulator-jan-sep-dre.test.mjs tests/dashboard.test.ts tests/analysis-accounting-average.test.ts tests/analysis-accounting-average.test.mjs",
     "test:integration": "node --experimental-strip-types --test tests/integration.test.ts tests/bootstrap.test.ts tests/team-integration.test.ts",
     "seed": "node --experimental-strip-types --env-file-if-exists=.env scripts/seed.ts",
     "test:e2e": "playwright test",
@@ -28,7 +28,7 @@
     "test:simulations-integration": "node --experimental-strip-types --test tests/simulation-integration.test.ts tests/simulation-reprocessing.test.ts tests/simulation-reprocessing-source.test.ts tests/simulation-reprocessing-integration.test.ts",
     "test:competences": "node --experimental-strip-types --test tests/report-competence.test.ts tests/report-competence-integration.test.ts",
     "test:projection": "node --experimental-strip-types --test tests/simulator-projection.test.mjs tests/simulator-projection-integration.test.ts",
-    "test:analyses-integration": "node --experimental-strip-types --test tests/analysis-integration.test.ts tests/analysis-performance-integration.test.ts tests/analysis-period-integration.test.ts"
+    "test:analyses-integration": "node --experimental-strip-types --test tests/analysis-integration.test.ts tests/analysis-performance-integration.test.ts tests/analysis-period-integration.test.ts tests/analysis-accounting-average-integration.test.ts"
   },
   "dependencies": {
     "mongodb": "6.21.0",

@@ -240,6 +240,7 @@ async function purgeGenerationReceipt(receipt: Doc, owner?: string) {
     for (const name of ['lookupStage', 'purchaseLines', 'lookupItems']) {
       await (await collection(name)).deleteMany(scope({jobId: {$in: jobIds}}));
     }
+    await (await collection('documentDifalEstimates')).deleteMany(scope({'value.jobId': {$in: jobIds}}));
     await (await collection('chunks')).deleteMany(scope({_id: {$regex: '^lookup:(?:' + jobIds.join('|') + '):'}}));
     await (await collection('lookupJobs')).deleteMany(scope({_id: {$in: jobIds}, generationId: id}));
   }

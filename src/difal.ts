@@ -1,14 +1,16 @@
 import {classifyOperationNature, normalizeOperationNature} from './operation-catalog.ts';
 import {normalizeCnpj} from './domain.ts';
 /** Estimated managerial DIFAL, not a legal rate lookup. Keep this module browser-safe. */
-export const DIFAL_VERSION = 'DIFAL_ESTIMATE_V4';
+export const DIFAL_VERSION = 'DIFAL_ESTIMATE_V5';
+/** Historical CPF/CNPJ rule, retained only to validate immutable snapshots. */
+export const DIFAL_CPF_CNPJ_VERSION = 'DIFAL_ESTIMATE_V4';
 export const DIFAL_CATALOG_VERSION = 'DIFAL_ESTIMATE_V3';
 export const DIFAL_PREVIOUS_VERSION = 'DIFAL_ESTIMATE_V2';
 export const DIFAL_LEGACY_VERSION = 'DIFAL_ESTIMATE_V1';
-export type DifalVersion = typeof DIFAL_VERSION | typeof DIFAL_CATALOG_VERSION | typeof DIFAL_PREVIOUS_VERSION | typeof DIFAL_LEGACY_VERSION;
+export type DifalVersion = typeof DIFAL_VERSION | typeof DIFAL_CPF_CNPJ_VERSION | typeof DIFAL_CATALOG_VERSION | typeof DIFAL_PREVIOUS_VERSION | typeof DIFAL_LEGACY_VERSION;
 export type DifalOrigin = 'IMPORTED' | 'DERIVED_FROM_SNAPSHOT' | 'UNAVAILABLE';
 export function isDifalVersion(value: unknown): value is DifalVersion {
-  return value === DIFAL_VERSION || value === DIFAL_CATALOG_VERSION || value === DIFAL_PREVIOUS_VERSION || value === DIFAL_LEGACY_VERSION;
+  return value === DIFAL_VERSION || value === DIFAL_CPF_CNPJ_VERSION || value === DIFAL_CATALOG_VERSION || value === DIFAL_PREVIOUS_VERSION || value === DIFAL_LEGACY_VERSION;
 }
 export const DIFAL_RATE_PERCENT = 10;
 /** Explicit conservative sale-purpose configuration; an initial 6 alone is never sufficient. */
@@ -18,7 +20,7 @@ const LEGACY_CFOPS = ['6101', '6102', '6103', '6104', '6105', '6106', '6107', '6
 export const DIFAL_ELIGIBLE_CFOPS = ['5102', ...LEGACY_CFOPS] as const;
 function eligibleNature(code: string, version: DifalVersion): boolean {
   if (!isDifalVersion(version)) throw new TypeError('Versão do DIFAL desconhecida.');
-  if (version === DIFAL_VERSION || version === DIFAL_CATALOG_VERSION) return classifyOperationNature(code) === 'VENDA';
+  if (version === DIFAL_VERSION || version === DIFAL_CPF_CNPJ_VERSION || version === DIFAL_CATALOG_VERSION) return classifyOperationNature(code) === 'VENDA';
   return (version === DIFAL_LEGACY_VERSION ? LEGACY_CFOPS : DIFAL_ELIGIBLE_CFOPS).some(value => value === code);
 }
 export const BRAZIL_UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'] as const;
@@ -36,7 +38,7 @@ function normalizedOperationText(value: unknown) {
 }
 export function salesOperation(natureCode: unknown, description: unknown, configuredSales = true, version: DifalVersion = DIFAL_VERSION): SalesOperation {
   const code = normalizeNatureCode(natureCode);
-  if (version === DIFAL_VERSION || version === DIFAL_CATALOG_VERSION) {
+  if (version === DIFAL_VERSION || version === DIFAL_CPF_CNPJ_VERSION || version === DIFAL_CATALOG_VERSION) {
     const operation = classifyOperationNature(code);
     return operation === 'VENDA' ? 'VENDA' : operation === 'SERVICO_VENDA' ? 'SERVICO' : operation === 'DEVOLUCAO_COMPRA' ? 'DEVOLUCAO' : 'OUTRAS';
   }
@@ -64,8 +66,8 @@ export function calculateDifal(input: DifalInput, version: DifalVersion = DIFAL_
   if (!eligibleNature(normalizeNatureCode(input.natureCode), version)) return rejected('INELIGIBLE_NATURE');
   const document = String(input.document ?? '').trim().replace(/[.\/\-\s]/g, '');
   // Follow the application's document identification contract; CPF is never sent to the CNPJ provider.
-  if (!/^\d{11}$/.test(document) && (version !== DIFAL_VERSION || !normalizeCnpj(input.document).valid))
-    return rejected(version === DIFAL_VERSION ? 'NOT_CPF_OR_CNPJ' : 'NOT_CPF');
+  if (!/^\d{11}$/.test(document) && (version !== DIFAL_CPF_CNPJ_VERSION || !normalizeCnpj(input.document).valid))
+    return rejected(version === DIFAL_CPF_CNPJ_VERSION ? 'NOT_CPF_OR_CNPJ' : 'NOT_CPF');
   const issuerUf = normalizeUf(input.issuerUf), recipientUf = normalizeUf(input.recipientUf);
   if (!issuerUf) return rejected('MISSING_ISSUER_UF');
   if (!recipientUf) return rejected('MISSING_RECIPIENT_UF');

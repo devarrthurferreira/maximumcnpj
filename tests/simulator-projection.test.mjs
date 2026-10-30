@@ -127,7 +127,7 @@ test('DIFAL usa total importado já arredondado por linha, média mensal e doze 
 
 
 test('projeção aceita a versão CPF/CNPJ sem reclassificar versões históricas',()=>{
- for(const version of ['DIFAL_ESTIMATE_V1','DIFAL_ESTIMATE_V2','DIFAL_ESTIMATE_V3','DIFAL_ESTIMATE_V4']){
+ for(const version of ['DIFAL_ESTIMATE_V1','DIFAL_ESTIMATE_V2','DIFAL_ESTIMATE_V3','DIFAL_ESTIMATE_V4','DIFAL_ESTIMATE_V5']){
   const result=projectDifal({version,ratePercent:10,issuerUf:'MG',eligibleLines:3,baseCents:60000,amountCents:6000,pendingLines:0},2,'source-job');
   assert.equal(result.sourceVersion,version);assert.equal(result.monthlyCents,3000);assert.equal(result.annualCents,36000);
  }

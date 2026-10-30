@@ -64,14 +64,16 @@ async function completeSector(page:Page,id:string,sector:'fiscal'|'accounting'){
 
 async function accounting(page:Page,id:string){
   await page.goto(`/analyses.html?id=${id}&sector=accounting`);
-  const month=page.locator('[data-accounting-month="2025-01"]');await expect(month).toBeVisible();
-  if(!await month.evaluate(node=>(node as HTMLDetailsElement).open))await month.locator('summary').click();
-  await month.locator('[data-accounting-field=salariesCents]').fill('10');
+  await expect(page.locator('[data-accounting-average=salariesCents]')).toBeVisible();
+  await page.locator('[data-accounting-average=salariesCents]').fill('10');
   for(const field of ['rentCents','cardExpensesCents','benefitsCents','adminExpensesCents']){
-    await month.locator(`[data-accounting-field=${field}]`).fill('0');
+    await page.locator(`[data-accounting-average=${field}]`).fill('0');
   }
   const saved=await completeSector(page,id,'accounting');expect(saved.readiness.ready).toBe(true);
   expect(saved.readiness.months).toEqual(['2025-01']);
+  expect(saved.accounting.data.monthlyAverage.values.salariesCents).toBe(1000);
+  expect(saved.accounting.data.months).toHaveLength(9);
+  expect(saved.accounting.data.months.every((row:any)=>row.salariesCents===1000)).toBe(true);
 }
 
 async function generate(page:Page,baseURL:string,id:string){
@@ -129,7 +131,7 @@ for(const scenario of [
     await expect(alerts.locator('[data-financial-alert-code=purchases-above-revenue]')).toBeVisible();
     await expect(alerts.locator('[data-financial-alert-code=costs-above-revenue]')).toBeVisible();
     if(scenario.revenue<0)await expect(alerts.locator('[data-financial-alert-code=negative-revenue]')).toBeVisible();
-    const revenueCells=page.locator('#dre-demonstrativo [data-dre-summary-row=revenue] td');
+    const revenueCells=page.locator('#dre-demonstrativo [data-dre-row=revenue] td');
     await expect(revenueCells).toHaveCount(2);
     await expect(revenueCells.first()).toHaveText(scenario.revenue<0?/-\s*R\$\s*50,00/:/R\$\s*100,00/);
     if(scenario.revenue<0){
@@ -157,7 +159,7 @@ for(const scenario of [
       await reopened.goto(`/simulator.html?simulation=${saved._id}`);
       await expect(reopened.locator('#simulation-snapshot')).toBeVisible();
       await expect(reopened.locator('#simulation-notices [data-financial-alerts]')).toBeVisible();
-      await expect(reopened.locator('#dre-demonstrativo [data-dre-summary-row=revenue] td').first()).toHaveText(scenario.revenue<0?/-\s*R\$\s*50,00/:/R\$\s*100,00/);
+      await expect(reopened.locator('#dre-demonstrativo [data-dre-row=revenue] td').first()).toHaveText(scenario.revenue<0?/-\s*R\$\s*50,00/:/R\$\s*100,00/);
       if(scenario.revenue<0){
         await expect(reopened.locator('[data-dre-regime-result].is-best')).toHaveCount(0);
         await expect(reopened.locator('#dre-demonstrativo')).not.toContainText('Maior resultado disponível');

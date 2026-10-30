@@ -8,6 +8,7 @@ import {renderCommercialComposition} from './simulator-commercial-view.js';
 import {BRAZIL_UFS,normalizeUf} from './difal.js';
 import {documentDifalSummary} from './analysis-document-difal.js';
 import {renderFinancialAlerts} from './financial-alerts-view.js';
+import {accountingAverage,accountingAverageInputValues,accountingAveragePreview} from './analysis-accounting-average.js';
 
 export {ACCOUNTING_FIELDS} from './analyses-guidance.js';
 export const ADJUSTMENT_FIELDS=[
@@ -270,35 +271,6 @@ function fiscalPanel(options) {
   return wizardFrame('fiscal','Fiscal',analysis.company?.name||'Documentos e tributação.',form);
 }
 
-function accountingMonth(row,canWrite,first=false) {
-  const complete=ACCOUNTING_FIELDS.every(([key])=>Number.isSafeInteger(row[key])&&row[key]>=0),total=complete?ACCOUNTING_FIELDS.reduce((sum,[key])=>sum+row[key],0):null;
-  return `<details class="analysis-expense-month" data-accounting-month="${esc(row.sourceMonth)}" id="analysis-month-${esc(row.sourceMonth)}" ${first?'open':''}><summary><span class="analysis-expense-month-name">${esc(monthLabel(row.sourceMonth))}</span><span class="analysis-expense-month-total"><small>Despesas do mês</small><strong data-accounting-total>${total===null?ACCOUNTING_FIELDS.every(([key])=>row[key]===null)?'Não incluído · sem valores':'Preenchimento incompleto':money(total/100)}</strong></span></summary><div class="analysis-expense-fields">${ACCOUNTING_FIELDS.map(([key,label])=>`<label>${label} (R$)<input type="number" min="0" max="1000000000000" step="0.01" inputmode="decimal" data-accounting-field="${key}" value="${centsInput(row[key])}" placeholder="Não informado" aria-label="${esc(label+' em '+monthLabel(row.sourceMonth))}"></label>`).join('')}</div>${canWrite?`<div class="analysis-expense-month-actions"><button type="button" data-zero-month="${esc(row.sourceMonth)}" title="Use somente quando não houver despesa nas categorias ainda em branco.">Preencher vazios com zero</button><button type="button" data-remove-month="${esc(row.sourceMonth)}" aria-label="Remover ${esc(monthLabel(row.sourceMonth))}">Limpar mês</button></div>`:''}</details>`;
-}
-
-export function renderAccountingCopy(options) {
-  const {analysis,accountingDraft,canWrite,source,generation,accountingCopy={}}=options;
-  if(!canWrite)return '';
-  const months=scopedAccountingMonths(analysis,accountingDraft.months||[],source,generation).map(row=>row.sourceMonth);
-  const mode=['manual','copy','repeat'].includes(accountingCopy.mode)?accountingCopy.mode:'manual';
-  const sourceMonth=months.includes(accountingCopy.sourceMonth)?accountingCopy.sourceMonth:months[0]||'';
-  const targets=months.filter(month=>month!==sourceMonth);
-  const targetMonth=targets.includes(accountingCopy.targetMonth)?accountingCopy.targetMonth:targets.find(month=>month>sourceMonth)||targets[0]||'';
-  const choices=[['manual','Preencher mês a mês','Digite valores diferentes em cada competência.'],['copy','Copiar para outro mês','Use um mês preenchido como base para outro.'],['repeat','Repetir em todos os meses','Use os mesmos valores nos meses deste período.']];
-  const selectOptions=(values,selected)=>values.map(month=>`<option value="${esc(month)}" ${month===selected?'selected':''}>${esc(monthLabel(month))}</option>`).join('');
-  return `<section class="analysis-accounting-copy" aria-labelledby="analysis-accounting-copy-heading">
-    <h3 id="analysis-accounting-copy-heading">Como deseja preencher?</h3>
-    <fieldset class="analysis-accounting-copy-modes"><legend class="sr-only">Forma de preenchimento das despesas</legend>${choices.map(([id,label,description])=>`<label class="analysis-accounting-copy-mode ${mode===id?'is-selected':''}"><input type="radio" name="accounting-fill-mode" id="analysis-accounting-mode-${id}" value="${id}" ${mode===id?'checked':''}><span><strong>${label}</strong><small>${description}</small></span></label>`).join('')}</fieldset>
-    <p class="analysis-accounting-copy-manual" ${mode==='manual'?'':'hidden'}>Abra cada mês abaixo para informar as despesas. Você também pode copiar valores e depois ajustar cada mês separadamente.</p>
-    <div class="analysis-accounting-copy-controls" ${mode==='manual'?'hidden':''}>
-      <div class="analysis-accounting-copy-selectors"><label for="analysis-accounting-copy-source">Copiar valores de<select id="analysis-accounting-copy-source" ${months.length?'':'disabled'}>${months.length?selectOptions(months,sourceMonth):'<option value="">Nenhum mês disponível</option>'}</select></label>
-      <label for="analysis-accounting-copy-target" ${mode==='copy'?'':'hidden'}>Para o mês<select id="analysis-accounting-copy-target" ${targets.length?'':'disabled'}>${targets.length?selectOptions(targets,targetMonth):'<option value="">Nenhum outro mês disponível</option>'}</select></label></div>
-      <div id="analysis-accounting-copy-preview" class="analysis-accounting-copy-preview" aria-live="polite"></div>
-      <button type="button" class="primary" id="analysis-accounting-copy-apply" disabled>Aplicar cópia</button>
-    </div>
-    <div class="analysis-accounting-copy-result"><p id="analysis-accounting-copy-status" role="status" ${accountingCopy.message?'':'hidden'}>${esc(accountingCopy.message||'')}</p><button type="button" id="analysis-accounting-copy-undo" ${accountingCopy.undo?'':'hidden'}>Desfazer cópia</button></div>
-  </section>`;
-}
-
 export function renderAccountingSummary({months=[],expectedMonths=[]}) {
   const summary=accountingSummary(months,expectedMonths),amount=value=>value===null?'Sem valores informados':money(value/100);
   return `<div class="analysis-summary-heading"><div><h3>Meses e valores do relatório</h3><p>O consolidado soma os meses preenchidos, sem projetar valores para meses vazios.</p></div>${badge({kind:summary.complete?'ready':'pending',label:summary.complete?'Preenchimento pronto':summary.enteredMonths?'Complete os meses iniciados':'Nenhum mês preenchido'})}</div>
@@ -327,21 +299,45 @@ export function renderAccountingSourceMonths(options) {
   return `<p class="analysis-note">${canWrite?'Você pode preencher antes do Fiscal. ':''}Os meses serão conferidos após a importação.</p>`;
 }
 
-function accountingPanel(options) {
-  const {analysis,accountingDraft,canWrite,configDirty,source,generation}=options;
-  const storedMonths=accountingDraft.months||[],months=scopedAccountingMonths(analysis,storedMonths,source,generation),sourceMonths=accountingSourceMonths(analysis,source,generation,accountingDraft.months);
-  const fixed=usesFixedAnalysisPeriod(analysis),period=analysisPeriodFor(analysis,source,generation),year=period?.sourceYear||months[0]?.sourceMonth.slice(0,4)||'';
-  const addControl=fixed?`<div class="analysis-add-month analysis-prepare-period"><label for="analysis-new-source-year">Ano dos documentos<input type="number" id="analysis-new-source-year" min="2000" max="2099" step="1" inputmode="numeric" placeholder="Ex.: 2026" value="${esc(year)}" ${period?'readonly':''}></label><button type="button" id="analysis-add-month">Preparar janeiro a setembro</button><p class="analysis-note">Adiciona os nove meses com os campos em branco. Valores já preenchidos no mesmo ano são mantidos.</p></div>`:`<div class="analysis-add-month"><label for="analysis-new-month">Adicionar competência<input type="month" id="analysis-new-month" min="2000-01" max="2099-12"></label><button type="button" id="analysis-add-month">Adicionar mês</button></div>`;
-  const monthsContent=`<details class="analysis-accounting-tools" id="analysis-accounting-tools" ${months.length?'':'open'}><summary>${canWrite?'Adicionar meses ou colar planilha':'Competências dos documentos'}</summary><div class="analysis-accounting-tools-content"><div id="analysis-accounting-source-months">${renderAccountingSourceMonths(options)}</div>
-    ${canWrite?addControl:''}
-    <div id="analysis-accounting-import"></div></div></details>`;
-  const valuesContent=`<div id="analysis-accounting-period">${renderAnalysisPeriod(options,{compact:true})}</div>${monthsContent}<div id="analysis-accounting-excluded">${storedMonths.length>months.length?`<p class="analysis-period-excluded">${storedMonths.length-months.length} competência(s) fora do período permanecem salvas e não entram nos totais abaixo.</p>`:''}</div><div id="analysis-accounting-copy">${renderAccountingCopy(options)}</div><div class="analysis-accounting-quickbar"><p>Preencha os meses disponíveis. Um mês totalmente em branco fica fora do relatório. Em um mês iniciado, informe as cinco contas e use zero nas categorias sem gasto.</p>${canWrite&&months.length?'<button type="button" id="analysis-zero-empty">Preencher campos vazios com R$ 0,00</button>':''}</div><div class="analysis-expenses" id="analysis-expenses">${months.length?months.map((row,index)=>accountingMonth(row,canWrite,index===0)).join(''):'<p class="analysis-note analysis-accounting-empty">Nenhuma competência adicionada.</p>'}</div><p class="analysis-note">Meses totalmente em branco são descartados do cálculo. Meses parcialmente preenchidos precisam ser completados. Zero é um valor informado e cada despesa deve aparecer uma única vez.</p>
+export function accountingAverageYear(options) {
+  const period=analysisPeriodFor(options.analysis,options.source,options.generation);
+  const savedYear=Number(options.accountingDraft.months?.[0]?.sourceMonth?.slice(0,4))||
+    Number(new Intl.DateTimeFormat('en',{year:'numeric',timeZone:'America/Sao_Paulo'}).format(new Date()));
+  const year=Number(period?.sourceYear||options.accountingYearRaw||savedYear);
+  return Number.isInteger(year)&&year>=2000&&year<=2099?year:savedYear;
+}
 
-        <details class="analysis-accounting-summary-panel" id="analysis-accounting-summary-panel" open><summary>Ver meses incluídos e totais das despesas</summary><div id="analysis-accounting-summary" class="analysis-accounting-summary" aria-label="Resumo das despesas informadas">${renderAccountingSummary({months,expectedMonths:sourceMonths})}</div></details>${configDirty?'<p class="analysis-message is-warning">Salve os regimes e o ano antes de concluir o Contábil.</p>':''}`;
+export function renderAccountingAverageProjection(options) {
+  const year=accountingAverageYear(options),proposed=accountingAverage(options.accountingDraft,year);
+  const values=accountingAverageInputValues(options.accountingAverageRaw,proposed.values);
+  const preview=accountingAveragePreview(values,year),amount=value=>value===null?'Não informado':money(value/100);
+  return `<div class="analysis-accounting-totals analysis-average-totals" aria-live="polite">
+    <div><span>Média mensal total</span><strong data-accounting-average-total>${amount(preview.monthlyCents)}</strong><small>${preview.complete?'Cinco contas informadas':`${preview.filledFields} de 5 contas informadas`}</small></div>
+    <div><span>Total de janeiro a setembro</span><strong data-accounting-summary-total>${amount(preview.totalCents)}</strong><small>Média mensal × 9 meses${preview.complete?'':' · parcial'}</small></div>
+    <div><span>Período contábil</span><strong data-accounting-summary-months>9 meses</strong><small>Janeiro a setembro de ${year}</small></div>
+  </div><details class="analysis-average-months" id="analysis-average-months"><summary>Conferir os nove meses e o total por conta</summary>
+    <div class="analysis-average-table-wrap" role="region" aria-label="Valores contábeis de janeiro a setembro" tabindex="0"><table class="analysis-average-table"><thead><tr><th scope="col">Competência</th>${ACCOUNTING_FIELDS.map(([,label])=>`<th scope="col">${esc(label)}</th>`).join('')}<th scope="col">Total</th></tr></thead>
+    <tbody>${preview.months.map(row=>`<tr data-accounting-month="${row.sourceMonth}"><th scope="row">${esc(monthLabel(row.sourceMonth))}</th>${ACCOUNTING_FIELDS.map(([key])=>`<td data-average-value="${key}">${amount(row[key])}</td>`).join('')}<td>${amount(preview.monthlyCents)}</td></tr>`).join('')}</tbody>
+    <tfoot><tr><th scope="row">Total · 9 meses</th>${ACCOUNTING_FIELDS.map(([key])=>`<td>${amount(values[key]===null?null:values[key]*9)}</td>`).join('')}<td>${amount(preview.totalCents)}</td></tr></tfoot></table></div>
+  </details><p class="analysis-note">Cada média mensal será aplicada igualmente aos nove meses. Campos vazios continuam pendentes; use zero quando não houver despesa. A DRE usa somente os meses com cobertura fiscal, dentro de janeiro a setembro.</p>`;
+}
+
+function accountingPanel(options) {
+  const {analysis,accountingDraft,canWrite,configDirty,source,generation,accountingAverageRaw}=options;
+  const year=accountingAverageYear(options),period=analysisPeriodFor(analysis,source,generation),proposed=accountingAverage(accountingDraft,year);
+  const values=accountingAverageInputValues(accountingAverageRaw,proposed.values),stored=accountingDraft.months||[];
+  const inputValue=key=>accountingAverageRaw&&Object.hasOwn(accountingAverageRaw,key)?accountingAverageRaw[key]:centsInput(values[key]);
+  const legacy=proposed.legacy?`<div class="analysis-message is-info" id="analysis-average-legacy"><p><strong>Seu preenchimento anterior está preservado.</strong> ${proposed.varied?'A sugestão de média usa os meses que já têm valores em cada conta, arredondada para centavos. Revise os cinco valores antes de salvar.':'Os valores mensais já salvos foram apresentados abaixo.'} ${proposed.fromOtherYear?'O ano dos documentos mudou; as despesas anteriores continuam disponíveis para conferência.':''} Ao salvar, as médias serão aplicadas a janeiro–setembro, criando uma nova revisão.</p><details><summary>Conferir valores anteriores</summary><div class="analysis-average-table-wrap" role="region" aria-label="Valores contábeis anteriores" tabindex="0"><table class="analysis-average-table"><thead><tr><th scope="col">Competência</th>${ACCOUNTING_FIELDS.map(([,label])=>`<th scope="col">${esc(label)}</th>`).join('')}</tr></thead><tbody>${stored.filter(row=>ACCOUNTING_FIELDS.some(([key])=>row[key]!==null)).map(row=>`<tr><th scope="row">${esc(monthLabel(row.sourceMonth))}</th>${ACCOUNTING_FIELDS.map(([key])=>`<td>${row[key]===null?'Não informado':money(row[key]/100)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details></div>`:'';
+  const valuesContent=`<div class="analysis-average-intro"><p>Informe uma única <strong>média mensal</strong> para cada conta. O sistema aplica o mesmo valor de janeiro a setembro.</p><p>Exemplo: R$ 1.000,00 em salários = R$ 1.000,00 em cada mês e <strong>R$ 9.000,00 no período</strong>.</p></div>
+    <div id="analysis-accounting-period">${renderAnalysisPeriod(options,{compact:true})}</div><div class="analysis-average-year"><label for="analysis-new-source-year">Ano dos documentos<input type="number" id="analysis-new-source-year" min="2000" max="2099" step="1" inputmode="numeric" value="${esc(period?.sourceYear||options.accountingYearRaw||year)}" ${period?'readonly':''}></label><p class="analysis-note">${period?'Conferido com os documentos fiscais.':'Você pode salvar antes do Fiscal. A média será vinculada ao ano dos documentos quando eles forem importados.'}</p></div>
+    ${legacy}<div class="analysis-average-fields">${ACCOUNTING_FIELDS.map(([key,label])=>`<label>${esc(label)}<span>Média mensal (R$)</span><input type="number" min="0" max="1000000000000" step="0.01" inputmode="decimal" id="analysis-average-${key}" data-accounting-average="${key}" value="${esc(inputValue(key))}" placeholder="0,00" aria-label="${esc(label+' · média mensal')}"><small data-average-period-total="${key}">${values[key]===null?'Informe o valor mensal':money(values[key]*9/100)+' em 9 meses'}</small></label>`).join('')}</div>
+    <div class="analysis-accounting-quickbar"><p>Os valores são numéricos, em reais, com até duas casas decimais.</p>${canWrite?'<button type="button" id="analysis-zero-empty">Preencher campos vazios com R$ 0,00</button>':''}</div>
+    <div id="analysis-accounting-summary" class="analysis-accounting-summary" aria-label="Resumo das médias mensais">${renderAccountingAverageProjection(options)}</div>
+    ${configDirty?'<p class="analysis-message is-warning">Salve os regimes e o ano antes de concluir o Contábil.</p>':''}`;
   const form=`<form id="analysis-accounting-form" class="analysis-wizard-form" novalidate><div class="analysis-wizard-body"><fieldset class="analysis-fields" ${canWrite?'':'disabled'}>
-      ${wizardStep('values','Despesas por mês','',valuesContent,{first:true})}
+      ${wizardStep('values','Despesas · média mensal','Janeiro a setembro · 9 meses',valuesContent,{first:true})}
     </fieldset></div>${wizardFooter({canWrite,sector:'accounting',analysisId:analysis.id,finalAction:canWrite?`<button type="submit" name="intent" value="complete" class="primary" ${configDirty?'disabled':''}>Salvar e concluir</button>`:''})}</form>`;
-  return wizardFrame('accounting','Contábil',analysis.company?.name||'Despesas por competência.',form);
+  return wizardFrame('accounting','Contábil',analysis.company?.name||'Média mensal das despesas.',form);
 }
 
 export function renderAnalysisGuidance(options) {

@@ -184,7 +184,7 @@
 @media(max-width:370px) { .dre-summary-cards article,.dre-evolution-metrics article { grid-template-columns:1fr; gap:6px; } .dre-summary-cards article>strong { text-align:left; font-size:24px; } }
 @media print { .dre-overview,.dre-quick-nav,.dre-heading,.dre-table-heading,.dre-reading-footer,.dre-reading-note,.dre-period-panel,.dre-evolution,.dre-evolution-year,.dre-evolution-unavailable { display:none!important; } .sim-comparison-details { display:none; } }
 
-/* January–September: the comparison is visible first; full accounting detail is lazy. */
+/* January–September: result comparison and the full accounting statement stay visible. */
 .sim-fixed-period { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px 20px; padding:22px; border:1px solid #c9dcd2; background:#f4f9f6; border-radius:12px; }
 .sim-fixed-period h2 { margin:8px 0; font-size:21px; color:#244e40; }
 .sim-fixed-period p { margin:0; color:#52685e; font-size:12px; line-height:1.6; }
@@ -351,3 +351,19 @@
  .dre-executive-table { break-inside:avoid; }
  .simulator-clean .dre-visual.dre-executive .dre-executive-table th:first-child { position:static!important; min-width:0; width:28%; max-width:none; }
 }
+
+/* The complete statement is the primary view for the fixed analysis window. */
+.dre-fixed-complete .dre-complete-controls { display:flex; align-items:end; justify-content:space-between; flex-wrap:wrap; gap:16px 24px; margin:20px 0; }
+.dre-fixed-complete .dre-complete-controls .dre-regime-control { flex-basis:320px; }
+.dre-fixed-complete .dre-table-heading { padding-top:18px; }
+.dre-fixed-complete .dre-report-coverage { margin-bottom:0; }
+.simulator-clean .dre-fixed-complete > .dre-table-wrap { max-height:none; }
+.dre-fixed-complete .dre-table-wrap table { min-width:760px; }
+.dre-fixed-complete .dre-table-wrap:focus-visible { outline:2px solid #750207; outline-offset:3px; }
+@media(max-width:650px) {
+ .dre-fixed-complete .dre-complete-controls { align-items:stretch; gap:10px; margin:16px 0; }
+ .dre-fixed-complete .dre-complete-controls .dre-regime-control { flex:1 1 100%; }
+ .dre-fixed-complete .dre-complete-controls .dre-percent-control { min-height:44px; }
+ .dre-fixed-complete .dre-table-heading { padding-top:16px; }
+}
+@media print { .dre-complete-controls { display:none!important; } .dre-fixed-complete .dre-table-wrap table { min-width:0; } }

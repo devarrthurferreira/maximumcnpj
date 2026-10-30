@@ -1,5 +1,17 @@
 # Histórico de alterações
 
+## [0.53.0] — 2026-10-30
+
+- Restringe DIFAL de vendas a CPF de outra UF, com ausência confirmada exibida como R$ 0,00 e mensagem explícita; mantém pendências de evidência distintas de zero e não altera a antecipação de compras.
+- Recorta a estimativa do cartão de Saídas para janeiro a setembro, com conferência assíncrona e cache versionado separado dos documentos originais.
+- Versiona a regra como `DIFAL_ESTIMATE_V5` e o motor como `1.16.0-cpf-sales-difal`, preservando a reprodução e os valores históricos das regras anteriores.
+- Restaura a DRE completa como conteúdo principal, com contas, comparativos, tributos, custos, despesas, créditos e resultado visíveis, mantendo visão mensal e exportações.
+- Substitui os modos contábeis por cinco médias mensais numéricas, repetidas de janeiro a setembro, com prévia dos nove meses e total do período.
+- Mantém a média contábil vinculada à análise quando o ano do Fiscal é identificado depois, evitando que valores salvos no ano provisório desapareçam da leitura e do cálculo.
+- Preserva lançamentos legados até salvar a conversão explicitamente, além das revisões dos setores e versões anteriores da DRE.
+- Confirma a revisão antes de exibir sucesso, protege rascunhos durante atualização dos documentos e conserva revisões independentes para impedir sobrescritas concorrentes.
+- Inclui regressões de cálculos, MongoDB, histórico, Python/PDF e navegador com dados sintéticos, sem migração destrutiva.
+
 ## [0.52.0] — 2026-10-29
 
 - Torna RBT12 e extrato/PGDAS-D opcionais na análise, com opções explícitas para não informar, digitar a referência manualmente ou importar um PDF.

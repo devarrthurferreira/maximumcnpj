@@ -195,26 +195,37 @@ function commercialAdjustments(presentation,composition,columns){
   });
   return adjusted?'<p class="dre-commercial-adjustments" role="note">A composição acima pertence aos documentos. Os ajustes manuais estão refletidos na DRE e não redistribuem os valores entre clientes ou fornecedores.</p>':'';
 }
-function renderExecutiveDre({presentation,calendar,year,regimeId,showPercent=false,reportPeriod='complete',monthly=false,month=0}){
-  const months=presentation.months||calendar.months,selectedMonth=Math.max(0,Math.min(months.length-1,Number(month)||0));
-  const regime=selectRegime(presentation,regimeId,monthly?selectedMonth:null);
-  const columns=presentation.regimes.map(item=>monthly?{id:item.id,label:item.name,mode:'month',month:selectedMonth}:annualColumn(item));
-  const summaries=columns.map(column=>buildDreExecutiveSummary(presentation,column));
+/** January–September always opens the complete statement, using captured cells only. */
+function renderJanSepDre({presentation,calendar,year,regimeId,showPercent=false,reportPeriod='complete',monthly=false,monthView=true,month=0}){
+  const context=monthlyContext({presentation,calendar,year,regimeId,monthView,month});
+  const {months,selectedMonth}=context,regime=monthly?context.regime:selectRegime(presentation,regimeId);
+  const comparisonColumns=presentation.regimes.map(item=>monthly?{id:item.id,label:item.name,mode:'month',month:selectedMonth}:annualColumn(item));
+  const columns=monthly?context.columns:comparisonColumns;
+  const summaries=comparisonColumns.map(column=>buildDreExecutiveSummary(presentation,column));
   const sourceMonth=monthly?calendar.months[selectedMonth]?.sourceMonth:null;
   const composition=monthly?presentation.monthlyCommercialComposition?.[sourceMonth]:presentation.commercialComposition;
   const baseLabel=monthly?sourceMonth?`${months[selectedMonth]?.label} / ${sourceMonth.slice(0,4)}`:'Sem dados nesta competência':`Jan–Set / ${presentation.analysisPeriod.sourceYear}`;
-  const incompleteCoverage=dreReportCoverage(presentation).fullCoverage===false;
-  return `<section class="card sim-dre dre-complete dre-visual dre-executive${monthly?' sim-calendar':''}" id="dre-demonstrativo"><div class="dre-heading"><div class="dre-summary-title"><h2>DRE resumida</h2><p>${presentation.regimes.length} ${presentation.regimes.length===1?'regime selecionado':'regimes comparados'}</p></div><div class="dre-base-context" aria-label="Base dos documentos e cenário tributário"><div><span>Base dos documentos</span><strong>${esc(baseLabel)}</strong></div><div><span>Cenário tributário</span><strong>${esc(year)}</strong></div></div></div>
-    ${periodControl({monthly,calendar,year,months,selectedMonth})}${executiveCards(presentation,columns,summaries)}
-    ${incompleteCoverage?`<div class="dre-review-context">${coverageNote(presentation,{compact:true})}</div>`:''}
-    <div class="dre-table-heading is-executive"><p>Valores em R$ · devoluções e créditos já considerados.</p>${percentControl(showPercent)}</div>
-    ${executiveTable(presentation,columns,summaries,showPercent)}
+  const summaryColumn=monthly?{id:regime.id,mode:'month',month:selectedMonth}:annualColumn(regime);
+  const summaryLabel=`${regime.name} · ${monthly?months[selectedMonth]?.label:totalLabel(presentation)} / ${year}`;
+  const tableDescription=monthly?monthView?'Mês selecionado e consolidado de janeiro a setembro.':'Competências disponíveis de janeiro a setembro e consolidado do período.':presentation.regimes.length===1?'Todas as contas do regime selecionado.':'Todas as contas, com os regimes lado a lado.';
+  return `<section class="card sim-dre dre-complete dre-visual dre-executive dre-fixed-complete${monthly?' sim-calendar':''}${monthly&&monthView?' dre-single-month':''}" id="dre-demonstrativo"><div class="dre-heading"><div><span class="eyebrow">DEMONSTRAÇÃO DO RESULTADO</span><h2>DRE completa</h2><p>${presentation.regimes.length} ${presentation.regimes.length===1?'regime selecionado':'regimes comparados'} · janeiro a setembro</p></div><div class="dre-base-context" aria-label="Base dos documentos e cenário tributário"><div><span>Base dos documentos</span><strong>${esc(baseLabel)}</strong></div><div><span>Cenário tributário</span><strong>${esc(year)}</strong></div></div></div>
+    ${periodControl({monthly,calendar,year,months,selectedMonth})}${executiveCards(presentation,comparisonColumns,summaries)}
+    ${coverageNote(presentation)}
+    <div class="dre-complete-controls">${regimeControl(presentation,regime,!monthly,monthly?selectedMonth:null)}${percentControl(showPercent)}</div>
+    <div class="dre-table-heading"><div><h3>Demonstrativo completo</h3><p>${tableDescription} Receitas, tributos, compras, despesas, lucro e prejuízo detalhados nas linhas abaixo.</p></div></div>
+    ${monthly?`<div class="dre-calendar-controls"><div role="group" aria-label="Visualização do calendário"><button type="button" data-dre-month-view="single" aria-pressed="${monthView}">Um mês por vez</button><button type="button" data-dre-month-view="all" aria-pressed="${!monthView}">${months.length} ${months.length===1?'mês':'meses'}</button></div></div>`:''}
+    ${quickNavigation()}${readingNote(showPercent)}
+    <p class="dre-table-scroll-note">Deslize a tabela para conferir ${monthly&&!monthView?'as competências':'os valores'} <span aria-hidden="true">→</span></p>
+    ${table({presentation,columns,showPercent,highlightId:regime.id,className:monthly?'dre-calendar-screen':'',label:monthly?'DRE mensal completa de janeiro a setembro':'DRE completa por regime',indicatorLabel:'DRE completa'})}
     <div class="dre-toolbar dre-report-toolbar">${reportOptions(reportPeriod,true)}</div>
-    ${composition?renderCommercialComposition(composition,{periodLabel:monthly?sourceMonth:`${presentation.analysisPeriod.startMonth} a ${presentation.analysisPeriod.endMonth}`,title:'Composição dos documentos',compact:true})+commercialAdjustments(presentation,composition,columns):''}
-    <details class="dre-full-details" data-simulation-detail="dre"><summary><span>Ver DRE completa e conferências</span></summary><div class="dre-detail-controls">${regimeControl(presentation,regime,!monthly,monthly?selectedMonth:null)}</div><div data-simulation-lazy="dre"></div></details>
-    <p class="dre-report-complete-note">PDF e CSV incluem a DRE completa, mesmo com os detalhes recolhidos. — indica informação indisponível ou não aplicável.</p></section>`;
+    ${finalReconciliations({presentation,columns,showPercent,summaryColumn,summaryLabel})}
+    ${appliedCredits(presentation,comparisonColumns)}${compactDifal(presentation)}${simplesDiagnostic(presentation,sourceMonth)}
+    ${composition?renderCommercialComposition(composition,{periodLabel:monthly?sourceMonth:`${presentation.analysisPeriod.startMonth} a ${presentation.analysisPeriod.endMonth}`,title:'Composição dos documentos',compact:true})+commercialAdjustments(presentation,composition,comparisonColumns):''}
+    ${monthly?monthlyEvolution(presentation,calendar,regime.id,selectedMonth):annualEvolution(presentation,calendar,regime.id)}
+    ${contextFooter(presentation,calendar,year,sourceMonth)}
+    <p class="dre-report-complete-note">Tela, PDF e CSV usam os valores desta versão salva. Meses sem dados permanecem identificados na cobertura; não são preenchidos com zero.</p></section>`;
 }
-/** Materialized only when the complete DRE is opened. Exports use the same cells directly. */
+/** Shared complete detail renderer retained for previously opened views and reports. */
 export function renderDreCompleteDetails({presentation,calendar,year,regimeId,showPercent=false,monthly=false,monthView=true,month=0}){
   const context=monthly?monthlyContext({presentation,calendar,year,regimeId,monthView,month}):null;
   const regime=context?.regime||selectRegime(presentation,regimeId),columns=context?.columns||presentation.regimes.map(annualColumn);
@@ -228,7 +239,7 @@ export function renderDreCompleteDetails({presentation,calendar,year,regimeId,sh
     ${contextFooter(presentation,calendar,year,sourceMonth)}${finalReconciliations({presentation,columns,showPercent,summaryColumn,summaryLabel})}`;
 }
 export function renderAnnualDre({presentation,calendar,year,regimeId,showPercent=false,reportPeriod='complete'}){
-  if(fixedPeriod(presentation,calendar))return renderExecutiveDre({presentation,calendar,year,regimeId,showPercent,reportPeriod});
+  if(fixedPeriod(presentation,calendar))return renderJanSepDre({presentation,calendar,year,regimeId,showPercent,reportPeriod});
   const columns=presentation.regimes.map(annualColumn),regime=selectRegime(presentation,regimeId);
   return `<section class="card sim-dre dre-complete dre-visual" id="dre-demonstrativo"><div class="dre-heading"><div><span class="eyebrow">DEMONSTRAÇÃO DO RESULTADO</span><h2>DRE anual</h2><p>Consolidado de ${esc(year)} · ${presentation.method==='REPORT_MONTHS_V1'?'soma das competências importadas':'projeção anual salva'}</p></div>${regimeControl(presentation,regime,true)}</div>
   ${periodControl({calendar,year})}
@@ -247,7 +258,7 @@ function monthlyContext({presentation,calendar,year,regimeId,monthView=false,mon
   return {regime,months,columns,selectedMonth};
 }
 export function renderCompleteMonthlyDre({presentation,calendar,year,regimeId,showPercent=false,monthView=true,month=0,reportPeriod='complete'}){
-  if(fixedPeriod(presentation,calendar))return renderExecutiveDre({presentation,calendar,year,regimeId,showPercent,reportPeriod,monthly:true,month});
+  if(fixedPeriod(presentation,calendar))return renderJanSepDre({presentation,calendar,year,regimeId,showPercent,reportPeriod,monthly:true,monthView,month});
   const {regime,months,columns,selectedMonth}=monthlyContext({presentation,calendar,year,regimeId,monthView,month});
   const selected=months[selectedMonth],summaryColumn={id:regime.id,mode:'month',month:selectedMonth};
   return `<section class="card sim-dre sim-calendar dre-complete dre-visual${monthView?' dre-single-month':''}" id="dre-demonstrativo"><div class="dre-heading"><div><span class="eyebrow">DEMONSTRAÇÃO DO RESULTADO</span><h2>DRE mensal</h2><p>Cenário ${esc(year)} · ${calendar?.version==='DRE_CALENDAR_V3'?'valores por competência dos relatórios':'projeção pela média mensal salva'}</p></div>${regimeControl(presentation,regime,false,selectedMonth)}</div>

@@ -506,7 +506,7 @@ class PurchaseMongoTests(unittest.TestCase):
             ('anticipation', anticipation_fixture(cnpj=True, version=ANTICIPATION_CPF_VERSION),
              ANTICIPATION_VERSION, 732, 'R$ 7,32'),
             ('difal', difal_fixture(cnpj=True, reason='NOT_CPF', version=DIFAL_CPF_VERSION),
-             DIFAL_VERSION, 1500, 'R$ 15,00'),
+             DIFAL_VERSION, 0, 'R$ 0,00'),
         ]
         for key, (job, lines, items), current_version, amount, amount_text in cases:
             with self.subTest(tax=key):
@@ -530,14 +530,14 @@ class PurchaseMongoTests(unittest.TestCase):
                     text = '\n'.join(page.get_text() for page in pdf)
                 self.assertIn(amount_text, text)
                 self.assertIn('Calculado a partir dos dados salvos no relatório de origem', text)
-                self.assertIn('CPF ou CNPJ válido', text)
+                self.assertIn('CPF ou CNPJ válido' if key == 'anticipation' else 'somente CPF', text)
                 self.assertEqual(self.db.lookupJobs.find_one({'_id': job['_id']}), frozen_job)
                 self.assertEqual(self.db.purchaseLines.find_one({'_id': lines[0]['_id']}), frozen_row)
-                self.db.purchaseLines.update_one({'_id': lines[0]['_id']}, {'$set': {f'{key}.amountCents': amount}})
+                self.db.purchaseLines.update_one({'_id': lines[0]['_id']}, {'$set': {f'{key}.amountCents': amount + 1}})
                 with self.assertRaises(ReportError):
                     purchase_metadata(self.db, frozen_job, WORKSPACE)
                 self.db.purchaseLines.replace_one({'_id': lines[0]['_id']}, frozen_row)
-                self.db.lookupJobs.update_one({'_id': job['_id']}, {'$set': {f'purchaseInput.{key}.amountCents': amount}})
+                self.db.lookupJobs.update_one({'_id': job['_id']}, {'$set': {f'purchaseInput.{key}.amountCents': amount + 1}})
                 with self.assertRaises(ReportError):
                     purchase_metadata(self.db, self.db.lookupJobs.find_one({'_id': job['_id']}), WORKSPACE)
 

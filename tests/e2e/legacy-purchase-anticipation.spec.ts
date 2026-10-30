@@ -118,7 +118,7 @@ for(const historicalVersion of [undefined,'ICMS_ANTICIPATION_V2','ICMS_ANTICIPAT
   }finally{await mongo.close();}
 });
 
-test('vendas históricas V3 exibem CPF e CNPJ no relatório e CSV sem substituir o snapshot original',async({page,baseURL,historicalAccount},info)=>{
+test('vendas históricas V3 exibem somente CPF no relatório e CSV sem substituir o snapshot original',async({page,baseURL,historicalAccount},info)=>{
   test.setTimeout(90_000);page.setDefaultTimeout(15_000);
   expect(process.env.MONGODB_URI,'Use MongoDB descartável').toBeTruthy();
   const origin=new URL(baseURL!).origin;
@@ -146,12 +146,12 @@ test('vendas históricas V3 exibem CPF e CNPJ no relatório e CSV sem substituir
 
     const summary=await get(`/api/v4/sales/${jobId}/summary`);
     expect(summary.difalOrigin).toBe('DERIVED_FROM_SNAPSHOT');
-    expect(summary.difal).toMatchObject({version:'DIFAL_ESTIMATE_V4',ratePercent:10,issuerUf:'MG',baseCents:300000,amountCents:30000,eligibleLines:2,pendingLines:1});
+    expect(summary.difal).toMatchObject({version:'DIFAL_ESTIMATE_V5',ratePercent:10,issuerUf:'MG',baseCents:100000,amountCents:10000,eligibleLines:1,pendingLines:0});
     expect(summary.job.difalVersion).toBe('DIFAL_ESTIMATE_V3');expect(summary.totals.totalCents).toBe(410000);
     const details=await get(`/api/v4/sales/${jobId}/lines?status=ALL&page=1`);
-    expect(details.items.map((row:any)=>row.difal.reason)).toEqual(['ELIGIBLE','ELIGIBLE','NOT_SALE','SAME_UF','NOT_SALE','MISSING_RECIPIENT_UF']);
+    expect(details.items.map((row:any)=>row.difal.reason)).toEqual(['ELIGIBLE','NOT_CPF','NOT_SALE','NOT_CPF','NOT_SALE','NOT_CPF']);
     const grouped=await get(`/api/v4/sales/${jobId}/results?status=ALL&page=1`);
-    expect(grouped.items.find((row:any)=>row.document===cnpj).difal).toMatchObject({baseCents:200000,amountCents:20000,eligibleLines:1,pendingLines:1});
+    expect(grouped.items.find((row:any)=>row.document===cnpj).difal).toMatchObject({baseCents:0,amountCents:0,eligibleLines:0,pendingLines:0});
 
     const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
     let processRequests=0;page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/process'))processRequests++;});
@@ -159,20 +159,20 @@ test('vendas históricas V3 exibem CPF e CNPJ no relatório e CSV sem substituir
     const panel=page.locator('#purchase-report-view .purchase-difal');
     await expect(panel.getByRole('heading',{name:'DIFAL sobre vendas · 10%'})).toBeVisible();
     await expect(panel).toContainText('Calculado a partir dos dados já salvos neste relatório.');
-    await expect(panel.locator('[data-difal-amount]')).toContainText('300,00');await expect(panel).toContainText('3.000,00');await expect(panel).toContainText('CPF ou CNPJ');await expect(panel).toContainText('1 linha(s) pendente(s)');
+    await expect(panel.locator('[data-difal-amount]')).toContainText('100,00');await expect(panel).toContainText('1.000,00');await expect(panel).toContainText('Vendas com CPF');await expect(panel).not.toContainText('pendente(s)');
     await page.locator('#purchase-view-filter').selectOption('lines');
     const rows=page.locator('#purchase-result-list tbody tr');
-    await expect(rows.filter({hasText:'CNPJ interestadual'})).toContainText('200,00');await expect(rows.filter({hasText:'CPF interestadual'})).toContainText('100,00');await expect(rows.filter({hasText:'CNPJ sem UF'})).toContainText('Pendente');
+    await expect(rows.filter({hasText:'CNPJ interestadual'})).toContainText('Não se aplica');await expect(rows.filter({hasText:'CPF interestadual'})).toContainText('100,00');await expect(rows.filter({hasText:'CNPJ sem UF'})).toContainText('Não se aplica');
     const downloading=page.waitForEvent('download');await page.locator('#purchase-csv').click();const download=await downloading,stream=await download.createReadStream(),parts:Buffer[]=[];
     for await(const part of stream!)parts.push(Buffer.from(part));const workbook=XLSX.read(Buffer.concat(parts).toString('utf8'),{type:'string',raw:true});
     const csvRows=XLSX.utils.sheet_to_json<string[]>(workbook.Sheets[workbook.SheetNames[0]],{header:1,raw:true,defval:''}),headers=csvRows[0],at=(row:string[],header:string)=>row[headers.indexOf(header)];
     const legalEntity=csvRows.slice(1).find(row=>at(row,'Comprador (I)')==='CNPJ interestadual')!;
-    expect(at(legalEntity,'Base DIFAL (R$)')).toBe('2000,00');expect(at(legalEntity,'DIFAL estimado (R$)')).toBe('200,00');expect(at(legalEntity,'Situação DIFAL')).toBe('ELIGIBLE');expect(at(legalEntity,'Versão DIFAL')).toBe('DIFAL_ESTIMATE_V4');
+    expect(at(legalEntity,'Base DIFAL (R$)')).toBe('0,00');expect(at(legalEntity,'DIFAL estimado (R$)')).toBe('0,00');expect(at(legalEntity,'Situação DIFAL')).toBe('NOT_CPF');expect(at(legalEntity,'Versão DIFAL')).toBe('DIFAL_ESTIMATE_V5');
     expect(at(legalEntity,'Origem DIFAL')).toBe('DERIVED_FROM_SNAPSHOT');
     const pending=csvRows.slice(1).find(row=>at(row,'Comprador (I)')==='CNPJ sem UF')!;
-    expect(at(pending,'Base DIFAL (R$)')).toBe('');expect(at(pending,'DIFAL estimado (R$)')).toBe('');expect(at(pending,'Situação DIFAL')).toContain('Pendente');
-    expect(csvRows.slice(1).reduce((sum,row)=>sum+Number(String(at(row,'DIFAL estimado (R$)')||'0').replace(',','.')),0)).toBeCloseTo(300,2);
-    await page.reload();await expect(panel.locator('[data-difal-amount]')).toContainText('300,00');
+    expect(at(pending,'Base DIFAL (R$)')).toBe('0,00');expect(at(pending,'DIFAL estimado (R$)')).toBe('0,00');expect(at(pending,'Situação DIFAL')).toBe('NOT_CPF');
+    expect(csvRows.slice(1).reduce((sum,row)=>sum+Number(String(at(row,'DIFAL estimado (R$)')||'0').replace(',','.')),0)).toBeCloseTo(100,2);
+    await page.reload();await expect(panel.locator('[data-difal-amount]')).toContainText('100,00');
     await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await panel.screenshot({path:info.outputPath('difal-vendas-historico-mobile.png')});
     expect(await frozen()).toEqual(before);expect(providerCalls).toBe(1);expect(processRequests).toBe(0);expect(errors).toEqual([]);
   }finally{await mongo.close();}

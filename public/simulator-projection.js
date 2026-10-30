@@ -85,7 +85,7 @@ export function annualizeReports(fields, reportMonths) {
 export function projectDifal(summary, reportMonths, sourceJobId) {
   if (summary == null) return null;
   months(reportMonths);
-  if (!summary || typeof summary !== 'object' || Array.isArray(summary) || !['DIFAL_ESTIMATE_V1','DIFAL_ESTIMATE_V2','DIFAL_ESTIMATE_V3','DIFAL_ESTIMATE_V4'].includes(summary.version) || summary.ratePercent !== 10 ||
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary) || !['DIFAL_ESTIMATE_V1','DIFAL_ESTIMATE_V2','DIFAL_ESTIMATE_V3','DIFAL_ESTIMATE_V4','DIFAL_ESTIMATE_V5'].includes(summary.version) || summary.ratePercent !== 10 ||
       typeof sourceJobId !== 'string' || !sourceJobId || typeof summary.issuerUf !== 'string') throw new TypeError('Referência do DIFAL inválida.');
   for (const key of ['amountCents', 'baseCents', 'pendingLines', 'eligibleLines']) cents(summary[key]);
   const monthlyCents = safeBigInt(roundedDivision(BigInt(summary.amountCents), BigInt(reportMonths)));

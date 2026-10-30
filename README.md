@@ -1,4 +1,26 @@
-# Maximum CNPJ · v0.52.0
+# Maximum CNPJ · v0.53.0
+
+## DIFAL para CPF, DRE completa e média contábil preservada — v0.53.0
+
+O **DIFAL de vendas** considera somente operações de venda com **CPF** e **UF de destino diferente da UF do emitente**. Vendas para CNPJ, para a mesma UF, serviços e naturezas não elegíveis não compõem essa base. Mantém-se a estimativa de 10% já utilizada pelo projeto, com a seleção independente de entrada/saída por regime e as condições de aplicação no Simples. As regras de antecipação sobre compras permanecem independentes. Quando os dados confirmam ausência de vendas elegíveis, a tela mostra **R$ 0,00** e informa que não possui vendas elegíveis para CPF de outro estado; ausência de UF ou de evidência continua identificada como pendência.
+
+O cartão de Saídas mostra o recorte de **janeiro a setembro**, inclusive quando o arquivo original abrange outubro a dezembro ou conserva uma regra antiga de DIFAL. A conferência desse resumo é carregada separadamente do status do documento, com cache versionado no servidor: navegar e acompanhar a leitura não varre os arquivos fiscais. Os documentos e seus totais originais não são reescritos. O cálculo usa `DIFAL_ESTIMATE_V5`, enquanto versões V1–V4 continuam disponíveis para conferir os registros históricos. O motor passa a `1.16.0-cpf-sales-difal` e sua variante de competências disponíveis; o fluxo existente de atualização cria revisões vinculadas e conserva os snapshots anteriores.
+
+### Contábil: uma média mensal para os nove meses
+
+O formulário possui apenas os cinco campos numéricos de **média mensal**: salários e pró-labore, aluguéis, taxas de cartões, benefícios e despesas administrativas. A prévia mostra o mesmo valor em janeiro, fevereiro, março, abril, maio, junho, julho, agosto e setembro, além do total do período. **R$ 1.000,00 em salários = R$ 1.000,00 em cada mês = R$ 9.000,00 de janeiro a setembro.** Valores vazios permanecem pendentes; zero deve ser informado quando não houver despesa.
+
+A média é armazenada com o marcador `MONTHLY_AVERAGE_V1`, valores em centavos e as nove competências. Ela pertence à análise e acompanha o ano identificado pelo Fiscal, mesmo quando o Contábil foi salvo antes da importação. A leitura e o cálculo materializam os meses do ano da fonte sem sobrescrever o registro original, o trabalho do outro setor, suas revisões ou versões de DRE. Lançamentos antigos diferentes entre meses permanecem salvos; a interface apresenta a média e explica a conversão, que só é aplicada ao salvar explicitamente.
+
+O formulário conserva os valores digitados durante atualizações dos documentos e troca de setor. O estado de salvo exige resposta válida com revisão confirmada. Respostas antigas não substituem uma revisão mais recente, e cada rascunho conserva a revisão em que foi aberto para bloquear sobrescritas por outra aba ou pessoa. Uma mudança de regimes feita na própria tela atualiza a referência local do Fiscal somente quando a resposta confirma exatamente essa operação.
+
+### DRE completa como apresentação principal
+
+A aba DRE abre diretamente o demonstrativo completo: receitas, tributos, compras/custos, despesas por conta, encargos, IRPJ/CSLL, resultado e indicadores, com comparativos entre os regimes e conferências de receita e ICMS. O detalhamento não depende de abrir uma seção escondida. A navegação para contas, o consolidado de janeiro a setembro, a seleção de competência e o quadro mensal permanecem disponíveis, assim como PDF, CSV, JSON e impressão.
+
+A janela da análise é sempre **janeiro a setembro**. O Contábil projeta os nove meses; a DRE identifica a cobertura fiscal e soma as competências com documentação disponível, sem inventar receitas ou compras para lacunas. A RBT12 continua sendo a referência dos doze meses anteriores a cada competência, quando informada. Históricos já salvos conservam o calendário e os valores capturados.
+
+Não há migração destrutiva nem edição de dados reais na implantação. As regressões usam documentos, contas e MongoDB descartáveis e conferem as duas ordens de preenchimento, anos diferentes entre rascunho e Fiscal, campos pendentes, concorrência, reabertura, versões anteriores, DIFAL CPF/CNPJ/UF/Q4, DRE e exportações.
 
 ## RBT12 manual e extrato opcional — v0.52.0
 
