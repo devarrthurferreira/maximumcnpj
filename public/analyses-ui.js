@@ -859,7 +859,7 @@ async function handleAnalysisAction(action) {
       openWizard('fiscal',{step:'documents'});return;
     }
     if(action==='generate'){await generate();return;}
-    if(action==='result'&&uuid(S.analysis.currentSimulation?.id))location.href='/simulator.html?'+new URLSearchParams({simulation:S.analysis.currentSimulation.id});
+    if(action==='result'&&uuid(S.analysis.currentSimulation?.id))location.href='/simulator.html?'+new URLSearchParams({simulation:S.analysis.currentSimulation.id,current:'1'});
   } catch(error){showError(error);}
 }
 function renderDetail() {
@@ -1349,7 +1349,7 @@ async function generate() {
     adoptAnalysis(response.analysis);
     if(!uuid(response.simulation?._id)||S.analysis.currentSimulation?.id!==response.simulation._id)throw new Error('O resultado ainda não foi confirmado nesta tela. Atualize a análise para conferir a versão salva.');
     S.generateRequest=null;S.versionsData=null;
-    setBusy(false);location.href='/simulator.html?'+new URLSearchParams({simulation:response.simulation._id});
+    setBusy(false);location.href='/simulator.html?'+new URLSearchParams({simulation:response.simulation._id,current:'1'});
   } catch(error){showError(error);}
   finally{if(S.busy){setBusy(false);renderDetail();}}
 }

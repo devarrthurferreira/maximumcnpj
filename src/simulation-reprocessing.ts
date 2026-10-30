@@ -20,6 +20,8 @@ import {REPROCESS_VERSION} from '../public/simulation-reprocess-contract.js';
 import {requiresSimplesReference} from '../public/regime-selection.js';
 import {promoteReprocessedAnalysis} from './analysis-store.ts';
 import {JAN_SEP_POLICY,JAN_SEP_MODEL_VERSION,assertCompleteAnalysisPeriod} from '../public/analysis-period.js';
+import {DIFAL_VERSION} from './difal.ts';
+import {OPERATION_CATALOG_VERSION} from './operation-catalog.ts';
 
 
 export {REPROCESS_VERSION};
@@ -301,8 +303,26 @@ async function inventory(batch: Doc) {
     ...(records.length ? {cursor:records.at(-1)!._id} : {}),inventoryComplete:records.length<500,updatedAt:new Date()}});
 }
 
-async function reprocessItem(actor: LookupActor, item: Doc) {
-  const original = await getSimulation(item.originalId);
+function currentSourceVersions(snapshot: Doc) {
+  const source=snapshot.source, modelVersion=source?.analysisPeriod?.version===JAN_SEP_POLICY?JAN_SEP_MODEL_VERSION:MODEL_VERSION;
+  return snapshot.modelVersion===modelVersion && snapshot.result?.version===modelVersion &&
+    source?.operationVersion===OPERATION_CATALOG_VERSION && source.sales?.difal?.version===DIFAL_VERSION &&
+    snapshot.difalProjection?.sourceVersion===DIFAL_VERSION && Array.isArray(source.monthlyReports) &&
+    source.monthlyReports.length===snapshot.reportMonths && source.monthlyReports.every((row:any)=>
+      row.operationVersion===OPERATION_CATALOG_VERSION && row.difal?.version===DIFAL_VERSION);
+}
+
+async function currentAnalysisForRefresh(original: Doc, allowedIds: string[]) {
+  if(!original.analysisId)return null;
+  const analysis=await(await collection('analyses')).findOne(scope({_id:original.analysisId,deletionStartedAt:{$exists:false}}));
+  pending(analysis && analysis.clientId===original.clientId && analysis.revision===original.analysisRevision &&
+    analysis.currentSimulation?.analysisRevision===analysis.revision && allowedIds.includes(analysis.currentSimulation.id),
+    'ANALYSIS_RESULT_CHANGED','Os dados desta análise mudaram. Abra a análise e gere o resultado com os setores atuais.');
+  return analysis;
+}
+
+async function reprocessItem(actor: LookupActor, originalId: string, loadedOriginal?: Doc) {
+  const original = loadedOriginal || await getSimulation(originalId);
   const targetId = reprocessedSimulationId(scope().workspaceId, original._id,original.source?.analysisPeriod?.version);
   // A completed child is recognized across operators and without re-reading mutable sources.
   const existing = await (await collection('simulations')).findOne(scope({_id:targetId,deletedAt:{$exists:false}}));
@@ -310,7 +330,8 @@ async function reprocessItem(actor: LookupActor, item: Doc) {
     const child = await getSimulation(targetId);
     pending(child.parentSimulationId === original._id && child.clientId === original.clientId && child.generationId === original.generationId,
       'REPROCESS_SOURCE', 'A versão corrigida não corresponde ao histórico original.');
-    pending(planReprocessing(child,child.source,scope().workspaceId).alreadyCurrent,'REPROCESS_CHILD_INVALID','A versão corrigida existente não passou na conferência dos cálculos armazenados.');
+    pending(currentSourceVersions(child) && planReprocessing(child,child.source,scope().workspaceId).alreadyCurrent,
+      'REPROCESS_CHILD_INVALID','A versão corrigida existente não passou na conferência dos cálculos armazenados.');
     await promoteReprocessedAnalysis(actor,original._id,child);
     return {childId:targetId,status:'OK',code:'UPDATED',message:'Versão corrigida já criada e preservada.'};
   }
@@ -326,12 +347,39 @@ async function reprocessItem(actor: LookupActor, item: Doc) {
     const cnpj = String(client?.cnpj || '').replace(/[^A-Z0-9]/gi,'').toUpperCase();
     pending(!cnpj || cnpj.slice(0,8) === plan.context.rbt12Extraction.cnpjBasico, 'RBT12_COMPANY', 'O extrato congelado não corresponde ao CNPJ da empresa.');
   }
-  if (plan.alreadyCurrent) return {childId:null,status:'OK',code:'ALREADY_CURRENT',message:'Simulação conferida: cálculos e fontes já correspondem às regras atuais.'};
+  if (plan.alreadyCurrent && currentSourceVersions(original)) return {childId:null,status:'OK',code:'ALREADY_CURRENT',message:'Simulação conferida: cálculos e fontes já correspondem às regras atuais.'};
   const child = await createReprocessedSimulation(actor, plan.input, plan.context);
   await promoteReprocessedAnalysis(actor,original._id,child);
   const migration = plan.context.serviceRevenueMigration;
   return {childId:child._id,status:'OK',code:'UPDATED',message:'Nova versão com a premissa de CBS de 11,3% e DIFAL de entrada e saída somente no Simples puro e híbrido, conforme as escolhas. Original preservado.' +
     (migration && migration.priorMonthlyServiceCents > 0 ? ' ' + migration.warning : '')};
+}
+
+/** Explicitly refresh one active result. GET and the original frozen archive remain unchanged. */
+export async function refreshSimulation(actor: LookupActor, simulationId: string, input: unknown) {
+  write(actor);
+  need(input == null || (typeof input==='object' && !Array.isArray(input) && Object.keys(input).length===0),
+    'A atualização usa somente o histórico armazenado; não envie valores ou identificadores.');
+  const original=await getSimulation(simulationId);
+  const targetId=reprocessedSimulationId(scope().workspaceId,original._id,original.source?.analysisPeriod?.version);
+  const analysis=await currentAnalysisForRefresh(original,[original._id,targetId]);
+  // A matching engine label alone is insufficient: an older DIFAL source can
+  // retain a positive amount. Verify the frozen calculation locally on the fast
+  // path, without loading the financial rows or consulting an external provider.
+  if((!analysis || analysis.currentSimulation.id===original._id) && currentSourceVersions(original) &&
+      planReprocessing(original,original.source,scope().workspaceId).alreadyCurrent){
+    await currentAnalysisForRefresh(original,[original._id]);
+    return {simulation:original,updated:false,originalId:original._id};
+  }
+  const outcome=await reprocessItem(actor,original._id,original);
+  const simulation=outcome.childId?await getSimulation(outcome.childId):original;
+  pending(simulation.clientId===original.clientId && simulation.generationId===original.generationId &&
+    (!outcome.childId || (simulation.parentSimulationId===original._id &&
+      simulation.reprocessing?.originalId===original._id && simulation.reprocessing.version===REPROCESS_VERSION)),
+    'REPROCESS_SOURCE','A versão corrigida não corresponde ao histórico original.');
+  await currentAnalysisForRefresh(original,[simulation._id]);
+  await audit(actor._id,'simulation.refresh',original._id);
+  return {simulation,updated:simulation._id!==original._id,originalId:original._id};
 }
 
 export async function reprocessSimulations(actor: LookupActor, input: unknown) {
@@ -362,7 +410,7 @@ export async function reprocessSimulations(actor: LookupActor, input: unknown) {
       const item = await items.findOneAndUpdate(scope({batchId:key(),status:'QUEUED'}),{$set:{status:'PROCESSING',processingOwner:owner,updatedAt:new Date()},$inc:{attempts:1}},{sort:{originalId:1},returnDocument:'after'});
       if(!item)break;
       let outcome;
-      try { outcome = await reprocessItem(actor,item); }
+      try { outcome = await reprocessItem(actor,item.originalId); }
       catch(error:any) {
         const expected = typeof error?.status === 'number' && error.status < 500;
         outcome = {childId:null,status:expected?'PENDING':'FAILED',code:expected?error.code || 'REPROCESS_PENDING':'REPROCESS_FAILED',

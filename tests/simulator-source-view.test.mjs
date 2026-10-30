@@ -190,6 +190,75 @@ test('mixed scenario directions show individual amounts without summing alternat
   assert.match(html,/sim-difal-selection-label">Simples híbrido/);
 });
 
+const noSalesEstimate=()=>({version:'DIFAL_ESTIMATE_V5',ratePercent:10,issuerUf:'MG',amountCents:0,baseCents:0,eligibleLines:0,pendingLines:0});
+const noSalesMessage='Não possui vendas interestaduais para CPF elegíveis. DIFAL de saída: R$ 0,00.';
+
+test('saída V5 sem elegíveis confirma zero no período e mantém a antecipação de compras independente',()=>{
+  const reports=difalReports();for(const report of reports)report.difal=noSalesEstimate();
+  const before=structuredClone(reports),policy=defaultDifalPolicy();
+  const exit=sourceView('exit',policy,reports),entry=sourceView('entry',policy,reports);
+  assert.deepEqual(exit.values.map(item=>[item.current,item.total]),[[0,0],[0,0]]);
+  assert.deepEqual(entry.values.map(item=>[item.current,item.total]),[[36.6,109.8],[36.6,109.8]]);
+  const html=renderDifalAppliedSource({view:exit});
+  assert(html.includes(noSalesMessage));assert.match(html,/data-difal-empty-scope="period"/);
+  assert.match(html,/<strong>Período importado:<\/strong>/);
+  assert.doesNotMatch(renderDifalAppliedSource({view:entry}),/data-difal-empty|Não possui vendas/);
+  assert.deepEqual(reports,before);
+});
+
+test('mês sem saída elegível não oculta DIFAL positivo das outras competências',()=>{
+  const reports=difalReports();reports[0].difal=noSalesEstimate();
+  reports[1].difal={...noSalesEstimate(),eligibleLines:1,baseCents:200000,amountCents:20000};
+  const january=sourceView('exit',defaultDifalPolicy(),reports),february=sourceView('exit',defaultDifalPolicy(),reports,{row:reports[1]});
+  assert.deepEqual(january.values.map(item=>[item.current,item.total]),[[0,200],[0,200]]);
+  const html=renderDifalAppliedSource({view:january});
+  assert(html.includes(noSalesMessage));assert.match(html,/data-difal-empty-scope="month"/);
+  assert.match(html,/<strong>Mês 01\/2025:<\/strong>/);assert.match(html,/R\$\s200,00/);
+  assert.doesNotMatch(renderDifalAppliedSource({view:february}),/data-difal-empty|Não possui vendas/);
+});
+
+test('zero por exclusão, regra antiga, UF desconhecida ou linha pendente não comprova ausência de vendas elegíveis',()=>{
+  const unconfirmed=[
+    undefined,{version:'DIFAL_ESTIMATE_V4'}, {version:undefined}, {issuerUf:''}, {issuerUf:'XX'},
+    {pendingLines:1}, {eligibleLines:1}, {eligibleLines:0,amountCents:1000}, {amountCents:null},
+  ];
+  for(const patch of unconfirmed){
+    const reports=difalReports();for(const report of reports)report.difal=patch?{...noSalesEstimate(),...patch}:undefined;
+    // A user's exclusion can yield zero independently of the source evidence.
+    for(const policy of [defaultDifalPolicy(),entryOnlyPolicy()]){
+      const html=renderDifalAppliedSource({view:sourceView('exit',policy,reports)});
+      assert.doesNotMatch(html,/data-difal-empty|Não possui vendas/,JSON.stringify(patch));
+    }
+  }
+  const projection=buildDifalApplicationView({direction:'exit',policy:defaultDifalPolicy(),rbt12:100000,currentCents:0,totalCents:0,sourceEstimate:noSalesEstimate()});
+  assert.match(renderDifalAppliedSource({view:projection}),/data-difal-empty-scope="period"/);
+});
+
+test('versão salva só confirma ausência com sua própria fonte V5 e células zeradas, sem reescrever histórico',()=>{
+  const reports=difalReports();for(const report of reports)report.difal=noSalesEstimate();
+  const policy=defaultDifalPolicy(),regimes=['pure','hybrid'].map(id=>({id,name:id,available:true,dre:{difal:0},difalApplication:{enabled:true,operations:policy.operations[id]}}));
+  const snapshot={source:{monthlyReports:reports},draft:{difalPolicy:policy},result:{method:'REPORT_MONTHS_V1',regimes,
+    monthlyResults:reports.map(report=>({month:report.month,sourceMonth:report.sourceMonth,result:{regimes:structuredClone(regimes)}}))}};
+  const before=structuredClone(snapshot);
+  const saved=sourceView('exit',policy,difalReports(),{snapshot});
+  assert.match(renderDifalAppliedSource({view:saved}),/data-difal-empty-scope="period"/);
+  assert.deepEqual(snapshot,before);
+
+  for(const change of ['oldRule','positiveDre','missingSource']){
+    const stale=structuredClone(snapshot);
+    if(change==='oldRule')for(const report of stale.source.monthlyReports)report.difal.version='DIFAL_ESTIMATE_V4';
+    if(change==='positiveDre'){
+      for(const regime of stale.result.regimes)regime.dre.difal=-200;
+      for(const item of stale.result.monthlyResults)for(const regime of item.result.regimes)regime.dre.difal=-100;
+    }
+    if(change==='missingSource')delete stale.source;
+    const captured=structuredClone(stale),view=sourceView('exit',policy,reports,{snapshot:stale});
+    assert.doesNotMatch(renderDifalAppliedSource({view}),/data-difal-empty|Não possui vendas/,change);
+    if(change==='positiveDre')assert.deepEqual(view.values.map(item=>[item.current,item.total]),[[100,200],[100,200]]);
+    assert.deepEqual(stale,captured);
+  }
+});
+
 test('source display honors each month sublimit and leaves unimported months unavailable',()=>{
   const reports=difalReports(),policy=defaultDifalPolicy();
   const view=sourceView('exit',policy,reports,{row:reports[1],rbt12ByMonth:{'2025-01':100000,'2025-02':3600000}});

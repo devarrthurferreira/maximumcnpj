@@ -6,7 +6,7 @@ const number = value => Number(value).toLocaleString('pt-BR');
 const date = value => Number.isFinite(Date.parse(value || '')) ? new Date(value).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}) : '';
 const labels = {QUEUED:'Aguardando', PROCESSING:'Processando', OK:'OK', PENDING:'Pendente', FAILED:'Falhou'};
 const simulationLink = (id, label) => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id || '')
-  ? `<a href="/simulator.html?simulation=${encodeURIComponent(id)}">${label}</a>` : '';
+  ? `<a href="/simulator.html?simulation=${encodeURIComponent(id)}&${label==='Abrir original'?'historical':'current'}=1">${label}</a>` : '';
 
 function validate(data) {
   const validCount = value => Number.isSafeInteger(value) && value >= 0;

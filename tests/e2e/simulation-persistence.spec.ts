@@ -38,7 +38,7 @@ async function generate(page: Page) {
   expect(response.ok(), await response.text()).toBe(true);
   const snapshot = await response.json();
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
-  await expect(page.locator('#saved-simulation-link')).toHaveAttribute('href', `/simulator.html?simulation=${snapshot._id}`);
+  await expect(page.locator('#saved-simulation-link')).toHaveAttribute('href', `/simulator.html?simulation=${snapshot._id}&historical=1`);
   await expect(page.locator('[data-dre-regime-result]')).toHaveCount(4);
   return snapshot;
 }
@@ -171,11 +171,11 @@ test('Real saved simulation survives a fresh login and a new version preserves e
     await reopened.goto('/simulations.html');
     await reopened.locator('#simulation-search').fill(code);
     await reopened.locator('#history-filters').getByRole('button', { name: 'Buscar', exact: true }).click();
-    const permalink = `/simulator.html?simulation=${first._id}`;
+    const permalink = `/simulator.html?simulation=${first._id}&historical=1`;
     const historyLink = reopened.locator(`#history-results a[href="${permalink}"]`);
     await expect(historyLink).toBeVisible();
     await historyLink.click();
-    await expect(reopened).toHaveURL(new RegExp(`simulation=${first._id}$`));
+    await expect(reopened).toHaveURL(new RegExp(`simulation=${first._id}&historical=1$`));
     await expect(reopened.locator('#simulation-snapshot')).toBeVisible();
     await expect(reopened.locator('#simulator-form')).toHaveCount(0);
     await expect(reopened.locator('#simulation-snapshot .sim-captured-details')).toContainText('RBT12 de referência do PA 09/2026: R$ 150.000,00');

@@ -1,4 +1,4 @@
-import {monthlyProjection, monthlyDifal, baselineMonth, calculateMonthlySimulation} from './simulator-monthly.js';
+import {monthlyProjection, monthlyDifal, baselineMonth, calculateMonthlySimulation, MONTHLY_MODEL_VERSION} from './simulator-monthly.js';
 import {buildRbt12Schedule, reconcileSection22Extraction} from './simulator-rbt12.js';
 import {renderOperationAudit,renderRbt12Schedule,renderAnticipationSource,buildDifalApplicationView,difalApplicationSummary,renderDifalAppliedSource} from './simulator-source-view.js';
 import {buildMonthlyDre} from './simulator-calendar.js';
@@ -13,9 +13,10 @@ import {buildDrePdfRequest,fetchDrePdf} from './simulator-dre-download.js';
 import {mountNavigation} from './navigation.js';
 import {renderSimulationCharts} from './simulation-charts.js';
 import {createEmptyDraft, calculateSimulation, defaultDifalPolicy, parseDifalPolicy, upgradeDifalPolicy, resolveDifalApplication, CALCULATOR_SOURCE_COMMIT, TAX_SOURCES} from './simulator-engine.js';
-import {JAN_SEP_POLICY,assertCompleteAnalysisPeriod} from './analysis-period.js';
+import {JAN_SEP_POLICY,JAN_SEP_MODEL_VERSION,assertCompleteAnalysisPeriod} from './analysis-period.js';
 import {selectAvailableRbt12Months} from './simulator-period-selection.js';
 import {renderFinancialAlerts} from './financial-alerts-view.js';
+import {DIFAL_VERSION,normalizeUf} from './difal.js';
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const moneyFormatter = new Intl.NumberFormat('pt-BR', {style:'currency',currency:'BRL'});
@@ -179,6 +180,7 @@ async function api(path, options={}) {
     if(processingPdf)throw new Error('A leitura do PDF demorou a responder. Nenhuma RBT12 foi confirmada nesta tela. Verifique a leitura armazenada antes de reprocessar.');
     if(path.startsWith('/api/v4/simples-documents'))throw new Error(path.endsWith('/status')?'Não foi possível verificar a leitura armazenada a tempo. Tente verificar novamente.':path.endsWith('/process-urls')?'A preparação da leitura demorou a responder. O PDF original permanece armazenado; tente novamente.':'A preparação do envio do PDF demorou a responder. Tente enviar novamente.');
     if(path.startsWith('/api/simples'))throw new Error('Não foi possível recuperar a leitura do extrato a tempo. Tente novamente.');
+    if(path.endsWith('/refresh'))throw new Error('A conferência da DRE demorou a responder. Tente novamente para retomar a mesma atualização.');
     throw new Error('O servidor demorou a responder. Tente salvar novamente para confirmar o mesmo registro.');
   } throw error; }
   finally { clearTimeout(timer); }
@@ -300,7 +302,7 @@ function renderDifalSource(host) {
     const open=host.querySelector('[data-difal-disclosure],[data-difal-source-disclosure]')?.open||false;
     if(!projected){host.innerHTML='<section class="sim-difal-card is-pending"><h3>DIFAL indisponível</h3><p>Reimporte as vendas com a UF do emitente e do destinatário para conferir a estimativa.</p></section>';return;}
     const adjusted=S.readonly?S.edited:monthHasAdjustments(S.entry);
-    const noSales=!projected.pendingLines&&projected.sourceBaseCents===0;
+    const noSales=projected.sourceVersion===DIFAL_VERSION&&!!normalizeUf(projected.issuerUf)&&projected.pendingLines===0&&projected.eligibleLines===0&&projected.sourceBaseCents===0&&projected.sourceAmountCents===0;
     host.innerHTML=`<section class="sim-difal-card${projected.pendingLines?' is-pending':''}" aria-labelledby="sim-difal-title">
       <header class="sim-difal-header"><div><span class="eyebrow">RELATÓRIO DE VENDAS / SAÍDAS</span><h3 id="sim-difal-title">DIFAL por competência</h3></div><span class="sim-state-badge${projected.pendingLines?' is-adjusted':''}">${projected.pendingLines?'UFs pendentes':noSales?'Não possui DIFAL de vendas':'Estimativa gerencial · 10%'}</span></header>
       <div class="sim-difal-metrics"><article class="sim-difal-current"><span>${row?esc(competenceLabel(row.sourceMonth)):'Mês sem dados importados'}</span><strong data-difal-monthly>${!current?'—':current.pendingLines&&!current.eligibleLines?'Pendente':money(current.amountCents/100)}</strong><small>${current?.pendingLines?'Valor parcial · confira as UFs':'DIFAL do mês'}</small></article><article><span>Base elegível do mês</span><strong>${current?money(current.baseCents/100):'—'}</strong><small>${current?`${current.eligibleLines} ${current.eligibleLines===1?'linha elegível':'linhas elegíveis'} · emitente ${esc(current.issuerUf||'sem UF')}`:'Fora do período dos relatórios'}</small></article><article><span>Total do período importado</span><strong data-difal-annual data-difal-amount>${money(projected.annualCents/100)}</strong><small>Soma de ${reports.length} ${reports.length===1?'competência':'competências'}</small></article></div>
@@ -323,7 +325,7 @@ function renderDifalSource(host) {
   const projected=difalProjection();
   const pending=Number(difal.pendingLines||0)>0;
   const noCalculatedLines=pending&&!difal.eligibleLines;
-  const noSales=!pending&&difal.baseCents===0;
+  const noSales=difal.version===DIFAL_VERSION&&!!normalizeUf(difal.issuerUf)&&difal.pendingLines===0&&difal.eligibleLines===0&&difal.baseCents===0&&difal.amountCents===0;
   host.innerHTML=`<section class="sim-note" aria-labelledby="sim-difal-title"><h3 id="sim-difal-title">DIFAL estimado · relatório e DRE</h3>
     <div class="sim-detail-grid"><article><span>Total importado · ${esc(difal.ratePercent)}%</span><strong data-difal-amount>${noCalculatedLines?'Pendente':money(difal.amountCents/100)}</strong></article><article><span>Base das vendas elegíveis</span><strong>${money(difal.baseCents/100)}</strong></article><article><span>Vendas elegíveis no arquivo</span><strong>${esc(difal.eligibleLines)}</strong><small>UF do emitente: ${esc(difal.issuerUf||'não informada')}</small></article>${projected?`<article><span>DIFAL mensal na DRE</span><strong data-difal-monthly>${noCalculatedLines?'Pendente':money(projected.monthlyCents/100)}</strong><small>Total importado ÷ ${S.months} ${S.months===1?'mês':'meses'}</small></article><article><span>DIFAL anual na DRE</span><strong data-difal-annual>${noCalculatedLines?'Pendente':money(projected.annualCents/100)}</strong><small>Média mensal × 12</small></article>`:''}</div>
     <p>Alíquota média estimada de ${esc(difal.ratePercent)}%, que não corresponde necessariamente à alíquota legal de cada operação. ${projected?'A inclusão na DRE e nos tributos segue a escolha de cada regime e o sublimite do Simples. O total importado é dividido pelo período confirmado e projetado em 12 meses. Serviços, inclusive natureza 9000, não integram a base elegível.':'Esta versão histórica preserva o DIFAL como referência separada; seus tributos e resultados não foram recalculados.'}</p>
@@ -882,7 +884,7 @@ function renderSaveStatus() {
   const host=$('#simulation-save-status');if(!host)return;
   host.hidden=S.readonly;
   if(S.readonly){host.replaceChildren();return;}
-  if(S.snapshot)host.innerHTML=`<span class="sim-save-dot" aria-hidden="true"></span><span>Simulação salva no histórico · ${date(S.snapshot.createdAt)}</span><a id="saved-simulation-link" href="/simulator.html?simulation=${encodeURIComponent(S.snapshot._id)}">Abrir versão salva →</a>`;
+  if(S.snapshot)host.innerHTML=`<span class="sim-save-dot" aria-hidden="true"></span><span>Simulação salva no histórico · ${date(S.snapshot.createdAt)}</span><a id="saved-simulation-link" href="/simulator.html?simulation=${encodeURIComponent(S.snapshot._id)}&historical=1">Abrir versão salva →</a>`;
   else if(S.saving)host.innerHTML='<span class="sim-save-dot pending" aria-hidden="true"></span><span>Salvando simulação no histórico…</span>';
   else if(!canSave())host.innerHTML='<span>Prévia local. Seu perfil permite consultar o histórico; salvar versões exige acesso de operador.</span>';
   else if(S.pending) {host.innerHTML=`<span>O salvamento não foi confirmado. ${esc(S.saveError||'Tente novamente.')}</span><button type="button" id="retry-save">Tentar salvar novamente</button>`;$('#retry-save').onclick=()=>void persist();}
@@ -999,7 +1001,7 @@ function capturedFields(snapshot) {
   const settings=simples?`<span>${d.year} · Vendas: Anexo ${d.salesAnnex===1?'I':'II'}</span><span>Serviços: Anexo ${{3:'III',4:'IV',5:'V'}[d.serviceAnnex]}</span><span>ICMS/ISS no Simples: ${d.icmsOutside===true?'fora do DAS':'dentro do DAS'}</span>`:`<span>Cenário ${d.year}</span>`;
   const referenceLabel=simples?`RBT12: ${snapshot.rbt12Source==='SIMPLES_SECTION_22'?'Extrato · seção 2.2':snapshot.rbt12Source==='SIMPLES_PDF'?'Extrato · leitura anterior':snapshot.rbt12Source==='MANUAL'?'informada manualmente':snapshot.rbt12Source==='NOT_PROVIDED'?'não informada · opcional':'estimativa histórica'}`:'Extrato do Simples: não exigido';
   return `<section class="card sim-snapshot" id="simulation-snapshot"><details class="sim-captured-details"><summary>Dados usados no cálculo <span>Valores mensais${simples?' · exceto RBT12':''}</span></summary><h2>${esc(snapshot.title||'Simulação de '+S.source.company.name)}</h2>${!managed?`<p><a class="sim-back" data-analysis-return href="${esc(analysisUrl)}">Retomar empresa com Fiscal e Contábil →</a></p>`:''}
-    ${snapshot.parentSimulationId&&!snapshot.parentSimulationDeleted?`<a class="sim-back" href="/simulator.html?simulation=${encodeURIComponent(snapshot.parentSimulationId)}">Abrir versão de origem →</a>`:snapshot.parentSimulationDeleted?'<p class="sim-help">A versão de origem foi excluída do histórico.</p>':''}
+    ${snapshot.parentSimulationId&&!snapshot.parentSimulationDeleted?`<a class="sim-back" href="/simulator.html?simulation=${encodeURIComponent(snapshot.parentSimulationId)}&historical=1">Abrir versão de origem →</a>`:snapshot.parentSimulationDeleted?'<p class="sim-help">A versão de origem foi excluída do histórico.</p>':''}
     <div class="sim-snapshot-meta">${selection}${settings}<span>${snapshot.reportMonths} ${snapshot.reportMonths===1?'mês':'meses'} nos arquivos · ${snapshot.periodBasis==='COLUMN_H'?'coluna H':'período confirmado'}</span><span>${referenceLabel}</span><span>${snapshot.manuallyAdjusted?'Valores importados ajustados':'Valores dos relatórios preservados'}</span></div>${monthlyTable||`<div class="sim-detail-grid">${fields.map(([label,val])=>`<article><span>${label}</span><strong>${money(val)}</strong></article>`).join('')}</div>`}${snapshot.adjustments?.length?`<details class="sim-adjustments"><summary>${snapshot.adjustments.length} ajustes em relação aos relatórios</summary><div class="sim-memory-items">${snapshot.adjustments.map(a=>`<article><div><strong>${a.sourceMonth?esc(a.sourceMonth)+' · ':''}${esc(fieldLabel(a.field))}</strong><p>Valor mensal dos relatórios: ${money(a.reportMonthlyValue)}</p></div><span>Simulado: ${money(a.simulatedMonthlyValue)}</span></article>`).join('')}</div></details>`:''}<p class="sim-help sim-record-id">Registro ${esc(snapshot._id)} · Modelo ${esc(snapshot.modelVersion)} · Base de cálculo ${esc(snapshot.calculatorSourceCommit)}</p></details></section>`;
 }
 function fieldLabel(key) { return {serviceRevenue:'Vendas de serviços',serviceRevenueCents:'Vendas de serviços',salesOptantCents:'Vendas Optantes SN',salesNonOptantCents:'Vendas Não Optantes SN',salesCpfCents:'Vendas de CPFs',purchasesOptantCents:'Compras do Simples',purchasesNonOptantCents:'Compras fora do Simples'}[key]||key; }
@@ -1010,6 +1012,59 @@ function showSnapshot(snapshot) {
   $('#simulator-app').innerHTML=`<div id="simulator-intro">${hero(true)}</div><div id="simulation-result"></div>${capturedFields(snapshot)}<h2 class="sim-evidence-title">Conferência dos relatórios de origem</h2>${difalOptions(snapshot)}<div id="simulator-projection"></div><div id="simulator-revenue-reconciliation"></div><div id="simulator-difal"></div><div id="simulator-anticipation"></div>${renderSection22(snapshot.rbt12Extraction)}<div id="rbt12-schedule">${renderRbt12Schedule(snapshot.rbt12Schedule||snapshot.result?.rbt12Schedule)}</div>${sourceCard()}<div id="simulation-notices"></div>`;
   updateProjection();updateDifalSource();updateAnticipationSource();updateDifalOptions();renderNotices();renderResult();
   const button=$('#create-version');if(button)button.onclick=()=>void openSnapshotVersion(snapshot);
+}
+function currentSnapshotModel(snapshot) {
+  const expected=snapshot.source?.analysisPeriod?.version===JAN_SEP_POLICY?JAN_SEP_MODEL_VERSION:MONTHLY_MODEL_VERSION;
+  return snapshot.modelVersion===expected&&snapshot.result?.version===expected;
+}
+function snapshotUrl(id,historical=false) {
+  return '/simulator.html?'+new URLSearchParams({simulation:id,[historical?'historical':'current']:'1'});
+}
+function snapshotNotice(snapshot,{historical=false,updated=false,originalId=null}={}) {
+  if(!historical&&!updated&&currentSnapshotModel(snapshot))return;
+  const notice=document.createElement('section');notice.className='card sim-version-notice';notice.dataset.simulationRevision=updated?'updated':'historical';
+  notice.innerHTML=updated?`<p role="status"><strong>DRE atualizada com os relatórios conferidos.</strong> O DIFAL de saída, os impostos e o resultado correspondem à regra atual. A versão anterior continua no histórico.</p><a class="sim-back" href="${esc(snapshotUrl(originalId,true))}">Consultar versão anterior →</a>`:
+    `<p><strong>${historical?'Versão histórica.':'Esta DRE foi salva com uma regra anterior.'}</strong> Os valores abaixo correspondem à data em que esta versão foi gerada.</p><a class="sim-back" data-current-simulation href="${esc(snapshotUrl(snapshot._id))}">Conferir DRE com a regra atual →</a>`;
+  $('#simulator-intro').after(notice);
+}
+function refreshFailure(snapshot,error) {
+  const historical=snapshotUrl(snapshot._id,true);
+  $('#simulator-app').innerHTML=`<section class="card sim-empty" data-simulation-refresh="failed"><h2>A DRE atual ainda precisa de conferência</h2><p role="alert">${esc(error.message||String(error))}</p><p>A versão salva permanece disponível no histórico. O resultado atualizado será exibido depois da conferência dos relatórios.</p><div class="sim-links">${canSave()?'<button type="button" id="retry-current-simulation">Tentar atualizar DRE</button>':''}${documentUuid(snapshot.analysisId)?`<a class="sim-back" href="/analyses.html?${new URLSearchParams({id:snapshot.analysisId})}">Abrir análise da empresa →</a>`:''}<a class="sim-back" href="${esc(historical)}">Consultar versão histórica →</a></div></section>`;
+  $('#retry-current-simulation')?.addEventListener('click',()=>void openSavedSnapshot(snapshot,{current:true}));
+}
+async function openSavedSnapshot(snapshot,{current=false,historical=false}={}) {
+  // Explicit history keeps its captured values. Opening the company's current DRE
+  // verifies/revises only this saved calculation, not the workspace-wide batch.
+  const verify=!historical&&(current||documentUuid(snapshot.analysisId));
+  if(!verify){showSnapshot(snapshot);snapshotNotice(snapshot,{historical});return;}
+  if(!canSave()){
+    try{
+      if(documentUuid(snapshot.analysisId)){
+        const {analysis}=await api('/api/v4/analyses/'+snapshot.analysisId+'?summary=1');
+        const latest=analysis?.currentSimulation;
+        if(analysis?.id!==snapshot.analysisId||analysis.clientId!==snapshot.clientId||!documentUuid(latest?.id)||latest.stale||latest.analysisRevision!==analysis.revision)
+          throw new Error('A DRE atual precisa ser gerada com os dados salvos dos setores. Abra a análise da empresa para conferir.');
+        const next=latest.id===snapshot._id?snapshot:await api('/api/v4/simulations/'+latest.id);
+        if(next.analysisId!==snapshot.analysisId||next.clientId!==snapshot.clientId||next.analysisRevision!==analysis.revision||!currentSnapshotModel(next))
+          throw new Error('Um administrador ou operador precisa atualizar esta DRE para aplicar a regra atual do DIFAL.');
+        history.replaceState(null,'',snapshotUrl(next._id));showSnapshot(next);return;
+      }
+      showSnapshot(snapshot);snapshotNotice(snapshot,{historical:true});return;
+    }catch(error){refreshFailure(snapshot,error);return;}
+  }
+  $('#simulator-app').innerHTML='<section class="card sim-empty" data-simulation-refresh="loading" aria-busy="true"><h2>Conferindo a DRE atual</h2><p role="status">Verificando o DIFAL de saída e os totais com os relatórios salvos…</p></section>';
+  try{
+    const response=await api('/api/v4/simulations/'+snapshot._id+'/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const next=response.simulation;
+    if(response.originalId!==snapshot._id||typeof response.updated!=='boolean'||!documentUuid(next?._id)||
+      next.clientId!==snapshot.clientId||next.generationId!==snapshot.generationId||
+      next.source?.sales?.jobId!==snapshot.source?.sales?.jobId||next.source?.purchases?.jobId!==snapshot.source?.purchases?.jobId||
+      !currentSnapshotModel(next)||(response.updated?next._id===snapshot._id||next.parentSimulationId!==snapshot._id:next._id!==snapshot._id)){
+      throw new Error('O servidor não confirmou uma versão atualizada desta empresa. Tente novamente.');
+    }
+    history.replaceState(null,'',snapshotUrl(next._id));
+    showSnapshot(next);snapshotNotice(next,{updated:response.updated,originalId:snapshot._id});
+  }catch(error){refreshFailure(snapshot,error);}
 }
 async function openSnapshotVersion(snapshot) {
   const button=$('#create-version');if(button)button.disabled=true;
@@ -1042,7 +1097,7 @@ async function boot() {
     S.user=(await api('/api/auth/session')).user;mountNavigation(S.user,'simulations');
     if(!S.user||S.user.mustChangePassword){$('#simulator-app').innerHTML=`<section class="card sim-empty"><h2>${S.user?.mustChangePassword?'Redefina sua senha para continuar':'Entre para continuar'}</h2><p>Use sua conta Maximum para acessar os relatórios e o simulador.</p><a class="sim-back" href="/">Acessar painel →</a></section>`;return;}
     const params=new URLSearchParams(location.search),simulation=params.get('simulation'),generation=params.get('generation'),client=params.get('client'),uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-    if(simulation) {if(!uuid.test(simulation))throw new Error('Identificação da simulação inválida.');showSnapshot(await api('/api/v4/simulations/'+simulation));return;}
+    if(simulation) {if(!uuid.test(simulation))throw new Error('Identificação da simulação inválida.');await openSavedSnapshot(await api('/api/v4/simulations/'+simulation),{current:params.get('current')==='1',historical:params.get('historical')==='1'});return;}
     const analysis=params.get('analysis');
     if(analysis){if(!uuid.test(analysis))throw new Error('Identificação da análise inválida.');location.replace('/analyses.html?'+new URLSearchParams({id:analysis,sector:'fiscal'}));return;}
     if(!generation||!client){$('#simulator-app').innerHTML='<section class="card sim-empty"><h1>Seu próximo cenário começa aqui.</h1><p>Selecione a empresa e importe compras e vendas para começar ou reabra uma simulação salva.</p><div class="sim-links"><a class="sim-back" href="/analyses.html?view=new">Nova análise →</a><a class="sim-back" href="/simulations.html">Ver simulações salvas →</a></div></section>';return;}

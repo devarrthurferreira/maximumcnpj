@@ -48,7 +48,7 @@ for (const role of ['admin','operator']) test(`Histórico ${role} retoma lote au
   await expect(page.getByLabel('Ano do cenário')).toHaveValue('2027');
   expect(historyReads()).toBe(2);
   await panel.getByText('Conferir pendências e versões',{exact:true}).click();
-  await expect(panel.getByRole('link',{name:'Abrir versão atualizada'})).toHaveAttribute('href',`/simulator.html?simulation=${childId}`);
+  await expect(panel.getByRole('link',{name:'Abrir versão atualizada'})).toHaveAttribute('href',`/simulator.html?simulation=${childId}&current=1`);
   await expect(panel.getByText('Relatório de vendas indisponível. Confira o original.',{exact:true})).toBeVisible();
   await expect(panel).not.toContainText('As simulações verificadas estão atualizadas.');
 });
@@ -115,8 +115,8 @@ test('Pendência antiga de serviços em lote encerrado é atualizada automaticam
   await expect(page.locator(`[data-simulation-id="${migratedChildId}"]`)).toHaveCount(1);
   await expect(page.locator(`[data-simulation-id="${childId}"]`)).toHaveCount(1);
   await panel.getByText('Conferir pendências e versões',{exact:true}).click();
-  await expect(panel.locator(`a[href="/simulator.html?simulation=${migratedChildId}"]`)).toBeVisible();
-  await expect(panel.locator(`a[href="/simulator.html?simulation=${childId}"]`)).toBeVisible();
+  await expect(panel.locator(`a[href="/simulator.html?simulation=${migratedChildId}&current=1"]`)).toBeVisible();
+  await expect(panel.locator(`a[href="/simulator.html?simulation=${childId}&current=1"]`)).toBeVisible();
   await page.clock.fastForward(10000);expect(posts).toBe(1);expect(created).toBe(1);
 
   await page.reload();

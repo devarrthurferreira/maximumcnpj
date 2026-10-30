@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.54.1] — 2026-10-30
+
+- Confere a DRE atual ao abri-la e cria uma revisão dos cálculos antigos com os relatórios de origem, corrigindo a divergência entre o resumo de saídas atualizado e a DRE salva.
+- Mantém o DIFAL de saída em zero quando a fonte confirma ausência de vendas interestaduais para CPF elegíveis; totais, resultado e exportações usam a versão recalculada, preservando o DIFAL de entrada.
+- Adiciona atualização autenticada por simulação, com retomada idempotente, validação da identidade, promoção protegida da versão corrente e atalho sem leitura das linhas para versões já conferidas.
+- Identifica a consulta histórica, inclusive nos atalhos de salvamento e atividade; preserva snapshots anteriores e apresenta falhas de atualização sem mostrar um resultado antigo como atual ou converter ausência de evidência em zero.
+- Atualiza motor, revisão automática e testes de regressão para cálculo mensal/consolidado, histórico, MongoDB, PDF e navegador.
+
 ## [0.54.0] — 2026-10-30
 
 - Adiciona `MONGODB_URI_2`/`MONGODB_DB_2` e `MONGODB_URI_3`/`MONGODB_DB_3` para até três clusters, mantendo compatibilidade sem conexões adicionais.

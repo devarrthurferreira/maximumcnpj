@@ -3,6 +3,8 @@ import {randomUUID} from 'node:crypto';
 import {MongoClient,type Db} from 'mongodb';
 import {hashPassword} from '../../src/security.ts';
 import {csvParse} from '../../src/domain.ts';
+import {calculateMonthlySimulation} from '../../public/simulator-monthly.js';
+import {buildMonthlyDre} from '../../public/simulator-calendar.js';
 
 type Account={id:string;email:string;password:string;role:'admin'|'operator'|'viewer'};
 type Workspace={db:Db;workspaceId:string;admin:Account;operator:Account;viewer:Account};
@@ -93,7 +95,7 @@ async function patchSector(request:APIRequestContext,baseURL:string,analysis:any
     expectedSectorRevision:analysis[sector].revision,expectedConfigRevision:analysis.config.revision,complete:true,data
   })).analysis;
 }
-async function prepareSources(request:APIRequestContext,baseURL:string,analysis:any,company:Company){
+async function prepareSources(request:APIRequestContext,baseURL:string,analysis:any,company:Company,salesUf='SP'){
   const prepared=await api(request,baseURL,'POST','/api/v4/analyses/'+analysis.id+'/fiscal/import',{
     expectedSectorRevision:analysis.fiscal.revision,expectedConfigRevision:analysis.config.revision
   });
@@ -104,7 +106,7 @@ async function prepareSources(request:APIRequestContext,baseURL:string,analysis:
     });
     const totals=[...(kind==='sales'?[100_000,200_000]:[50_000,70_000]),...Array(7).fill(0)];
     await api(request,baseURL,'POST','/api/v4/'+kind+'/'+attached.job._id+'/rows',{offset:0,rows:totals.map((totalCents,index)=>({
-      document:'12345678900',name:'Pessoa sintética',recipientUf:'SP',serviceDate:'2025-0'+(index+1)+'-15',
+      document:'12345678900',name:'Pessoa sintética',recipientUf:kind==='sales'?salesUf:'SP',serviceDate:'2025-0'+(index+1)+'-15',
       natureCode:kind==='sales'?'5102001':'1102001',description:'Operação sintética interestadual',quantity:'1',
       grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents
     }))});
@@ -118,6 +120,69 @@ async function prepareSources(request:APIRequestContext,baseURL:string,analysis:
   }))});
   expect(analysis.readiness.ready).toBe(true);return analysis;
 }
+
+test('Abrir DRE atual confere a fonte zerada, corrige os totais e mantém a versão histórica',async({page,baseURL,analysisWorkspace},info)=>{
+  test.setTimeout(120_000);page.setDefaultTimeout(15_000);
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await signIn(page.request,baseURL!,analysisWorkspace.admin);
+  const company=await createCompany(page.request,baseURL!,'Empresa sintética sem saída interestadual');
+  await signIn(page.request,baseURL!,analysisWorkspace.operator);
+  let analysis=(await api(page.request,baseURL!,'POST','/api/v4/analyses',{clientId:company.id,year:2027,regimeSelection:selection})).analysis;
+  analysis=await prepareSources(page.request,baseURL!,analysis,company,'MG');
+  const generated=await generateByApi(page.request,baseURL!,analysis),legacy=structuredClone(generated.simulation);
+  // Reproduce a captured, obsolete DRE charging exit DIFAL while its stored
+  // underlying sales prove CPF recipients in the same UF. Only synthetic data.
+  const reports=legacy.source.monthlyReports;
+  for(const [index,row] of reports.entries()){
+    const baseCents=index===0?100_000:index===1?200_000:0;
+    row.difal={...row.difal,version:'DIFAL_ESTIMATE_V4',baseCents,amountCents:baseCents/10,eligibleLines:baseCents?1:0,pendingLines:0};
+  }
+  legacy.source.sales.difal={version:'DIFAL_ESTIMATE_V4',ratePercent:10,issuerUf:'MG',baseCents:300_000,amountCents:30_000,eligibleLines:2,pendingLines:0};
+  Object.assign(legacy,calculateMonthlySimulation(legacy.draft,reports,legacy.monthlyInputs,legacy.source.sales.jobId,legacy.rbt12Schedule??null,legacy.source.analysisPeriod));
+  legacy.monthlyDre=buildMonthlyDre(legacy.result,legacy.draft.year,legacy.rbt12Manual,legacy.source.period);
+  legacy.modelVersion='1.16.0-cpf-sales-difal-available-months';legacy.result.version=legacy.modelVersion;
+  const {db,workspaceId}=analysisWorkspace;
+  await db.collection<any>('simulations').replaceOne({_id:legacy._id,workspaceId},{...legacy,workspaceId});
+  await db.collection<any>('analyses').updateOne({_id:analysis.id,workspaceId},{$set:{'currentSimulation.modelVersion':legacy.modelVersion}});
+  const original=await api(page.request,baseURL!,'GET','/api/v4/simulations/'+legacy._id),sources=await freezeSources(analysisWorkspace,analysis,legacy);
+  const requests:string[]=[];page.on('request',request=>{if(request.url().endsWith('/refresh'))requests.push(request.method());});
+  await page.goto('/analyses.html?id='+analysis.id);
+  const opening=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/simulations/'+legacy._id+'/refresh');
+  await page.locator('a[href="/simulator.html?simulation='+legacy._id+'&current=1"]').click();
+  const response=await opening;expect(response.ok(),await response.text()).toBe(true);
+  await expect(page.locator('[data-simulation-revision="updated"]')).toContainText('DRE atualizada');
+  const currentId=new URL(page.url()).searchParams.get('simulation');expect(currentId).not.toBe(legacy._id);
+  const corrected=await api(page.request,baseURL!,'GET','/api/v4/simulations/'+currentId);
+  expect(corrected.parentSimulationId).toBe(legacy._id);
+  const dre=await fullDre(page),zero=dre.locator('[data-dre-row="difal"] td');
+  await expect(zero).toHaveCount(2);for(const cell of await zero.all())await expect(cell).toHaveText('R$ 0,00');
+  await expect(dre.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('87,84');
+  await expect(page.locator('#simulator-difal')).toContainText('Não possui vendas interestaduais para CPF elegíveis');
+  for(const regime of corrected.result.regimes){
+    const prior=original.result.regimes.find((row:any)=>row.id===regime.id);
+    expect(regime.dre.difal).toBe(0);expect(regime.dre.icmsAnticipation).toBe(prior.dre.icmsAnticipation);
+    expect(regime.totalTaxes).toBeCloseTo(prior.totalTaxes-300,8);
+    expect(regime.dre.netProfit).toBeCloseTo(prior.dre.netProfit+300,8);
+  }
+  expect(corrected.result.monthlyResults).toHaveLength(9);
+  for(const month of corrected.result.monthlyResults)for(const regime of month.result.regimes)expect(regime.dre.difal).toBe(0);
+  const latest=(await api(page.request,baseURL!,'GET','/api/v4/analyses/'+analysis.id+'?summary=1')).analysis;
+  expect(latest.currentSimulation.id).toBe(currentId);expect(latest.currentSimulation.stale).toBe(false);
+  expect(latest.fiscal).toEqual(generated.analysis.fiscal);expect(latest.accounting).toEqual(generated.analysis.accounting);
+  const downloading=page.waitForEvent('download');await page.locator('#export-dre-csv').click();
+  const download=await downloading,stream=await download.createReadStream();let csv='';for await(const chunk of stream!)csv+=chunk;
+  const annual=csvParse(csv,';').find(row=>row[2]==="'− DIFAL sobre vendas (10%)");expect(annual?.slice(5,7)).toEqual(['0,00','0,00']);
+  await page.screenshot({path:info.outputPath('dre-current-no-exit-difal.png'),fullPage:true});
+  await page.reload();await expect(page.locator('#simulation-snapshot')).toBeVisible();
+  expect(await db.collection('simulations').countDocuments({workspaceId,analysisId:analysis.id})).toBe(2);
+  await page.goto('/simulator.html?simulation='+legacy._id+'&historical=1');
+  await expect(page.locator('[data-simulation-revision="historical"]')).toContainText('Versão histórica');
+  await expect(page.locator('#dre-demonstrativo [data-dre-row="difal"] td').first()).toContainText('300,00');
+  expect(requests).toEqual(['POST','POST']);
+  expect(await api(page.request,baseURL!,'GET','/api/v4/simulations/'+legacy._id)).toEqual(original);
+  expect(await freezeSources(analysisWorkspace,analysis,legacy)).toEqual(sources);
+  expect(errors).toEqual([]);
+});
 async function freezeSources(workspace:Workspace,analysis:any,snapshot:any){
   const {db,workspaceId}=workspace,jobIds=[snapshot.source.purchases.jobId,snapshot.source.sales.jobId];
   return {
