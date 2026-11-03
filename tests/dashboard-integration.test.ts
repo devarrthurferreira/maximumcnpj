@@ -31,6 +31,8 @@ test('dashboard history paginates all types, searches companies, scopes data, an
   ]);
   const analysisId=randomUUID();await(await collection('analysisRevisions')).insertOne({_id:randomUUID(),...scope(),clientId,analysisId,createdAt,kind:'accounting',revision:2,data:{status:'COMPLETE',months:['private snapshot']}});
   const history=await activityHistory({clientId});assert.equal(history.total,34);assert.equal(history.items.length,30);assert.equal((await activityHistory({clientId,page:2})).items.length,4);
+  assert(history.items.every((item:any)=>item.clientId===clientId&&item.clientName==='Empresa Busca'&&item.clientCode==='0042'&&item.clientCnpj==='00000000000191'),
+    'Company metadata remains complete when enrichment happens after pagination.');
   assert.equal((await activityHistory({search:'00.000.000/0001-91'})).total,34);assert.equal((await activityHistory({search:'0042'})).total,34);assert.equal((await activityHistory({search:'Empresa Busca',kind:'SALES'})).total,1);
   assert.equal((await activityHistory({clientId:otherId})).total,0);assert.equal((await activityHistory({search:'.*'})).total,0);
   assert(!JSON.stringify(history).includes('private snapshot'));assert(!JSON.stringify(history).includes('Segredo'));
@@ -38,6 +40,9 @@ test('dashboard history paginates all types, searches companies, scopes data, an
   assert.equal(dashboard.recentCompanies[0]._id,clientId);
   await(await collection('audit')).insertOne({_id:randomUUID(),...scope(),action:'lookup.delete',target:jobs[0]._id,createdAt});
   assert.equal((await activityHistory({clientId,kind:'PURCHASES'})).total,0);
+  const afterDeletion=await activityHistory({clientId});assert.equal(afterDeletion.total,33);
+  assert.equal(afterDeletion.items.length,30);assert(!afterDeletion.items.some((item:any)=>item._id===jobs[0]._id));
+  assert.equal((await activityHistory({clientId,search:'Empresa Busca'})).total,33,'Search and ordinary pagination must apply the same deletion receipts.');
  } finally {
   await(await database()).dropDatabase();await closeDatabase();
   for(const [key,value] of Object.entries({MONGODB_DB:previous.db,WORKSPACE_ID:previous.workspace,MONGODB_STORAGE_LIMIT_BYTES:previous.limit})){if(value===undefined)delete process.env[key];else process.env[key]=value;}

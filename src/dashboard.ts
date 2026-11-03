@@ -80,14 +80,18 @@ export async function activityHistory({clientId='',page=1,search='',kind=''}:{cl
   const jobs:any[]=[{$match:filter},{$project:{_id:1,workspaceId:1,clientId:1,createdAt:1,clientName:1,clientCode:1,status:1,title:'$fileName',generationId:1,
     kind:{$switch:{branches:[{case:{$eq:['$mode',PURCHASE_MODE]},then:'PURCHASES'},{case:{$eq:['$mode',SALES_MODE]},then:'SALES'}],default:'LOOKUP'}}}}];
   const branch=(coll:string,match:Record<string,unknown>,project:Record<string,unknown>)=>({$unionWith:{coll,pipeline:[{$match:match},{$project:{_id:1,workspaceId:1,clientId:1,createdAt:1,...project}}]}});
+  const searching=!!search.trim();
+  const companyStages=[
+    {$lookup:{from:'clients',let:{client:'$clientId'},pipeline:[{$match:{...scope(),$expr:{$eq:['$_id','$$client']}}},{$project:{name:1,code:1,cnpj:1}}],as:'company'}},
+    {$set:{company:{$arrayElemAt:['$company',0]}}},
+    {$set:{clientName:{$ifNull:['$company.name','$clientName']},clientCode:{$ifNull:['$company.code','$clientCode']},clientCnpj:'$company.cnpj'}}
+  ];
   const stages:any[]=[...jobs,
     branch('simulations',{...filter,deletedAt:{$exists:false},analysisPublication:{$ne:'PENDING'}},{kind:{$literal:'SIMULATION'},title:1,status:{$literal:'COMPLETED'},analysisId:1}),
     branch('analysisRevisions',filter,{analysisId:1,revision:1,title:{$concat:['Revisão ',{$toString:'$revision'}]},status:'$data.status',
       kind:{$switch:{branches:[{case:{$eq:['$kind','accounting']},then:'ACCOUNTING'},{case:{$eq:['$kind','config']},then:'CONFIG'}],default:'FISCAL'}}}),
     branch('batches',filter,{kind:{$literal:'LEGACY'},title:'$fileName',status:1,clientName:1}),
-    {$lookup:{from:'clients',let:{client:'$clientId'},pipeline:[{$match:{...scope(),$expr:{$eq:['$_id','$$client']}}},{$project:{name:1,code:1,cnpj:1}}],as:'company'}},
-    {$set:{company:{$arrayElemAt:['$company',0]}}},
-    {$set:{clientName:{$ifNull:['$company.name','$clientName']},clientCode:{$ifNull:['$company.code','$clientCode']},clientCnpj:'$company.cnpj'}},
+    ...(searching?companyStages:[]),
     // Deletion receipts also hide in-flight deletions before their physical cleanup finishes.
     {$lookup:{from:'audit',let:{target:'$_id',generation:'$generationId',analysis:'$analysisId'},pipeline:[{$match:{...scope(),$expr:{$or:[
       {$and:[{$eq:['$action','lookup.delete']},{$eq:['$target','$$target']}]},
@@ -96,13 +100,16 @@ export async function activityHistory({clientId='',page=1,search='',kind=''}:{cl
       {$and:[{$eq:['$action','simulation.delete']},{$eq:['$target','$$target']}]}
     ]}}},{$limit:1},{$project:{_id:1}}],as:'deleted'}},{$match:{deleted:{$size:0}}}];
   if(kind)stages.push({$match:{kind}});
-  if(search.trim()){
+  if(searching){
     const term=escapeRegex(search.trim().slice(0,100)),cnpjTerm=escapeRegex(search.replace(/[^a-zA-Z0-9]/g,'').slice(0,14));
     const choices:any[]=['clientName','clientCode','title'].map(field=>({[field]:{$regex:term,$options:'i'}}));
     if(cnpjTerm)choices.push({clientCnpj:{$regex:cnpjTerm,$options:'i'}});
     stages.push({$match:{$or:choices}});
   }
-  stages.push({$facet:{items:[{$sort:{createdAt:-1,kind:1,_id:-1}},{$skip:(page-1)*ACTIVITY_PAGE_SIZE},{$limit:ACTIVITY_PAGE_SIZE},{$project:{workspaceId:0,company:0,deleted:0}}],count:[{$count:'total'}]}});
+  // Without a search term, company names are presentation only: enrich the page,
+  // not every historical row. Deletion filtering stays before pagination/count.
+  stages.push({$facet:{items:[{$sort:{createdAt:-1,kind:1,_id:-1}},{$skip:(page-1)*ACTIVITY_PAGE_SIZE},{$limit:ACTIVITY_PAGE_SIZE},
+    ...(!searching?companyStages:[]),{$project:{workspaceId:0,company:0,deleted:0}}],count:[{$count:'total'}]}});
   const [result]=await(await collection('lookupJobs')).aggregate(stages,{maxTimeMS:20000,allowDiskUse:true}).toArray();
   const total=result?.count?.[0]?.total||0;
   return {items:result?.items||[],page,pageSize:ACTIVITY_PAGE_SIZE,total,totalPages:Math.max(1,Math.ceil(total/ACTIVITY_PAGE_SIZE))};

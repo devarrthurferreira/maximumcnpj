@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.55.0] - 2026-11-03
+
+- Abre a central e carrega as empresas em paralelo após autenticação; falhas do catálogo permitem nova tentativa sem descartar a sessão ou os cartões disponíveis.
+- Adia o enquadramento completo dos CNPJs até abrir a seção, com endpoint próprio e proteção contra respostas atrasadas de outro filtro. Mantém a API completa compatível.
+- Elimina um GET repetido ao abrir a análise pelos atalhos da empresa e evita buscar o catálogo de UF no Contábil; leituras fiscais em andamento são compartilhadas.
+- Busca os metadados das empresas somente para os até 30 registros da página do histórico sem texto de busca. Mantém busca, contagem e exclusões anteriores à paginação.
+- Executa consultas independentes do dashboard e do histórico em paralelo, preservando a deduplicação de CNPJs entre os bancos e o isolamento por workspace.
+- Acrescenta regressões de carregamento, nova tentativa, alternância de setores, identidade, filtros e histórico. Sem mudança nas regras fiscais ou migração de dados.
+
 ## [0.54.5] - 2026-11-03
 
 - Simplifica a conferência de DIFAL, com valor de entrada em destaque, saída compacta e uma escolha por regime, preservando preferências não editadas.
