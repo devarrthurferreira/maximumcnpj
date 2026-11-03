@@ -1,0 +1,30 @@
+name: Atualizar testes ao fluxo DIFAL por leitura
+on:
+  push:
+    branches: ['fix/difal-report-driven-choice-20261103']
+    paths: ['.github/workflows/align-difal-tests.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 2}
+      - name: Aplicar somente alinhamento dos testes
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/fix/difal-report-driven-choice-20261103
+          echo 'b75d217602c1e0c06eb148b735a19e933377144f589dd33d3d3a6a28b574d61d  .maintenance/difal-browser-tests.patch.gz' | sha256sum -c -
+          gzip -dc .maintenance/difal-browser-tests.patch.gz > /tmp/tests.patch
+          git apply --include='tests/e2e/*' --check /tmp/tests.patch
+          git apply --include='tests/e2e/*' --index /tmp/tests.patch
+          git rm .maintenance/difal-browser-tests.patch.gz
+          git diff --cached --check
+          git fetch origin fix/difal-report-driven-choice-20261103
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: alinhar navegacao e fixtures a evidencia dos relatorios'
+          git push origin HEAD:refs/heads/fix/difal-report-driven-choice-20261103
