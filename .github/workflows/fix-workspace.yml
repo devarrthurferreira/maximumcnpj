@@ -1,0 +1,28 @@
+name: Workspace descartável da correção DIFAL
+on:
+  push:
+    branches: ['fix/sublimit-entry-difal-20261103']
+    paths: ['.github/workflows/fix-workspace.yml']
+permissions:
+  contents: read
+jobs:
+  workspace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Código versionado e dependências de teste, sem credenciais
+        run: |
+          git archive --format=tar -o source.tar HEAD
+          npm ci --ignore-scripts --include=dev
+          tar -czf dependencies.tar.gz node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maximum-fix-workspace
+          path: |
+            source.tar
+            dependencies.tar.gz
+          retention-days: 1
