@@ -14,14 +14,15 @@ jobs:
         with: {fetch-depth: 2}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: {node-version: '22'}
-      - name: Conferir e aplicar patch
+      - name: Conferir e aplicar arquivos da aplicação
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/feat/simple-flow-loading-20261103
           echo '805d1472a0b87101717235c4ba59b3ed3b2e08411a94e12f71c758ca2b5a2d5d  .maintenance/ui-feedback.xz' | sha256sum -c -
           xz -dc .maintenance/ui-feedback.xz > /tmp/ui-feedback.patch
-          git apply --unidiff-zero --check /tmp/ui-feedback.patch
-          git apply --unidiff-zero --index /tmp/ui-feedback.patch
+          # O token desta rotina só altera conteúdo; workflows são publicados separadamente pelo mantenedor autorizado.
+          git apply --unidiff-zero --exclude=.github/workflows/ui-feedback.yml --check /tmp/ui-feedback.patch
+          git apply --unidiff-zero --exclude=.github/workflows/ui-feedback.yml --index /tmp/ui-feedback.patch
           git diff --cached --check
       - name: Validar aplicação
         run: |
