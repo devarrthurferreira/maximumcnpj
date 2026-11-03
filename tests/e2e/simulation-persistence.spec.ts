@@ -1,6 +1,7 @@
 import {MongoClient} from 'mongodb';
 import {mockStatement,statementHistory,documentId} from './extrato-helper.ts';
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, type APIRequestContext, type Page } from '@playwright/test';
+import {test} from './isolated-auth-test.ts';
 import { randomUUID } from 'node:crypto';
 
 // This flow uses the running application and disposable MongoDB throughout.

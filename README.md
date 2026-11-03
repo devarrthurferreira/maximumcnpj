@@ -1,4 +1,12 @@
-# Maximum CNPJ · v0.55.0
+# Maximum CNPJ · v0.55.1
+
+## v0.55.1 — Rolagem da DRE sobre a tabela (2026-11-03)
+
+A roda do mouse pode continuar a rolagem vertical da página quando o ponteiro está sobre as linhas e os valores da DRE. A tabela conserva a navegação horizontal, a coluna de identificação e a leitura completa do demonstrativo. As tabelas com rolagem interna liberam a página ao alcançar o início ou o fim, sem prender o gesto na área do relatório.
+
+A correção restringe a contenção de rolagem ao eixo horizontal e permite o encadeamento vertical nativo do navegador. Não adiciona interceptação de eventos do mouse nem altera cálculos, competências, valores salvos, impressão ou exportações. Os testes de navegador incluem movimentos reais da roda sobre a tabela.
+
+A infraestrutura de regressão também isola os contadores de login de cenários específicos no MongoDB local descartável. Os limites da aplicação permanecem ativos dentro de cada cenário e inalterados em produção; contas, sessões e tentativas de autenticação continuam reais.
 
 ## v0.55.0 — Resposta mais rápida na central e nas análises (2026-11-03)
 
@@ -8,7 +16,7 @@ Os atalhos **Fiscal** e **Contábil** aproveitam o resumo validado retornado na 
 
 O histórico sem texto de busca consulta nomes, códigos e CNPJs apenas para os **até 30 registros da página**, depois da paginação. A contagem, as exclusões em andamento, os filtros e a busca por empresa continuam conferidos no servidor. A API completa permanece compatível; o resumo usa `GET /api/v4/dashboard?summary=1` e a classificação sob demanda usa `GET /api/v4/dashboard/classification`. Operações independentes do dashboard e do histórico executam em paralelo, incluindo a leitura dos bancos usados.
 
-Validação local com dados sintéticos: **494 testes de regras/HTTP**, **47 integrações de análises/dashboard**, **246 testes Python/PDF/OCR/MongoDB** e **35 cenários de navegador** aprovados, sem testes ignorados. Os cenários cobrem consulta compartilhada, erro/nova tentativa, troca de empresa e logout/login durante requisições em andamento. Tipos, build e consistência de versões conferidos.
+Validação local com dados sintéticos: **494 testes de regras/HTTP**, **47 integrações de análises/dashboard**, **246 testes Python/PDF/OCR/MongoDB** e **74 cenários direcionados de navegador** aprovados, sem testes ignorados. Os cenários cobrem consulta compartilhada, erro/nova tentativa, troca de empresa e logout/login durante requisições em andamento. Tipos, build e consistência de versões conferidos. Os testes anteriores de importação, DIFAL e fluxo guiado foram alinhados às regras já vigentes: entradas positivas com CNPJ elegível, CPF excluído na V5, saída atual desativada, histórico preservado e conferência por competência.
 
 As regras fiscais, os documentos, as preferências de DIFAL, a DRE e o período janeiro–setembro continuam preservados. Os ganhos comprovados são a retirada de consultas repetidas e de trabalho desnecessário na abertura; não representam uma promessa de tempo fixo em produção, que também depende da conexão e dos serviços externos.
 

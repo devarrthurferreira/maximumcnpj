@@ -21,7 +21,7 @@ async function api(request:APIRequestContext,baseURL:string,method:string,path:s
   expect(response.ok(),path+': '+await response.text()).toBe(true);return response.json();
 }
 
-test('Análises começa na empresa, escolhe setor, regimes, DIFAL e oferece RBT12 opcional nessa etapa',async({page,baseURL,company},info)=>{
+test('Análises segue empresa, setor, regimes, RBT12 opcional, documentos e DIFAL sem decidir antes da leitura',async({page,baseURL,company},info)=>{
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto('/analyses.html');
   const wizard=page.locator('#analysis-wizard');await expect(wizard).toHaveAttribute('data-wizard-step','company');
@@ -31,32 +31,41 @@ test('Análises começa na empresa, escolhe setor, regimes, DIFAL e oferece RBT1
   await page.locator('input[name=sector][value=fiscal]').check();await page.locator('#analysis-open-company').click();
   await expect(wizard).toHaveAttribute('data-wizard-kind','fiscal');await expect(wizard).toHaveAttribute('data-wizard-step','regimes');
   await page.locator('#analysis-fiscal-regime-presumed').uncheck();await page.locator('#analysis-fiscal-regime-actual').uncheck();
-  await page.locator('#analysis-wizard-next').click();await expect(wizard).toHaveAttribute('data-wizard-step','difal');
-  await page.locator('#analysis-wizard-next').click();await expect(page.locator('#analysis-error')).toContainText('escolha Sim ou Não');
-  await expect(wizard).toHaveAttribute('data-wizard-step','difal');
-  await page.locator('#analysis-difal-yes').check();
-  for(const id of ['pure','hybrid']){
-    await expect(page.locator(`[data-analysis-difal="${id}"] input[type=checkbox]`)).toHaveCount(3);
-    await expect(page.locator(`[data-analysis-difal="${id}"]`)).toContainText('Incluir DIFAL de entrada neste regime');
-    await expect(page.locator(`[data-analysis-difal="${id}"]`)).toContainText('ENTRADA - antecipação das compras');
-    await expect(page.locator(`[data-analysis-difal="${id}"]`)).toContainText('SAÍDA - desativada');
-    const outgoing=page.locator(`[data-analysis-difal="${id}"] [data-analysis-difal-operation="exit"]`);
-    await expect(outgoing).toBeDisabled();await expect(outgoing).not.toBeChecked();
-  }
-  await page.locator('[data-analysis-difal-regime=hybrid][data-analysis-difal-operation=entry]').uncheck();
   await page.locator('#analysis-wizard-next').click();await expect(wizard).toHaveAttribute('data-wizard-step','rbt12');
   await expect(page.locator('#analysis-extrato-none')).toHaveAttribute('aria-pressed','true');
   await expect(page.locator('#analysis-rbt12-pdf')).toHaveCount(0);
   await expect(page.locator('#analysis-difal-panel')).not.toBeVisible();
   await expect(page.locator('#analysis-sales-annex')).not.toBeVisible();
   await expect(page.locator('#analysis-fiscal-documents-view')).not.toBeVisible();
+  await page.locator('#analysis-wizard-next').click();await expect(wizard).toHaveAttribute('data-wizard-step','documents');
+  await page.locator('#analysis-wizard-back').click();await expect(wizard).toHaveAttribute('data-wizard-step','rbt12');
   await page.locator('#analysis-extrato-manual').click();await page.locator('#analysis-rbt12').fill('120000');await page.locator('#analysis-rbt12-confirm').check();
   await page.locator('#analysis-wizard-next').click();await expect(wizard).toHaveAttribute('data-wizard-step','documents');
+  await page.locator('#analysis-wizard-next').click();await expect(wizard).toHaveAttribute('data-wizard-step','difal');
+  const entry=page.locator('[data-difal-assessment="entry"]');
+  await expect(entry).toHaveAttribute('data-difal-state','waiting');
+  await expect(entry.locator('[data-difal-detected-amount]')).toHaveCount(0);
+  for(const choice of ['yes','no']){
+    await expect(page.locator('#analysis-difal-'+choice)).toBeDisabled();
+    await expect(page.locator('#analysis-difal-'+choice)).not.toBeChecked();
+  }
+  for(const regime of ['pure','hybrid']){
+    await expect(page.locator(`[data-analysis-difal="${regime}"] input[type=checkbox]`)).toHaveCount(1);
+    await expect(page.locator(`[data-difal-include="${regime}"]`)).toBeDisabled();
+  }
+  await expect(page.locator('[data-analysis-difal-operation="exit"]')).toHaveCount(0);
+  await expect(page.locator('[data-difal-assessment="exit"]')).toHaveAttribute('data-difal-state','waiting');
+  await expect(page.locator('[data-difal-assessment="exit"] [data-difal-detected-amount]')).toHaveCount(0);
   await page.locator('#analysis-wizard button[value=save]').click();await expect(page.locator('#analysis-feedback')).toContainText('salvo');
   const id=new URL(page.url()).searchParams.get('id');const saved=(await api(page.request,baseURL!,'GET',`/api/v4/analyses/${id}?summary=1`)).analysis;
   expect(saved.config.regimeSelection.selected).toEqual(['pure','hybrid']);expect(saved.fiscal.data.rbt12).toBe(120000);
-  expect(saved.fiscal.data.difalPolicy.operations.hybrid.entry).toBe(false);
+  expect(saved.fiscal.data.difalChoice).toBeNull();
+  expect(saved.fiscal.data.difalPolicy.operations).toEqual({pure:{entry:true,exit:false},hybrid:{entry:true,exit:false}});
   expect(saved.fiscal.data.generationId).toBeNull();
+  await page.goto(`/analyses.html?id=${id}&sector=fiscal&step=difal`);
+  await expect(wizard).toHaveAttribute('data-wizard-step','difal');await expect(entry).toHaveAttribute('data-difal-state','waiting');
+  await expect(page.locator('#analysis-difal-yes')).not.toBeChecked();await expect(page.locator('#analysis-difal-no')).not.toBeChecked();
+  await expect(page.locator('#analysis-rbt12')).toHaveValue('120000.00');
   await page.setViewportSize({width:390,height:650});await page.screenshot({path:info.outputPath('fiscal-mobile.png'),fullPage:true});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);expect(errors).toEqual([]);
 });

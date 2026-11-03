@@ -4,9 +4,11 @@ import {MongoClient,type Db} from 'mongodb';
 import {csvParse} from '../../src/domain.ts';
 import {hashPassword} from '../../src/security.ts';
 import {JAN_SEP_MODEL_VERSION} from '../../public/analysis-period.js';
+import {processLookup} from '../../src/lookup-jobs.ts';
+import {closeDatabase} from '../../src/store.ts';
 
-// Real browser, authenticated API and disposable MongoDB. No routes are mocked;
-// CPF-only source documents cannot trigger an external CNPJ lookup.
+// Real browser, authenticated APIs and disposable MongoDB. The external CNPJ
+// transport is synthetic; lookup processing and immutable snapshots remain real.
 const test=base.extend<{icmsAccount:{email:string;password:string;db:Db;workspaceId:string}}>({
   icmsAccount:async({},use)=>{
     expect(process.env.MONGODB_URI,'Use somente MongoDB descartável').toBeTruthy();
@@ -24,14 +26,16 @@ const test=base.extend<{icmsAccount:{email:string;password:string;db:Db;workspac
     }
   }
 });
+test.afterAll(async()=>closeDatabase());
 
-type SourceRow={nature:string;uf:'MG'|'SP';cents:number;name:string};
+const supplierCnpj='11222333000181';
+type SourceRow={nature:string;uf:'MG'|'SP';cents:number;name:string;document?:string};
 function report(name:string,source:SourceRow[]){
   const header=Array(28).fill('');
   for(const [column,label] of [[0,'CNPJ / CPF / CNO'],[7,'Data Escrituração/Serviço'],[8,'Razão Social'],[9,'Estado'],[11,'Natureza'],[14,'Descrição'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']] as const)header[column]=label;
   const rows=source.map(item=>{
     const row=Array(28).fill('');
-    row[0]='123.456.789-00';row[7]='15/01/2025';row[8]=item.name;row[9]=item.uf;row[11]=item.nature;row[14]='Operação sintética de ICMS';row[15]='1';row[16]=(item.cents/100).toFixed(2).replace('.',',');
+    row[0]=item.document||'123.456.789-00';row[7]='15/01/2025';row[8]=item.name;row[9]=item.uf;row[11]=item.nature;row[14]='Operação sintética de ICMS';row[15]='1';row[16]=(item.cents/100).toFixed(2).replace('.',',');
     for(const column of [24,25,26,27])row[column]='0,00';
     return row;
   });
@@ -119,6 +123,15 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
     expect(response.ok(),`${path}: ${await response.text()}`).toBe(true);return response.json();
   };
   await post('/api/auth/login',credentials);
+  const session=await (await page.request.get('/api/auth/session')).json();let providerCalls=0;
+  const transport=(async(url:string|URL|Request)=>{
+    providerCalls++;expect(String(url).split('/').pop()).toBe(supplierCnpj);
+    return Response.json({cnpj:supplierCnpj,razao_social:'Fornecedor CNPJ sintético',opcao_pelo_simples:false,opcao_pelo_mei:false});
+  }) as typeof fetch;
+  await page.route(/\/api\/v4\/purchases\/[^/]+\/process$/,async route=>{
+    const jobId=new URL(route.request().url()).pathname.split('/').at(-2)!;
+    await route.fulfill({json:await processLookup(session.user,jobId,transport)});
+  });
   const code=String(Number.parseInt(randomUUID().replaceAll('-','').slice(0,10),16));
   const clientId=(await post('/api/v4/clients/import',{rows:[{code,name:`Empresa sintética crédito ICMS ${code}`,uf:'MG'}]})).items[0].id;
   await page.goto('/generations.html');await page.locator('#generation-search').fill(code);
@@ -132,7 +145,7 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
   await page.locator('#generation-create').click();expect((await creating).ok()).toBe(true);
   const purchases:SourceRow[]=[
     {nature:'1102001',uf:'MG',cents:30_000,name:'Compra sintética interna'},
-    {nature:'2102001',uf:'SP',cents:50_000,name:'Compra sintética interestadual'},
+    {nature:'2102001',uf:'SP',cents:50_000,name:'Compra sintética interestadual',document:supplierCnpj},
     {nature:'8000002',uf:'MG',cents:20_000,name:'Serviço sintético interno 8000'},
     {nature:'8000102',uf:'SP',cents:40_000,name:'Serviço sintético interestadual 8000'},
     {nature:'1202001',uf:'MG',cents:10_000,name:'Devolução sintética interna'},
@@ -204,8 +217,11 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
   const jobIds=[saved.source.purchases.jobId,saved.source.sales.jobId],sourceFilter={workspaceId,jobId:{$in:jobIds}};
   const frozen=async()=>({jobs:await db.collection<any>('lookupJobs').find({_id:{$in:jobIds},workspaceId}).sort({_id:1}).toArray(),rows:await db.collection<any>('purchaseLines').find(sourceFilter).sort({jobId:1,index:1}).toArray(),lookups:await db.collection('lookupItems').find(sourceFilter).sort({jobId:1,cnpj:1}).toArray()});
   const original=await frozen();
-  expect(original.rows).toHaveLength(24);expect(original.lookups).toHaveLength(0);
-  expect(original.rows.every(row=>row.documentKind==='CPF'&&!row.valid)).toBe(true);
+  expect(original.rows).toHaveLength(24);expect(original.lookups).toHaveLength(1);
+  expect(original.lookups[0]).toMatchObject({cnpj:supplierCnpj,state:'DONE',status:'NAO_OPTANTE'});
+  expect(original.rows.filter(row=>row.documentKind==='CPF'&&!row.valid)).toHaveLength(23);
+  const cnpjRows=original.rows.filter(row=>row.documentKind==='CNPJ');expect(cnpjRows).toHaveLength(1);
+  expect(cnpjRows[0]).toMatchObject({document:supplierCnpj,valid:true,totalCents:50_000,anticipation:{eligible:true,baseCents:50_000,amountCents:3660,reason:'ELIGIBLE'}});
   const services=original.rows.filter(row=>String(row.natureCode).startsWith('8000'));
   expect(services.map(row=>row.totalCents).sort((a,b)=>a-b)).toEqual([20_000,40_000]);
   for(const row of services)expect(row.anticipation).toEqual({eligible:false,baseCents:0,amountCents:0,reason:'SERVICE_PURCHASE_EXCLUDED'});
@@ -290,5 +306,5 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
   }finally{await fresh.close();}
   expect(await frozen()).toEqual(original);
   expect(await db.collection<any>('simulations').findOne({_id:saved._id,workspaceId})).toEqual(stored);
-  expect(errors).toEqual([]);
+  expect(providerCalls).toBe(1);expect(errors).toEqual([]);
 });
