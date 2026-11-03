@@ -133,7 +133,17 @@ test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório compl
     expect(pending.result.simplesDiagnostic.statusCode).toBe('READY');
     await openCompleteDre(reopened);
     expect(pending.result.regimes.filter((row:any)=>['pure','hybrid'].includes(row.id)).every((row:any)=>row.available)).toBe(true);
-    expect(pending.result.memory.find((row:any)=>row.id==='simples.sales.icms').value).toBeGreaterThan(0);
+    // Tax rates belong to each competence; the consolidated memory sums money,
+    // never percentages. At RBT12 R$4m, the fifth-band local share is 4.0593625%.
+    expect(pending.result.monthlyResults).toHaveLength(9);
+    for(const month of pending.result.monthlyResults){
+      expect(month.result.memory.find((row:any)=>row.id==='simples.band')).toMatchObject({value:6});
+      const icms=month.result.memory.find((row:any)=>row.id==='simples.sales.icms');
+      expect(icms).toMatchObject({unit:'percent'});expect(icms.value).toBeCloseTo(0.040593625,10);
+    }
+    const insidePure=pending.result.regimes.find((row:any)=>row.id==='pure');
+    expect(insidePure.dre.icmsNet).toBe(0);
+    expect(insidePure.dre.das).toBeCloseTo(-445_808.9625,6);
     await reopened.locator('#icms-outside').selectOption('outside');
     await expect(reopened.locator('#results-top')).toHaveCount(0);
     const outside=await save(reopened);

@@ -2,15 +2,19 @@ import {test,expect} from '@playwright/test';
 import {randomUUID} from 'node:crypto';
 import {MongoClient} from 'mongodb';
 import {csvParse} from '../../src/domain.ts';
+import {processLookup} from '../../src/lookup-jobs.ts';
+import {closeDatabase} from '../../src/store.ts';
 
-// Real UI, authenticated API and disposable MongoDB: no intercepted requests.
-// CPF-only reports avoid contacting any external company lookup provider.
-function report(name:string,nature:string,cents:number){
+// Real UI, authenticated APIs and disposable MongoDB. Only the CNPJ provider
+// transport is synthetic; processLookup still persists its real source snapshot.
+test.afterAll(async()=>closeDatabase());
+const supplierCnpj='11222333000181';
+function report(name:string,nature:string,cents:number,document:string){
   const header=Array(28).fill('');
   for(const [column,label] of [[0,'CNPJ / CPF / CNO'],[7,'Data Escrituração/Serviço'],[8,'Razão Social'],[9,'Estado'],[11,'Natureza'],[14,'Descrição'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']] as const)header[column]=label;
   const rows=Array.from({length:9},(_,index)=>{
     const row=Array(28).fill('');
-    row[0]='123.456.789-00';row[7]=`15/0${index+1}/2026`;row[8]='Pessoa sintética';row[9]='SP';row[11]=nature;row[14]='Operação sintética';row[15]='1';
+    row[0]=document;row[7]=`15/0${index+1}/2026`;row[8]='Pessoa sintética';row[9]='SP';row[11]=nature;row[14]='Operação sintética';row[15]='1';
     // January retains the original movement; the other eight months explicitly have no amount.
     row[16]=((index===0?cents:0)/100).toFixed(2).replace('.',',');
     for(const column of [24,25,26,27])row[column]='0,00';return row;
@@ -28,6 +32,15 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
     expect(response.ok(),`${path}: ${await response.text()}`).toBe(true);return response.json();
   }
   await post('/api/auth/login',{email:process.env.ADMIN_EMAIL,password:process.env.ADMIN_PASSWORD});
+  const session=await (await page.request.get('/api/auth/session')).json();let providerCalls=0;
+  const transport=(async(url:string|URL|Request)=>{
+    providerCalls++;expect(String(url).split('/').pop()).toBe(supplierCnpj);
+    return Response.json({cnpj:supplierCnpj,razao_social:'Fornecedor CNPJ sintético',opcao_pelo_simples:false,opcao_pelo_mei:false});
+  }) as typeof fetch;
+  await page.route(/\/api\/v4\/purchases\/[^/]+\/process$/,async route=>{
+    const jobId=new URL(route.request().url()).pathname.split('/').at(-2)!;
+    await route.fulfill({json:await processLookup(session.user,jobId,transport)});
+  });
   const code=String(Number.parseInt(randomUUID().replaceAll('-','').slice(0,10),16));
   const imported=await post('/api/v4/clients/import',{rows:[{code,name:`Empresa sintética saída excluída ${code}`,uf:'MG'}]});
   const clientId=imported.items[0].id;
@@ -42,7 +55,7 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
   for(const [kind,nature,cents] of [['purchases','1102',50_000],['sales','5102',15_000]] as const){
     await expect(page.locator('#purchase-file')).toBeEnabled();
     await expect(page.locator('#purchase-issuer-uf')).toHaveValue('MG');
-    await page.locator('#purchase-file').setInputFiles(report(`${code}-${kind}.csv`,nature,cents));
+    await page.locator('#purchase-file').setInputFiles(report(`${code}-${kind}.csv`,nature,cents,kind==='purchases'?supplierCnpj:'123.456.789-00'));
     await expect(page.locator('.purchase-guided-summary')).toBeVisible();
     if(kind==='purchases')await expect(page.locator('#purchase-report-view [data-anticipation-amount]')).toContainText('36,60');
     else{
@@ -67,6 +80,7 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
   expect(saved.reportMonths).toBe(9);
   expect(saved.source.analysisPeriod).toMatchObject({version:'JAN_SEP_V1',sourceYear:2026,months:9,complete:true});
   expect(saved.source.monthlyReports.map((row:any)=>row.sourceMonth)).toEqual(Array.from({length:9},(_,index)=>'2026-0'+(index+1)));
+  expect(saved.source.monthlyReports[0].anticipation).toMatchObject({version:'ICMS_ANTICIPATION_V5',baseCents:50_000,amountCents:3660,eligibleLines:1,pendingLines:0});
   expect(saved.draft.difalPolicy).toEqual(policy);expect(saved.source.difalPolicy).toEqual(policy);
   expect(saved.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,0,0,0]);
   expect(saved.result.regimes.map((regime:any)=>Math.round(regime.dre.icmsAnticipation*100))).toEqual([-3660,-3660,0,0]);
@@ -102,5 +116,5 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
     await expect(reopened.locator('[data-difal-amount]')).toContainText('0,00');
     await expect(reopened.locator('.purchase-difal')).toContainText('Não possui DIFAL de saída');
   }finally{await fresh.close();}
-  expect(errors).toEqual([]);
+  expect(providerCalls).toBe(1);expect(errors).toEqual([]);
 });

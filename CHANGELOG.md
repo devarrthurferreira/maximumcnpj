@@ -8,6 +8,7 @@
 - Busca os metadados das empresas somente para os até 30 registros da página do histórico sem texto de busca. Mantém busca, contagem e exclusões anteriores à paginação.
 - Executa consultas independentes do dashboard e do histórico em paralelo, preservando a deduplicação de CNPJs entre os bancos e o isolamento por workspace.
 - Acrescenta regressões de carregamento, nova tentativa, alternância de setores, identidade, filtros e histórico. Sem mudança nas regras fiscais ou migração de dados.
+- Atualiza expectativas antigas de navegador para a sequência atual do Fiscal e as regras já vigentes de DIFAL, mantendo casos positivos, pendências, histórico, créditos, alertas financeiros e reabertura.
 
 ## [0.54.5] - 2026-11-03
 
