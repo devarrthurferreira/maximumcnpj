@@ -897,6 +897,7 @@ body:has(#analysis-delete-dialog[open]){overflow:hidden}
 .analysis-difal-assessment.is-simple .analysis-difal-exit{display:grid;grid-template-columns:1fr auto;gap:8px 18px;padding:14px 18px;background:#fafbfc}
 .analysis-difal-exit .analysis-difal-result-heading{display:block!important}.analysis-difal-exit .analysis-difal-result-heading>strong{margin-top:4px}
 .analysis-difal-assessment.is-simple .analysis-difal-exit [data-difal-detected-amount]{margin:0;font-size:20px;align-self:center}
+.analysis-difal-assessment.is-simple .analysis-difal-exit [data-difal-evidence-note]{grid-column:1/-1;min-width:0;overflow-wrap:anywhere}
 .analysis-difal-rule{grid-column:1/-1;font-size:12px;color:#63718a}.analysis-difal-rule summary{cursor:pointer;width:fit-content}.analysis-difal-rule p{margin-bottom:0}
 .analysis-difal-options.is-simple{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.analysis-difal-options.is-simple fieldset{margin:0;padding:0;border:0;min-width:0}
 .analysis-difal-regime-choice{display:flex;align-items:center;gap:12px;border:1px solid #dfe4ec;border-radius:12px;padding:14px;cursor:pointer;background:#fff}.analysis-difal-regime-choice:has(input:checked){border-color:#750207;background:#fbf5f5}.analysis-difal-regime-choice:focus-within{outline:2px solid #750207;outline-offset:2px}.analysis-difal-regime-choice input{width:18px;height:18px;accent-color:#750207}.analysis-difal-regime-choice strong{display:block;font-size:14px}.analysis-difal-regime-choice small{display:block;font-size:12px;color:#63718a;margin-top:4px}

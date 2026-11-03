@@ -148,10 +148,15 @@ function sectorChooser(analysis,options) {
   return `<section class="analysis-sectors-overview" aria-label="Setores da análise"><div class="analysis-sector-choice">${['fiscal','accounting'].map(sector=>`<a class="analysis-sector-tab analysis-sector-card${guidance.sectors[sector].complete?' is-complete':''}" href="${analysisUrl(analysis.id,sector)}" data-analysis-sector="${sector}" data-analysis-sector-card="${sector}" aria-haspopup="dialog"><span class="analysis-sector-icon" aria-hidden="true">${icon(sector==='fiscal'?'report':'companies')}</span><div class="analysis-sector-card-heading"><strong>${sectorName(sector)}</strong><p>${sector==='fiscal'?'Documentos e impostos':'Despesas da empresa'}</p></div><span data-analysis-sector-status="${sector}" title="${savedBy(analysis[sector])}">${badge(guidance.sectors[sector])}</span><b>${options.canWrite?'Abrir':'Consultar'} <span aria-hidden="true">→</span></b></a>`).join('')}</div></section>`;
 }
 
+function difalEvidenceNote(item) {
+  return `Conferência do relatório ${item.state==='reading'?'em andamento':'pendente'}: ${item.note}`;
+}
+
 function renderDocumentDifal(summary,type) {
   if(!summary)return '';
-  const amount=summary.amountCents===null?(summary.state==='reading'?'Conferindo…':summary.state==='pending'?'Pendente':'Indisponível'):money(summary.amountCents/100);
-  return `<div class="analysis-document-difal${summary.state==='ready'?'':' is-pending'}" data-analysis-document-difal="${type}" data-difal-state="${summary.state}" role="status"><div class="analysis-document-difal-heading"><span>${esc(summary.label)}</span><strong data-analysis-document-difal-amount>${esc(amount)}</strong></div><small>${esc(summary.context)}</small>${summary.note?`<p>${esc(summary.note)}</p>`:''}</div>`;
+  const disabled=summary.applicationState==='disabled',evidencePending=disabled&&summary.state!=='ready';
+  const amount=summary.amountCents===null?(disabled?'Não aplicado':summary.state==='reading'?'Conferindo…':summary.state==='pending'?'Pendente':'Indisponível'):money(summary.amountCents/100);
+  return `<div class="analysis-document-difal${summary.state==='ready'?'':' is-pending'}" data-analysis-document-difal="${type}" data-difal-state="${summary.state}"${disabled?' data-difal-application-state="disabled"':''} role="status"><div class="analysis-document-difal-heading"><span>${esc(summary.label)}</span><strong data-analysis-document-difal-amount>${esc(amount)}</strong></div><small>${esc(summary.context)}</small>${summary.note?`<p${evidencePending?' data-difal-evidence-note':''}>${esc(evidencePending?difalEvidenceNote(summary):summary.note)}</p>`:''}</div>`;
 }
 
 export function renderFiscalReports({analysis,generation,canWrite,generationUnavailable=false,documentUploads={},documentIssuerUf,fiscalDraft,configDraft,fiscalDifalChoice}) {
@@ -228,7 +233,11 @@ export function renderDifalAssessment(assessment) {
   return `<div class="analysis-difal-assessment is-simple" aria-label="DIFAL identificado nos relatórios" aria-live="polite">${['entry','exit'].map(direction=>{
     const item=assessment?.[direction]||{state:'waiting',amountCents:null,note:'Adicione e confira o relatório antes de decidir.'};
     const note=item.note||item.context||'Estimativa dos documentos de janeiro a setembro.';
-    return `<article class="analysis-difal-${direction}" data-difal-assessment="${direction}" data-difal-state="${esc(item.state)}"><div class="analysis-difal-result-heading"><h3>${direction==='entry'?'DIFAL de entrada':'DIFAL de saída'}</h3><strong>${item.state==='reading'?'<span class="max-loading-spinner" aria-hidden="true"></span>':''}${esc(states[item.state]||states.unavailable)}</strong></div>${item.amountCents!==null&&item.amountCents!==undefined?`<p data-difal-detected-amount>${money(item.amountCents/100)}</p>`:''}${item.eligibleLines!==null&&item.eligibleLines!==undefined&&direction==='entry'?`<p class="analysis-difal-base">${esc(item.eligibleLines)} operação(ões) elegível(is) · Base: ${money(item.baseCents/100)}</p>`:''}${direction==='exit'&&item.state==='disabled'?`<details class="analysis-difal-rule"><summary>Entender a saída</summary><p>${esc(note)}</p></details>`:`<p class="analysis-difal-source-note">${esc(note)}</p>`}</article>`;
+    const disabled=direction==='exit'&&(item.applicationState==='disabled'||item.state==='disabled');
+    const evidencePending=disabled&&item.state!=='disabled';
+    const status=disabled?(item.applicationLabel||states.disabled):states[item.state]||states.unavailable;
+    const explanation=disabled?`${evidencePending?`<p class="analysis-difal-source-note" data-difal-evidence-note>${esc(difalEvidenceNote({...item,note}))}</p>`:''}<details class="analysis-difal-rule"><summary>Entender a saída</summary><p>${esc(item.applicationNote||note)}</p></details>`:`<p class="analysis-difal-source-note">${esc(note)}</p>`;
+    return `<article class="analysis-difal-${direction}" data-difal-assessment="${direction}" data-difal-state="${esc(item.state)}"${disabled?' data-difal-application-state="disabled"':''}><div class="analysis-difal-result-heading"><h3>${direction==='entry'?'DIFAL de entrada':'DIFAL de saída'}</h3><strong>${item.state==='reading'?'<span class="max-loading-spinner" aria-hidden="true"></span>':''}${esc(status)}</strong></div>${item.amountCents!==null&&item.amountCents!==undefined?`<p data-difal-detected-amount>${money(item.amountCents/100)}</p>`:''}${item.eligibleLines!==null&&item.eligibleLines!==undefined&&direction==='entry'?`<p class="analysis-difal-base">${esc(item.eligibleLines)} operação(ões) elegível(is) · Base: ${money(item.baseCents/100)}</p>`:''}${explanation}</article>`;
   }).join('')}</div>`;
 }
 

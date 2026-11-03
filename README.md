@@ -1,4 +1,12 @@
-# Maximum CNPJ · v0.55.2
+# Maximum CNPJ · v0.55.3
+
+## v0.55.3 — Conferência automática após enviar o relatório (2026-11-03)
+
+Concluir o envio de entradas ou saídas na própria análise inicia também a conferência do DIFAL de janeiro a setembro. Antes, um relatório anual podia ficar com a mensagem de competências indisponíveis porque seus metadados já estavam carregados e a consulta do recorte não era disparada. A leitura agora começa ao receber o documento concluído, aproveita a geração em memória e compartilha consultas em andamento, sem exigir atualização manual nem buscar novamente os mesmos metadados.
+
+Os cartões distinguem a regra **Saída não aplicada pela regra da análise** da situação de conferência do relatório. Enquanto falta uma estimativa validada, a saída mostra **Não aplicado**, com a leitura ou a pendência do documento em mensagem própria e visível. **R$ 0,00** só é apresentado após a validação da evidência. Falhas de origem, período ou integridade continuam explícitas e podem ser conferidas ou tentadas novamente; a regra de saída não transforma esses casos em leitura concluída.
+
+O DIFAL de entrada conserva valores positivos, valores parciais e pendências. A atualização mantém as escolhas salvas, a vinculação entre empresa e documento e as versões históricas. Nenhuma regra de cálculo ou arquivo original é alterado.
 
 ## v0.55.2 — Leitura do DIFAL com estado correto e menos consultas (2026-11-03)
 

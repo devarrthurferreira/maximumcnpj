@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.55.3] - 2026-11-03
+
+- Inicia automaticamente a conferência de DIFAL ao concluir um upload na análise, inclusive para relatórios anuais que precisam do recorte janeiro–setembro; reutiliza os metadados já recebidos.
+- Separa a regra de saída desativada do estado de leitura do documento nos dois cartões. Exibe **Não aplicado** quando a evidência ainda não está confirmada, sem apresentar um zero fictício.
+- Mantém mensagens de leitura e falhas do relatório visíveis, além dos controles de identidade, sessão, período, integridade e respostas atrasadas.
+- Conserva a evidência e as escolhas de entrada, o compartilhamento de consultas, os documentos e o histórico.
+- Acrescenta regressões de upload inline anual com API e MongoDB locais, entrada positiva de janeiro–setembro, dezembro excluído, erro de período, nova tentativa e apresentação em telas de 320 e 390 pixels.
+
 ## [0.55.2] - 2026-11-03
 
 - Mostra a conferência de DIFAL em andamento e conserva mensagens de erro acionáveis, sem tratar espera ou falha como zero.

@@ -1,4 +1,4 @@
-import {documentDifalSummary} from './analysis-document-difal.js';
+import {documentDifalSummary,OUTGOING_DIFAL_APPLICATION} from './analysis-document-difal.js';
 
 /** Evidence from the current linked reports, never from a checkbox or saved DRE. */
 export function assessAnalysisDifal({analysis,generation,documentUploads={},generationError='',generationUnavailable=false,metadataState=''}={}) {
@@ -7,7 +7,8 @@ export function assessAnalysisDifal({analysis,generation,documentUploads={},gene
   const company=companies?.length===1?companies[0]:null;
   return Object.fromEntries([['entry','PURCHASES','purchase','purchaseJobId'],['exit','SALES','sales','salesJobId']].map(([direction,type,slot,idKey])=>{
     const label=direction==='entry'?'DIFAL de entrada':'DIFAL de saída';
-    const unknown=(state,note)=>({direction,label,state,amountCents:null,baseCents:null,eligibleLines:null,pendingLines:null,note,confirmed:false});
+    const unknown=(state,note)=>({direction,label,...(direction==='exit'?OUTGOING_DIFAL_APPLICATION:{}),
+      state,amountCents:null,baseCents:null,eligibleLines:null,pendingLines:null,note,confirmed:false});
     const upload=documentUploads[type];
     if(upload?.error||generationError||generationUnavailable)return [direction,unknown('unavailable',
       upload?.error||generationError||'Os documentos vinculados não estão disponíveis. Confira os relatórios antes de tentar novamente.')];

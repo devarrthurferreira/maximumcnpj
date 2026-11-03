@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {assessAnalysisDifal,savedDifalChoice} from '../public/analysis-difal-assessment.js';
 // The shared view imports navigation's stylesheet hook; rendering itself is pure.
 globalThis.document={querySelector:()=>({})};
-const {renderDifalChoice,renderDifalAssessment}=await import('../public/analyses-view.js');
+const {renderDifalChoice,renderDifalAssessment,renderFiscalReports}=await import('../public/analyses-view.js');
 delete globalThis.document;
 import {defaultDifalPolicy} from '../public/simulator-engine.js';
 import {defaultFiscalData,parseFiscalData} from '../src/analysis-contract.ts';
@@ -79,6 +79,45 @@ test('saída não aplicada é regra do modelo, não conclusão de ausência de v
  const result=assessAnalysisDifal(fixture());assert.equal(result.exit.state,'disabled');assert.equal(result.exit.amountCents,0);
  const view=renderDifalAssessment(result);assert.match(view,/não significa ausência de vendas interestaduais/);assert.doesNotMatch(view,/Não possui DIFAL/);
  assert.doesNotMatch(html(fixture()),/data-analysis-difal-operation="exit"/);
+});
+test('regra de saída permanece distinta de evidência ausente, em leitura ou com erro',()=>{
+ const changes=[
+  f=>f.analysis.fiscal.data.generationId=null,
+  f=>f.metadataState='loading',
+  f=>f.generationError='Fonte temporariamente indisponível.',
+  f=>f.generation.companies[0].sales.clientId='other-client',
+  f=>delete f.generation.companies[0].sales.reportPeriod,
+  f=>f.generation.companies[0].sales.reportPeriod={startMonth:'2025-01',endMonth:'2025-12',months:12},
+  f=>f.generation.companies[0].sales.currentDifalState='loading'
+ ];
+ for(const change of changes){
+  const f=fixture();change(f);const before=structuredClone(f),result=assessAnalysisDifal(f);
+  assert.equal(result.exit.applicationState,'disabled');assert.equal(result.exit.confirmed,false);assert.equal(result.exit.amountCents,null);
+  assert.notEqual(result.exit.state,'disabled');
+  const view=renderDifalAssessment(result).split('<article class="analysis-difal-exit"')[1];
+  assert.match(view,/data-difal-application-state="disabled"/);assert.match(view,/Saída não aplicada pela regra da análise/);
+  assert.match(view,/<p class="analysis-difal-source-note" data-difal-evidence-note>Conferência do relatório/);
+  assert.doesNotMatch(view,/data-difal-detected-amount/);
+  assert.deepEqual(f,before);
+ }
+});
+test('erro de conferência da saída fica visível fora da explicação recolhida da regra',()=>{
+ const f=fixture(),sales=f.generation.companies[0].sales;
+ sales.currentDifal=null;sales.currentDifalState='error';sales.currentDifalError={message:'Banco de origem temporariamente indisponível.',status:503};
+ const result=assessAnalysisDifal(f),view=renderDifalAssessment(result).split('<article class="analysis-difal-exit"')[1];
+ assert.equal(result.entry.state,'available');assert.equal(result.entry.amountCents,7320);
+ assert.equal(result.exit.state,'unavailable');assert.equal(result.exit.confirmed,false);assert.equal(result.exit.amountCents,null);
+ assert.match(view,/<p class="analysis-difal-source-note" data-difal-evidence-note>Conferência do relatório pendente: Banco de origem temporariamente indisponível\.<\/p>/);
+ assert.doesNotMatch(view.match(/<details[\s\S]*?<\/details>/)[0],/Banco de origem/);
+});
+test('cartão de saída mostra regra não aplicada e mantém período inválido como pendência explícita',()=>{
+ const f=fixture();f.analysis.config={regimeSelection:selection};f.analysis.company={uf:'MG'};
+ f.generation.companies[0].sales.reportPeriod={startMonth:'2025-01',endMonth:'2025-12',months:12};
+ const view=renderFiscalReports({...f,canWrite:true}).replaceAll('\u00a0',' ');
+ assert.match(view,/data-analysis-document-difal="SALES" data-difal-state="unavailable" data-difal-application-state="disabled"/);
+ assert.match(view,/<strong data-analysis-document-difal-amount>Não aplicado<\/strong>/);
+ assert.match(view,/<p data-difal-evidence-note>Conferência do relatório pendente: Não foi possível confirmar as competências/);
+ assert.doesNotMatch(view,/R\$ 0,00|>Indisponível</);
 });
 test('preferências aguardando confirmação sobrevivem a salvar e reabrir; legado preservado',()=>{
  assert.equal(savedDifalChoice({revision:0,data:{}}),null);assert.equal(savedDifalChoice({revision:3,data:{}}),undefined);
