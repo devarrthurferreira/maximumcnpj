@@ -63,7 +63,7 @@ test('salvar mostra tela de processamento, evita duplicação e confirma depois 
   const analysis=await reports(page.request,baseURL!,await fresh(page.request,baseURL!,account));
   await page.goto(url(analysis.id));await expect(detected(page)).toHaveAttribute('data-difal-state','available');
   await page.locator('#analysis-difal-no').check();const hold=gate();let writes=0;
-  await page.route(`**/api/v4/analyses/${analysis.id}/fiscal`,async route=>{
+  await page.route(`**/api/v4/analyses/${analysis.id}/fiscal?summary=1`,async route=>{
     if(route.request().method()==='PATCH'){writes++;await hold.promise;}await route.continue();
   });
   try{
@@ -83,10 +83,10 @@ test('erro de gravação fecha carregamento e preserva escolha para nova tentati
   const analysis=await reports(page.request,baseURL!,await fresh(page.request,baseURL!,account));
   await page.goto(url(analysis.id));await expect(detected(page)).toHaveAttribute('data-difal-state','available');
   await page.locator('#analysis-difal-no').check();
-  await page.route(`**/api/v4/analyses/${analysis.id}/fiscal`,route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'TEMPORARY',message:'Servidor temporariamente indisponível.'})}));
+  await page.route(`**/api/v4/analyses/${analysis.id}/fiscal?summary=1`,route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'TEMPORARY',message:'Servidor temporariamente indisponível.'})}));
   await page.locator('button[value="save"]').click();await expect(page.locator('#analysis-error')).toContainText('temporariamente indisponível');
   await expect(page.locator('#analysis-busy-screen')).toBeHidden();await expect(page.locator('#analysis-difal-no')).toBeChecked();await expect(page.locator('button[value="save"]')).toBeEnabled();
-  await page.unroute(`**/api/v4/analyses/${analysis.id}/fiscal`);
+  await page.unroute(`**/api/v4/analyses/${analysis.id}/fiscal?summary=1`);
   await page.locator('button[value="save"]').click();await expect(page.locator('#analysis-feedback')).toContainText('Fiscal salvo');
 });
 

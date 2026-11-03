@@ -40,7 +40,7 @@ const S={user:null,clients:null,analysis:null,sector:null,source:null,generation
 let modal=null;
 const activity=createLoadingScreen({id:'analysis-busy-screen',target:()=>document.querySelector('dialog[open] .analysis-wizard-frame')});
 let busyMessage='Processando…';
-let companyCheckController=null,evidenceTask=null,metadataTask=null,accountingSummaryFrame=0;
+let companyCheckController=null,evidenceTask=null,metadataTask=null,clientsTask=null,accountingSummaryFrame=0;
 let scheduleCache={reference:null,months:null,value:null};
 const writable=()=>['admin','operator'].includes(S.user?.role);
 const dirty=()=>S.configDirty||S.fiscalDirty||S.accountingDirty;
@@ -239,7 +239,7 @@ function openWizard(kind,{step=null}={}) {
     if(step)S.modalSteps[kind]=wizardStep(kind,step).id;
     if(same){if(step)setWizardStep(step,{focus:false});modal.open(currentWizardState());}
     else renderDetail();
-    if(kind==='fiscal')void ensureEvidence();
+    if(kind==='fiscal'){void loadDocumentUf().catch(()=>{});void ensureEvidence();}
     syncWizardUrl();return true;
   }catch(error){showError(error);return false;}
 }
@@ -279,8 +279,14 @@ function pagination(data) {
 }
 
 async function clients(){
-  if(!S.clients){const response=await analysisRequest('/api/v4/clients');if(!Array.isArray(response.items))throw new Error('Não foi possível carregar as empresas.');S.clients=response.items;}
-  return S.clients;
+  if(S.clients)return S.clients;
+  // Reopening the Fiscal while the catalog is pending shares the same read.
+  // A failed read is released so the next explicit action can try again.
+  if(!clientsTask)clientsTask=analysisRequest('/api/v4/clients').then(response=>{
+    if(!Array.isArray(response.items))throw new Error('Não foi possível carregar as empresas.');
+    S.clients=response.items;return S.clients;
+  }).finally(()=>{clientsTask=null;});
+  return clientsTask;
 }
 
 async function openList() {
@@ -601,7 +607,7 @@ async function openCompany(clientId) {
       if(sector==='fiscal')target.searchParams.set('step','documents');
     }
     history.replaceState(null,'',target.pathname+target.search);
-    await openAnalysis(found.id);
+    await openAnalysis(found.id,{record:found});
   } else await openNew(clientId);
 }
 
@@ -765,15 +771,18 @@ async function ensureEvidence({force=false}={}) {
   });
   return task.promise;
 }
-async function openAnalysis(id) {
+async function openAnalysis(id,{record=null}={}) {
   if(!uuid(id))throw new Error('A identificação da análise é inválida. Abra a empresa pela carteira.');
   const sequence=++S.sequence;
   cancelEvidence();cancelMetadata();
   releaseWizard();
   $('#analyses-app').innerHTML='<div class="initial">'+loadingMarkup({title:'Abrindo a análise…',detail:'Buscando os dados salvos desta empresa.'})+'</div>';
-  const response=await analysisRequest(apiPath('/'+encodeURIComponent(id)+'?summary=1'));
+  // The company entry route already received this authenticated summary in the
+  // same action. Reuse it once; explicit reloads still read the current record.
+  const opened=assertAnalysis(record||(await analysisRequest(apiPath('/'+encodeURIComponent(id)+'?summary=1'))).analysis);
   if(sequence!==S.sequence)return;
-  S.analysis=null;adoptAnalysis(response.analysis);S.generateRequest=null;
+  if(opened.id!==id)throw new Error('A resposta não corresponde à análise selecionada. Abra a empresa pela carteira.');
+  S.analysis=null;adoptAnalysis(opened);S.generateRequest=null;
   S.difalEnabledMemory.analysis=null;
   S.paste={text:'',preview:null,error:'',replaceConfirmed:false,open:false,pending:false};S.detailOpen={};
   S.accountingAverageRaw=null;S.accountingYearRaw=null;
@@ -789,7 +798,6 @@ async function openAnalysis(id) {
   S.modalOpen=!!S.modalKind;
   if(S.modalKind){const step=normalizeWizardStep(S.modalKind,query.get('step'));if(step)S.modalSteps[S.modalKind]=step;}
   clearError();renderDetail();
-  void loadDocumentUf().catch(()=>{});
   if(query.get('resumed')==='1')feedback('Esta empresa já tinha uma análise. Retomamos o trabalho e preservamos os regimes e dados já salvos.','info');
   if(S.versionsOpen){await loadVersions(1);$('#analysis-versions')?.scrollIntoView({block:'start',behavior:'instant'});}
   else if(query.get('view')==='review')$('#analysis-generation')?.scrollIntoView({block:'start',behavior:'instant'});
@@ -903,7 +911,7 @@ function renderDetail() {
   bindWizard();
   if($('#analysis-accounting-tools')&&(S.paste.pending||!S.accountingDraft.months.length))$('#analysis-accounting-tools').open=true;
   if(S.busy)setBusy(true);
-  if(S.modalOpen&&S.modalKind==='fiscal')void ensureEvidence();
+  if(S.modalOpen&&S.modalKind==='fiscal'){void loadDocumentUf().catch(()=>{});void ensureEvidence();}
   if(S.modalOpen&&S.modalKind==='accounting')ensureAccountingMetadata();
 }
 

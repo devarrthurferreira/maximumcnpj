@@ -1,4 +1,16 @@
-# Maximum CNPJ · v0.54.5
+# Maximum CNPJ · v0.55.0
+
+## v0.55.0 — Resposta mais rápida na central e nas análises (2026-11-03)
+
+A **Visão geral** passa a abrir sem esperar a lista de empresas nem calcular o enquadramento cadastral de todos os CNPJs históricos. Os cartões principais e o catálogo carregam em paralelo depois da autenticação. O enquadramento é consultado quando a seção é aberta, com indicação de carregamento e nova tentativa em caso de erro. Trocar a empresa ou navegar para outra tela invalida respostas antigas; não há mistura de resultados entre filtros. Uma falha no catálogo mantém a sessão e os indicadores já disponíveis, com a ação **Recarregar empresas**.
+
+Os atalhos **Fiscal** e **Contábil** aproveitam o resumo validado retornado na mesma ação, eliminando um GET repetido antes de abrir a análise. O Contábil deixa de carregar o catálogo usado somente para sugerir a UF fiscal. A alternância entre setores compartilha uma leitura de catálogo em andamento e preserva os campos digitados; uma leitura com erro pode ser tentada novamente. Reabrir explicitamente a análise continua consultando os dados atuais.
+
+O histórico sem texto de busca consulta nomes, códigos e CNPJs apenas para os **até 30 registros da página**, depois da paginação. A contagem, as exclusões em andamento, os filtros e a busca por empresa continuam conferidos no servidor. A API completa permanece compatível; o resumo usa `GET /api/v4/dashboard?summary=1` e a classificação sob demanda usa `GET /api/v4/dashboard/classification`. Operações independentes do dashboard e do histórico executam em paralelo, incluindo a leitura dos bancos usados.
+
+Validação local com dados sintéticos: **494 testes de regras/HTTP**, **47 integrações de análises/dashboard**, **246 testes Python/PDF/OCR/MongoDB** e **35 cenários de navegador** aprovados, sem testes ignorados. Os cenários cobrem consulta compartilhada, erro/nova tentativa, troca de empresa e logout/login durante requisições em andamento. Tipos, build e consistência de versões conferidos.
+
+As regras fiscais, os documentos, as preferências de DIFAL, a DRE e o período janeiro–setembro continuam preservados. Os ganhos comprovados são a retirada de consultas repetidas e de trabalho desnecessário na abertura; não representam uma promessa de tempo fixo em produção, que também depende da conexão e dos serviços externos.
 
 ## v0.54.5 — Fluxo simples e carregamento visível (2026-11-03)
 
