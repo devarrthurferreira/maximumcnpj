@@ -873,3 +873,12 @@ body:has(#analysis-delete-dialog[open]){overflow:hidden}
 .analysis-average-table thead th,.analysis-average-table tfoot th,.analysis-average-table tfoot td{background:#f1f7f3;font-weight:650}
 #analysis-average-legacy details{margin-top:12px}#analysis-average-legacy summary{cursor:pointer;font-weight:600}
 @media(max-width:650px){.analysis-average-fields{grid-template-columns:minmax(0,1fr)}.analysis-average-year{align-items:stretch;flex-direction:column;gap:6px}.analysis-average-year label{flex:auto}.analysis-average-totals{grid-template-columns:1fr!important}.analysis-average-intro{padding:14px}}
+
+/* Source evidence is visually distinct from the user's inclusion preference. */
+.analysis-difal-assessment{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:4px 0 16px}
+.analysis-difal-assessment article{min-width:0;border:1px solid var(--analysis-line);border-radius:10px;padding:14px}
+.analysis-difal-assessment h3{margin:0 0 8px;font-size:15px}
+.analysis-difal-assessment p{margin:8px 0 0;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.analysis-difal-assessment [data-difal-detected-amount]{font-size:24px;font-weight:700}
+.analysis-difal-question:disabled{opacity:.65}
+@media(max-width:600px){.analysis-difal-assessment{grid-template-columns:1fr}}

@@ -5,7 +5,7 @@ import {WIZARD_STEPS,wizardSteps,wizardStep,initialWizardStep,normalizeWizardSte
 const ids=steps=>steps.map(step=>step.id);
 
 test('abertura Empresa → Setor e Fiscal com regimes, DIFAL, RBT12 e documentos',()=>{
-  const expected={new:['company','sector'],fiscal:['regimes','difal','rbt12','documents'],accounting:['values'],config:['choices']};
+  const expected={new:['company','sector'],fiscal:['regimes','rbt12','documents','difal'],accounting:['values'],config:['choices']};
   assert.deepEqual(Object.keys(WIZARD_STEPS),Object.keys(expected));
   for(const [kind,steps] of Object.entries(expected)){
     assert.deepEqual(ids(wizardSteps(kind)),steps);
@@ -22,7 +22,7 @@ test('retomada e consulta conservam as mesmas etapas, sem decidir permissões ou
     assert.deepEqual(wizardSteps(kind,{resume:true,canWrite:false}),wizardSteps(kind));
   }
   // A seleção dos regimes não remove a etapa de opções fiscais.
-  assert.deepEqual(ids(wizardSteps('fiscal',{regimeSelection:{selected:['presumed','actual']}})),['regimes','difal','rbt12','documents']);
+  assert.deepEqual(ids(wizardSteps('fiscal',{regimeSelection:{selected:['presumed','actual']}})),['regimes','rbt12','documents','difal']);
 });
 
 test('descritores conciliam IDs, índices, numeração e extremos de cada fluxo',()=>{
@@ -108,7 +108,7 @@ test('voltar no Fiscal não exige dados nem altera um rascunho',()=>{
   const options=Object.freeze({resume:false,draft});
   const tax=wizardStep('fiscal','rbt12',options);
   assert.equal(wizardStep('new','company',options).previous,null);
-  assert.equal(wizardStep('fiscal',tax.previous,options).id,'difal');
+  assert.equal(wizardStep('fiscal',tax.previous,options).id,'regimes');
   assert.deepEqual(draft,{rbt12:null,months:[]});
 });
 

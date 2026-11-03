@@ -4,7 +4,7 @@ import {MongoClient,type Db} from 'mongodb';
 import {processLookup} from '../../src/lookup-jobs.ts';
 import {closeDatabase} from '../../src/store.ts';
 import {hashPassword} from '../../src/security.ts';
-import {OUTGOING_DIFAL_MESSAGE} from '../../public/simulator-engine.js';
+const OUTGOING_REPORT_NOTE='Não aplicado pela regra desta análise. Isso não significa ausência de vendas interestaduais.';
 
 type Account={id:string;email:string;password:string};
 type Workspace={db:Db;workspaceId:string;writer:Account;viewer:Account};
@@ -101,7 +101,7 @@ async function attach(request:APIRequestContext,baseURL:string,analysis:any,gene
   return attached.job._id;
 }
 async function fiscalStep(page:Page,step:'regimes'|'difal'|'rbt12'|'documents'){
-  const wizard=page.locator('#analysis-wizard'),steps=['regimes','difal','rbt12','documents'];
+  const wizard=page.locator('#analysis-wizard'),steps=['regimes','rbt12','documents','difal'];
   for(let attempt=0;attempt<steps.length;attempt++){
     const current=await wizard.getAttribute('data-wizard-step');expect(steps).toContain(current);if(current===step)return;
     await page.locator(steps.indexOf(current!)>steps.indexOf(step)?'#analysis-wizard-back':'#analysis-wizard-next').click();
@@ -117,17 +117,17 @@ for(const first of ['PURCHASES','SALES'] as const)test(`DIFAL aparece após ler 
   await expect(page.locator('[data-analysis-document-difal]')).toHaveCount(0);
   const originalUrl=page.url(),second=first==='PURCHASES'?'SALES':'PURCHASES';
   await upload(page,first);await expect(page).toHaveURL(originalUrl);
-  await expect(amount(page,first)).toHaveText(first==='SALES'?'R$ 0,00':'R$ 36,60');
+  await expect(amount(page,first)).toHaveText('R$ 0,00');
   await expect(tax(page,second)).toHaveCount(0);await expect(card(page,second)).toContainText('Aguardando documento');
   const firstGeneration=await generationFor(page.request,baseURL!,analysis.id);
-  expect(firstGeneration.companies[0][first==='SALES'?'sales':'purchase'].purchaseInput[first==='SALES'?'difal':'anticipation'].amountCents).toBe(first==='SALES'?0:3_660);
+  expect(firstGeneration.companies[0][first==='SALES'?'sales':'purchase'].purchaseInput[first==='SALES'?'difal':'anticipation'].amountCents).toBe(0);
   await upload(page,second);await expect(page).toHaveURL(originalUrl);
-  await expect(amount(page,'PURCHASES')).toHaveText('R$ 36,60');await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
+  await expect(amount(page,'PURCHASES')).toHaveText('R$ 0,00');await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
   await expect(tax(page,'PURCHASES')).toContainText(/antecipação de ICMS/i);
   await expect(tax(page,'SALES')).toContainText(/DIFAL de saída/i);
   const saved=await generationFor(page.request,baseURL!,analysis.id);expect(saved._id).toBe(firstGeneration._id);
   expect(saved.companies[0][first==='SALES'?'sales':'purchase']).toEqual(firstGeneration.companies[0][first==='SALES'?'sales':'purchase']);
-  await page.reload();await expect(amount(page,'PURCHASES')).toHaveText('R$ 36,60');await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
+  await page.reload();await expect(amount(page,'PURCHASES')).toHaveText('R$ 0,00');await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
   if(first==='PURCHASES')for(const width of [1280,390,320]){
     await page.setViewportSize({width,height:900});await tax(page,'SALES').scrollIntoViewIfNeeded();
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
@@ -137,39 +137,38 @@ for(const first of ['PURCHASES','SALES'] as const)test(`DIFAL aparece após ler 
   expect(errors).toEqual([]);
 });
 
-test('entrada acompanha a escolha e saída permanece zerada ao salvar e consultar sem alterar a fonte',async({page,browser,baseURL,difalWorkspace})=>{
+test('evidência da entrada permanece ao excluir da DRE e saída segue a regra sem alterar a fonte',async({page,browser,baseURL,difalWorkspace})=>{
   test.setTimeout(120_000);page.setDefaultTimeout(15_000);
   const analysis=await createAnalysis(page.request,baseURL!,difalWorkspace.writer),prepared=await prepare(page.request,baseURL!,analysis);
-  await attach(page.request,baseURL!,analysis,prepared.generationId,'PURCHASES',[{totalCents:50_000,recipientUf:'SP'}]);
+  await attach(page.request,baseURL!,analysis,prepared.generationId,'PURCHASES',[{totalCents:50_000,recipientUf:'SP',document:'00000000000191'}]);
   await attach(page.request,baseURL!,analysis,prepared.generationId,'SALES',[{totalCents:100_000,recipientUf:'SP'}]);
   const original=await generationFor(page.request,baseURL!,analysis.id);await page.goto(documentsUrl(analysis.id));
   await expect(amount(page,'PURCHASES')).toHaveText('R$ 36,60');await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
   const writes:string[]=[];page.on('request',request=>{if(request.method()==='PATCH'&&new URL(request.url()).pathname.startsWith('/api/v4/analyses/'))writes.push(request.url());});
   await fiscalStep(page,'difal');await page.locator('#analysis-difal-no').check();await fiscalStep(page,'documents');
-  await expect(tax(page,'PURCHASES')).toHaveCount(0);await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
-  await expect(tax(page,'SALES')).toContainText(OUTGOING_DIFAL_MESSAGE);
+  await expect(amount(page,'PURCHASES')).toHaveText('R$ 36,60');await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
+  await expect(tax(page,'SALES')).toContainText(OUTGOING_REPORT_NOTE);
   await fiscalStep(page,'difal');await page.locator('#analysis-difal-yes').check();
   const details=page.locator('#analysis-difal-details');if(await details.getAttribute('open')===null)await details.locator(':scope > summary').click();
   await details.locator('[data-analysis-difal-enabled="hybrid"]').uncheck();
-  await expect(details.locator('[data-analysis-difal-regime="pure"][data-analysis-difal-operation="exit"]')).not.toBeChecked();
-  await expect(details.locator('[data-analysis-difal-regime="pure"][data-analysis-difal-operation="exit"]')).toBeDisabled();
+  await expect(details.locator('[data-analysis-difal-operation="exit"]')).toHaveCount(0);
   await fiscalStep(page,'documents');await expect(amount(page,'PURCHASES')).toHaveText('R$ 36,60');await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
   await fiscalStep(page,'difal');
   await details.locator('[data-analysis-difal-regime="pure"][data-analysis-difal-operation="entry"]').uncheck();
-  await expect(details.locator('[data-analysis-difal-regime="pure"][data-analysis-difal-operation="exit"]')).toBeDisabled();
-  await page.locator('#analysis-wizard-next').click();
+  await expect(details.locator('[data-analysis-difal-operation="exit"]')).toHaveCount(0);
+  await page.locator('#analysis-wizard button[value="complete"]').click();
   await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','difal');
   await expect(page.locator('#analysis-wizard [role="alert"]')).toContainText('Escolha entrada');
   await page.locator('#analysis-difal-no').check();
-  await fiscalStep(page,'documents');await expect(tax(page,'PURCHASES')).toHaveCount(0);await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
+  await fiscalStep(page,'documents');await expect(amount(page,'PURCHASES')).toHaveText('R$ 36,60');await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
   expect(writes).toEqual([]);
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${analysis.id}/fiscal`&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="save"]').click();expect((await saving).ok()).toBe(true);
-  await page.reload();await expect(tax(page,'PURCHASES')).toHaveCount(0);await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
+  await page.reload();await expect(amount(page,'PURCHASES')).toHaveText('R$ 36,60');await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
   const unchanged=await generationFor(page.request,baseURL!,analysis.id);expect(unchanged).toEqual(original);
   const context=await browser.newContext({baseURL});try{
     await signIn(context.request,baseURL!,difalWorkspace.viewer);const viewer=await context.newPage();await viewer.goto(documentsUrl(analysis.id));
-    await expect(tax(viewer,'PURCHASES')).toHaveCount(0);await expect(amount(viewer,'SALES')).toHaveText('R$ 0,00');
+    await expect(amount(viewer,'PURCHASES')).toHaveText('R$ 36,60');await expect(amount(viewer,'SALES')).toHaveText('R$ 0,00');
     await expect(viewer.locator('[data-analysis-add-document]')).toHaveCount(0);await expect(card(viewer,'SALES').getByRole('link',{name:'Conferir relatório'})).toBeVisible();
   }finally{await context.close();}
 });
@@ -179,7 +178,7 @@ test('saída é zero com CPF interestadual ou UF pendente e a entrada continua i
   await attach(page.request,baseURL!,analysis,prepared.generationId,'PURCHASES',[{totalCents:50_000,recipientUf:'MG'}]);
   await attach(page.request,baseURL!,analysis,prepared.generationId,'SALES',[{totalCents:100_000,recipientUf:'SP'},{totalCents:50_000,recipientUf:''}]);
   await page.goto(documentsUrl(analysis.id));await expect(amount(page,'PURCHASES')).toHaveText('R$ 0,00');
-  await expect(amount(page,'SALES')).toHaveText('R$ 0,00');await expect(tax(page,'SALES')).toContainText(OUTGOING_DIFAL_MESSAGE);
+  await expect(amount(page,'SALES')).toHaveText('R$ 0,00');await expect(tax(page,'SALES')).toContainText(OUTGOING_REPORT_NOTE);
   await expect(tax(page,'SALES')).not.toContainText(/parcial|pendente|Não possui vendas/i);await expect(tax(page,'PURCHASES')).not.toContainText(/pendente|indisponível/i);
   const generation=await generationFor(page.request,baseURL!,analysis.id);
   expect(generation.companies[0].sales.purchaseInput.difal).toMatchObject({version:'DIFAL_ESTIMATE_V6',amountCents:0,eligibleLines:0,pendingLines:0});
@@ -191,10 +190,10 @@ test('leitura incompleta não antecipa o cartão e UF pendente só bloqueia a en
   await page.goto(documentsUrl(analysis.id));await expect(card(page,'SALES')).toContainText('Finalização pendente');
   await expect(tax(page,'SALES')).toHaveCount(0);await page.locator('[data-analysis-document-retry="SALES"]').click();
   await expect(card(page,'SALES')).toContainText('Leitura concluída');await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
-  await expect(tax(page,'SALES')).toContainText(OUTGOING_DIFAL_MESSAGE);
+  await expect(tax(page,'SALES')).toContainText(OUTGOING_REPORT_NOTE);
   const generation=await generationFor(page.request,baseURL!,analysis.id);expect(generation.companies[0].sales._id).toBe(jobId);
   expect(generation.companies[0].sales.purchaseInput.difal).toMatchObject({version:'DIFAL_ESTIMATE_V6',amountCents:0,eligibleLines:0,pendingLines:0});
-  await attach(page.request,baseURL!,analysis,prepared.generationId,'PURCHASES',[{totalCents:50_000,recipientUf:''}]);
+  await attach(page.request,baseURL!,analysis,prepared.generationId,'PURCHASES',[{totalCents:50_000,recipientUf:'',document:'00000000000191'}]);
   await page.reload();await expect(amount(page,'PURCHASES')).toHaveText('Pendente');
   await expect(tax(page,'PURCHASES')).not.toContainText('R$ 0,00');
   await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
@@ -228,7 +227,7 @@ test('cartão de vendas mantém janeiro–setembro e DIFAL zero mesmo com CPF in
     {totalCents:300_000,recipientUf:'MG',serviceDate:'2025-09-15'}
   ]);
   await page.goto(documentsUrl(emptyAnalysis.id));await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
-  await expect(tax(page,'SALES')).toContainText(OUTGOING_DIFAL_MESSAGE);
+  await expect(tax(page,'SALES')).toContainText(OUTGOING_REPORT_NOTE);
   await expect(tax(page,'SALES')).not.toContainText(/pendente|indisponível/i);
   await page.setViewportSize({width:390,height:900});await tax(page,'SALES').scrollIntoViewIfNeeded();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);

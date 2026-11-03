@@ -63,7 +63,7 @@ async function switchSector(page:Page,sector:'fiscal'|'accounting'){
 }
 
 async function fiscalDocuments(page:Page){
-  const wizard=page.locator('#analysis-wizard'),steps=['regimes','difal','rbt12','documents'];
+  const wizard=page.locator('#analysis-wizard'),steps=['regimes','rbt12','documents','difal'];
   for(let attempt=0;attempt<steps.length;attempt++){
     const current=await wizard.getAttribute('data-wizard-step');expect(steps).toContain(current);
     if(current==='documents')return;
@@ -166,9 +166,11 @@ test('Geração realmente excluída permite salvar RBT12 e recuperar importaçã
   await page.locator('#analysis-wizard-next').click();
   await expect(page.locator('#analysis-fiscal-evidence')).toContainText('nova importação');
   await expect(page.locator('#analysis-fiscal-documents-view a')).toHaveCount(0);
-  const rejected=page.waitForResponse(response=>response.request().method()==='PATCH'&&new URL(response.url()).pathname.endsWith('/fiscal'));
+  await page.locator('#analysis-wizard-next').click();
+  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','difal');
   await page.locator('#analysis-wizard button[value="complete"]').click();
-  const failure=await rejected;expect(failure.status()).toBe(409);expect((await failure.json()).error).toBe('ANALYSIS_GENERATION_UNAVAILABLE');
+  await expect(page.locator('#analysis-error')).toContainText('Dados pendentes não equivalem a zero');
+  await page.locator('#analysis-difal-documents').click();
   await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','documents');
   await expect(page.locator('#analysis-replace-missing-documents')).toBeVisible();
   await openDetails(page,'analysis-fiscal-options');await page.locator('#analysis-sales-annex').selectOption('2');

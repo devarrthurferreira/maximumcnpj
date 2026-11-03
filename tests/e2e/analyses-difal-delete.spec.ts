@@ -5,6 +5,9 @@ import {gunzipSync} from 'node:zlib';
 import {MongoClient,type Db} from 'mongodb';
 import {hashPassword} from '../../src/security.ts';
 import {csvParse} from '../../src/domain.ts';
+import {processLookup} from '../../src/lookup-jobs.ts';
+import {closeDatabase} from '../../src/store.ts';
+
 
 type Account={id:string;email:string;password:string;role:'admin'|'operator'|'viewer'};
 type Workspace={db:Db;workspaceId:string;admin:Account;operator:Account;viewer:Account};
@@ -59,13 +62,14 @@ async function signIn(request:APIRequestContext,baseURL:string,account:Account){
   await api(request,baseURL,'POST','/api/auth/login',{email:account.email,password:account.password});
   expect((await api(request,baseURL,'GET','/api/auth/session')).user.role).toBe(account.role);
 }
+test.afterAll(async()=>closeDatabase());
 async function createCompany(request:APIRequestContext,baseURL:string,prefix='Empresa sintética DIFAL'):Promise<Company>{
   const code=String(Number.parseInt(randomUUID().replaceAll('-','').slice(0,11),16)),name=prefix+' '+code;
   const imported=await api(request,baseURL,'POST','/api/v4/clients/import',{rows:[{code,name,uf:'MG'}]});
   expect(imported.success).toBe(1);return {id:imported.items[0].id,code,name};
 }
 async function fiscalStep(page:Page,step:'regimes'|'difal'|'rbt12'|'documents'){
-  const wizard=page.locator('#analysis-wizard'),steps=['regimes','difal','rbt12','documents'];
+  const wizard=page.locator('#analysis-wizard'),steps=['regimes','rbt12','documents','difal'];
   await expect(page.locator('[data-analysis-sector="fiscal"]').first()).toBeAttached();
   if(!await wizard.isVisible())await page.locator('[data-analysis-sector="fiscal"]').first().click();
   else if(await wizard.getAttribute('data-wizard-kind')!=='fiscal')await wizard.locator('[data-analysis-sector="fiscal"]').click();
@@ -93,16 +97,23 @@ async function openNew(page:Page,baseURL:string,company:Company,choice:'yes'|'no
   if(checkRequired){
     await page.screenshot({path:test.info().outputPath('analysis-new-difal-choice.png'),fullPage:true});
     const before=(await api(page.request,baseURL,'GET','/api/v4/analyses/'+id)).analysis.fiscal;
-    await page.locator('#analysis-wizard-next').click();
-    await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('escolha Sim ou Não');
-    await expect(page.locator('#analysis-difal-yes')).toBeFocused();
+    await expect(page.locator('#analysis-difal-yes')).toBeDisabled();
+    await page.locator('#analysis-wizard button[value="complete"]').click();
+    await expect(page.locator('#analysis-wizard #analysis-error')).toContainText('Dados pendentes não equivalem a zero');
     expect((await api(page.request,baseURL,'GET','/api/v4/analyses/'+id)).analysis.fiscal).toEqual(before);
   }
+  const draftSaved=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+id+'/fiscal'&&response.request().method()==='PATCH');
+  await page.locator('#analysis-wizard button[value="save"]').click();expect((await draftSaved).ok()).toBe(true);
+  let current=(await api(page.request,baseURL,'GET','/api/v4/analyses/'+id)).analysis;
+  current=await prepareSources(page.request,baseURL,current,company,'SP',true,false);
+  await page.goto('/analyses.html?id='+id+'&sector=fiscal&step=difal');
+  await expect(page.locator('[data-difal-assessment="entry"]')).toHaveAttribute('data-difal-state','available');
+  await expect(page.locator('#analysis-difal-yes')).not.toBeChecked();
   await page.locator('#analysis-difal-'+choice).check();
   if(choice==='yes')await expect(page.locator('#analysis-difal-details')).toHaveJSProperty('open',true);
   else await expect(page.locator('#analysis-difal-details')).toBeHidden();
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+id+'/fiscal'&&response.request().method()==='PATCH');
-  await page.locator('#analysis-wizard button[value="save"]').click();expect((await saving).ok()).toBe(true);
+  await page.locator('#analysis-wizard button[value="complete"]').click();expect((await saving).ok()).toBe(true);
   await expect(page.locator('#analyses-app')).toHaveAttribute('aria-busy','false');
   const analysis=(await api(page.request,baseURL,'GET','/api/v4/analyses/'+id)).analysis;
   expect(analysis.clientId).toBe(company.id);expect(analysis.config.regimeSelection).toEqual(selection);
@@ -114,30 +125,36 @@ async function patchSector(request:APIRequestContext,baseURL:string,analysis:any
     expectedSectorRevision:analysis[sector].revision,expectedConfigRevision:analysis.config.revision,complete:true,data
   })).analysis;
 }
-async function prepareSources(request:APIRequestContext,baseURL:string,analysis:any,company:Company,salesUf='SP'){
+async function prepareSources(request:APIRequestContext,baseURL:string,analysis:any,company:Company,salesUf='SP',purchaseCnpj=false,completeFiscal=true){
   const prepared=await api(request,baseURL,'POST','/api/v4/analyses/'+analysis.id+'/fiscal/import',{
     expectedSectorRevision:analysis.fiscal.revision,expectedConfigRevision:analysis.config.revision
   });
-  // Real authenticated Node ingestion derives both estimates; CPF rows never call a CNPJ provider.
+  // Real ingestion; CNPJ lookups use a synthetic local provider and CPF never invokes it.
   for(const kind of ['purchases','sales'] as const){
     const attached=await api(request,baseURL,'POST','/api/v4/generations/'+prepared.generationId+'/'+kind,{
       clientId:company.id,importId:randomUUID(),fileName:company.code+'-'+kind+'.csv',expectedRows:9,issuerUf:'MG'
     });
     const totals=[...(kind==='sales'?[100_000,200_000]:[50_000,70_000]),...Array(7).fill(0)];
     await api(request,baseURL,'POST','/api/v4/'+kind+'/'+attached.job._id+'/rows',{offset:0,rows:totals.map((totalCents,index)=>({
-      document:'12345678900',name:'Pessoa sintética',recipientUf:kind==='sales'?salesUf:'SP',serviceDate:'2025-0'+(index+1)+'-15',
+      document:purchaseCnpj&&kind==='purchases'?'00000000000191':'12345678900',name:'Contraparte sintética',recipientUf:kind==='sales'?salesUf:'SP',serviceDate:'2025-0'+(index+1)+'-15',
       natureCode:kind==='sales'?'5102001':'1102001',description:'Operação sintética interestadual',quantity:'1',
       grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents
     }))});
-    const completed=await api(request,baseURL,'POST','/api/v4/'+kind+'/'+attached.job._id+'/finalize',{});
-    expect(completed.status).toBe('COMPLETED');expect(completed.summary.unique).toBe(0);
+    let completed=await api(request,baseURL,'POST','/api/v4/'+kind+'/'+attached.job._id+'/finalize',{});
+    if(completed.status!=='COMPLETED'){
+      const actor=(await api(request,baseURL,'GET','/api/auth/session')).user;
+      completed=await processLookup(actor,attached.job._id,(async()=>Response.json({cnpj:'00000000000191',razao_social:'Fornecedor sintético',opcao_pelo_simples:false})) as typeof fetch);
+    }
+    expect(completed.status).toBe('COMPLETED');expect(completed.summary.unique).toBe(purchaseCnpj&&kind==='purchases'?1:0);
   }
-  analysis=await patchSector(request,baseURL,prepared.analysis,'fiscal',{...prepared.analysis.fiscal.data,
-    rbt12Source:'MANUAL',rbt12:100_000,rbt12ManualConfirmed:true,rbt12ExtractionId:null,rbt12DocumentId:null});
+  analysis=(await api(request,baseURL,'PATCH','/api/v4/analyses/'+analysis.id+'/fiscal',{
+    expectedSectorRevision:prepared.analysis.fiscal.revision,expectedConfigRevision:prepared.analysis.config.revision,complete:completeFiscal,
+    data:{...prepared.analysis.fiscal.data,rbt12Source:'MANUAL',rbt12:100_000,rbt12ManualConfirmed:true,rbt12ExtractionId:null,rbt12DocumentId:null}
+  })).analysis;
   analysis=await patchSector(request,baseURL,analysis,'accounting',{months:Array.from({length:9},(_,index)=>'2025-0'+(index+1)).map(sourceMonth=>({
     sourceMonth,salariesCents:0,rentCents:0,cardExpensesCents:0,benefitsCents:0,adminExpensesCents:0
   }))});
-  expect(analysis.readiness.ready).toBe(true);return analysis;
+  expect(analysis.readiness.ready).toBe(completeFiscal);return analysis;
 }
 
 test('Abrir DRE atual zera saída mesmo para CPF interestadual e mantém a versão histórica positiva',async({page,baseURL,analysisWorkspace},info)=>{
@@ -166,16 +183,16 @@ test('Abrir DRE atual zera saída mesmo para CPF interestadual e mantém a vers�
   expect(corrected.parentSimulationId).toBe(legacy._id);
   const dre=await fullDre(page),zero=dre.locator('[data-dre-row="difal"] td');
   await expect(zero).toHaveCount(2);for(const cell of await zero.all())await expect(cell).toHaveText('R$ 0,00');
-  await expect(dre.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('87,84');
+  await expect(dre.locator('[data-dre-row="icmsAnticipation"] td').first()).toHaveText('R$ 0,00');
   await expect(page.locator('#simulator-difal')).toContainText('Não possui DIFAL de saída');
   expect(corrected.result.outgoingDifalDisabled).toBe(true);
   expect(corrected.source.monthlyReports.every((row:any)=>row.difal.version==='DIFAL_ESTIMATE_V6'&&row.difal.amountCents===0)).toBe(true);
   for(const regime of corrected.result.regimes){
     const prior=original.result.regimes.find((row:any)=>row.id===regime.id);
-    expect(regime.dre.difal).toBe(0);expect(regime.dre.icmsAnticipation).toBe(prior.dre.icmsAnticipation);
+    expect(regime.dre.difal).toBe(0);expect(regime.dre.icmsAnticipation).toBe(0);
     expect(regime.dre.revenue).toBe(prior.dre.revenue);
-    expect(regime.totalTaxes).toBeCloseTo(prior.totalTaxes-300,8);
-    expect(regime.dre.netProfit).toBeCloseTo(prior.dre.netProfit+300,8);
+    expect(regime.totalTaxes).toBeCloseTo(prior.totalTaxes-387.84,8);
+    expect(regime.dre.netProfit).toBeCloseTo(prior.dre.netProfit+387.84,8);
   }
   expect(corrected.result.monthlyResults).toHaveLength(9);
   for(const month of corrected.result.monthlyResults)for(const regime of month.result.regimes)expect(regime.dre.difal).toBe(0);
@@ -269,7 +286,6 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   await expect(page.locator('#analysis-difal-yes')).toBeChecked();
   await page.screenshot({path:info.outputPath('analysis-difal-fiscal-desktop.png'),fullPage:true});
   await fiscalStep(page,'difal');await expect(page.locator('#analysis-difal-yes')).toBeVisible();
-  analysis=await prepareSources(page.request,baseURL!,analysis,company);
   await page.goto('/analyses.html?id='+id);
   const included=await generateInBrowser(page,baseURL!,id);expectDifal(included,true);
   const sources=await freezeSources(analysisWorkspace,analysis,included);expect(sources.lines).toHaveLength(18);
@@ -286,11 +302,11 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   if(await details.getAttribute('open')===null)await details.locator(':scope > summary').click();
   const enabled=(regime:string)=>details.locator('[data-analysis-difal-enabled="'+regime+'"]');
   const direction=(regime:string,operation:string)=>details.locator('[data-analysis-difal-regime="'+regime+'"][data-analysis-difal-operation="'+operation+'"]');
-  await expect(direction('pure','exit')).toBeDisabled();await direction('hybrid','entry').uncheck();await enabled('hybrid').uncheck();
+  await expect(direction('pure','exit')).toHaveCount(0);await direction('hybrid','entry').uncheck();await enabled('hybrid').uncheck();
   await page.locator('#analysis-difal-no').check();await expect(details).toBeHidden();
   await page.locator('#analysis-difal-yes').check();await expect(details).toHaveJSProperty('open',true);
   await expect(enabled('pure')).toBeChecked();await expect(enabled('hybrid')).not.toBeChecked();
-  await expect(direction('pure','entry')).toBeChecked();await expect(direction('pure','exit')).not.toBeChecked();
+  await expect(direction('pure','entry')).toBeChecked();await expect(direction('pure','exit')).toHaveCount(0);
   await expect(direction('hybrid','entry')).not.toBeChecked();await expect(direction('hybrid','exit')).not.toBeChecked();
   await expect(direction('hybrid','entry')).toBeDisabled();await expect(direction('hybrid','exit')).toBeDisabled();
   expect(policyWrites).toEqual([]);
@@ -302,7 +318,7 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   await page.screenshot({path:info.outputPath('analysis-difal-no-mobile.png'),fullPage:true});
   await page.setViewportSize({width:1280,height:720});
   expect(policyWrites).toEqual([]);
-  await fiscalStep(page,'documents');
+  await fiscalStep(page,'difal');
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+id+'/fiscal'&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="complete"]').click();
   const response=await saving;expect(response.ok(),await response.text()).toBe(true);analysis=(await response.json()).analysis;

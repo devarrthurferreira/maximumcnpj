@@ -6,6 +6,7 @@ import {renderRbt12Schedule} from './simulator-source-view.js';
 import {ACCOUNTING_FIELDS,accountingSummary,analysisGuidance,accountingSourceMonths,analysisPeriodFor,scopedAccountingMonths,usesFixedAnalysisPeriod} from './analyses-guidance.js';
 import {renderCommercialComposition} from './simulator-commercial-view.js';
 import {BRAZIL_UFS,normalizeUf} from './difal.js';
+import {assessAnalysisDifal} from './analysis-difal-assessment.js';
 import {documentDifalSummary} from './analysis-document-difal.js';
 import {renderFinancialAlerts} from './financial-alerts-view.js';
 import {accountingAverage,accountingAverageInputValues,accountingAveragePreview} from './analysis-accounting-average.js';
@@ -208,32 +209,45 @@ function extratoPanel({analysis,draft,reference,schedule,documentStatus,pdfStatu
 
 export function difalChoiceSummary(selection,policy,choice) {
   const selected=resolveRegimeSelection(selection).selected.filter(id=>['pure','hybrid'].includes(id));
-  if(!selected.length)return 'DIFAL não utilizado nos regimes selecionados. Saída: R$ 0,00.';
+  if(!selected.length)return 'Os regimes selecionados não utilizam a antecipação de entrada nesta análise.';
   const decision=choice===undefined?(selected.some(id=>policy?.enabled?.[id])?'yes':'no'):choice;
-  if(decision===null)return 'Escolha Sim ou Não para o DIFAL de entrada. Saída: R$ 0,00.';
-  if(decision==='no')return 'DIFAL não será incluído nesta simulação. Saída: R$ 0,00.';
-  return selected.map(id=>{
+  if(decision===null)return 'Nenhuma escolha confirmada. Primeiro confira os relatórios; depois decida a inclusão na DRE.';
+  if(decision==='no')return 'Sua escolha: não incluir a entrada na DRE. Isso não altera o que foi encontrado nos relatórios.';
+  return 'Sua escolha: '+selected.map(id=>{
     const name=id==='pure'?'Puro':'Híbrido';
-    if(!policy?.enabled?.[id])return `${name}: não incluído`;
-    const operations=policy.operations?.[id],directions=[operations?.entry?'entrada':null].filter(Boolean);
-    return `${name}: ${directions.join(' e ')||'nenhuma operação selecionada'}`;
-  }).join(' · ')+'. Saída: R$ 0,00 em todos os regimes.';
+    return `${name}: ${policy?.enabled?.[id]&&policy.operations?.[id]?.entry?'incluir entrada identificada':'não incluir'}`;
+  }).join(' · ')+'. Os valores vêm dos documentos, não desta seleção.';
 }
 
-export function renderDifalChoice(selection,policy,{prefix='analysis',choice}={}) {
+export function renderDifalAssessment(assessment) {
+  const states={waiting:'Aguardando relatório',reading:'Conferindo relatório',unavailable:'Leitura indisponível',
+    pending:'Conferência pendente',partial:'Valor parcial — conferência pendente',available:'Entrada identificada',
+    none:'Sem entrada elegível no relatório',disabled:'Saída não aplicada pela regra da análise'};
+  return `<div class="analysis-difal-assessment" aria-label="DIFAL identificado nos relatórios" aria-live="polite">${['entry','exit'].map(direction=>{
+    const item=assessment?.[direction]||{state:'waiting',amountCents:null,note:'Adicione e confira o relatório antes de decidir.'};
+    return `<article data-difal-assessment="${direction}" data-difal-state="${esc(item.state)}"><h3>${direction==='entry'?'Entradas · compras':'Saídas · vendas'}</h3><strong>${esc(states[item.state]||states.unavailable)}</strong>${item.amountCents!==null&&item.amountCents!==undefined?`<p data-difal-detected-amount>${money(item.amountCents/100)}</p>`:''}${item.eligibleLines!==null&&item.eligibleLines!==undefined&&direction==='entry'?`<p>${esc(item.eligibleLines)} operação(ões) elegível(is) · Base: ${money(item.baseCents/100)}</p>`:''}<p>${esc(item.note||item.context||'Estimativa conferida nos documentos de janeiro a setembro.')}</p></article>`;
+  }).join('')}</div>`;
+}
+
+export function renderDifalChoice(selection,policy,{prefix='analysis',choice,assessment}={}) {
   const selected=resolveRegimeSelection(selection).selected.filter(id=>['pure','hybrid'].includes(id));
   if(!selected.length)return '';
   const decision=choice===undefined?(selected.some(id=>policy?.enabled?.[id])?'yes':'no'):choice;
-  return `<section class="analysis-difal-panel" id="${esc(prefix)}-difal-panel"><fieldset class="analysis-difal-question" aria-describedby="${esc(prefix)}-difal-summary"><legend>Terá DIFAL de entrada?</legend><div class="analysis-difal-choice-options">${[['yes','Sim'],['no','Não']].map(([value,label])=>`<label for="${esc(prefix)}-difal-${value}"><input id="${esc(prefix)}-difal-${value}" type="radio" name="${esc(prefix)}-difal-choice" value="${value}" data-difal-choice="${value}" data-difal-context="${esc(prefix)}" ${decision===value?'checked':''}><span>${label}</span></label>`).join('')}</div></fieldset>
+  const canChoose=assessment?.entry?.state==='available';
+  const explanation=assessment?.entry?.state==='none'?'Nenhuma entrada elegível foi encontrada. A DRE fica com R$ 0,00 para essa entrada; suas preferências salvas não são alteradas.':canChoose?'Confira a estimativa acima e escolha se deseja incluí-la na DRE.':'Leia e confira o relatório de entradas antes de escolher. Pendência ou erro não significam ausência de DIFAL.';
+  return `<section class="analysis-difal-panel" id="${esc(prefix)}-difal-panel" data-evidence-ready="${canChoose}">
+    ${renderDifalAssessment(assessment)}<p class="analysis-note">${esc(explanation)}</p>
+    <fieldset class="analysis-difal-question" ${canChoose?'':'disabled'} aria-describedby="${esc(prefix)}-difal-summary"><legend>Incluir o DIFAL de entrada identificado na DRE?</legend><div class="analysis-difal-choice-options">${[['yes','Sim'],['no','Não']].map(([value,label])=>`<label for="${esc(prefix)}-difal-${value}"><input id="${esc(prefix)}-difal-${value}" type="radio" name="${esc(prefix)}-difal-choice" value="${value}" data-difal-choice="${value}" data-difal-context="${esc(prefix)}" ${decision===value?'checked':''}><span>${label}</span></label>`).join('')}</div></fieldset>
     <p class="analysis-difal-summary" id="${esc(prefix)}-difal-summary" role="status" aria-live="polite">${esc(difalChoiceSummary(selection,policy,choice))}</p>
-    <details class="analysis-difal-details" id="${esc(prefix)}-difal-details" ${decision==='yes'?'open':'hidden'}><summary>Definir regimes do DIFAL de entrada</summary>${difalOptions(selection,policy)}</details>
+    <details class="analysis-difal-details" id="${esc(prefix)}-difal-details" ${decision==='yes'&&canChoose?'open':'hidden'}><summary>Definir regimes para a entrada identificada</summary>${difalOptions(selection,policy)}</details>
+    ${prefix==='analysis'?'<div class="analysis-actions"><button type="button" id="analysis-difal-documents">Conferir relatórios</button><button type="button" id="analysis-difal-retry">Atualizar leitura do DIFAL</button></div>':''}
   </section>`;
 }
 
 function difalOptions(selection,policy) {
   const selected=resolveRegimeSelection(selection).selected.filter(id=>['pure','hybrid'].includes(id));
   if(!selected.length)return '';
-  return `<div class="analysis-difal-options">${selected.map(id=>`<fieldset data-analysis-difal="${id}"><legend>${esc(REGIME_LABELS[id])}</legend><label class="analysis-check"><input type="checkbox" data-analysis-difal-enabled="${id}" ${policy?.enabled?.[id]?'checked':''}>Incluir DIFAL de entrada neste regime</label>${[['entry','ENTRADA - antecipação das compras'],['exit','SAÍDA - desativada · R$ 0,00']].map(([operation,label])=>`<label class="analysis-check"><input type="checkbox" data-analysis-difal-operation="${operation}" data-analysis-difal-regime="${id}" ${operation==='entry'&&policy?.operations?.[id]?.entry?'checked':''} ${operation==='exit'||!policy?.enabled?.[id]?'disabled':''}>${label}</label>`).join('')}</fieldset>`).join('')}</div><p class="analysis-note">Não possui DIFAL de saída nesta análise, inclusive nas vendas interestaduais para CPF. A antecipação de compras continua independente, somente no Simples Puro e Híbrido e conforme as regras de cada competência.</p>`;
+  return `<div class="analysis-difal-options">${selected.map(id=>`<fieldset data-analysis-difal="${id}"><legend>${esc(REGIME_LABELS[id])}</legend><label class="analysis-check"><input type="checkbox" data-analysis-difal-enabled="${id}" ${policy?.enabled?.[id]?'checked':''}>Incluir entrada identificada neste regime</label><label class="analysis-check"><input type="checkbox" data-analysis-difal-operation="entry" data-analysis-difal-regime="${id}" ${policy?.operations?.[id]?.entry?'checked':''} ${!policy?.enabled?.[id]?'disabled':''}>ENTRADA - antecipação das compras elegíveis</label></fieldset>`).join('')}</div><p class="analysis-note">A leitura identifica a base e o valor; esta escolha apenas autoriza sua inclusão. CPF continua excluído conforme a regra desta análise. A saída não é reativada por estas opções.</p>`;
 }
 
 function fiscalAdjustments(draft,source,canWrite,analysis,generation) {
@@ -264,9 +278,9 @@ function fiscalPanel(options) {
   const regimes=`${regimeChoices(config.regimeSelection,'analysis-fiscal-regime')}<label class="analysis-config-year">Ano do cenário<select id="analysis-fiscal-year"><option value="2027" ${config.year===2027?'selected':''}>2027</option><option value="2028" ${config.year===2028?'selected':''}>2028</option></select></label><p class="analysis-note">Escolha um ou mais regimes. A DRE única compara somente os regimes selecionados. O período dos documentos fica limitado aos meses disponíveis de janeiro a setembro.</p>`;
   const form=`<form id="analysis-fiscal-form" class="analysis-wizard-form" novalidate><div class="analysis-wizard-body"><fieldset class="analysis-fields" ${canWrite?'':'disabled'}>
       ${wizardStep('regimes','Quais regimes terão DRE?','Selecione os regimes da comparação.',regimes,{first:true})}
-      ${wizardStep('difal','DIFAL por regime','Defina a antecipação de compras de cada Simples. O DIFAL de saída permanece zerado.',renderDifalChoice(analysis.config.regimeSelection,draft.difalPolicy,{choice:options.fiscalDifalChoice})||'<p class="analysis-note">Os regimes escolhidos não utilizam as opções de DIFAL do Simples. Continue para os documentos.</p>')}
       ${wizardStep('rbt12','RBT12 / PGDAS-D · opcional','',extratoPanel({...options,draft}))}
       ${wizardStep('documents','Relatórios de entradas e saídas','Importe e confira somente as competências disponíveis entre janeiro e setembro.',`<div id="analysis-fiscal-period">${renderAnalysisPeriod(options,{compact:true})}</div><div id="analysis-fiscal-evidence">${renderFiscalEvidence(options)}</div><div id="analysis-fiscal-documents-view">${renderFiscalReports(options)}</div>${simples?`<div id="analysis-inline-rbt12-view">${renderInlineRbt12(options)}</div>`:''}<div id="analysis-commercial-composition">${renderFiscalComposition(options)}</div>${tax}`)}
+      ${wizardStep('difal','DIFAL identificado nos relatórios','Confira a leitura e depois escolha a inclusão por regime.',`<div id="analysis-difal-view">${renderDifalChoice(analysis.config.regimeSelection,draft.difalPolicy,{choice:options.fiscalDifalChoice,assessment:assessAnalysisDifal(options)})||'<p class="analysis-note">Os regimes selecionados não utilizam a antecipação de entrada nesta análise.</p>'}</div>`)}
     </fieldset></div>${wizardFooter({canWrite,sector:'fiscal',analysisId:analysis.id,finalAction:canWrite?`<button type="submit" name="intent" value="complete" class="primary" ${configDirty?'disabled':''}>Salvar e concluir</button>`:''})}</form>`;
   return wizardFrame('fiscal','Fiscal',analysis.company?.name||'Documentos e tributação.',form);
 }

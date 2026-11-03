@@ -25,7 +25,7 @@ async function fiscalStep(page:Page,step:'regimes'|'difal'|'rbt12'|'documents'){
     await opener.click();
   }
   await expect(wizard).toBeVisible();await expect(wizard).toHaveAttribute('data-wizard-kind','fiscal');
-  const steps=['regimes','difal','rbt12','documents'];
+  const steps=['regimes','rbt12','documents','difal'];
   for(let attempt=0;attempt<steps.length;attempt++){
     const current=await wizard.getAttribute('data-wizard-step');expect(steps).toContain(current);
     if(current===step)return;
@@ -35,7 +35,7 @@ async function fiscalStep(page:Page,step:'regimes'|'difal'|'rbt12'|'documents'){
   await expect(wizard).toHaveAttribute('data-wizard-step',step);
 }
 async function completeFiscal(page:Page,id:string){
-  await fiscalStep(page,'documents');
+  await fiscalStep(page,'difal');
   const saved=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/fiscal`&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="complete"]').click();
   const response=await saved;expect(response.ok(),await response.text()).toBe(true);

@@ -1,3 +1,4 @@
+import {assessAnalysisDifal,savedDifalChoice} from './analysis-difal-assessment.js';
 import {loadDocumentDifal} from './analysis-document-difal.js';
 import {mountNavigation} from './navigation.js';
 import {analysisRequest} from './analyses-api.js';
@@ -255,7 +256,7 @@ function adoptAnalysis(value,{preserveDrafts=false}={}) {
   }
   S.analysis=record;
   if(!preserveDrafts||!S.configDirty){S.configDraft=clone(record.config);S.configDirty=false;S.draftRevisions.config=record.config.revision;}
-  if(!preserveDrafts||!S.fiscalDirty){S.fiscalDraft=clone(record.fiscal.data);S.fiscalDirty=false;S.draftRevisions.fiscal=record.fiscal.revision;}
+  if(!preserveDrafts||!S.fiscalDirty){S.fiscalDraft=clone(record.fiscal.data);S.fiscalDifalChoice=savedDifalChoice(record.fiscal);S.fiscalDirty=false;S.draftRevisions.fiscal=record.fiscal.revision;}
   if(!preserveDrafts||!S.accountingDirty){
     S.accountingDraft=clone(record.accounting.data);S.accountingDirty=false;
     S.accountingAverageRaw=null;S.accountingYearRaw=null;S.draftRevisions.accounting=record.accounting.revision;
@@ -386,15 +387,17 @@ function captureDifalPolicy(prefix,base) {
 }
 function refreshDifalControls(prefix,policy,selection,choice=difalChoice(policy,selection)) {
   const panel=$('#'+prefix+'-difal-panel');if(!panel)return;
+  const canChoose=panel.dataset.evidenceReady==='true';
+  panel.querySelector('.analysis-difal-question').disabled=!canChoose;
   panel.querySelectorAll('[data-difal-choice]').forEach(input=>input.checked=input.value===choice);
   panel.querySelectorAll('[data-analysis-difal-enabled]').forEach(input=>{
-    input.checked=policy.enabled[input.dataset.analysisDifalEnabled];input.disabled=choice!=='yes';
+    input.checked=policy.enabled[input.dataset.analysisDifalEnabled];input.disabled=!canChoose||choice!=='yes';
   });
   panel.querySelectorAll('[data-analysis-difal-operation]').forEach(input=>{
     const id=input.dataset.analysisDifalRegime,outgoing=input.dataset.analysisDifalOperation==='exit';
-    input.checked=!outgoing&&policy.operations[id].entry;input.disabled=outgoing||choice!=='yes'||!policy.enabled[id];
+    input.checked=!outgoing&&policy.operations[id].entry;input.disabled=!canChoose||outgoing||choice!=='yes'||!policy.enabled[id];
   });
-  const details=$('#'+prefix+'-difal-details');if(details)details.hidden=choice!=='yes';
+  const details=$('#'+prefix+'-difal-details');if(details)details.hidden=!canChoose||choice!=='yes';
   const summary=$('#'+prefix+'-difal-summary');if(summary)summary.textContent=difalChoiceSummary(selection,policy,choice);
 }
 function changeDifal(prefix,input) {
@@ -417,7 +420,7 @@ function changeDifal(prefix,input) {
     }
   }
   if(prefix==='new'){S.newDifalPolicy=policy;S.newDifalChoice=choice;}
-  else {S.fiscalDraft.difalPolicy=policy;S.fiscalDifalChoice=choice;}
+  else {S.fiscalDraft.difalPolicy=policy;S.fiscalDifalChoice=choice;S.fiscalDraft.difalChoice=choice;}
   refreshDifalControls(prefix,policy,selection,choice);
   if(prefix==='analysis')refreshDocumentUploads();
   if(input.matches('[data-difal-choice]')&&choice==='yes'){
@@ -438,9 +441,17 @@ function refreshNewDifal() {
 }
 function validateDifalChoice(prefix,selection,policy,{required=false}={}) {
   if(!selectedDifalRegimes(selection).length)return;
+  if(prefix==='analysis'){
+    const entry=assessAnalysisDifal(detailOptions()).entry;
+    if(entry.state==='none')return;
+    if(entry.state!=='available'){
+      const field=$('#analysis-difal-documents');revealWizardField(field);field?.focus();
+      throw new Error('Confira a leitura do relatório de entradas antes de concluir o DIFAL. Dados pendentes não equivalem a zero.');
+    }
+  }
   if(required&&!['yes','no'].includes(prefix==='new'?S.newDifalChoice:S.fiscalDifalChoice)){
     const field=$('#'+prefix+'-difal-yes');revealWizardField(field);field?.focus();
-    throw new Error('Informe se esta análise terá DIFAL de entrada: escolha Sim ou Não.');
+    throw new Error('Confira o valor identificado e escolha Sim ou Não para incluí-lo na DRE.');
   }
   if(difalChoice(policy,selection)==='yes'&&!selectedDifalRegimes(selection).some(id=>policy.enabled[id]&&policy.operations[id].entry)){
     const details=$('#'+prefix+'-difal-details');if(details){details.hidden=false;details.open=true;}
@@ -551,7 +562,7 @@ async function openNew(clientId='') {
       const difalPolicy=clone(S.newDifalPolicy);
       if(!requiresSimplesReference(selection))difalPolicy.enabled.pure=difalPolicy.enabled.hybrid=false;
       setBusy(true,'Abrindo a análise desta empresa…');
-      const response=await analysisRequest(apiPath('?summary=1'),{method:'POST',body:{clientId,year,regimeSelection:selection,...(!S.newExisting?{difalPolicy:parseDifalPolicy(difalPolicy)}:{})}});
+      const response=await analysisRequest(apiPath('?summary=1'),{method:'POST',body:{clientId,year,regimeSelection:selection,...(!S.newExisting?{difalPolicy:parseDifalPolicy(difalPolicy),difalChoice:null}:{})}});
       const record=assertAnalysis(response.analysis);
       if(record.clientId!==clientId)throw new Error('A análise retornada não corresponde à empresa selecionada.');
       setBusy(false);location.href=analysisUrl(record.id,sector)+(response.created?'&created=1':'&resumed=1');
@@ -656,6 +667,7 @@ function refreshPeriodViews() {
   if($('#analysis-accounting-form'))scheduleAccountingSummary();
 }
 function refreshEvidence() {
+  refreshDifalAssessment();
   const status=$('#analysis-fiscal-evidence');if(status)status.innerHTML=renderFiscalEvidence(detailOptions());
   const retry=$('#analysis-retry-evidence');if(retry)retry.onclick=()=>void ensureEvidence({force:true});
   const replace=$('#analysis-replace-missing-documents');if(replace)replace.onclick=()=>void prepareImport();
@@ -766,7 +778,7 @@ async function openAnalysis(id) {
   S.evidenceState='idle';S.evidenceError='';S.evidenceKey=null;
   S.metadataState='idle';S.metadataKey=null;S.generationUnavailable=false;
   const query=new URLSearchParams(location.search),sector=query.get('sector');
-  S.fiscalDifalChoice=query.get('created')==='1'?null:undefined;
+  S.fiscalDifalChoice=savedDifalChoice(S.analysis.fiscal);
   S.sector=['fiscal','accounting'].includes(sector)?sector:null;S.versionsOpen=query.get('view')==='versions';S.versionsData=null;
   S.modalKind=query.get('view')==='settings'?'config':S.sector;
   S.modalOpen=!!S.modalKind;
@@ -910,6 +922,7 @@ function captureFiscal() {
   result.serviceAnnex=Number($('#analysis-service-annex')?.value||result.serviceAnnex);
   if($('#analysis-icms-outside'))result.icmsOutside=$('#analysis-icms-outside').value==='outside';
   result.difalPolicy=captureDifalPolicy('analysis',result.difalPolicy);
+  if(S.fiscalDifalChoice!==undefined)result.difalChoice=S.fiscalDifalChoice;
   if(!requiresSimplesReference(S.analysis.config.regimeSelection)){
     result.rbt12Source='NOT_REQUIRED';result.rbt12=null;result.rbt12ExtractionId=null;result.rbt12DocumentId=null;result.rbt12ManualConfirmed=false;
   }else if(result.rbt12Source==='MANUAL'){
@@ -1038,7 +1051,19 @@ function editFiscalAdjustments() {
     markDirty('fiscal');renderDetail();$('#analysis-fiscal-adjustments').open=true;
   }catch(error){showError(error);}
 }
+function refreshDifalAssessment() {
+  const host=$('#analysis-difal-view');if(!host||!S.analysis)return;
+  const active=document.activeElement?.id,open=$('#analysis-difal-details')?.open;
+  host.innerHTML=renderDifalChoice(S.analysis.config.regimeSelection,S.fiscalDraft.difalPolicy,
+    {choice:S.fiscalDifalChoice,assessment:assessAnalysisDifal(detailOptions())})||'<p>Os regimes selecionados não utilizam antecipação de entrada.</p>';
+  refreshDifalControls('analysis',S.fiscalDraft.difalPolicy,S.analysis.config.regimeSelection,S.fiscalDifalChoice);
+  if(open&&$('#analysis-difal-details')&&!$('#analysis-difal-details').hidden)$('#analysis-difal-details').open=true;
+  const documents=$('#analysis-difal-documents');if(documents)documents.onclick=()=>setWizardStep('documents');
+  const retry=$('#analysis-difal-retry');if(retry){retry.disabled=S.busy||S.evidenceState==='loading';retry.onclick=()=>void ensureEvidence({force:true});}
+  if(active&&host.contains(document.getElementById(active)))document.getElementById(active)?.focus({preventScroll:true});
+}
 function bindFiscal() {
+  refreshDifalAssessment();
   refreshDifalControls('analysis',S.fiscalDraft.difalPolicy,S.analysis.config.regimeSelection,S.fiscalDifalChoice===undefined?difalChoice(S.fiscalDraft.difalPolicy,S.analysis.config.regimeSelection):S.fiscalDifalChoice);
   $('#analysis-fiscal-form').oninput=event=>{
     if(event.target.name==='regime'||event.target.id==='analysis-fiscal-year'){markDirty('config');return;}
@@ -1069,6 +1094,7 @@ function bindFiscal() {
 }
 
 function refreshDocumentUploads() {
+  refreshDifalAssessment();
   const reports=$('#analysis-fiscal-documents-view');if(!reports)return;
   reports.innerHTML=renderFiscalReports(detailOptions());bindFiscalDocumentActions();
 }
@@ -1191,7 +1217,7 @@ async function prepareImport({type='PURCHASES',reuse=false}={}) {
   if(S.busy||S.pdfBusy||S.deleting||!writable()||hasPendingDocuments())return;
   try {
     clearError();captureAll();
-    validateDifalChoice('analysis',S.analysis.config.regimeSelection,S.fiscalDraft.difalPolicy);
+    // Importing must precede, not depend on, the choice to include detected DIFAL.
     if(S.paste.pending)throw new Error('Há uma colagem do Contábil ainda não aplicada. Confira e aplique os dados ou use Limpar colagem antes de abrir a importação fiscal.');
     if(S.accountingDirty)throw new Error('Salve o trabalho Contábil antes de abrir a importação fiscal. As despesas ainda não salvas continuam nesta tela.');
     if(S.configDirty)throw new Error('Salve as escolhas da análise antes de preparar os documentos fiscais.');

@@ -1,4 +1,12 @@
-# Maximum CNPJ · v0.54.3
+# Maximum CNPJ · v0.54.4
+
+## v0.54.4 — Conferência de DIFAL antes da escolha (2026-11-03)
+
+O Fiscal segue **Regimes → RBT12 opcional → Entradas e saídas → Conferir DIFAL**. A evidência dos documentos é independente da preferência de inclusão: o valor aparece mesmo antes de escolher ou depois de selecionar Não. A escolha só é liberada depois de uma leitura válida com entrada elegível; ausência de arquivo, erro, UF pendente e valor parcial não são zero confirmado.
+
+A tela exibe base, quantidade de operações e valor de janeiro a setembro. Nenhuma entrada elegível gera zero na DRE, sem modificar preferências salvas. Novos rascunhos mantêm a decisão pendente ao salvar e reabrir (`difalChoice: null`); a conclusão de entrada positiva exige confirmação explícita. Preferências históricas continuam preservadas. A leitura, por si só, não salva respostas nem habilita regimes.
+
+A saída segue não aplicada conforme a regra gerencial já definida; o formulário deixa de alegar ausência de operações e remove os controles de saída desativados. Nenhuma alíquota, elegibilidade fiscal, arquivo ou versão histórica é alterada nesta entrega.
 
 
 ## v0.54.3 — Entrada de ICMS e RBT12 sem bloqueio automático (2026-11-03)

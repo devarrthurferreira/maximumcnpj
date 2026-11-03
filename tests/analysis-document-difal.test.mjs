@@ -20,7 +20,7 @@ test('entrada conserva centavos capturados e saída V6 confirma cálculo desativ
   assert.equal(summary.amountCents,type==='PURCHASES'?3660:0);assert.equal(summary.state,'ready');
   assert.equal(summary.label,type==='PURCHASES'?'DIFAL de entrada':'DIFAL de saída');
   assert.match(summary.context,type==='PURCHASES'?/Antecipação de ICMS/:/desativado.*janeiro a setembro/);
-  if(type==='SALES')assert.match(summary.note,/Não possui DIFAL de saída. Cálculo de saída desativado nesta análise/);
+  if(type==='SALES')assert.match(summary.note,/Não aplicado pela regra desta análise/);
   assert.deepEqual(input,before);
   source(input).amountCents=12345;
   if(type==='PURCHASES')assert.equal(documentDifalSummary(input).amountCents,12345);
@@ -35,13 +35,13 @@ test('saída desativada permanece visível em qualquer seleção; escolhas conti
   assert.equal(documentDifalSummary(input).amountCents,0);
  }
  const entry=options('PURCHASES');entry.policy.operations.pure.entry=false;entry.policy.operations.hybrid.entry=false;
- assert.equal(documentDifalSummary(entry),null);
+ assert.equal(documentDifalSummary(entry).amountCents,3660);
 });
 
 test('escolha não oculta entrada e preserva confirmação da saída desativada',()=>{
  for(const choice of ['no',null])for(const type of ['PURCHASES','SALES']){
   const input=options(type);input.choice=choice;const before=structuredClone(input);
-  if(type==='PURCHASES')assert.equal(documentDifalSummary(input),null);
+  if(type==='PURCHASES')assert.equal(documentDifalSummary(input).amountCents,3660);
   else assert.equal(documentDifalSummary(input).amountCents,0);
   assert.deepEqual(input,before);
  }
@@ -63,7 +63,7 @@ test('zero registrado sem operações elegíveis é exibido como zero',()=>{
     const input=options(type);Object.assign(source(input),{amountCents:0,baseCents:0,eligibleLines:0});
     const summary=documentDifalSummary(input);
     assert.equal(summary.state,'ready');assert.equal(summary.amountCents,0);
-    assert.match(summary.note,type==='PURCHASES'?/Sem operações elegíveis/:/Não possui DIFAL de saída/);
+    assert.match(summary.note,type==='PURCHASES'?/Sem operações elegíveis/:/Não aplicado pela regra/);
   }
 });
 
@@ -108,9 +108,9 @@ test('cartão atual não apresenta cifra de regra antiga, mas preserva o resumo 
   }
 });
 
-test('política inválida é rejeitada e ausência de escolha não reativa a saída',()=>{
+test('preferências não são usadas como evidência e ausência de escolha não reativa a saída',()=>{
  for(const policy of [null,{version:'unknown'}]){
-  const input=options();input.policy=policy;assert.equal(documentDifalSummary(input),null);
+  const input=options();input.policy=policy;assert.equal(documentDifalSummary(input).amountCents,0);
  }
  const input=options();input.policy=undefined;assert.equal(documentDifalSummary(input).amountCents,0);
 });

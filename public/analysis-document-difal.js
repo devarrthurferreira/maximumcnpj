@@ -1,21 +1,12 @@
-import {difalDirectionSelection} from './difal-policy.js';
-import {resolveRegimeSelection} from './regime-selection.js';
 import {DIFAL_VERSION,isDifalVersion} from './difal.js';
 import {ANTICIPATION_VERSION,isAnticipationVersion} from './icms-anticipation.js';
-import {OUTGOING_DIFAL_MESSAGE} from './simulator-engine.js';
 
 /** Display the server's checked estimate, without recalculating tax in the browser. */
 export function documentDifalSummary({job,type,jobId,clientId,generationId,policy,regimeSelection,choice}) {
-  if(!['PURCHASES','SALES'].includes(type)||(type==='PURCHASES'&&(choice===null||choice==='no'))||!jobId||!clientId||!generationId||
+  if(!['PURCHASES','SALES'].includes(type)||!jobId||!clientId||!generationId||
      job?.status!=='COMPLETED'||job._id!==jobId||job.clientId!==clientId||job.generationId!==generationId||
      job.mode!==(type==='PURCHASES'?'PURCHASES_V1':'SALES_V1'))return null;
-  const entry=type==='PURCHASES',direction=entry?'entry':'exit';
-  let selection,selected;
-  try {
-    selection=difalDirectionSelection(policy,direction);
-    selected=resolveRegimeSelection(regimeSelection).selected;
-  } catch { return null; }
-  if(entry&&!selection?.regimeIds.some(id=>selected.includes(id)))return null;
+  const entry=type==='PURCHASES';
 
   const taxKey=entry?'anticipation':'difal',currentKey=entry?'currentAnticipation':'currentDifal';
   const current=Object.hasOwn(job,currentKey),expectedVersion=entry?ANTICIPATION_VERSION:DIFAL_VERSION;
@@ -36,16 +27,17 @@ export function documentDifalSummary({job,type,jobId,clientId,generationId,polic
   if(!summary||(!safePeriod||summary.version!==expectedVersion)||!knownVersion(summary.version)||(version!==undefined&&version!==summary.version)||
      !['amountCents','baseCents','eligibleLines','pendingLines'].every(key=>Number.isSafeInteger(summary[key])&&summary[key]>=0)||
      !Number.isFinite(summary.ratePercent)||summary.ratePercent<=0||summary.ratePercent>100)return unavailable;
+  const totals={baseCents:summary.baseCents,eligibleLines:summary.eligibleLines,pendingLines:summary.pendingLines};
   if(!entry){
     if(['amountCents','baseCents','eligibleLines','pendingLines'].some(key=>summary[key]!==0))return unavailable;
-    return {label,context,state:'ready',amountCents:0,note:OUTGOING_DIFAL_MESSAGE};
+    return {label,context,...totals,state:'ready',amountCents:0,note:'Não aplicado pela regra desta análise. Isso não significa ausência de vendas interestaduais.'};
   }
   if(summary.pendingLines){
     const partial=summary.eligibleLines>0;
-    return {label,context,state:partial?'partial':'pending',amountCents:partial?summary.amountCents:null,
+    return {label,context,...totals,state:partial?'partial':'pending',amountCents:partial?summary.amountCents:null,
       note:`${partial?'Valor parcial · ':''}${summary.pendingLines} ${summary.pendingLines===1?'linha com UF pendente':'linhas com UF pendente'}. Confira o relatório.`};
   }
-  return {label,context,state:'ready',amountCents:summary.amountCents,
+  return {label,context,...totals,state:'ready',amountCents:summary.amountCents,
     note:summary.baseCents===0?'Sem operações elegíveis neste arquivo.':''};
 }
 
