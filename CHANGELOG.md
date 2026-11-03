@@ -1,5 +1,11 @@
 # Histórico de alterações
 
+## [0.55.1] - 2026-11-03
+
+- Corrige a rolagem vertical da página com o ponteiro sobre a DRE, mantendo a navegação horizontal e liberando o gesto ao atingir os limites de tabelas com rolagem interna.
+- Acrescenta regressões com movimentos reais da roda do mouse sobre as linhas e os valores do demonstrativo, preservando layout, impressão e cálculos.
+- Isola somente os contadores de login dos cenários afetados em MongoDB local descartável; mantém os limites de segurança da aplicação e os logins reais dos testes.
+
 ## [0.55.0] - 2026-11-03
 
 - Abre a central e carrega as empresas em paralelo após autenticação; falhas do catálogo permitem nova tentativa sem descartar a sessão ou os cartões disponíveis.
@@ -8,6 +14,7 @@
 - Busca os metadados das empresas somente para os até 30 registros da página do histórico sem texto de busca. Mantém busca, contagem e exclusões anteriores à paginação.
 - Executa consultas independentes do dashboard e do histórico em paralelo, preservando a deduplicação de CNPJs entre os bancos e o isolamento por workspace.
 - Acrescenta regressões de carregamento, nova tentativa, alternância de setores, identidade, filtros e histórico. Sem mudança nas regras fiscais ou migração de dados.
+- Atualiza expectativas antigas de navegador para a sequência atual do Fiscal e as regras já vigentes de DIFAL, mantendo casos positivos, pendências, histórico, créditos, alertas financeiros e reabertura.
 
 ## [0.54.5] - 2026-11-03
 

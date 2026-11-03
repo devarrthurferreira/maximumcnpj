@@ -55,8 +55,15 @@ async function importReports(page:Page,returnsCents:number){
 }
 
 async function completeSector(page:Page,id:string,sector:'fiscal'|'accounting'){
+  if(sector==='fiscal'){
+    await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','documents');
+    await page.locator('#analysis-wizard-next').click();
+    await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','difal');
+  }
+  const complete=page.locator('#analysis-wizard button[value=complete]');
+  await expect(complete).toBeVisible();await expect(complete).toBeEnabled();
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/${sector}`&&response.request().method()==='PATCH');
-  await page.locator('#analysis-wizard button[value=complete]').click();
+  await complete.click();
   const response=await saving;expect(response.ok(),await response.text()).toBe(true);
   const result=await response.json();expect(result.analysis[sector].status).toBe('COMPLETE');
   await expect(page.locator('#analysis-wizard')).not.toBeVisible();return result.analysis;
@@ -111,7 +118,7 @@ for(const scenario of [
       // Saving the unchanged negative field exercises the signed editor/parser contract.
       await sales.fill('-50');
     }
-    await expect(page.locator('#analysis-wizard button[value=complete]')).toBeEnabled();
+    await expect(page.locator('#analysis-wizard-next')).toBeEnabled();
     await sourceAlerts.scrollIntoViewIfNeeded();await sourceAlerts.screenshot({path:info.outputPath('fiscal-alerta.png')});
     await completeSector(page,analysis.id,'fiscal');await accounting(page,analysis.id);
     const saved=await generate(page,baseURL!,analysis.id);

@@ -68,8 +68,12 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
   const catalog=await post('/api/v4/clients/import',{rows:[{code,name,uf:'SP'}]});expect(catalog.success).toBe(1);const realClient=catalog.items[0].id;
   await page.goto('/generations.html');await page.locator('#generation-search').fill(code);
   await screenshots(page,info,'guided-company-search');await page.locator(`[data-select-company="${realClient}"]`).click();
-  const difalPolicy={version:'DIFAL_SCENARIOS_V2',enabled:{pure:false,hybrid:true,presumed:false,actual:false},operations:{pure:{entry:true,exit:true},hybrid:{entry:false,exit:true}}};
+  const difalPolicy={version:'DIFAL_SCENARIOS_V2',enabled:{pure:false,hybrid:true,presumed:false,actual:false},operations:{pure:{entry:true,exit:false},hybrid:{entry:false,exit:false}}};
   await page.locator('#generation-difal-pure').uncheck();await page.locator('#generation-difal-entry-hybrid').uncheck();
+  for(const id of ['pure','hybrid']){
+    await expect(page.locator(`#generation-difal-exit-${id}`)).toBeDisabled();
+    await expect(page.locator(`#generation-difal-exit-${id}`)).not.toBeChecked();
+  }
   await screenshots(page,info,'guided-report-types');
   const created=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/v4/generations'&&r.request().method()==='POST');
   await page.locator('#generation-create').click();const creation=await created;expect(creation.ok()).toBe(true);const generation={_id:creation.request().postDataJSON().generationId};
@@ -87,7 +91,8 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
     await page.locator('[data-guided-continue]').click();
   }
   await expect(page.locator('#guided-rbt12-stage')).toBeVisible();await expect(page.locator('#simulator-form')).toBeHidden();
-  await expect(page.locator('[data-guided-difal-summary]')).toContainText('Simples puro: não incluir. Simples híbrido: saída (vendas)');
+  await expect(page.locator('[data-guided-difal-summary]')).toContainText('Simples puro: não incluir. Simples híbrido: nenhuma operação selecionada.');
+  await expect(page.locator('[data-guided-difal-summary]')).toContainText('Saída desativada: R$ 0,00.');
   await page.locator('#guided-rbt12-skip').click();await expect(page.locator('#simulator-form')).toBeVisible();
   await expect(page.locator('#rbt12')).toBeEditable();await expect(page.locator('#rbt12')).toHaveValue('');
   await expect(page.locator('#serviceRevenue')).toHaveValue('0.00');
@@ -104,6 +109,9 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
   await page.locator('#generate-simulation').click();const response=await saving;expect(response.ok(),await response.text()).toBe(true);const snapshot=await response.json();
   expect(snapshot).toMatchObject({generationId:generation._id,clientId:realClient,rbt12Source:'MANUAL',reportMonths:9,periodBasis:'COLUMN_H',analysisPeriod:{version:'JAN_SEP_V1',complete:true,months:9},draft:{rbt12:150000,difalPolicy,values:{salesRevenue:12000,serviceRevenue:0,regularPurchases:4500}},source:{difalPolicy,revenueSplit:{version:'SALES_SERVICES_V1'},fields:{serviceRevenueCents:0},purchases:{totalCents:450000},sales:{totalCents:1200000}}});
   expect(snapshot.source.monthlyReports).toHaveLength(9);expect(snapshot.result.monthlyResults).toHaveLength(9);
+  for(const result of [snapshot.result,...snapshot.result.monthlyResults.map((row:any)=>row.result)]){
+    expect(result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,0,0,0]);
+  }
   expect(snapshot.rbt12Extraction).toBeFalsy();expect(snapshot.rbt12ExtractionId).toBeFalsy();expect(snapshot.result.method).toBe('REPORT_MONTHS_V1');expect(snapshot.result.annualRevenue).toBe(12000);
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');await screenshots(page,info,'guided-result');
   const mongo=new MongoClient(process.env.MONGODB_URI!);
@@ -120,7 +128,11 @@ test('Real guided reports reach a saved manual-RBT12 simulation and reopen with 
     await expect(reopened.locator('[data-difal-option="pure"]')).toContainText('Não incluído por escolha');
     await expect(reopened.locator('.sim-dre')).toContainText('12.000,00');await expect(reopened.locator('[data-dre-regime-result]')).toHaveCount(4);
     await reopened.locator('#create-version').click();await expect(reopened.locator('#rbt12')).toBeEditable();
-    await expect(reopened.locator('#difal-enabled-pure')).not.toBeChecked();await expect(reopened.locator('#difal-enabled-actual')).toHaveCount(0);await expect(reopened.locator('#difal-enabled-hybrid')).toBeChecked();await expect(reopened.locator('#difal-entry-hybrid')).not.toBeChecked();await expect(reopened.locator('#difal-exit-hybrid')).toBeChecked();
+    await expect(reopened.locator('#difal-enabled-pure')).not.toBeChecked();await expect(reopened.locator('#difal-enabled-actual')).toHaveCount(0);await expect(reopened.locator('#difal-enabled-hybrid')).toBeChecked();await expect(reopened.locator('#difal-entry-hybrid')).not.toBeChecked();
+    for(const id of ['pure','hybrid']){
+      await expect(reopened.locator(`#difal-exit-${id}`)).toBeDisabled();
+      await expect(reopened.locator(`#difal-exit-${id}`)).not.toBeChecked();
+    }
     await reopened.locator('#rbt12-use-pdf').click();await readStatement(reopened);
     await reopened.reload();await expect(reopened.locator('#rbt12')).toHaveValue('150000.00');
     await expect(reopened.locator('#rbt12')).toHaveAttribute('readonly','');

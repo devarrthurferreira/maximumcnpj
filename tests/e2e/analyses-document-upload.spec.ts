@@ -2,6 +2,8 @@ import {test as base,expect,type APIRequestContext,type Page,type Route} from '@
 import {randomUUID} from 'node:crypto';
 import {MongoClient} from 'mongodb';
 import {hashPassword} from '../../src/security.ts';
+import {processLookup} from '../../src/lookup-jobs.ts';
+import {closeDatabase} from '../../src/store.ts';
 
 type Credentials={id:string;email:string;password:string};
 type Accounts={writer:Credentials;viewer:Credentials};
@@ -24,6 +26,7 @@ const test=base.extend<{documentAccounts:Accounts}>({
     }
   }
 });
+test.afterAll(async()=>closeDatabase());
 
 async function api(request:APIRequestContext,baseURL:string,method:'GET'|'POST'|'DELETE',path:string,data?:unknown){
   const response=await request.fetch(path,{method,...(data===undefined?{}:{data}),headers:{Origin:new URL(baseURL).origin}});
@@ -46,19 +49,19 @@ async function create(request:APIRequestContext,baseURL:string,account:Credentia
 const documentsUrl=(id:string)=>'/analyses.html?'+new URLSearchParams({id,sector:'fiscal',step:'documents'});
 const card=(page:Page,type:string)=>page.locator(`[data-analysis-document="${type}"]`);
 const importPath=(id:string)=>`/api/v4/analyses/${id}/fiscal/import`;
-function report(type:'PURCHASES'|'SALES'){
+function report(type:'PURCHASES'|'SALES',document='123.456.789-00'){
   const header=Array(28).fill('');
   for(const [column,label] of [[0,'CNPJ / CPF / CNO'],[7,'Data Escrituração/Serviço'],[8,'Razão Social'],[9,'Estado'],[11,'Natureza'],[14,'Descrição'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']] as const)header[column]=label;
-  const row=Array(28).fill('');row[0]='123.456.789-00';row[7]='15/01/2025';row[8]='Pessoa sintética';row[9]='MG';
+  const row=Array(28).fill('');row[0]=document;row[7]='15/01/2025';row[8]='Pessoa sintética';row[9]='MG';
   row[11]=type==='SALES'?'5102001':'1102001';row[14]='Documento sintético';row[15]='1';row[16]=type==='SALES'?'1000,45':'200,67';
   for(const column of [24,25,26,27])row[column]='0,00';
   return {name:`adicionar-${type.toLowerCase()}.csv`,mimeType:'text/csv',buffer:Buffer.from([header,row].map(values=>values.join(';')).join('\r\n'),'latin1')};
 }
-async function selectDocument(page:Page,type:'PURCHASES'|'SALES'){
+async function selectDocument(page:Page,type:'PURCHASES'|'SALES',document?:string){
   // A real click must open the native chooser without waiting for network work.
   const chooserPromise=page.waitForEvent('filechooser');
   await page.locator(`[data-analysis-add-document="${type}"]`).click();
-  const chooser=await chooserPromise;await chooser.setFiles(report(type));
+  const chooser=await chooserPromise;await chooser.setFiles(report(type,document));
 }
 async function completeDocument(page:Page,type:'PURCHASES'|'SALES'){
   await expect(card(page,type)).toContainText('Leitura concluída');
@@ -181,17 +184,26 @@ test('Uma RBT12 inválida permanece digitada ao tentar adicionar documento, sem 
 test('Retomar importação histórica sem UF conserva a UF ausente e sinaliza o imposto pendente',async({page,baseURL,documentAccounts})=>{
   const analysis=await create(page.request,baseURL!,documentAccounts.writer);
   const prepared=await api(page.request,baseURL!,'POST',importPath(analysis.id),{expectedSectorRevision:analysis.fiscal.revision,expectedConfigRevision:analysis.config.revision});
-  const importId=randomUUID(),file=report('PURCHASES');
+  const importId=randomUUID(),supplierCnpj='11222333000181',file=report('PURCHASES',supplierCnpj);
   await api(page.request,baseURL!,'POST','/api/v4/generations/'+prepared.generationId+'/purchases',{
     importId,clientId:analysis.clientId,fileName:file.name,expectedRows:1,type:'PURCHASES',issuerUf:''});
+  const session=await api(page.request,baseURL!,'GET','/api/auth/session');let providerCalls=0;
+  const transport=(async(url:string|URL|Request)=>{
+    providerCalls++;expect(String(url).split('/').pop()).toBe(supplierCnpj);
+    return Response.json({cnpj:supplierCnpj,razao_social:'Fornecedor CNPJ sintético',opcao_pelo_simples:false,opcao_pelo_mei:false});
+  }) as typeof fetch;
+  await page.route('**/api/v4/purchases/'+importId+'/process',async route=>{
+    await route.fulfill({json:await processLookup(session.user,importId,transport)});
+  });
   await page.goto(documentsUrl(analysis.id));await expect(card(page,'PURCHASES')).toContainText('Importação incompleta');
   await expect(page.locator('[data-analysis-document-uf]')).toHaveValue('MG');
-  await selectDocument(page,'PURCHASES');await completeDocument(page,'PURCHASES');
+  await selectDocument(page,'PURCHASES',supplierCnpj);await completeDocument(page,'PURCHASES');
   const generation=await generationFor(page.request,baseURL!,analysis.id);expect(generation._id).toBe(prepared.generationId);
   expect(generation.companies[0].purchase._id).toBe(importId);
   const summary=await api(page.request,baseURL!,'GET','/api/v4/purchases/'+importId+'/summary');
   expect(summary.job.issuerUf).toBe('');expect(summary.anticipation.issuerUf).toBe('');
   expect(summary.anticipation.pendingLines).toBe(1);expect(summary.anticipation.amountCents).toBe(0);expect(summary.totals.totalCents).toBe(20067);
+  expect(summary.anticipation.version).toBe('ICMS_ANTICIPATION_V5');expect(summary.totals.uniqueCnpjs).toBe(1);expect(providerCalls).toBe(1);
 });
 
 for(const failureStage of ['create-before','create-after','rows','finalize-after'] as const)test(`Retomar envio após falha ${failureStage} reutiliza o mesmo relatório sem duplicar linhas`,async({page,baseURL,documentAccounts})=>{

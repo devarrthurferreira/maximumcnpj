@@ -1,4 +1,5 @@
-import {test,expect,type Page} from '@playwright/test';
+import {expect,type Page} from '@playwright/test';
+import {test} from './isolated-auth-test.ts';
 import {MongoClient} from 'mongodb';
 import {randomUUID} from 'node:crypto';
 import {mockStatement,documentId} from './extrato-helper.ts';
