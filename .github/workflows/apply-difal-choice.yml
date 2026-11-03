@@ -14,16 +14,16 @@ jobs:
         with: {fetch-depth: 2}
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
-      - name: Conferir integridade e aplicar patch
+      - name: Conferir integridade e aplicar somente codigo
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/fix/difal-report-driven-choice-20261103
           cat .maintenance/difal-choice.part1 .maintenance/difal-choice.part2 > /tmp/difal-choice.xz
           echo 'fbb566611c8f9a566c1389bf9729fb11254374739360f0d9e4fa63862ad56a37  /tmp/difal-choice.xz' | sha256sum -c -
           xz -dc /tmp/difal-choice.xz > /tmp/difal-choice.patch
-          git apply --unidiff-zero --check /tmp/difal-choice.patch
-          git apply --unidiff-zero --index /tmp/difal-choice.patch
-          git rm .maintenance/difal-choice.part1 .maintenance/difal-choice.part2 .github/workflows/apply-difal-choice.yml
+          git apply --exclude='.github/workflows/*' --unidiff-zero --check /tmp/difal-choice.patch
+          git apply --exclude='.github/workflows/*' --unidiff-zero --index /tmp/difal-choice.patch
+          git rm .maintenance/difal-choice.part1 .maintenance/difal-choice.part2
           git diff --cached --check
       - name: Validar versao, tipos, build e regras
         run: |
