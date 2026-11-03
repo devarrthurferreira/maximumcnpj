@@ -25,8 +25,9 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 5
     env:
       MONGODB_URI: mongodb://127.0.0.1:27017
-      MONGODB_DB: maximum_difal_choice_ci
-      WORKSPACE_ID: difal_choice_ci
+      MONGODB_DB: maximum_difal_choice_test
+      WORKSPACE_ID: difal_choice_test
+      ADMIN_EMAIL: ci@example.test
       SUITE: ${{ matrix.suite }}
     steps:
       - uses: actions/checkout@v4

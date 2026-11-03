@@ -8,6 +8,8 @@ Os cartões distinguem a regra **Saída não aplicada pela regra da análise** d
 
 O DIFAL de entrada conserva valores positivos, valores parciais e pendências. A atualização mantém as escolhas salvas, a vinculação entre empresa e documento e as versões históricas. Nenhuma regra de cálculo ou arquivo original é alterado.
 
+Os fluxos dedicados de CI identificam explicitamente os bancos e workspaces descartáveis e a conta sintética usada pelo isolamento de logins. Esse isolamento permanece restrito aos serviços locais e aos identificadores de teste.
+
 ## v0.55.2 — Leitura do DIFAL com estado correto e menos consultas (2026-11-03)
 
 A conferência de DIFAL distingue a leitura em andamento, o resultado validado, a pendência de UF e a falha de consulta. Respostas incompletas deixam de ser reutilizadas como leitura concluída, e a mensagem de falha conserva a orientação recebida do servidor. **Atualizar leitura** refaz a consulta de DIFAL sem reler o extrato ou repetir a conciliação completa da análise; chamadas simultâneas para o mesmo documento compartilham a requisição em andamento.

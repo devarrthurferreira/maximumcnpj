@@ -7,6 +7,7 @@
 - Mantém mensagens de leitura e falhas do relatório visíveis, além dos controles de identidade, sessão, período, integridade e respostas atrasadas.
 - Conserva a evidência e as escolhas de entrada, o compartilhamento de consultas, os documentos e o histórico.
 - Acrescenta regressões de upload inline anual com API e MongoDB locais, entrada positiva de janeiro–setembro, dezembro excluído, erro de período, nova tentativa e apresentação em telas de 320 e 390 pixels.
+- Configura os fluxos dedicados de CI com conta sintética e identificadores explícitos de bancos e workspaces de teste, compatíveis com as proteções do isolamento de logins.
 
 ## [0.55.2] - 2026-11-03
 

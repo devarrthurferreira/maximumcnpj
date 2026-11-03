@@ -17,8 +17,9 @@ jobs:
           --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       MONGODB_URI: mongodb://127.0.0.1:27017
-      MONGODB_DB: maximum_ui_feedback_ci
-      WORKSPACE_ID: maximum_ui_feedback_ci
+      MONGODB_DB: maximum_ui_feedback_test
+      WORKSPACE_ID: maximum_ui_feedback_test
+      ADMIN_EMAIL: ci@example.test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with: {persist-credentials: false, fetch-depth: 2}
