@@ -1,0 +1,21 @@
+name: Workspace isolado para melhoria de interface
+on:
+  push:
+    branches: ['feat/simple-flow-loading-20261103']
+    paths: ['.github/workflows/ui-workspace.yml']
+permissions:
+  contents: read
+jobs:
+  workspace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Exportar somente arquivos versionados
+        run: git archive --format=tar -o source.tar HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maximum-ui-source
+          path: source.tar
+          retention-days: 1
