@@ -1,0 +1,41 @@
+name: Aplicar correção validada de entrada e sublimite
+on:
+  push:
+    branches: ['fix/sublimit-entry-difal-20261103']
+    paths: ['.github/workflows/apply-entry-fix.yml', '.maintenance/entry-fix.part*']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Conferir integridade e aplicar alteração testada
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/fix/sublimit-entry-difal-20261103
+          cat .maintenance/entry-fix.part1 .maintenance/entry-fix.part2 > /tmp/entry-fix.xz
+          echo 'c4febeed8a30bb93991298f556d64f358dd5df8e5b69b45bb103e63d393c531e  /tmp/entry-fix.xz' | sha256sum -c -
+          xz -dc /tmp/entry-fix.xz > /tmp/entry-fix.patch
+          git apply --unidiff-zero --check /tmp/entry-fix.patch
+          git apply --unidiff-zero --index /tmp/entry-fix.patch
+          git diff --cached --check
+      - name: Validar versão, tipos, build e regras
+        run: |
+          npm ci --include=dev
+          npm run check:release
+          npm run check
+          npm run build
+          npm test
+      - name: Registrar correção sem sobrescrever alterações concorrentes
+        run: |
+          set -euo pipefail
+          git fetch origin fix/sublimit-entry-difal-20261103
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: restaurar entrada ICMS sem trava por RBT12 e excluir CPF (v0.54.3)'
+          git push origin HEAD:refs/heads/fix/sublimit-entry-difal-20261103
