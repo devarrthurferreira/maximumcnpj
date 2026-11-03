@@ -624,6 +624,16 @@ function cancelMetadata() {
   metadataTask?.controller.abort();metadataTask=null;
 }
 const difalCacheScope=()=>JSON.stringify([S.user?.workspaceId||'',S.user?._id||'']);
+function readGenerationDifal(record,generation,{force=false}={}) {
+  const id=record.id,sequence=S.sequence,key=evidenceKey(record),cacheScope=difalCacheScope();
+  const active=()=>currentContext(id,sequence)&&evidenceKey(S.analysis)===key&&S.generation===generation&&
+    generation?._id===record.fiscal.data.generationId&&difalCacheScope()===cacheScope;
+  if(!active())return;
+  // Run only when adopting a generation or a completed upload, never from rendering.
+  void loadDocumentDifal(generation,{clientId:record.clientId,request:analysisRequest,force,cacheScope,onUpdate:()=>{
+    if(active())refreshEvidence();
+  }});
+}
 function generationMetadata(record,{force=false,forceDifal=false}={}) {
   const key=evidenceKey(record),id=record.id,generationId=record.fiscal.data.generationId,sequence=S.sequence;
   if(!generationId)return Promise.resolve(null);
@@ -637,10 +647,7 @@ function generationMetadata(record,{force=false,forceDifal=false}={}) {
     if(generation._id!==generationId||!generation.companies?.some(company=>company.clientId===record.clientId))throw new Error('Os relatórios não correspondem à empresa desta análise. Confira o vínculo antes de continuar.');
     if(currentContext(id,sequence)&&evidenceKey(S.analysis)===key){
       S.generation=generation;S.metadataState='ready';
-      const cacheScope=difalCacheScope();
-      void loadDocumentDifal(generation,{clientId:record.clientId,request:analysisRequest,force:forceDifal,cacheScope,onUpdate:()=>{
-        if(currentContext(id,sequence)&&evidenceKey(S.analysis)===key&&S.generation===generation&&difalCacheScope()===cacheScope)refreshEvidence();
-      }});
+      readGenerationDifal(record,generation,{force:forceDifal});
     }
     return generation;
   }).catch(error=>{
@@ -1228,6 +1235,7 @@ async function addFiscalDocument(type,file,{retry=false}={}) {
     const freshCompany=generation.companies.find(item=>item.clientId===S.analysis.clientId),key=type==='SALES'?'sales':'purchase';
     freshCompany[key]=job;freshCompany[key+'JobId']=job._id;S.generation=generation;
     S.metadataState='ready';S.metadataKey=evidenceKey(S.analysis);
+    readGenerationDifal(S.analysis,generation);
     feedback(`${type==='SALES'?'Saídas':'Entradas'} adicionadas. Você pode continuar nesta tela.`,'success');
   } catch(error){state.status='error';state.error=error.message||'Não foi possível enviar o documento. Tente novamente.';state.progress=state.pending?'Seu progresso foi salvo. Tente novamente para continuar o mesmo documento.':'';
     if(error.code==='ANALYSIS_CONFLICT')showError(error);

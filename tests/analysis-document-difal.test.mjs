@@ -139,6 +139,58 @@ test('arquivo só do quarto trimestre não recebe zero como se houvesse dados Ja
   assert.equal(documentDifalSummary(input).state,'unavailable');assert.equal(documentDifalSummary(input).amountCents,null);
 });
 
+test('regra de saída desativada não confirma período ausente, amplo ou incompleto',()=>{
+ const changes=[
+  input=>delete input.job.reportPeriod,
+  input=>input.job.reportPeriod={startMonth:'2026-01',endMonth:'2026-12',months:12},
+  input=>input.job.reportPeriod={startMonth:'2026-10',endMonth:'2026-12',months:3},
+  input=>{input.job.currentDifal=structuredClone(source(input));input.job.currentDifalPeriod={version:'JAN_SEP_V1',sourceYear:2026,complete:false,includedMonths:['2026-01']};}
+ ];
+ for(const change of changes){
+  const input=options();change(input);const before=structuredClone(input),summary=documentDifalSummary(input);
+  assert.equal(summary.applicationState,'disabled');assert.equal(summary.applicationLabel,'Saída não aplicada pela regra da análise');
+  assert.equal(summary.state,'unavailable');assert.equal(summary.amountCents,null);
+  assert.match(summary.note,/Não foi possível confirmar as competências/);assert.doesNotMatch(summary.context,/janeiro a setembro/);
+  assert.deepEqual(input,before);
+ }
+ const entry=options('PURCHASES');delete entry.job.reportPeriod;
+ assert.equal(documentDifalSummary(entry).state,'unavailable');assert.equal(documentDifalSummary(entry).amountCents,null);
+ assert.equal(documentDifalSummary(entry).applicationState,undefined);
+});
+
+test('adoção de saída Jan–Dez dispara uma conferência deduplicada mesmo com regra desativada',async()=>{
+ const input=options();input.jobId=input.job._id='new-sales-full-year';
+ input.job.reportPeriod={startMonth:'2026-01',endMonth:'2026-12',months:12};
+ const original=structuredClone(input.job),company={clientId:input.clientId},generation={_id:input.generationId,companies:[company]};
+ const hold=gate();let calls=0;
+ const request=async()=>{calls++;await hold.promise;return {jobId:input.jobId,clientId:input.clientId,generationId:input.generationId,
+  difal:structuredClone(source(input)),period:{version:'JAN_SEP_V1',sourceYear:2026,complete:true,includedMonths:['2026-01']}};};
+ await loadDocumentDifal(generation,{clientId:input.clientId,request});assert.equal(calls,0);
+ company.salesJobId=input.jobId;company.sales=input.job;
+ const first=loadDocumentDifal(generation,{clientId:input.clientId,request});
+ const second=loadDocumentDifal(generation,{clientId:input.clientId,request});
+ const reading=documentDifalSummary(input);assert.equal(reading.applicationState,'disabled');assert.equal(reading.state,'reading');assert.equal(reading.amountCents,null);
+ await Promise.resolve();assert.equal(calls,1);hold.release();await Promise.all([first,second]);
+ const ready=documentDifalSummary(input);assert.equal(ready.state,'ready');assert.equal(ready.amountCents,0);assert.equal(ready.applicationState,'disabled');
+ assert.match(ready.context,/janeiro a setembro de 2026/);
+ await loadDocumentDifal(generation,{clientId:input.clientId,request});assert.equal(calls,1);
+ assert.deepEqual(input.job.purchaseInput,original.purchaseInput);assert.deepEqual(input.job.reportPeriod,original.reportPeriod);
+});
+
+test('saída desativada com resposta sem período validado não entra no cache e pode recuperar',async()=>{
+ const input=options();input.jobId=input.job._id='sales-invalid-period';
+ input.job.reportPeriod={startMonth:'2026-01',endMonth:'2026-12',months:12};
+ const generation={_id:input.generationId,companies:[{clientId:input.clientId,salesJobId:input.jobId,sales:input.job}]};
+ let calls=0;
+ const request=async()=>({jobId:input.jobId,clientId:input.clientId,generationId:input.generationId,difal:structuredClone(source(input)),
+  period:{version:'JAN_SEP_V1',sourceYear:2026,complete:++calls!==1,includedMonths:['2026-01']}});
+ await loadDocumentDifal(generation,{clientId:input.clientId,request});
+ const failed=documentDifalSummary(input);assert.equal(failed.applicationState,'disabled');assert.equal(failed.state,'unavailable');assert.equal(failed.amountCents,null);
+ assert.equal(failed.error.code,'DIFAL_SUMMARY_INVALID');
+ await loadDocumentDifal(generation,{clientId:input.clientId,request});assert.equal(calls,2);
+ assert.equal(documentDifalSummary(input).state,'ready');assert.equal(documentDifalSummary(input).amountCents,0);
+});
+
 test('falha transitória no resumo permite nova tentativa e nunca confirma zero indevido',async()=>{
   const input=options();input.job._id=input.jobId='retry-load';input.job.difalVersion='DIFAL_ESTIMATE_V4';source(input).version='DIFAL_ESTIMATE_V4';Object.assign(source(input),{amountCents:10000,baseCents:100000,eligibleLines:1});
   const generation={_id:'generation',companies:[{clientId:'client',salesJobId:input.jobId,sales:input.job}]};

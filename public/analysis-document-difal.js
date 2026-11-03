@@ -2,6 +2,13 @@ import {DIFAL_VERSION,DIFAL_RATE_PERCENT,isDifalVersion} from './difal.js';
 import {ANTICIPATION_VERSION,ANTICIPATION_RATE_PERCENT,isAnticipationVersion} from './icms-anticipation.js';
 import {isAnalysisMonth,reportMonthsInPeriod} from './analysis-period.js';
 
+/** The current application rule is independent of whether a report was verified. */
+export const OUTGOING_DIFAL_APPLICATION=Object.freeze({
+  applicationState:'disabled',
+  applicationLabel:'Saída não aplicada pela regra da análise',
+  applicationNote:'Não aplicado pela regra desta análise. Isso não significa ausência de vendas interestaduais.'
+});
+
 function checkedPeriod(period,current) {
   try {
     const year=current?period?.sourceYear:Number(String(period?.startMonth||'').slice(0,4));
@@ -32,9 +39,11 @@ export function documentDifalSummary({job,type,jobId,clientId,generationId,polic
   const safePeriod=checkedPeriod(period,current);
   const knownVersion=entry?isAnticipationVersion:isDifalVersion;
   const label=entry?'DIFAL de entrada':'DIFAL de saída';
-  const context=entry?'Antecipação de ICMS · estimativa do arquivo':`DIFAL de saída desativado · janeiro a setembro${safePeriod?' de '+singleYear:''}`;
-  const unavailable=note=>({label,context,state:'unavailable',amountCents:null,note});
-  if(job[currentKey+'State']==='loading')return {label,context,state:'reading',amountCents:null,
+  const context=entry?'Antecipação de ICMS · estimativa do arquivo':safePeriod?
+    `DIFAL de saída desativado · janeiro a setembro de ${singleYear}`:'DIFAL de saída desativado pela regra da análise';
+  const presentation={label,context,...(entry?{}:OUTGOING_DIFAL_APPLICATION)};
+  const unavailable=note=>({...presentation,state:'unavailable',amountCents:null,note});
+  if(job[currentKey+'State']==='loading')return {...presentation,state:'reading',amountCents:null,
     note:'Conferindo as operações de janeiro a setembro. Aguarde a resposta do relatório.'};
   if(job[currentKey+'State']==='error')return {...unavailable(job[currentKey+'Error']?.message||'Não foi possível conferir a estimativa. Tente atualizar a leitura.'),
     error:job[currentKey+'Error']};
@@ -51,7 +60,7 @@ export function documentDifalSummary({job,type,jobId,clientId,generationId,polic
   if(!entry){
     if(['amountCents','baseCents','eligibleLines','pendingLines'].some(key=>summary[key]!==0))
       return unavailable('A estimativa de saída não corresponde à regra atual. Atualize a leitura.');
-    return {label,context,...totals,state:'ready',amountCents:0,note:'Não aplicado pela regra desta análise. Isso não significa ausência de vendas interestaduais.'};
+    return {...presentation,...totals,state:'ready',amountCents:0,note:OUTGOING_DIFAL_APPLICATION.applicationNote};
   }
   if(summary.pendingLines){
     const partial=summary.eligibleLines>0;
