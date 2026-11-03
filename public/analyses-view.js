@@ -150,7 +150,7 @@ function sectorChooser(analysis,options) {
 
 function renderDocumentDifal(summary,type) {
   if(!summary)return '';
-  const amount=summary.amountCents===null?(summary.state==='pending'?'Pendente':'Indisponível'):money(summary.amountCents/100);
+  const amount=summary.amountCents===null?(summary.state==='reading'?'Conferindo…':summary.state==='pending'?'Pendente':'Indisponível'):money(summary.amountCents/100);
   return `<div class="analysis-document-difal${summary.state==='ready'?'':' is-pending'}" data-analysis-document-difal="${type}" data-difal-state="${summary.state}" role="status"><div class="analysis-document-difal-heading"><span>${esc(summary.label)}</span><strong data-analysis-document-difal-amount>${esc(amount)}</strong></div><small>${esc(summary.context)}</small>${summary.note?`<p>${esc(summary.note)}</p>`:''}</div>`;
 }
 

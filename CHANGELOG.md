@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.55.2] - 2026-11-03
+
+- Mostra a conferência de DIFAL em andamento e conserva mensagens de erro acionáveis, sem tratar espera ou falha como zero.
+- Valida integralmente os resumos antes de reutilizar a resposta ou dispensar a consulta; respostas incompletas podem ser consultadas novamente.
+- Atualiza somente a evidência de DIFAL na nova tentativa, preservando o rascunho e evitando releitura do extrato e da análise completa.
+- Reutiliza as linhas do relatório nas verificações e no recorte de janeiro a setembro, mantendo os controles de identidade, contagem e integridade financeira.
+- Valida campos, período e checksum do cache de estimativas, detectando alterações de centavos, e permite leitura reconciliada quando somente o armazenamento auxiliar apresenta uma falha transitória ou de quota; autenticação, conflitos divergentes e exclusões continuam verificados.
+- Acrescenta regressões de leitura legada, UF pendente, recuperação de falhas e ausência de alterações nos dados originais.
+
 ## [0.55.1] - 2026-11-03
 
 - Corrige a rolagem vertical da página com o ponteiro sobre a DRE, mantendo a navegação horizontal e liberando o gesto ao atingir os limites de tabelas com rolagem interna.

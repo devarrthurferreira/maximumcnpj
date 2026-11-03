@@ -1,4 +1,5 @@
-import {test as base,expect,type APIRequestContext,type Page} from '@playwright/test';
+import {expect,type APIRequestContext,type Page} from '@playwright/test';
+import {test as base} from './isolated-auth-test';
 import {randomUUID} from 'node:crypto';
 import {MongoClient,type Db} from 'mongodb';
 import {processLookup} from '../../src/lookup-jobs.ts';
@@ -80,11 +81,12 @@ async function prepare(request:APIRequestContext,baseURL:string,analysis:any){
     expectedSectorRevision:analysis.fiscal.revision,expectedConfigRevision:analysis.config.revision
   });
 }
-async function attach(request:APIRequestContext,baseURL:string,analysis:any,generationId:string,type:ReportType,rows:ReportRow[],finalize=true){
+async function attach(request:APIRequestContext,baseURL:string,analysis:any,generationId:string,type:ReportType,rows:ReportRow[],finalize=true,beforeUpload?:(jobId:string)=>Promise<void>){
   const name=type==='SALES'?'sales':'purchases';
   const attached=await api(request,baseURL,'POST',`/api/v4/generations/${generationId}/${name}`,{
     importId:randomUUID(),clientId:analysis.clientId,fileName:`difal-${name}.csv`,expectedRows:rows.length,issuerUf:'MG'
   });
+  await beforeUpload?.(attached.job._id);
   await api(request,baseURL,'POST',`/api/v4/${name}/${attached.job._id}/rows`,{offset:0,rows:rows.map(row=>({
     document:row.document??'12345678900',name:'Pessoa sintética',recipientUf:row.recipientUf,serviceDate:row.serviceDate??'2025-01-15',
     natureCode:type==='SALES'?'5102001':'1102001',description:'Operação sintética',quantity:'1',grossCents:row.totalCents,
@@ -99,6 +101,24 @@ async function attach(request:APIRequestContext,baseURL:string,analysis:any,gene
     expect(completed.status).toBe('COMPLETED');
   }
   return attached.job._id;
+}
+async function attachLegacyEntry(request:APIRequestContext,baseURL:string,workspace:Workspace,analysis:any,generationId:string,rows:ReportRow[]){
+  return attach(request,baseURL,analysis,generationId,'PURCHASES',rows,true,async jobId=>{
+    // Seed a historical import before its real upload/finalization, so all V4
+    // snapshots are produced and checked by the server's historical rule.
+    const result=await workspace.db.collection<any>('lookupJobs').updateOne({
+      _id:jobId,workspaceId:workspace.workspaceId,mode:'PURCHASES_V1',status:'UPLOADING'
+    },{$set:{anticipationVersion:'ICMS_ANTICIPATION_V4'}});
+    expect(result.matchedCount).toBe(1);
+  });
+}
+async function entrySnapshot(workspace:Workspace,jobId:string){
+  const filter={workspaceId:workspace.workspaceId,jobId};
+  return {
+    job:await workspace.db.collection<any>('lookupJobs').findOne({_id:jobId,workspaceId:workspace.workspaceId}),
+    lines:await workspace.db.collection('purchaseLines').find(filter).sort({index:1}).toArray(),
+    items:await workspace.db.collection('lookupItems').find(filter).sort({cnpj:1}).toArray()
+  };
 }
 async function fiscalStep(page:Page,step:'regimes'|'difal'|'rbt12'|'documents'){
   const wizard=page.locator('#analysis-wizard'),steps=['regimes','rbt12','documents','difal'];
@@ -232,4 +252,100 @@ test('cartão de vendas mantém janeiro–setembro e DIFAL zero mesmo com CPF in
   await page.setViewportSize({width:390,height:900});await tax(page,'SALES').scrollIntoViewIfNeeded();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   await tax(page,'SALES').screenshot({path:info.outputPath('difal-disabled-zero-jan-set.png')});
+});
+
+test('entrada V4 lê CNPJ de janeiro–setembro pela API real, exclui CPF e outubro e preserva a origem',async({page,baseURL,difalWorkspace},info)=>{
+  test.setTimeout(90_000);
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  const analysis=await createAnalysis(page.request,baseURL!,difalWorkspace.writer),prepared=await prepare(page.request,baseURL!,analysis);
+  const jobId=await attachLegacyEntry(page.request,baseURL!,difalWorkspace,analysis,prepared.generationId,[
+    {totalCents:100_000,recipientUf:'SP',document:'00000000000191'},
+    {totalCents:200_000,recipientUf:'SP',document:'00000000000191',serviceDate:'2025-09-15'},
+    {totalCents:400_000,recipientUf:'SP'},
+    {totalCents:900_000,recipientUf:'SP',document:'00000000000191',serviceDate:'2025-10-15'}
+  ]);
+  const before=await entrySnapshot(difalWorkspace,jobId);
+  expect(before.job?.purchaseInput.anticipation).toMatchObject({
+    version:'ICMS_ANTICIPATION_V4',baseCents:1_600_000,amountCents:117_120,eligibleLines:4,pendingLines:0
+  });
+  const savedFiscal=(await api(page.request,baseURL!,'GET',`/api/v4/analyses/${analysis.id}?summary=1`)).analysis.fiscal;
+  const response=page.waitForResponse(result=>new URL(result.url()).pathname===`/api/v4/purchases/${jobId}/difal-period`);
+  await page.goto(documentsUrl(analysis.id));
+  const checked=await response;expect(checked.ok()).toBe(true);
+  const estimate=await checked.json();
+  expect(estimate).toMatchObject({jobId,clientId:analysis.clientId,generationId:prepared.generationId,
+    anticipation:{version:'ICMS_ANTICIPATION_V5',baseCents:300_000,amountCents:21_960,eligibleLines:2,pendingLines:0}});
+  expect(estimate.period).toMatchObject({version:'JAN_SEP_V1',sourceYear:2025,complete:true,months:9,
+    includedMonths:['2025-01','2025-02','2025-03','2025-04','2025-05','2025-06','2025-07','2025-08','2025-09'],excludedMonths:['2025-10']});
+  await info.attach('entry-v4-jan-sep-response',{body:JSON.stringify(estimate,null,2),contentType:'application/json'});
+  await expect(card(page,'PURCHASES')).toContainText('Leitura concluída');
+  await expect(amount(page,'PURCHASES')).toHaveText('R$ 219,60');
+  await expect(tax(page,'PURCHASES')).not.toContainText(/indisponível|pendente/i);
+  await expect(card(page,'SALES')).toContainText('Aguardando documento');
+  await tax(page,'PURCHASES').screenshot({path:info.outputPath('entry-v4-jan-sep-desktop.png')});
+  await fiscalStep(page,'difal');
+  const detected=page.locator('[data-difal-assessment="entry"]');
+  await expect(detected).toHaveAttribute('data-difal-state','available');
+  await expect(detected.locator('[data-difal-detected-amount]')).toHaveText('R$ 219,60');
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await detected.screenshot({path:info.outputPath('entry-v4-jan-sep-mobile.png')});
+  await page.reload();await expect(detected.locator('[data-difal-detected-amount]')).toHaveText('R$ 219,60');
+  expect(await entrySnapshot(difalWorkspace,jobId)).toEqual(before);
+  expect((await api(page.request,baseURL!,'GET',`/api/v4/analyses/${analysis.id}?summary=1`)).analysis.fiscal).toEqual(savedFiscal);
+  expect(errors).toEqual([]);
+});
+
+test('entrada V4 com UF de CNPJ pendente não usa o CPF histórico como valor confirmado',async({page,baseURL,difalWorkspace})=>{
+  const analysis=await createAnalysis(page.request,baseURL!,difalWorkspace.writer),prepared=await prepare(page.request,baseURL!,analysis);
+  const jobId=await attachLegacyEntry(page.request,baseURL!,difalWorkspace,analysis,prepared.generationId,[
+    {totalCents:50_000,recipientUf:'',document:'00000000000191'},
+    {totalCents:100_000,recipientUf:'SP'}
+  ]);
+  const before=await entrySnapshot(difalWorkspace,jobId);
+  expect(before.job?.purchaseInput.anticipation).toMatchObject({version:'ICMS_ANTICIPATION_V4',amountCents:7_320,pendingLines:1});
+  const response=page.waitForResponse(result=>new URL(result.url()).pathname===`/api/v4/purchases/${jobId}/difal-period`);
+  await page.goto(documentsUrl(analysis.id));
+  const checked=await response;expect(checked.ok()).toBe(true);
+  expect((await checked.json()).anticipation).toMatchObject({version:'ICMS_ANTICIPATION_V5',amountCents:0,baseCents:0,eligibleLines:0,pendingLines:1});
+  await expect(amount(page,'PURCHASES')).toHaveText('Pendente');
+  await expect(tax(page,'PURCHASES')).not.toContainText(/R\$\s*(0,00|73,20)/);
+  await fiscalStep(page,'difal');
+  const detected=page.locator('[data-difal-assessment="entry"]');
+  await expect(detected).toHaveAttribute('data-difal-state','pending');
+  await expect(detected.locator('[data-difal-detected-amount]')).toHaveCount(0);
+  await expect(page.locator('#analysis-difal-yes')).toBeDisabled();
+  expect(await entrySnapshot(difalWorkspace,jobId)).toEqual(before);
+});
+
+test('entrada legada retoma a API real após erro temporário sem fabricar zero nem alterar escolhas salvas',async({page,baseURL,difalWorkspace})=>{
+  const analysis=await createAnalysis(page.request,baseURL!,difalWorkspace.writer),prepared=await prepare(page.request,baseURL!,analysis);
+  const jobId=await attachLegacyEntry(page.request,baseURL!,difalWorkspace,analysis,prepared.generationId,[
+    {totalCents:100_000,recipientUf:'SP',document:'00000000000191'}
+  ]);
+  const before=await entrySnapshot(difalWorkspace,jobId);
+  const savedFiscal=(await api(page.request,baseURL!,'GET',`/api/v4/analyses/${analysis.id}?summary=1`)).analysis.fiscal;
+  const path=`/api/v4/purchases/${jobId}/difal-period`;let attempts=0;
+  await page.route('**'+path,async route=>{
+    attempts++;
+    if(attempts===1)await route.fulfill({status:503,json:{error:'SYNTHETIC_TEMPORARY_READ',message:'Leitura temporariamente indisponível.'}});
+    else await route.continue();
+  });
+  await page.goto(`/analyses.html?id=${analysis.id}&sector=fiscal&step=difal`);
+  const detected=page.locator('[data-difal-assessment="entry"]');
+  await expect(detected).toHaveAttribute('data-difal-state','unavailable');
+  await expect(detected.locator('[data-difal-detected-amount]')).toHaveCount(0);
+  await expect(detected).not.toContainText('R$ 0,00');
+  await expect(page.locator('#analysis-difal-yes')).toBeDisabled();
+  expect(attempts).toBe(1);
+  await expect(page.locator('#analysis-difal-retry')).toBeEnabled();
+  const response=page.waitForResponse(result=>new URL(result.url()).pathname===path&&result.status()===200);
+  await page.locator('#analysis-difal-retry').click();
+  expect((await(await response).json()).anticipation).toMatchObject({version:'ICMS_ANTICIPATION_V5',amountCents:7_320,pendingLines:0});
+  await expect(detected).toHaveAttribute('data-difal-state','available');
+  await expect(detected.locator('[data-difal-detected-amount]')).toHaveText('R$ 73,20');
+  expect(attempts).toBe(2);
+  await fiscalStep(page,'documents');await expect(amount(page,'PURCHASES')).toHaveText('R$ 73,20');
+  expect(await entrySnapshot(difalWorkspace,jobId)).toEqual(before);
+  expect((await api(page.request,baseURL!,'GET',`/api/v4/analyses/${analysis.id}?summary=1`)).analysis.fiscal).toEqual(savedFiscal);
 });

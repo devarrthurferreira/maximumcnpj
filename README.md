@@ -1,4 +1,12 @@
-# Maximum CNPJ · v0.55.1
+# Maximum CNPJ · v0.55.2
+
+## v0.55.2 — Leitura do DIFAL com estado correto e menos consultas (2026-11-03)
+
+A conferência de DIFAL distingue a leitura em andamento, o resultado validado, a pendência de UF e a falha de consulta. Respostas incompletas deixam de ser reutilizadas como leitura concluída, e a mensagem de falha conserva a orientação recebida do servidor. **Atualizar leitura** refaz a consulta de DIFAL sem reler o extrato ou repetir a conciliação completa da análise; chamadas simultâneas para o mesmo documento compartilham a requisição em andamento.
+
+O servidor reutiliza as linhas já lidas para conferir os tributos, as datas, a seleção de compras e o recorte de janeiro a setembro. As verificações de componentes financeiros, identidades, contagem, origem do enquadramento e snapshots continuam obrigatórias. O resumo auxiliar só é reutilizado quando está completo, corresponde ao documento e ao período e conserva o checksum do conteúdo reconciliado. A conferência detecta inclusive uma alteração de um centavo dentro da margem possível de arredondamento por linha. Uma falha transitória ou de quota apenas nesse armazenamento auxiliar permite entregar o resultado já reconciliado, conservando as barreiras de integridade e exclusão.
+
+A validação cobre relatórios legados, CNPJ elegível, CPF excluído, outubro fora da janela, UF pendente, resposta incompleta, falha transitória e nova tentativa. A contagem de consultas com MongoDB descartável confirmou uma leitura projetada das linhas e uma agregação financeira na primeira consulta de entrada, em lugar de cinco passagens sobre essas linhas; a conferência dos snapshots cadastrais permanece separada. Com resumo válido, nenhuma varredura das linhas ou snapshots cadastrais é repetida. As leituras usam os dados salvos do relatório e não consultam novamente o provedor de CNPJ. A ausência de evidência permanece explícita; valores parciais e pendências não viram zero confirmado.
 
 ## v0.55.1 — Rolagem da DRE sobre a tabela (2026-11-03)
 

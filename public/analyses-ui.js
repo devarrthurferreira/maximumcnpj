@@ -40,7 +40,7 @@ const S={user:null,clients:null,analysis:null,sector:null,source:null,generation
 let modal=null;
 const activity=createLoadingScreen({id:'analysis-busy-screen',target:()=>document.querySelector('dialog[open] .analysis-wizard-frame')});
 let busyMessage='Processando…';
-let companyCheckController=null,evidenceTask=null,metadataTask=null,clientsTask=null,accountingSummaryFrame=0;
+let companyCheckController=null,evidenceTask=null,metadataTask=null,clientsTask=null,accountingSummaryFrame=0,metadataSequence=0;
 let scheduleCache={reference:null,months:null,value:null};
 const writable=()=>['admin','operator'].includes(S.user?.role);
 const dirty=()=>S.configDirty||S.fiscalDirty||S.accountingDirty;
@@ -623,20 +623,23 @@ function cancelEvidence() {
 function cancelMetadata() {
   metadataTask?.controller.abort();metadataTask=null;
 }
-function generationMetadata(record,{force=false}={}) {
+const difalCacheScope=()=>JSON.stringify([S.user?.workspaceId||'',S.user?._id||'']);
+function generationMetadata(record,{force=false,forceDifal=false}={}) {
   const key=evidenceKey(record),id=record.id,generationId=record.fiscal.data.generationId,sequence=S.sequence;
   if(!generationId)return Promise.resolve(null);
   if(metadataTask?.key===key)return metadataTask.promise;
   if(!force&&S.metadataKey===key&&S.metadataState==='ready')return Promise.resolve(S.generation);
   if(!force&&S.metadataKey===key&&S.metadataState==='error')return Promise.reject(Object.assign(new Error(S.generationError),{status:S.generationUnavailable?404:0}));
   cancelMetadata();const controller=new AbortController(),task={key,controller,promise:null};metadataTask=task;
+  metadataSequence++;
   S.metadataState='loading';S.metadataKey=key;S.generationError='';S.generationUnavailable=false;refreshAccountingSources();
   task.promise=analysisRequest('/api/v4/generations/'+encodeURIComponent(generationId),{signal:controller.signal}).then(generation=>{
     if(generation._id!==generationId||!generation.companies?.some(company=>company.clientId===record.clientId))throw new Error('Os relatórios não correspondem à empresa desta análise. Confira o vínculo antes de continuar.');
     if(currentContext(id,sequence)&&evidenceKey(S.analysis)===key){
       S.generation=generation;S.metadataState='ready';
-      void loadDocumentDifal(generation,{clientId:record.clientId,request:analysisRequest,onUpdate:()=>{
-        if(currentContext(id,sequence)&&evidenceKey(S.analysis)===key&&S.generation===generation)refreshEvidence();
+      const cacheScope=difalCacheScope();
+      void loadDocumentDifal(generation,{clientId:record.clientId,request:analysisRequest,force:forceDifal,cacheScope,onUpdate:()=>{
+        if(currentContext(id,sequence)&&evidenceKey(S.analysis)===key&&S.generation===generation&&difalCacheScope()===cacheScope)refreshEvidence();
       }});
     }
     return generation;
@@ -712,6 +715,7 @@ async function ensureEvidence({force=false}={}) {
   task.promise=(async()=>{
     const sourceRead=analysisRequest(apiPath('/'+id+'?includeSource=1'),{signal:controller.signal});
     const generationRead=generationMetadata(record,{force});
+    const generationSequence=metadataSequence;
     const referenceRead=requiresSimplesReference(record.config.regimeSelection)&&fiscal.rbt12Source==='SIMPLES_SECTION_22'&&fiscal.rbt12ExtractionId?
       S.reference?.extractionId===fiscal.rbt12ExtractionId&&S.reference?.documentId===fiscal.rbt12DocumentId?Promise.resolve(S.reference):
         loadAnalysisExtraction({clientId:record.clientId,documentId:fiscal.rbt12DocumentId,extractionId:fiscal.rbt12ExtractionId,cnpj:record.company.cnpj,signal:controller.signal}):Promise.resolve(null);
@@ -731,7 +735,6 @@ async function ensureEvidence({force=false}={}) {
     const reads=await Promise.allSettled([sourceRead,generationRead,referenceRead]);
     if(controller.signal.aborted||evidenceTask!==task||!currentContext(id,sequence)||evidenceKey(S.analysis)!==key)return;
     let error='',generationUnavailable=false;
-    S.generationError='';
     if(reads[0].status==='fulfilled'){
       try{
         const data=reads[0].value,checked=assertAnalysis(data.analysis);
@@ -746,18 +749,17 @@ async function ensureEvidence({force=false}={}) {
         }
       }catch(failure){error=failure.message;}
     }else error=reads[0].reason?.message||'Não foi possível conferir os documentos fiscais.';
-    if(reads[1].status==='fulfilled'){
+    if(generationSequence===metadataSequence&&reads[1].status==='fulfilled'){
       const generation=reads[1].value;
       if(generation&&(generation._id!==fiscal.generationId||!generation.companies?.some(company=>company.clientId===record.clientId)))S.generationError='Os relatórios não correspondem à empresa desta análise. Confira o vínculo antes de continuar.';
-      else S.generation=generation;
-    }else S.generationError=reads[1].reason?.status===404?'Os documentos fiscais vinculados não estão disponíveis. Confira os relatórios ou prepare uma nova importação.':reads[1].reason?.message||'Não foi possível conferir os relatórios vinculados.';
+    }else if(generationSequence===metadataSequence)S.generationError=reads[1].reason?.status===404?'Os documentos fiscais vinculados não estão disponíveis. Confira os relatórios ou prepare uma nova importação.':reads[1].reason?.message||'Não foi possível conferir os relatórios vinculados.';
     const usesReference=S.fiscalDraft.rbt12Source==='SIMPLES_SECTION_22'&&S.fiscalDraft.rbt12ExtractionId===fiscal.rbt12ExtractionId&&S.fiscalDraft.rbt12DocumentId===fiscal.rbt12DocumentId;
     if(reads[2].status==='fulfilled'){
       const reference=reads[2].value;
       if(reference&&usesReference){if(S.reference!==reference)S.pdfStatus='';S.reference=reference;}
     }else if(usesReference)S.pdfStatus=reads[2].reason?.message||'Não foi possível confirmar a leitura do extrato. Verifique o PDF vinculado.';
     // O erro do PDF pertence ao campo RBT12; não transforma entradas/saídas já concluídas em documentos com erro.
-    if(generationUnavailable||reads[1].status==='rejected'&&reads[1].reason?.status===404){
+    if(generationSequence===metadataSequence&&(generationUnavailable||reads[1].status==='rejected'&&reads[1].reason?.status===404)){
       S.generation=null;S.source=null;S.generationUnavailable=true;
       if(generationUnavailable)S.generationError=error;
       S.metadataState='error';S.metadataKey=key;
@@ -1067,14 +1069,25 @@ function editFiscalAdjustments() {
 function refreshDifalAssessment() {
   const host=$('#analysis-difal-view');if(!host||!S.analysis)return;
   const active=document.activeElement?.id,open=$('#analysis-difal-details')?.open;
-  const reading=S.evidenceState==='loading';
+  const assessment=assessAnalysisDifal(detailOptions());
+  const reading=S.metadataState==='loading'||Object.values(assessment).some(item=>item.state==='reading');
   host.innerHTML=renderDifalChoice(S.analysis.config.regimeSelection,S.fiscalDraft.difalPolicy,
-    {choice:S.fiscalDifalChoice,assessment:assessAnalysisDifal(detailOptions()),reading})||'<p>Os regimes selecionados não utilizam antecipação de entrada.</p>';
+    {choice:S.fiscalDifalChoice,assessment,reading})||'<p>Os regimes selecionados não utilizam antecipação de entrada.</p>';
   refreshDifalControls('analysis',S.fiscalDraft.difalPolicy,S.analysis.config.regimeSelection,S.fiscalDifalChoice);
   if(open&&$('#analysis-difal-details')&&!$('#analysis-difal-details').hidden)$('#analysis-difal-details').open=true;
   const documents=$('#analysis-difal-documents');if(documents)documents.onclick=()=>setWizardStep('documents');
-  const retry=$('#analysis-difal-retry');if(retry){retry.disabled=S.busy||reading;retry.textContent=reading?'Conferindo…':'Atualizar leitura';retry.onclick=()=>void ensureEvidence({force:true});}
+  const retry=$('#analysis-difal-retry');if(retry){retry.disabled=S.busy||reading;retry.textContent=reading?'Conferindo…':'Atualizar leitura';retry.onclick=()=>void retryDifalEvidence();}
   if(active&&host.contains(document.getElementById(active)))document.getElementById(active)?.focus({preventScroll:true});
+}
+async function retryDifalEvidence() {
+  if(!S.analysis||S.busy||S.metadataState==='loading')return;
+  const record=S.analysis,sequence=S.sequence,key=evidenceKey(record);
+  // Recheck only the linked reports and their tax estimates. Existing source
+  // reconciliation errors and RBT12 fields keep their independent state.
+  const pending=generationMetadata(record,{force:true,forceDifal:true});
+  refreshDifalAssessment();
+  try {await pending;}catch{}
+  if(currentContext(record.id,sequence)&&evidenceKey(S.analysis)===key)refreshEvidence();
 }
 function bindFiscal() {
   refreshDifalAssessment();

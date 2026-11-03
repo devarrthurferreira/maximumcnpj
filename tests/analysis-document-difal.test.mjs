@@ -181,3 +181,77 @@ test('falha de entrada não impede saída zero nem fabrica um valor confirmado d
  assert.equal(documentDifalSummary(entry).state,'unavailable');assert.equal(documentDifalSummary(entry).amountCents,null);
  assert.equal(documentDifalSummary(sale).amountCents,0);
 });
+
+function legacyEntry(id) {
+ const input=options('PURCHASES');input.jobId=input.job._id=id;
+ const result={jobId:id,clientId:input.clientId,generationId:input.generationId,anticipation:structuredClone(source(input)),
+  period:{version:'JAN_SEP_V1',sourceYear:2026,complete:true,includedMonths:['2026-01']}};
+ input.job.anticipationVersion=source(input).version='ICMS_ANTICIPATION_V4';
+ return {input,result,generation:{_id:input.generationId,companies:[{clientId:input.clientId,purchaseJobId:id,purchase:input.job}]}};
+}
+function gate(){let release;const promise=new Promise(resolve=>release=resolve);return {promise,release};}
+
+test('consulta pendente informa leitura e compartilha a mesma requisição mesmo com force',async()=>{
+ const f=legacyEntry('reading-pending'),hold=gate();let calls=0;
+ const request=async()=>{calls++;await hold.promise;return f.result;};
+ const first=loadDocumentDifal(f.generation,{clientId:f.input.clientId,request});
+ const second=loadDocumentDifal(f.generation,{clientId:f.input.clientId,request,force:true});
+ assert.equal(documentDifalSummary(f.input).state,'reading');assert.equal(documentDifalSummary(f.input).amountCents,null);
+ await Promise.resolve();assert.equal(calls,1);hold.release();await Promise.all([first,second]);
+ assert.equal(documentDifalSummary(f.input).state,'ready');assert.equal(documentDifalSummary(f.input).amountCents,3660);
+});
+
+test('erro de origem preserva mensagem, status e código seguro e não impede nova tentativa',async()=>{
+ const f=legacyEntry('error-detail'),requestId='11111111-1111-4111-8111-111111111111';let calls=0;
+ const request=async()=>{if(++calls===1)throw Object.assign(new Error('Banco de origem temporariamente indisponível. Tente novamente.'),{status:503,code:'SOURCE_UNAVAILABLE',requestId});return f.result;};
+ await loadDocumentDifal(f.generation,{clientId:f.input.clientId,request});
+ const failed=documentDifalSummary(f.input);assert.equal(failed.state,'unavailable');assert.equal(failed.amountCents,null);
+ assert.match(failed.note,/Banco de origem temporariamente indisponível/);assert.match(failed.note,new RegExp(requestId));
+ assert.equal(failed.error.status,503);assert.equal(failed.error.code,'SOURCE_UNAVAILABLE');assert.equal(failed.error.retryable,true);
+ await loadDocumentDifal(f.generation,{clientId:f.input.clientId,request,force:true});
+ assert.equal(calls,2);assert.equal(documentDifalSummary(f.input).amountCents,3660);
+});
+
+test('resposta incompleta, taxa incompatível ou período inválido nunca envenena o cache',async()=>{
+ const invalid=[result=>delete result.anticipation.amountCents,result=>result.anticipation.ratePercent=10,
+  result=>result.anticipation.amountCents=result.anticipation.baseCents+1,
+  result=>result.period.includedMonths=['2026-10'],result=>result.period.includedMonths=['2026-01','2026-01'],
+  result=>result.period.complete=false,result=>result.period.months=2];
+ for(const [index,change] of invalid.entries()){
+  const f=legacyEntry('invalid-response-'+index),broken=structuredClone(f.result);change(broken);let calls=0;
+  const request=async()=>++calls===1?broken:f.result;
+  await loadDocumentDifal(f.generation,{clientId:f.input.clientId,request});
+  assert.equal(documentDifalSummary(f.input).state,'unavailable');assert.equal(documentDifalSummary(f.input).amountCents,null);
+  await loadDocumentDifal(f.generation,{clientId:f.input.clientId,request});
+  assert.equal(calls,2);assert.equal(documentDifalSummary(f.input).amountCents,3660);
+ }
+});
+
+test('resumo inline incompleto consulta o servidor; resumo válido evita leitura adicional',async()=>{
+ const f=legacyEntry('invalid-inline');f.input.job.anticipationVersion='ICMS_ANTICIPATION_V5';source(f.input).version='ICMS_ANTICIPATION_V5';
+ delete source(f.input).amountCents;let calls=0;
+ await loadDocumentDifal(f.generation,{clientId:f.input.clientId,request:async()=>{calls++;return f.result;}});
+ assert.equal(calls,1);assert.equal(documentDifalSummary(f.input).amountCents,3660);
+ const valid=options('PURCHASES');
+ await loadDocumentDifal({_id:valid.generationId,companies:[{clientId:valid.clientId,purchaseJobId:valid.jobId,purchase:valid.job}]},
+  {clientId:valid.clientId,request:async()=>{throw new Error('Não deve consultar um resumo inline válido.');}});
+ assert.equal(documentDifalSummary(valid).state,'ready');
+});
+
+test('force substitui cache concluído sem duplicar a nova consulta pendente',async()=>{
+ const f=legacyEntry('force-cache'),hold=gate();let calls=0;
+ const request=async()=>{if(++calls>1)await hold.promise;return {...f.result,anticipation:{...f.result.anticipation,amountCents:calls===1?3660:7320}};};
+ await loadDocumentDifal(f.generation,{clientId:f.input.clientId,request});
+ const first=loadDocumentDifal(f.generation,{clientId:f.input.clientId,request,force:true});
+ const second=loadDocumentDifal(f.generation,{clientId:f.input.clientId,request,force:true});
+ await Promise.resolve();assert.equal(calls,2);assert.equal(documentDifalSummary(f.input).amountCents,null);
+ hold.release();await Promise.all([first,second]);assert.equal(documentDifalSummary(f.input).amountCents,7320);
+});
+
+test('escopos de sessão não compartilham cache nem deixam resposta antiga sobrescrever a nova',async()=>{
+ const f=legacyEntry('session-scopes'),hold=gate();let calls=0;
+ const old=loadDocumentDifal(f.generation,{clientId:f.input.clientId,cacheScope:'workspace/user-a',request:async()=>{calls++;await hold.promise;return f.result;}});
+ await loadDocumentDifal(f.generation,{clientId:f.input.clientId,cacheScope:'workspace/user-b',request:async()=>{calls++;return {...f.result,anticipation:{...f.result.anticipation,amountCents:7320}};}});
+ assert.equal(calls,2);assert.equal(documentDifalSummary(f.input).amountCents,7320);
+ hold.release();await old;assert.equal(documentDifalSummary(f.input).amountCents,7320);
+});

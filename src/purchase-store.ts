@@ -1,8 +1,10 @@
-import {buildAnalysisPeriod} from '../public/analysis-period.js';
+import {buildAnalysisPeriod,assertCompleteAnalysisPeriod} from '../public/analysis-period.js';
+import {MongoNetworkError,MongoOperationTimeoutError,MongoServerError,MongoServerSelectionError} from 'mongodb';
+import {isStorageQuotaError} from './mongo-connections.ts';
 import {reportDifalPolicy} from './report-difal-policy.ts';
 import {reportRevenueReconciliation, generationRevenueReconciliation} from './report-revenue.ts';
-import {ANTICIPATION_VERSION,calculateAnticipation,isAnticipationVersion,summarizeAnticipation,type AnticipationSummary,type AnticipationOrigin} from './icms-anticipation.ts';
-import { calculateDifal, salesOperation, normalizeUf, summarizeDifal, DIFAL_VERSION, isDifalVersion, type DifalSummary, type DifalOrigin } from './difal.ts';
+import {ANTICIPATION_VERSION,ANTICIPATION_RATE_PERCENT,calculateAnticipation,isAnticipationVersion,summarizeAnticipation,type AnticipationSummary,type AnticipationOrigin} from './icms-anticipation.ts';
+import { calculateDifal, salesOperation, normalizeUf, summarizeDifal, DIFAL_VERSION, DIFAL_RATE_PERCENT, isDifalVersion, type DifalSummary, type DifalOrigin } from './difal.ts';
 import {OPERATION_CATALOG_VERSION, normalizeOperationNature, classifyOperationNature} from './operation-catalog.ts';
 import { PURCHASE_SELECTION_VERSION, selectPurchaseLine, summarizePurchaseSelection, type PurchaseSelectionSummary } from './purchase-selection.ts';
 import { normalizeCnpj, safeCell } from './domain.ts';
@@ -41,9 +43,9 @@ async function financialGroups(name: string, id: string, job: Doc) {
 function componentTotals(groups: any[]) {
   return Object.fromEntries(FINANCIAL_FIELDS.map(field => [field, exactCents(groups.reduce((sum, group) => sum + exactCents(group[field]), 0))]));
 }
-async function financialPeriod(name: string, id: string, job: Doc) {
+async function financialPeriod(name: string, id: string, job: Doc, sourceRows?: Record<string,any>[]) {
   if (calculationVersion(job) !== 'NET_V2') return null;
-  const rows = await (await jobCollection(name,job)).find(scope({jobId: id})).project({serviceDate: 1}).sort({index: 1}).maxTimeMS(20000).toArray();
+  const rows = sourceRows ?? await (await jobCollection(name,job)).find(scope({jobId: id})).project({serviceDate: 1}).sort({index: 1}).maxTimeMS(20000).toArray();
   need(rows.length === job.expectedRows, 'Período fiscal incompleto. Reimporte o relatório.', 409, 'REPORT_PERIOD');
   return reportPeriod(rows.map(row => row.serviceDate));
 }
@@ -56,7 +58,7 @@ function validateOperationSnapshot(job: Doc, rows: Record<string,any>[], allowMi
   'Natureza ou classificação divergente do snapshot. Emissão bloqueada.',409,'OPERATION_SNAPSHOT');
 }
 /** Recompute from source fields and compare every persisted estimate before exposing it. */
-async function financialTaxes(name:string,id:string,job:Doc,deriveLegacy = false):Promise<{difal:DifalSummary|null;difalOrigin:DifalOrigin;anticipation:AnticipationSummary|null;anticipationOrigin:AnticipationOrigin}> {
+async function financialTaxes(name:string,id:string,job:Doc,deriveLegacy = false,sourceRows?:Record<string,any>[]):Promise<{difal:DifalSummary|null;difalOrigin:DifalOrigin;anticipation:AnticipationSummary|null;anticipationOrigin:AnticipationOrigin}> {
   need(job.operationVersion===undefined||job.operationVersion===OPERATION_CATALOG_VERSION,
     'Versão do catálogo de naturezas desconhecida. Emissão bloqueada.',409,'OPERATION_VERSION');
   need(job.anticipationVersion===undefined||job.mode===PURCHASE_MODE&&isAnticipationVersion(job.anticipationVersion),
@@ -68,7 +70,7 @@ async function financialTaxes(name:string,id:string,job:Doc,deriveLegacy = false
   const deriveSales=deriveLegacy&&job.mode===SALES_MODE&&job.difalVersion!==DIFAL_VERSION&&calculationVersion(job)==='NET_V2';
   if(salesTax)need(isDifalVersion(job.difalVersion),'Versão do DIFAL desconhecida. Reimporte as vendas.',409,'DIFAL_VERSION');
   if(!catalog&&!salesTax&&!purchaseTax&&!derivePurchase&&!deriveSales)return {difal:null,difalOrigin:'UNAVAILABLE',anticipation:null,anticipationOrigin:'UNAVAILABLE'};
-  const rows=await (await jobCollection(name,job)).find(scope({jobId:id})).project({totalCents:1,natureCode:1,description:1,operation:1,document:1,recipientUf:1,
+  const rows=sourceRows ?? await (await jobCollection(name,job)).find(scope({jobId:id})).project({totalCents:1,natureCode:1,description:1,operation:1,document:1,recipientUf:1,
     ...(catalog?{natureOperation:1,operationVersion:1}:{}),...(salesTax?{difal:1}:{}),...(purchaseTax?{anticipation:1}:{})}).maxTimeMS(20000).toArray();
   if(catalog)validateOperationSnapshot(job,rows,(derivePurchase||deriveSales)&&!salesTax&&!purchaseTax);
   if(salesTax||purchaseTax)need(rows.length===job.expectedRows&&typeof job.issuerUf==='string'&&job.issuerUf===normalizeUf(job.issuerUf),
@@ -114,107 +116,134 @@ async function financialTaxes(name:string,id:string,job:Doc,deriveLegacy = false
 export async function currentSalesDifal(summary: Awaited<ReturnType<typeof reconciledPurchaseSummary>>): Promise<DifalSummary | null> {
   return summary.difal || null;
 }
-/** Read-only Jan–Sep estimate for the analysis document card. Whole-file snapshots stay intact. */
-export async function currentSalesDocumentDifal(id: string) {
-  const job = await purchaseJob(id, SALES_MODE);
-  need(job.status === 'COMPLETED', 'Conclua o relatório de vendas.', 409, 'INCOMPLETE');
-  const signature = digest(JSON.stringify([id, job.clientId, job.generationId, job.completedAt, job.difalVersion, job.issuerUf,
-    job.expectedRows, job.reportPeriod, job.purchaseInput, DIFAL_VERSION, 'JAN_SEP_V1']));
-  const cache = await collection('documentDifalEstimates');
-  const sameSource = (value: any) => value?.jobId === id && value.clientId === job.clientId &&
-    (value.generationId ?? null) === (job.generationId ?? null) &&
-    value.difal?.version === DIFAL_VERSION && value.period?.version === 'JAN_SEP_V1';
-  const visibleEstimate = async (value: {
-    jobId: string; clientId: string; generationId?: string; difal: DifalSummary; period: ReturnType<typeof buildAnalysisPeriod>
-  }) => {
-    // A cold reader can finish after deletion has purged the generation. Check after
-    // writing: an earlier deletion is detected here; a later one will purge the cache.
-    try { await purchaseJob(id, SALES_MODE); }
-    catch (error) {
-      if (error instanceof AppError && error.code === 'NOT_FOUND') await cache.deleteOne(scope({_id: signature}));
+type DocumentEstimate = {
+  jobId:string;clientId:string;generationId?:string;period:ReturnType<typeof buildAnalysisPeriod>;
+  anticipation?:AnticipationSummary;difal?:DifalSummary;
+};
+type DocumentTaxKey = 'anticipation'|'difal';
+const DOCUMENT_CACHE_MAX_TIME_MS=2000;
+/** Cache availability is optional; authentication, integrity and code errors are not. */
+function unavailableDocumentCache(error:unknown):boolean {
+  // Server selection can wrap an authentication error, which must remain fatal.
+  if(error instanceof MongoServerSelectionError)return error.cause===undefined||unavailableDocumentCache(error.cause);
+  return isStorageQuotaError(error)||error instanceof MongoNetworkError||error instanceof MongoOperationTimeoutError||
+    error instanceof MongoServerError&&(error.code===50||error.code===262);
+}
+function validDocumentEstimate(value:any,job:Doc,taxKey:DocumentTaxKey):value is DocumentEstimate {
+  const entry=taxKey==='anticipation',version=entry?ANTICIPATION_VERSION:DIFAL_VERSION,rate=entry?ANTICIPATION_RATE_PERCENT:DIFAL_RATE_PERCENT;
+  if(!value||value.jobId!==job._id||value.clientId!==job.clientId||
+    (value.generationId??null)!==(job.generationId??null))return false;
+  const tax=value[taxKey];
+  if(!tax||tax.version!==version||tax.ratePercent!==rate||tax.issuerUf!==normalizeUf(job.issuerUf)||
+    !['baseCents','amountCents','eligibleLines','pendingLines'].every(key=>Number.isSafeInteger(tax[key])&&tax[key]>=0)||
+    !Number.isSafeInteger(job.expectedRows)||tax.eligibleLines+tax.pendingLines>job.expectedRows||
+    !Number.isSafeInteger(job.purchaseInput?.totalCents)||tax.baseCents>job.purchaseInput.totalCents||tax.amountCents>tax.baseCents||
+    !tax.eligibleLines&&(tax.baseCents!==0||tax.amountCents!==0))return false;
+  if(!entry&&['baseCents','amountCents','eligibleLines','pendingLines'].some(key=>tax[key]!==0))return false;
+  try{
+    assertCompleteAnalysisPeriod(value.period);
+    const period=buildAnalysisPeriod(job.reportPeriod,job.reportPeriod);
+    if(stableFinancialValue(value.period)!==stableFinancialValue(period))return false;
+    // When the current version covers the whole file, the frozen summary gives
+    // an independent exact check. Historical versions must retain their old tax.
+    if(!period.excludedMonths.length&&job[entry?'anticipationVersion':'difalVersion']===version&&
+      !sameTaxSummary(tax,job.purchaseInput?.[taxKey]))return false;
+    if(entry){
+      // The file tax rounds each line separately. Its sum can differ from the
+      // unrounded aggregate by at most half a cent for each eligible line.
+      const difference=BigInt(tax.amountCents)*10000n-BigInt(tax.baseCents)*732n;
+      const bound=BigInt(tax.eligibleLines)*5000n;
+      if(difference < -bound||difference > bound)return false;
+    }
+  }catch{return false;}
+  return true;
+}
+async function cachedDocumentEstimate<T extends DocumentEstimate>(job:Doc,taxKey:DocumentTaxKey,read:()=>Promise<T>):Promise<T>{
+  const id=job._id,version=taxKey==='anticipation'?ANTICIPATION_VERSION:DIFAL_VERSION;
+  const signature=digest(JSON.stringify(['DOCUMENT_TAX_PERIOD_V2',scope().workspaceId,job.mode,id,job.clientId,job.generationId,
+    job.completedAt,job.calculationVersion,job.operationVersion,job.anticipationVersion,job.difalVersion,job.issuerUf,
+    job.storageVersion,job.storageSlot,job.expectedRows,job.summary,job.reportPeriod,job.purchaseInput,version,'JAN_SEP_V1']));
+  const cache=await collection('documentDifalEstimates');
+  // Detect changed cached cents even when they remain inside the legitimate
+  // per-line rounding range. Normalize the optional generation for BSON nulls.
+  const contentHash=(value:DocumentEstimate)=>digest(stableFinancialValue([
+    signature,value.jobId,value.clientId,value.generationId??null,value[taxKey],value.period
+  ]));
+  const validCached=(entry:Doc|null)=>validDocumentEstimate(entry?.value,job,taxKey)&&entry!.contentHash===contentHash(entry!.value);
+  const visibleEstimate=async(value:T)=>{
+    // Every reader checks deletion after the read/write, including warm-cache
+    // readers. An earlier deletion is detected here; a later one purges the cache.
+    try{await purchaseJob(id,job.mode as FinancialMode);}
+    catch(error){
+      if(error instanceof AppError&&error.code==='NOT_FOUND'){
+        try{await cache.deleteOne(scope({_id:signature}),{maxTimeMS:DOCUMENT_CACHE_MAX_TIME_MS});}
+        catch(cleanupError){if(!unavailableDocumentCache(cleanupError))throw cleanupError;}
+      }
       throw error;
     }
     return value;
   };
-  const cached = await cache.findOne(scope({_id: signature}));
-  if (sameSource(cached?.value)) return visibleEstimate(cached!.value);
-  const checked = await reconciledPurchaseSummary(id, true, SALES_MODE);
-  need(checked.period && checked.difal, 'Datas ou dados de DIFAL insuficientes para janeiro a setembro.', 409, 'DIFAL_PERIOD');
-  let period: ReturnType<typeof buildAnalysisPeriod>;
-  try { period = buildAnalysisPeriod(checked.period, checked.period); }
-  catch { throw new AppError(409, 'DIFAL_PERIOD', 'Não foi possível identificar uma única janela de janeiro a setembro. Confira o ano e as datas do relatório.'); }
-  need(period.complete, 'O arquivo não contém competências entre janeiro e setembro.', 409, 'DIFAL_PERIOD');
-  const rows = await (await jobCollection('purchaseLines',job)).find(scope({jobId: id}))
-    .project({index: 1, serviceDate: 1, totalCents: 1, document: 1, natureCode: 1, description: 1, recipientUf: 1})
-    .sort({index: 1}).maxTimeMS(20000).toArray();
-  need(rows.length === checked.totals.lines && rows.every((row,index) => row.index === index &&
-    typeof row.serviceDate === 'string' && /^20\d{2}-(0[1-9]|1[0-2])-\d{2}$/.test(row.serviceDate)),
-    'Datas ou linhas incompletas para selecionar janeiro a setembro.', 409, 'DIFAL_PERIOD');
-  const selected = rows.filter(row => period.includedMonths.includes(row.serviceDate.slice(0,7)));
-  const value = {jobId: id, clientId: checked.job.clientId as string, generationId: checked.job.generationId as string | undefined,
-    difal: summarizeDifal(selected.map(row => ({...row,totalCents:row.totalCents})), checked.job.issuerUf), period};
-  try {
-    await cache.updateOne(scope({_id: signature}), {$setOnInsert: {...scope(), value, createdAt: new Date()}}, {upsert: true});
-  } catch (error: any) {
-    if (error.code !== 11000) throw error;
-    // Two tabs/processes may derive the same immutable source concurrently. Accept
-    // only the identical result in this workspace; unrelated conflicts still fail.
-    const concurrent = await cache.findOne(scope({_id: signature}));
-    if (!sameSource(concurrent?.value) || !sameTaxSummary(value.difal, concurrent!.value.difal) ||
-        stableFinancialValue(value.period) !== stableFinancialValue(concurrent!.value.period)) throw error;
+  let cached:Doc|null=null,cacheAvailable=true;
+  try{cached=await cache.findOne(scope({_id:signature}),{maxTimeMS:DOCUMENT_CACHE_MAX_TIME_MS});}
+  catch(error){if(!unavailableDocumentCache(error))throw error;cacheAvailable=false;}
+  if(validCached(cached))return visibleEstimate(cached!.value as T);
+  const value=await read();
+  if(cacheAvailable){
+    try{
+      // Repair only the invalid value actually read. A concurrent checked value
+      // must not be deleted or overwritten, and source documents are never edited.
+      if(cached)await cache.deleteOne(scope({_id:signature,value:cached.value,contentHash:cached.contentHash??null}),{maxTimeMS:DOCUMENT_CACHE_MAX_TIME_MS});
+      await cache.updateOne(scope({_id:signature}),{$setOnInsert:{...scope(),value,contentHash:contentHash(value),createdAt:new Date()}},
+        {upsert:true,maxTimeMS:DOCUMENT_CACHE_MAX_TIME_MS});
+    }catch(error:any){
+      if(error.code===11000){
+        // A duplicate is safe only when its scoped, checked value is identical.
+        const concurrent=await cache.findOne(scope({_id:signature}),{maxTimeMS:DOCUMENT_CACHE_MAX_TIME_MS});
+        if(!validCached(concurrent)||
+          !sameTaxSummary(value[taxKey]!,concurrent!.value[taxKey])||
+          stableFinancialValue(value.period)!==stableFinancialValue(concurrent!.value.period))throw error;
+      }else if(!unavailableDocumentCache(error))throw error;
+    }
   }
   return visibleEstimate(value);
 }
 /** Read-only Jan–Sep estimate for the analysis document card. Whole-file snapshots stay intact. */
+export async function currentSalesDocumentDifal(id: string) {
+  const job=await purchaseJob(id,SALES_MODE);
+  need(job.status==='COMPLETED','Conclua o relatório de vendas.',409,'INCOMPLETE');
+  return cachedDocumentEstimate(job,'difal',async()=>{
+    const {summary:checked,rows}=await reconciledPurchaseData(id,true,SALES_MODE);
+    need(checked.period&&checked.difal,'Datas ou dados de DIFAL insuficientes para janeiro a setembro.',409,'DIFAL_PERIOD');
+    let period:ReturnType<typeof buildAnalysisPeriod>;
+    try{period=buildAnalysisPeriod(checked.period,checked.period);}
+    catch{throw new AppError(409,'DIFAL_PERIOD','Não foi possível identificar uma única janela de janeiro a setembro. Confira o ano e as datas do relatório.');}
+    need(period.complete,'O arquivo não contém competências entre janeiro e setembro.',409,'DIFAL_PERIOD');
+    need(rows.length===checked.totals.lines&&rows.every((row,index)=>row.index===index&&
+      typeof row.serviceDate==='string'&&/^20\d{2}-(0[1-9]|1[0-2])-\d{2}$/.test(row.serviceDate)),
+      'Datas ou linhas incompletas para selecionar janeiro a setembro.',409,'DIFAL_PERIOD');
+    const selected=rows.filter(row=>period.includedMonths.includes(row.serviceDate.slice(0,7)));
+    return {jobId:id,clientId:checked.job.clientId as string,generationId:checked.job.generationId as string|undefined,
+      difal:summarizeDifal(selected.map(row=>({...row,totalCents:row.totalCents})),checked.job.issuerUf),period};
+  });
+}
+/** Read-only Jan–Sep estimate for the analysis document card. Whole-file snapshots stay intact. */
 export async function currentPurchaseDocumentAnticipation(id: string) {
-  const job = await purchaseJob(id, PURCHASE_MODE);
-  need(job.status === 'COMPLETED', 'Conclua o relatório de compras.', 409, 'INCOMPLETE');
-  const signature = digest(JSON.stringify(['PURCHASES_V1', id, job.clientId, job.generationId, job.completedAt, job.anticipationVersion, job.issuerUf,
-    job.expectedRows, job.reportPeriod, job.purchaseInput, ANTICIPATION_VERSION, 'JAN_SEP_V1']));
-  const cache = await collection('documentDifalEstimates');
-  const sameSource = (value: any) => value?.jobId === id && value.clientId === job.clientId &&
-    (value.generationId ?? null) === (job.generationId ?? null) &&
-    value.anticipation?.version === ANTICIPATION_VERSION && value.period?.version === 'JAN_SEP_V1';
-  const visibleEstimate = async (value: {
-    jobId: string; clientId: string; generationId?: string; anticipation: AnticipationSummary; period: ReturnType<typeof buildAnalysisPeriod>
-  }) => {
-    // A cold reader can finish after deletion has purged the generation. Check after
-    // writing: an earlier deletion is detected here; a later one will purge the cache.
-    try { await purchaseJob(id, PURCHASE_MODE); }
-    catch (error) {
-      if (error instanceof AppError && error.code === 'NOT_FOUND') await cache.deleteOne(scope({_id: signature}));
-      throw error;
-    }
-    return value;
-  };
-  const cached = await cache.findOne(scope({_id: signature}));
-  if (sameSource(cached?.value)) return visibleEstimate(cached!.value);
-  const checked = await reconciledPurchaseSummary(id, true, PURCHASE_MODE);
-  need(checked.period && checked.anticipation, 'Datas ou dados de antecipação insuficientes para janeiro a setembro.', 409, 'ANTICIPATION_PERIOD');
-  let period: ReturnType<typeof buildAnalysisPeriod>;
-  try { period = buildAnalysisPeriod(checked.period, checked.period); }
-  catch { throw new AppError(409, 'ANTICIPATION_PERIOD', 'Não foi possível identificar uma única janela de janeiro a setembro. Confira o ano e as datas do relatório.'); }
-  need(period.complete, 'O arquivo não contém competências entre janeiro e setembro.', 409, 'ANTICIPATION_PERIOD');
-  const rows = await (await jobCollection('purchaseLines',job)).find(scope({jobId: id}))
-    .project({index: 1, serviceDate: 1, totalCents: 1, document: 1, natureCode: 1, description: 1, recipientUf: 1})
-    .sort({index: 1}).maxTimeMS(20000).toArray();
-  need(rows.length === checked.totals.lines && rows.every((row,index) => row.index === index &&
-    typeof row.serviceDate === 'string' && /^20\d{2}-(0[1-9]|1[0-2])-\d{2}$/.test(row.serviceDate)),
-    'Datas ou linhas incompletas para selecionar janeiro a setembro.', 409, 'ANTICIPATION_PERIOD');
-  const selected = rows.filter(row => period.includedMonths.includes(row.serviceDate.slice(0,7)));
-  const value = {jobId: id, clientId: checked.job.clientId as string, generationId: checked.job.generationId as string | undefined,
-    anticipation: summarizeAnticipation(selected.map(row => ({...row,totalCents:row.totalCents})), checked.job.issuerUf), period};
-  try {
-    await cache.updateOne(scope({_id: signature}), {$setOnInsert: {...scope(), value, createdAt: new Date()}}, {upsert: true});
-  } catch (error: any) {
-    if (error.code !== 11000) throw error;
-    // Two tabs/processes may derive the same immutable source concurrently. Accept
-    // only the identical result in this workspace; unrelated conflicts still fail.
-    const concurrent = await cache.findOne(scope({_id: signature}));
-    if (!sameSource(concurrent?.value) || !sameTaxSummary(value.anticipation, concurrent!.value.anticipation) ||
-        stableFinancialValue(value.period) !== stableFinancialValue(concurrent!.value.period)) throw error;
-  }
-  return visibleEstimate(value);
+  const job=await purchaseJob(id,PURCHASE_MODE);
+  need(job.status==='COMPLETED','Conclua o relatório de compras.',409,'INCOMPLETE');
+  return cachedDocumentEstimate(job,'anticipation',async()=>{
+    const {summary:checked,rows}=await reconciledPurchaseData(id,true,PURCHASE_MODE);
+    need(checked.period&&checked.anticipation,'Datas ou dados de antecipação insuficientes para janeiro a setembro.',409,'ANTICIPATION_PERIOD');
+    let period:ReturnType<typeof buildAnalysisPeriod>;
+    try{period=buildAnalysisPeriod(checked.period,checked.period);}
+    catch{throw new AppError(409,'ANTICIPATION_PERIOD','Não foi possível identificar uma única janela de janeiro a setembro. Confira o ano e as datas do relatório.');}
+    need(period.complete,'O arquivo não contém competências entre janeiro e setembro.',409,'ANTICIPATION_PERIOD');
+    need(rows.length===checked.totals.lines&&rows.every((row,index)=>row.index===index&&
+      typeof row.serviceDate==='string'&&/^20\d{2}-(0[1-9]|1[0-2])-\d{2}$/.test(row.serviceDate)),
+      'Datas ou linhas incompletas para selecionar janeiro a setembro.',409,'ANTICIPATION_PERIOD');
+    const selected=rows.filter(row=>period.includedMonths.includes(row.serviceDate.slice(0,7)));
+    return {jobId:id,clientId:checked.job.clientId as string,generationId:checked.job.generationId as string|undefined,
+      anticipation:summarizeAnticipation(selected.map(row=>({...row,totalCents:row.totalCents})),checked.job.issuerUf),period};
+  });
 }
 function sameTaxSummary(actual: DifalSummary|AnticipationSummary, saved: any) {
   return !!saved && Object.entries(actual).every(([field, value]) => saved[field] === value);
@@ -371,16 +400,23 @@ export async function finalizePurchaseUpload(actor: LookupActor, job: Doc) {
   return getJob(id);
 }
 
-/** Reconcile against immutable stored lines and scoped provider snapshots before any report/download. */
-export async function reconciledPurchaseSummary(id: string, requireComplete = true, mode: FinancialMode = PURCHASE_MODE) {
+/** Keep the checked source rows private, so a document-period read can reuse them. */
+async function reconciledPurchaseData(id: string, requireComplete = true, mode: FinancialMode = PURCHASE_MODE) {
   const job = await purchaseJob(id, mode), difalPolicy = await reportDifalPolicy(job);
   if (requireComplete) need(job.status === 'COMPLETED', `Conclua a consulta para emitir o relatório de ${financialLabel(mode)}.`, 409, 'INCOMPLETE');
   need(job.summary && job.purchaseInput, 'Resumo financeiro ausente.', 409, 'INCOMPLETE');
   const version = calculationVersion(job), formula = purchaseFormula(version);
-  const {difal,difalOrigin,anticipation,anticipationOrigin} = await financialTaxes('purchaseLines', id, job, true);
+  // Taxes, dates and purchase selection validate the same immutable rows. Fetch
+  // only their required fields once; names and other report display data stay out.
+  const sourceRows = await (await jobCollection('purchaseLines',job)).find(scope({jobId:id})).project({
+    index:1,serviceDate:1,totalCents:1,document:1,natureCode:1,description:1,natureOperation:1,operationVersion:1,recipientUf:1,
+    ...(mode===SALES_MODE?{operation:1,difal:1}:{documentKind:1,valid:1,cnpj:1,anticipation:1,
+      ...Object.fromEntries(COMPONENT_FIELDS.map(field=>[field,1]))})
+  }).sort({index:1}).maxTimeMS(20000).toArray();
+  const {difal,difalOrigin,anticipation,anticipationOrigin} = await financialTaxes('purchaseLines', id, job, true,sourceRows);
   const grouped = await financialGroups('purchaseLines', id, job);
   const components = version === 'NET_V2' ? componentTotals(grouped) : null;
-  const period = job.reportPeriod ? await financialPeriod('purchaseLines', id, job) : null;
+  const period = job.reportPeriod ? await financialPeriod('purchaseLines', id, job,sourceRows) : null;
   if (job.reportPeriod) need(!!period && sameReportPeriod(period, job.reportPeriod) && period?.observedMonths === job.reportPeriod.observedMonths &&
     JSON.stringify(period?.missingMonths) === JSON.stringify(job.reportPeriod.missingMonths),
     'Período fiscal divergente do snapshot. Emissão bloqueada.', 409, 'REPORT_PERIOD');
@@ -447,9 +483,6 @@ export async function reconciledPurchaseSummary(id: string, requireComplete = tr
   // scenarios, retries and rechecks. Only this explicit view filters purchases.
   let purchaseSelection: PurchaseSelectionSummary | undefined;
   if (mode === PURCHASE_MODE) {
-    const sourceRows = await (await jobCollection('purchaseLines',job)).find(scope({jobId: id}))
-      .project({index: 1, document: 1, documentKind: 1, valid: 1, cnpj: 1, natureCode: 1, totalCents: 1, ...Object.fromEntries(COMPONENT_FIELDS.map(field => [field, 1]))})
-      .sort({index: 1}).maxTimeMS(20000).toArray();
     need(sourceRows.length === lines && sourceRows.every((row, index) => row.index === index) &&
       sourceRows.reduce((sum, row) => sum + row.totalCents, 0) === rawTotalCents,
       'Linhas da seleção de compras divergentes do relatório.', 409, 'PURCHASE_TOTAL');
@@ -461,11 +494,16 @@ export async function reconciledPurchaseSummary(id: string, requireComplete = tr
     purchaseSelection = summarizePurchaseSelection(sourceRows.map(row => ({...row, totalCents: row.totalCents, status: indexed.get(row.cnpj)?.status})),
       {origin: 'DERIVED_FROM_SNAPSHOT', includeGroups: true, calculationVersion: version});
   }
-  return {job, ...(difalPolicy === undefined ? {} : {difalPolicy}), ...(mode === SALES_MODE ? {difal,difalOrigin, serviceGroups, servicesTotalCents} : {}), ...(mode===PURCHASE_MODE?{anticipation,anticipationOrigin,purchaseSelection}:{}), calculationVersion: version, formula, components, period, operationTotals: operationTotals.map(row => ({operation: row._id, lines: row.lines, totalCents: exactCents(row.totalCents), balanceCents: exactSignedCents(row.balanceCents)})),
+  const summary = {job, ...(difalPolicy === undefined ? {} : {difalPolicy}), ...(mode === SALES_MODE ? {difal,difalOrigin, serviceGroups, servicesTotalCents} : {}), ...(mode===PURCHASE_MODE?{anticipation,anticipationOrigin,purchaseSelection}:{}), calculationVersion: version, formula, components, period, operationTotals: operationTotals.map(row => ({operation: row._id, lines: row.lines, totalCents: exactCents(row.totalCents), balanceCents: exactSignedCents(row.balanceCents)})),
     reportingGroups: reportingGroups(groups, uniqueDocuments, totalCents, {count: nonCnpjDocumentCount, lines: lines - cnpjLines, totalCents: nonCnpjCents}, excludedByKind.get('CPF') || {count: 0, lines: 0, totalCents: 0}, mode),
     totals: {lines, uniqueCnpjs: valid.length, uniqueDocuments, nonCnpjDocumentCount, cnpjLines, nonCnpjLines: lines - cnpjLines, totalCents, cnpjCents, nonCnpjCents}, groups, excluded,
     denominators: {count: 'Documentos distintos do relatório, incluindo CPF, CNO e inválidos. Cada linha sem documento conta separadamente.', value: `Soma de ${formula} de todas as linhas do relatório. Apenas optantes confirmados entram em Simples; ${mode === SALES_MODE ? 'CPF tem grupo próprio nas vendas; os demais, incluindo não confirmados e outros documentos, integram Não optantes.' : 'todo o restante integra Não optantes no agrupamento gerencial.'}`},
     sources, source: `${sources.join(', ') || 'Nenhuma consulta CNPJ neste relatório'} — enquadramento observado na consulta; não comprova o regime na data da ${mode === SALES_MODE ? 'venda' : 'compra'}.`};
+  return {summary,rows:sourceRows};
+}
+/** Reconcile against immutable stored lines and scoped provider snapshots before any report/download. */
+export async function reconciledPurchaseSummary(id: string, requireComplete = true, mode: FinancialMode = PURCHASE_MODE) {
+  return (await reconciledPurchaseData(id,requireComplete,mode)).summary;
 }
 const readRevenueSummary = (id:string, mode:FinancialMode) => reconciledPurchaseSummary(id, true, mode);
 
