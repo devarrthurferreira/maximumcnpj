@@ -1,5 +1,5 @@
 export const JAN_SEP_POLICY:'JAN_SEP_V1';
-export const JAN_SEP_MODEL_VERSION:'1.18.0-no-outgoing-difal-available-months';
+export const JAN_SEP_MODEL_VERSION:'1.19.0-entry-without-rbt12-sublimit-available-months';
 export type AnalysisPeriod={version:typeof JAN_SEP_POLICY;sourceYear:number;startMonth:string;endMonth:string;months:number;
   availableMonths?:string[];expectedMonths:string[];includedMonths:string[];excludedMonths:string[];missingMonths:string[];complete:boolean};
 export type SourcePeriod={startMonth:string;endMonth:string;months:number};

@@ -216,7 +216,7 @@ test('ajustes da DRE não alteram a composição documental nem escondem prejuí
   assert.match(html,/data-dre-row="revenueManualAdjustment"/);assert.match(html,/ajustes manuais estão refletidos na DRE/);
   assert.equal(adjusted.presentation.commercialComposition.revenue.totalCents,adjusted.source.commercialComposition.revenue.totalCents);
   const loss=renderAnnualDre(fixture({rent:20000}));assert.match(loss,/Prejuízo estimado/);assert.match(loss,/class="dre-regime-result is-loss/);
-  const pending=fixture({rbt12:4000000});assert.equal(buildDreExecutiveSummary(pending.presentation,{id:'pure',mode:'annual'}).result,null);
+  const pending=fixture({rbt12:4900000});assert.equal(buildDreExecutiveSummary(pending.presentation,{id:'pure',mode:'annual'}).result,null);
   const pendingHtml=renderAnnualDre(pending);assert.match(pendingHtml,/Resultado indisponível/);assert.doesNotMatch(pendingHtml,/NaN|Infinity/);
 });
 

@@ -235,7 +235,7 @@ def selected_tax_story(total, report_type, scope, width, styles):
         if source['unavailableReports']:
             story.append(p(f'{reports(source["unavailableReports"])} sem estimativa disponível nos dados salvos.', 'small'))
     story.append(p('Estimativa gerencial separada dos totais de compras e vendas. '
-                   'As regras de regime e sublimite são aplicadas por competência na DRE.', 'small'))
+                   'A DRE aplica as opções de cada regime e a situação confirmada do ICMS; a RBT12 isolada não bloqueia a entrada.', 'small'))
     return story
 
 

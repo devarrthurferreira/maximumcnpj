@@ -48,7 +48,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
   const clientId=(await importCatalog(actor,[{code:'990',name:'Empresa sintética',uf:'MG'}])).items[0].id;
   const generation=await createGeneration(actor,{generationId:randomUUID(),clientIds:[clientId]});
   for(const [attach,fileName,entries] of [
-   [attachGenerationPurchase,'compras-sinteticas.csv',[rows(1000,'1102')]],
+   [attachGenerationPurchase,'compras-sinteticas.csv',[{...rows(1000,'1102'),document:'11222333000181'}]],
    [attachGenerationSale,'vendas-sinteticas.csv',[rows(salesCents,'6102'),rows(5000,'900001')]]
   ] as const){
    const {job}=await attach(actor,generation._id,{clientId,importId:randomUUID(),fileName,expectedRows:entries.length,issuerUf:'MG'});
@@ -56,9 +56,12 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
     await(await collection('lookupJobs')).updateOne(scope({_id:job._id}),{$set:{difalVersion:historicalVersion}});
    await uploadLookup(actor,job._id,{offset:0,rows:entries.map(row=>({...row,recipientUf,
     ...(attach===attachGenerationSale?{document:salesDocument}:{})}))});await finalizeLookup(actor,job._id);
-   if(attach===attachGenerationSale && salesDocument.length===14)await processLookup(actor,job._id,(async()=>{
-    providerCalls++;return Response.json({cnpj:salesDocument,razao_social:'Empresa sintética',opcao_pelo_simples:false,opcao_pelo_mei:false,uf:recipientUf});
+   if(attach===attachGenerationPurchase || salesDocument.length===14){
+   await (await collection('providerControl')).deleteMany({});
+   await processLookup(actor,job._id,(async()=>{
+    providerCalls++;return Response.json({cnpj:attach===attachGenerationPurchase?'11222333000181':salesDocument,razao_social:'Empresa sintética',opcao_pelo_simples:false,opcao_pelo_mei:false,uf:recipientUf});
    }) as typeof fetch);
+   }
   }
   const salesRevenue=salesCents/100+10;
   const monthlyGroups={salesOptantCents:0,salesNonOptantCents:salesDocument.length===14?salesRevenue:0,salesCpfCents:salesDocument.length===14?0:salesRevenue,purchasesOptantCents:0,purchasesNonOptantCents:12};
@@ -396,10 +399,11 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const jobs=await collection('lookupJobs'),lines=await collection('purchaseLines');
    const sourceBefore={jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({_id:1}).toArray()};
    await reprocessSimulations(actor,{});const done=await finish();
-   assert.deepEqual(done.counts,{queued:0,processing:0,ok:2,pending:1,failed:0});
+   assert.deepEqual(done.counts,{queued:0,processing:0,ok:1,pending:2,failed:0});
    const outcomes=new Map(done.items.map((item:any)=>[item.originalId,item]));
    assert.equal(outcomes.get(enabled._id)!.code,'ANTICIPATION_UF_PENDING');
-   for(const original of [excluded,atSublimit]){
+   assert.equal(outcomes.get(atSublimit._id)!.code,'ANTICIPATION_UF_PENDING');
+   for(const original of [excluded]){
     const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id));
     assert.deepEqual(child.draft.difalPolicy,currentPolicy(original.draft.difalPolicy));
     assert.equal(child.source.monthlyReports[0].difal.pendingLines,0);

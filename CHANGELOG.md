@@ -1,5 +1,16 @@
 # Histórico de alterações
 
+
+## [0.54.3] - 2026-11-03
+
+### Corrigido
+- Retirado bloqueio automático por RBT12 >= R$ 3,6 milhões da antecipação de entrada e da disponibilidade do Simples; a situação explicitamente confirmada de ICMS fora do DAS continua respeitada.
+- Sexta faixa liberada com componentes locais de ICMS/ISS pelos coeficientes da quinta faixa, sem exclusão inferida pelo RBT12.
+- Entrada V5 considera compras interestaduais com CNPJ válido, exclui CPF e serviços 8000, preservando valores financeiros e regras históricas V1–V4.
+- Cartão de entrada atual atualizado por leitura reconciliada Jan–Set, inclusive para documentos antigos, sem modificar snapshots ou mascarar dados pendentes.
+- Novo contrato de reprocessamento cria revisões atuais, mantém saída zero também na DRE e preserva o histórico.
+
+
 ## [0.54.2] — 2026-10-30
 
 - Desativa o DIFAL de saída na regra gerencial atual, inclusive em vendas interestaduais para CPF, mantendo receita, classificação das vendas e antecipação de compras independentes.

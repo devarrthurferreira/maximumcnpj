@@ -1,7 +1,7 @@
 import {difalDirectionSelection} from './difal-policy.js';
 import {resolveRegimeSelection} from './regime-selection.js';
 import {DIFAL_VERSION,isDifalVersion} from './difal.js';
-import {isAnticipationVersion} from './icms-anticipation.js';
+import {ANTICIPATION_VERSION,isAnticipationVersion} from './icms-anticipation.js';
 import {OUTGOING_DIFAL_MESSAGE} from './simulator-engine.js';
 
 /** Display the server's checked estimate, without recalculating tax in the browser. */
@@ -17,13 +17,14 @@ export function documentDifalSummary({job,type,jobId,clientId,generationId,polic
   } catch { return null; }
   if(entry&&!selection?.regimeIds.some(id=>selected.includes(id)))return null;
 
-  const currentSales=!entry&&Object.hasOwn(job,'currentDifal');
-  const summary=currentSales?job.currentDifal:job.purchaseInput?.[entry?'anticipation':'difal'];
-  const version=currentSales?DIFAL_VERSION:job[entry?'anticipationVersion':'difalVersion'];
-  const period=currentSales?job.currentDifalPeriod:job.reportPeriod;
+  const taxKey=entry?'anticipation':'difal',currentKey=entry?'currentAnticipation':'currentDifal';
+  const current=Object.hasOwn(job,currentKey),expectedVersion=entry?ANTICIPATION_VERSION:DIFAL_VERSION;
+  const summary=current?job[currentKey]:job.purchaseInput?.[taxKey];
+  const version=current?expectedVersion:job[entry?'anticipationVersion':'difalVersion'];
+  const period=current?job[currentKey+'Period']:job.reportPeriod;
   const singleYear=period?.sourceYear??Number(String(period?.startMonth||'').slice(0,4));
   const safePeriod=Number.isInteger(singleYear)&&singleYear>=2000&&singleYear<=2099&&
-    (currentSales?period?.version==='JAN_SEP_V1'&&period.complete&&period.includedMonths?.length>0:
+    (current?period?.version==='JAN_SEP_V1'&&period.complete&&period.includedMonths?.length>0:
       typeof period?.startMonth==='string'&&typeof period?.endMonth==='string'&&
       /^20\d{2}-0[1-9]$/.test(period.startMonth)&&/^20\d{2}-0[1-9]$/.test(period.endMonth)&&
       period.startMonth.slice(0,4)===period.endMonth.slice(0,4));
@@ -32,7 +33,7 @@ export function documentDifalSummary({job,type,jobId,clientId,generationId,polic
   const context=entry?'Antecipação de ICMS · estimativa do arquivo':`DIFAL de saída desativado · janeiro a setembro${safePeriod?' de '+singleYear:''}`;
   const unavailable={label,context,state:'unavailable',amountCents:null,
     note:'Estimativa indisponível nesta leitura. Confira o relatório.'};
-  if(!summary||(!entry&&(!safePeriod||summary.version!==DIFAL_VERSION))||!knownVersion(summary.version)||(version!==undefined&&version!==summary.version)||
+  if(!summary||(!safePeriod||summary.version!==expectedVersion)||!knownVersion(summary.version)||(version!==undefined&&version!==summary.version)||
      !['amountCents','baseCents','eligibleLines','pendingLines'].every(key=>Number.isSafeInteger(summary[key])&&summary[key]>=0)||
      !Number.isFinite(summary.ratePercent)||summary.ratePercent<=0||summary.ratePercent>100)return unavailable;
   if(!entry){
@@ -49,23 +50,30 @@ export function documentDifalSummary({job,type,jobId,clientId,generationId,polic
 }
 
 const currentEstimates = new Map();
-/** Fetch each completed sale's checked Jan–Sep estimate independently of upload status. */
+/** Fetch checked Jan–Sep estimates independently; failures never become confirmed zero. */
 export async function loadDocumentDifal(generation,{clientId,request,onUpdate=()=>{}}) {
-  const company=generation?.companies?.find(company=>company.clientId===clientId),job=company?.sales;
-  if(!job||job._id!==company.salesJobId||job.clientId!==clientId||job.generationId!==generation._id||
-     job.mode!=='SALES_V1'||job.status!=='COMPLETED')return;
-  const period=job.reportPeriod;
-  if(job.difalVersion===DIFAL_VERSION&&job.purchaseInput?.difal?.version===DIFAL_VERSION&&
-     /^20\d{2}-0[1-9]$/.test(period?.startMonth||'')&&/^20\d{2}-0[1-9]$/.test(period?.endMonth||'')&&
-     period.startMonth.slice(0,4)===period.endMonth.slice(0,4))return;
-  const key=JSON.stringify([job._id,job.completedAt,job.difalVersion,DIFAL_VERSION]);
-  if(!currentEstimates.has(key))currentEstimates.set(key,
-    request('/api/v4/sales/'+encodeURIComponent(job._id)+'/difal-period').then(result=>{
-      if(result.jobId!==job._id||result.clientId!==clientId||result.generationId!==generation._id||
-         result.difal?.version!==DIFAL_VERSION||result.period?.version!=='JAN_SEP_V1')throw new Error('Resumo DIFAL não corresponde ao documento.');
-      return result;
-    }).catch(()=>{currentEstimates.delete(key);return null;}));
-  const result=await currentEstimates.get(key);
-  Object.assign(job,{currentDifal:result?.difal||null,currentDifalPeriod:result?.period||null});
-  onUpdate();
+  const company=generation?.companies?.find(company=>company.clientId===clientId);
+  if(!company)return;
+  await Promise.all([
+    ['sales','salesJobId','SALES_V1','difal','difalVersion',DIFAL_VERSION,'currentDifal'],
+    ['purchases','purchaseJobId','PURCHASES_V1','anticipation','anticipationVersion',ANTICIPATION_VERSION,'currentAnticipation']
+  ].map(async ([slot,idKey,mode,taxKey,versionKey,currentVersion,currentKey])=>{
+    const job=company[slot==='purchases'?'purchase':slot];
+    if(!job||job._id!==company[idKey]||job.clientId!==clientId||job.generationId!==generation._id||
+       job.mode!==mode||job.status!=='COMPLETED')return;
+    const period=job.reportPeriod;
+    if(job[versionKey]===currentVersion&&job.purchaseInput?.[taxKey]?.version===currentVersion&&
+       /^20\d{2}-0[1-9]$/.test(period?.startMonth||'')&&/^20\d{2}-0[1-9]$/.test(period?.endMonth||'')&&
+       period.startMonth.slice(0,4)===period.endMonth.slice(0,4))return;
+    const key=JSON.stringify([job._id,job.completedAt,job[versionKey],currentVersion,clientId,generation._id]);
+    if(!currentEstimates.has(key))currentEstimates.set(key,
+      request('/api/v4/'+slot+'/'+encodeURIComponent(job._id)+'/difal-period').then(result=>{
+        if(result.jobId!==job._id||result.clientId!==clientId||result.generationId!==generation._id||
+           result[taxKey]?.version!==currentVersion||result.period?.version!=='JAN_SEP_V1')throw new Error('Resumo DIFAL não corresponde ao documento.');
+        return result;
+      }).catch(()=>{currentEstimates.delete(key);return null;}));
+    const result=await currentEstimates.get(key);
+    Object.assign(job,{[currentKey]:result?.[taxKey]||null,[currentKey+'Period']:result?.period||null});
+    onUpdate();
+  }));
 }

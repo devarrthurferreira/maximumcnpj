@@ -365,7 +365,7 @@ test('compras usam catálogo e primeiros quatro dígitos sem mudar total ou infe
   assert.throws(()=>parsePurchaseMatrix([header,...inputs],0,{operationVersion:'UNKNOWN'}),/catálogo/);
 });
 
-test('antecipação de compras usa 7,32% para CPF e CNPJ válido interestadual, preserva versões e pendências', () => {
+test('antecipação de compras usa 7,32% para CNPJ interestadual, exclui CPF e preserva versões', () => {
   const purchase=(document='123.456.789-00',uf='SP',nature='2102001')=>{
     const input=row(document,'Fornecedor sintético','1','150,00'); input[9]=uf; input[11]=nature;
     input[24]='10,00'; input[25]='900,00'; input[26]='2,00'; input[27]='1,00'; return input;
@@ -374,10 +374,10 @@ test('antecipação de compras usa 7,32% para CPF e CNPJ válido interestadual, 
     purchase('12345678900','','2102'),purchase('12345678900','SP','1202'),purchase('12345678900','SP','8000102'),purchase('12.abc.345/01de-35'),purchase('11222333000182')];
   const report=parsePurchaseMatrix([header,...inputs],0,{issuerUf:'MG'});
   assert.deepEqual(report.errors,[]);
-  assert.deepEqual(report.rows.map(value=>value.anticipation.reason),['ELIGIBLE','ELIGIBLE','NOT_CPF_OR_CNPJ','NOT_CPF_OR_CNPJ','SAME_UF','MISSING_RECIPIENT_UF','NOT_PURCHASE','SERVICE_PURCHASE_EXCLUDED','ELIGIBLE','NOT_CPF_OR_CNPJ']);
-  assert.equal(report.rows[0].totalCents,14100); assert.equal(report.rows[0].anticipation.amountCents,1032);
+  assert.deepEqual(report.rows.map(value=>value.anticipation.reason),['CPF_EXCLUDED','ELIGIBLE','NOT_CNPJ','NOT_CNPJ','CPF_EXCLUDED','CPF_EXCLUDED','NOT_PURCHASE','SERVICE_PURCHASE_EXCLUDED','ELIGIBLE','NOT_CNPJ']);
+  assert.equal(report.rows[0].totalCents,14100); assert.equal(report.rows[0].anticipation.amountCents,0);
   assert.equal(report.totalCents,141000); assert.equal(report.components.accessoryCents,900000);
-  assert.deepEqual(report.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:3,baseCents:42300,amountCents:3096,pendingLines:1});
+  assert.deepEqual(report.anticipation,{version:ANTICIPATION_VERSION,ratePercent:7.32,issuerUf:'MG',eligibleLines:2,baseCents:28200,amountCents:2064,pendingLines:0});
   for(const nature of ['8000','8000002','8000102','8.000.102']) {
     const service=parsePurchaseMatrix([header,purchase('12345678900','',nature)],0,{});
     assert.equal(service.rows[0].anticipation.reason,'SERVICE_PURCHASE_EXCLUDED');
@@ -385,7 +385,7 @@ test('antecipação de compras usa 7,32% para CPF e CNPJ válido interestadual, 
     assert.equal(service.rows[0].totalCents,14100);assert.equal(service.rows[0].natureOperation,'SERVICO_COMPRA');
   }
   const missing=parsePurchaseMatrix([header,purchase()],0,{});
-  assert.equal(missing.anticipation.pendingLines,1); assert.equal(missing.rows[0].anticipation.reason,'MISSING_ISSUER_UF');
+  assert.equal(missing.anticipation.pendingLines,0); assert.equal(missing.rows[0].anticipation.reason,'CPF_EXCLUDED');
   assert.equal(parsePurchaseMatrix([header,purchase('11222333000181')]).anticipation.pendingLines,1);
   assert.equal(parsePurchaseMatrix([header,purchase('11222333000182')]).anticipation.pendingLines,0);
   const cpfOnly=parsePurchaseMatrix([header,purchase('11222333000181')],0,{issuerUf:'MG',anticipationVersion:ANTICIPATION_PREVIOUS_VERSION});

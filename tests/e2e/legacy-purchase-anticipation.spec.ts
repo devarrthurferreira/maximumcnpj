@@ -69,11 +69,11 @@ for(const historicalVersion of [undefined,'ICMS_ANTICIPATION_V2','ICMS_ANTICIPAT
 
     const summary=await get(`/api/v4/purchases/${jobId}/summary`);
     expect(summary.anticipationOrigin).toBe('DERIVED_FROM_SNAPSHOT');
-    expect(summary.anticipation).toMatchObject({version:'ICMS_ANTICIPATION_V4',ratePercent:7.32,issuerUf:'MG',baseCents:300000,amountCents:21960,eligibleLines:2,pendingLines:1});
+    expect(summary.anticipation).toMatchObject({version:'ICMS_ANTICIPATION_V5',ratePercent:7.32,issuerUf:'MG',baseCents:200000,amountCents:14640,eligibleLines:1,pendingLines:0});
     expect(summary.job.anticipationVersion).toBe(historicalVersion);expect(summary.totals.totalCents).toBe(410000);
     expect(summary.purchaseSelection).toMatchObject({version:'PURCHASE_NATURES_V1',available:true,origin:'DERIVED_FROM_SNAPSHOT',reportLines:6,reportTotalCents:410000,excludedLines:1,excludedTotalCents:10000,totals:{lines:5,totalCents:400000}});
     const details=await get(`/api/v4/purchases/${jobId}/lines?status=ALL&page=1`);
-    expect(details.items.map((row:any)=>row.anticipation.reason)).toEqual(['ELIGIBLE','ELIGIBLE','SERVICE_PURCHASE_EXCLUDED','SAME_UF','NOT_PURCHASE','MISSING_RECIPIENT_UF']);
+    expect(details.items.map((row:any)=>row.anticipation.reason)).toEqual(['CPF_EXCLUDED','ELIGIBLE','SERVICE_PURCHASE_EXCLUDED','CPF_EXCLUDED','NOT_PURCHASE','CPF_EXCLUDED']);
 
     const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
     let processRequests=0;page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/process'))processRequests++;});
@@ -81,7 +81,7 @@ for(const historicalVersion of [undefined,'ICMS_ANTICIPATION_V2','ICMS_ANTICIPAT
     const panel=page.locator('#purchase-report-view .purchase-anticipation');
     await expect(panel.getByRole('heading',{name:'DIFAL de entrada — Antecipação de ICMS'})).toBeVisible();
     await expect(panel).toContainText('Calculado a partir dos dados já salvos neste relatório.');
-    await expect(panel.locator('[data-anticipation-amount]')).toContainText('219,60');await expect(panel).toContainText('3.000,00');await expect(panel).toContainText('7,32%');await expect(panel).toContainText('1 linha(s) pendente(s)');
+    await expect(panel.locator('[data-anticipation-amount]')).toContainText('146,40');await expect(panel).toContainText('2.000,00');await expect(panel).toContainText('7,32%');await expect(panel).not.toContainText('1 linha(s) pendente(s)');
     await expect(panel).not.toContainText('Indisponível neste histórico');
     await expect(page.locator('#purchase-report-view [data-purchase-considered-total]')).toContainText('4.000,00');
     await expect(page.locator('#purchase-report-view [data-purchase-original-total]')).toContainText('4.100,00');
@@ -93,13 +93,13 @@ for(const historicalVersion of [undefined,'ICMS_ANTICIPATION_V2','ICMS_ANTICIPAT
     await expect(rows.filter({hasText:'Devolução de venda'}).locator('[data-purchase-considered-cell]')).toContainText('Excluída das compras');
     await expect(rows.filter({hasText:'Serviço CPF 8000'}).locator('[data-purchase-considered-cell]')).toContainText('500,00');
     await expect(rows.filter({hasText:'CNPJ interestadual'})).toContainText('146,40');await expect(rows.filter({hasText:'CNPJ interestadual'})).toContainText('2.000,00');
-    await expect(rows.filter({hasText:'CPF interestadual'})).toContainText('73,20');await expect(rows.filter({hasText:'Serviço CPF 8000'})).toContainText('Serviço de prefixo 8000 excluído da antecipação');await expect(rows.filter({hasText:'Serviço CPF 8000'})).not.toContainText('36,60');await expect(rows.filter({hasText:'CPF sem UF'})).toContainText('Pendente');
+    await expect(rows.filter({hasText:'CPF interestadual'})).toContainText('CPF excluído');await expect(rows.filter({hasText:'Serviço CPF 8000'})).toContainText('Serviço de prefixo 8000 excluído da antecipação');await expect(rows.filter({hasText:'Serviço CPF 8000'})).not.toContainText('36,60');await expect(rows.filter({hasText:'CPF sem UF'})).toContainText('CPF excluído');
     const downloading=page.waitForEvent('download');await page.locator('#purchase-csv').click();const download=await downloading,stream=await download.createReadStream(),parts:Buffer[]=[];
     for await(const part of stream!)parts.push(Buffer.from(part));const workbook=XLSX.read(Buffer.concat(parts).toString('utf8'),{type:'string',raw:true});
     const csvRows=XLSX.utils.sheet_to_json<string[]>(workbook.Sheets[workbook.SheetNames[0]],{header:1,raw:true,defval:''}),headers=csvRows[0],at=(row:string[],header:string)=>row[headers.indexOf(header)];
     const cnpj=csvRows.slice(1).find(row=>at(row,'Documento do fornecedor (A)')==='11222333000181')!;
     expect(at(cnpj,'Total calculado (R$)')).toBe('2000,00');expect(at(cnpj,'Base DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('2000,00');expect(at(cnpj,'DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('146,40');expect(at(cnpj,'Situação DIFAL de entrada — Antecipação de ICMS')).toBe('ELIGIBLE');
-    expect(at(cnpj,'Versão DIFAL de entrada — Antecipação de ICMS')).toBe('ICMS_ANTICIPATION_V4');
+    expect(at(cnpj,'Versão DIFAL de entrada — Antecipação de ICMS')).toBe('ICMS_ANTICIPATION_V5');
     expect(at(cnpj,'Origem DIFAL de entrada')).toBe('DERIVED_FROM_SNAPSHOT');
     expect(at(cnpj,'Compras consideradas (R$)')).toBe('2000,00');expect(at(cnpj,'Versão da seleção de compras')).toBe('PURCHASE_NATURES_V1');
     expect(csvRows.slice(1)).toHaveLength(6);
@@ -110,9 +110,9 @@ for(const historicalVersion of [undefined,'ICMS_ANTICIPATION_V2','ICMS_ANTICIPAT
     const service=csvRows.slice(1).find(row=>at(row,'Razão social informada (I)')==='Serviço CPF 8000')!;
     expect(at(service,'Compras consideradas (R$)')).toBe('500,00');expect(at(service,'Base DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('0,00');expect(at(service,'DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('0,00');expect(at(service,'Situação DIFAL de entrada — Antecipação de ICMS')).toBe('SERVICE_PURCHASE_EXCLUDED');
     const pending=csvRows.slice(1).find(row=>at(row,'Razão social informada (I)')==='CPF sem UF')!;
-    expect(at(pending,'Base DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('');expect(at(pending,'DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('');expect(at(pending,'Situação DIFAL de entrada — Antecipação de ICMS')).toContain('Pendente');
-    expect(csvRows.slice(1).reduce((sum,row)=>sum+Number(String(at(row,'DIFAL de entrada — Antecipação de ICMS (R$)')||'0').replace(',','.')),0)).toBeCloseTo(219.6,2);
-    await page.reload();await expect(panel.locator('[data-anticipation-amount]')).toContainText('219,60');
+    expect(at(pending,'Base DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('0,00');expect(at(pending,'DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('0,00');expect(at(pending,'Situação DIFAL de entrada — Antecipação de ICMS')).toBe('CPF_EXCLUDED');
+    expect(csvRows.slice(1).reduce((sum,row)=>sum+Number(String(at(row,'DIFAL de entrada — Antecipação de ICMS (R$)')||'0').replace(',','.')),0)).toBeCloseTo(146.4,2);
+    await page.reload();await expect(panel.locator('[data-anticipation-amount]')).toContainText('146,40');
     await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await panel.screenshot({path:info.outputPath('antecipacao-historico-mobile.png')});
     expect(await frozen()).toEqual(before);expect(providerCalls).toBe(1);expect(processRequests).toBe(0);expect(errors).toEqual([]);
   }finally{await mongo.close();}

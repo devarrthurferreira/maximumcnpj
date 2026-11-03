@@ -6,21 +6,22 @@ import re
 
 from .difal import normalize_uf
 from .operation_catalog import is_purchase_operation, normalize_operation_nature
-from .tax_documents import is_cpf_or_cnpj
+from .tax_documents import is_cpf_or_cnpj, is_canonical_cnpj, normalize_tax_document
 
-ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_V4'
+ANTICIPATION_VERSION = 'ICMS_ANTICIPATION_V5'
+ANTICIPATION_SERVICE_EXCLUSION_VERSION = 'ICMS_ANTICIPATION_V4'
 ANTICIPATION_CPF_CNPJ_VERSION = 'ICMS_ANTICIPATION_V3'
 ANTICIPATION_CPF_VERSION = 'ICMS_ANTICIPATION_V2'
 ANTICIPATION_LEGACY_VERSION = 'ICMS_ANTICIPATION_V1'
 ANTICIPATION_VERSIONS = (ANTICIPATION_LEGACY_VERSION, ANTICIPATION_CPF_VERSION,
-                         ANTICIPATION_CPF_CNPJ_VERSION, ANTICIPATION_VERSION)
+                         ANTICIPATION_CPF_CNPJ_VERSION, ANTICIPATION_SERVICE_EXCLUSION_VERSION, ANTICIPATION_VERSION)
 ANTICIPATION_RATE_PERCENT = 7.32
 ANTICIPATION_PENDING_REASONS = frozenset(('MISSING_ISSUER_UF', 'MISSING_RECIPIENT_UF'))
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
 
 def calculate_anticipation(row, issuer_uf, version=ANTICIPATION_VERSION):
-    """Mirror Node: V4 excludes 8000 services; V1/V2/V3 retain their saved rules."""
+    """Mirror Node: V5 excludes CPF and services; V1–V4 retain their saved rules."""
     if version not in ANTICIPATION_VERSIONS:
         raise ValueError('Versão da antecipação de ICMS desconhecida.')
 
@@ -32,11 +33,17 @@ def calculate_anticipation(row, issuer_uf, version=ANTICIPATION_VERSION):
             isinstance(total, float) and (not math.isfinite(total) or not total.is_integer()) or
             not 0 <= total <= MAX_SAFE_INTEGER):
         return excluded('INVALID_TOTAL')
-    if version == ANTICIPATION_VERSION and normalize_operation_nature(row.get('natureCode')) == '8000':
+    if version in (ANTICIPATION_VERSION, ANTICIPATION_SERVICE_EXCLUSION_VERSION) and normalize_operation_nature(row.get('natureCode')) == '8000':
         return excluded('SERVICE_PURCHASE_EXCLUDED')
     if not is_purchase_operation(row.get('natureCode')):
         return excluded('NOT_PURCHASE')
-    if version in (ANTICIPATION_VERSION, ANTICIPATION_CPF_CNPJ_VERSION) and not is_cpf_or_cnpj(row.get('document')):
+    if version == ANTICIPATION_VERSION:
+        document = normalize_tax_document(row.get('document'))
+        if re.fullmatch(r'[0-9]{11}', document):
+            return excluded('CPF_EXCLUDED')
+        if not is_canonical_cnpj(document):
+            return excluded('NOT_CNPJ')
+    if version in (ANTICIPATION_SERVICE_EXCLUSION_VERSION, ANTICIPATION_CPF_CNPJ_VERSION) and not is_cpf_or_cnpj(row.get('document')):
         return excluded('NOT_CPF_OR_CNPJ')
     if version == ANTICIPATION_CPF_VERSION:
         document = re.sub(r'[./\-\s]', '', str(row.get('document') or '').strip())

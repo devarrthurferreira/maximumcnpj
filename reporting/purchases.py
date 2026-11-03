@@ -26,7 +26,7 @@ from .storage import job_database
 from .difal import DIFAL_VERSION, DIFAL_CPF_CNPJ_VERSION, DIFAL_VERSIONS, DIFAL_RATE_PERCENT, PENDING_REASONS, normalize_uf, calculate_difal, sales_operation
 from .operation_catalog import OPERATION_CATALOG_VERSION, classify_operation_nature, normalize_operation_nature
 from .tax_documents import is_canonical_cnpj as _valid_cnpj
-from .anticipation import (ANTICIPATION_VERSION, ANTICIPATION_VERSIONS, ANTICIPATION_RATE_PERCENT,
+from .anticipation import (ANTICIPATION_VERSION, ANTICIPATION_SERVICE_EXCLUSION_VERSION, ANTICIPATION_VERSIONS, ANTICIPATION_RATE_PERCENT,
                            ANTICIPATION_PENDING_REASONS, calculate_anticipation)
 
 PURCHASES_MODE = 'PURCHASES_V1'
@@ -858,7 +858,7 @@ def anticipation_story(anticipation, width, styles, origin=None, policy=None):
                           'e o campo de UF do fornecedor preservados. Reimporte as compras para completar esses dados.', 'small')]
     if origin == 'DERIVED_FROM_SNAPSHOT':
         story.append(p('Calculado a partir dos dados salvos no relatório de origem, após conferir a regra original, '
-                       'sem modificar o lote ou as suas linhas. A estimativa atual inclui CPF ou CNPJ válido.', 'small'))
+                       'sem modificar o lote ou as suas linhas. A estimativa atual inclui somente CNPJ válido; CPF fica excluído.', 'small'))
     rows = [['UF da empresa', 'Linhas elegíveis', 'Base elegível', 'Antecipação de ICMS (7,32%)'],
             [anticipation['issuerUf'] or 'Não informada', number(anticipation['eligibleLines']),
              money(anticipation['baseCents']), money(anticipation['amountCents'])]]
@@ -868,14 +868,16 @@ def anticipation_story(anticipation, width, styles, origin=None, policy=None):
                        'ou do fornecedor ausente. Essas linhas não integram a base nem o valor acima.', 'small'))
     nature_note = ('Naturezas consideradas: somente operações COMPRAS do catálogo. Serviços de prefixo 8000, '
                    'inclusive com sufixos, ficam fora da antecipação e permanecem nas compras consideradas.'
-                   if anticipation['version'] == ANTICIPATION_VERSION else
+                   if anticipation['version'] in (ANTICIPATION_VERSION, ANTICIPATION_SERVICE_EXCLUSION_VERSION) else
                    'A regra histórica considera operações de compra do catálogo e serviços de prefixo 8000.')
-    story.append(p('Somente compras interestaduais com fornecedor identificado por CPF de 11 dígitos ou CNPJ válido. '
-                   'CNOs, documentos ausentes ou inválidos não integram esta base. ' + nature_note, 'small'))
+    document_note = ('Somente compras interestaduais de fornecedores com CNPJ válido; CPF excluído nesta análise. '
+                     if anticipation['version'] == ANTICIPATION_VERSION else
+                     'Elegibilidade de documentos preservada conforme a versão histórica registrada. ')
+    story.append(p(document_note + 'CNOs, documentos ausentes ou inválidos não integram a base atual. ' + nature_note, 'small'))
     story.append(p('Parâmetro gerencial de 7,32%, sem equivalência automática à alíquota legal. '
                    'Base = total registrado da compra; arredondamento por linha em centavos e soma uma única vez. '
                    'Este valor fica separado do total de compras. Na DRE, a antecipação é aplicada somente ao Simples puro '
-                   'e híbrido, sem cobrança nas competências em que o sublimite estiver alcançado.', 'small'))
+                   'e híbrido, conforme seleção e situação confirmada do ICMS, sem bloqueio automático pelo valor da RBT12.', 'small'))
     return story
 
 

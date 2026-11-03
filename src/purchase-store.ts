@@ -165,6 +165,57 @@ export async function currentSalesDocumentDifal(id: string) {
   }
   return visibleEstimate(value);
 }
+/** Read-only Jan–Sep estimate for the analysis document card. Whole-file snapshots stay intact. */
+export async function currentPurchaseDocumentAnticipation(id: string) {
+  const job = await purchaseJob(id, PURCHASE_MODE);
+  need(job.status === 'COMPLETED', 'Conclua o relatório de compras.', 409, 'INCOMPLETE');
+  const signature = digest(JSON.stringify(['PURCHASES_V1', id, job.clientId, job.generationId, job.completedAt, job.anticipationVersion, job.issuerUf,
+    job.expectedRows, job.reportPeriod, job.purchaseInput, ANTICIPATION_VERSION, 'JAN_SEP_V1']));
+  const cache = await collection('documentDifalEstimates');
+  const sameSource = (value: any) => value?.jobId === id && value.clientId === job.clientId &&
+    (value.generationId ?? null) === (job.generationId ?? null) &&
+    value.anticipation?.version === ANTICIPATION_VERSION && value.period?.version === 'JAN_SEP_V1';
+  const visibleEstimate = async (value: {
+    jobId: string; clientId: string; generationId?: string; anticipation: AnticipationSummary; period: ReturnType<typeof buildAnalysisPeriod>
+  }) => {
+    // A cold reader can finish after deletion has purged the generation. Check after
+    // writing: an earlier deletion is detected here; a later one will purge the cache.
+    try { await purchaseJob(id, PURCHASE_MODE); }
+    catch (error) {
+      if (error instanceof AppError && error.code === 'NOT_FOUND') await cache.deleteOne(scope({_id: signature}));
+      throw error;
+    }
+    return value;
+  };
+  const cached = await cache.findOne(scope({_id: signature}));
+  if (sameSource(cached?.value)) return visibleEstimate(cached!.value);
+  const checked = await reconciledPurchaseSummary(id, true, PURCHASE_MODE);
+  need(checked.period && checked.anticipation, 'Datas ou dados de antecipação insuficientes para janeiro a setembro.', 409, 'ANTICIPATION_PERIOD');
+  let period: ReturnType<typeof buildAnalysisPeriod>;
+  try { period = buildAnalysisPeriod(checked.period, checked.period); }
+  catch { throw new AppError(409, 'ANTICIPATION_PERIOD', 'Não foi possível identificar uma única janela de janeiro a setembro. Confira o ano e as datas do relatório.'); }
+  need(period.complete, 'O arquivo não contém competências entre janeiro e setembro.', 409, 'ANTICIPATION_PERIOD');
+  const rows = await (await jobCollection('purchaseLines',job)).find(scope({jobId: id}))
+    .project({index: 1, serviceDate: 1, totalCents: 1, document: 1, natureCode: 1, description: 1, recipientUf: 1})
+    .sort({index: 1}).maxTimeMS(20000).toArray();
+  need(rows.length === checked.totals.lines && rows.every((row,index) => row.index === index &&
+    typeof row.serviceDate === 'string' && /^20\d{2}-(0[1-9]|1[0-2])-\d{2}$/.test(row.serviceDate)),
+    'Datas ou linhas incompletas para selecionar janeiro a setembro.', 409, 'ANTICIPATION_PERIOD');
+  const selected = rows.filter(row => period.includedMonths.includes(row.serviceDate.slice(0,7)));
+  const value = {jobId: id, clientId: checked.job.clientId as string, generationId: checked.job.generationId as string | undefined,
+    anticipation: summarizeAnticipation(selected.map(row => ({...row,totalCents:row.totalCents})), checked.job.issuerUf), period};
+  try {
+    await cache.updateOne(scope({_id: signature}), {$setOnInsert: {...scope(), value, createdAt: new Date()}}, {upsert: true});
+  } catch (error: any) {
+    if (error.code !== 11000) throw error;
+    // Two tabs/processes may derive the same immutable source concurrently. Accept
+    // only the identical result in this workspace; unrelated conflicts still fail.
+    const concurrent = await cache.findOne(scope({_id: signature}));
+    if (!sameSource(concurrent?.value) || !sameTaxSummary(value.anticipation, concurrent!.value.anticipation) ||
+        stableFinancialValue(value.period) !== stableFinancialValue(concurrent!.value.period)) throw error;
+  }
+  return visibleEstimate(value);
+}
 function sameTaxSummary(actual: DifalSummary|AnticipationSummary, saved: any) {
   return !!saved && Object.entries(actual).every(([field, value]) => saved[field] === value);
 }

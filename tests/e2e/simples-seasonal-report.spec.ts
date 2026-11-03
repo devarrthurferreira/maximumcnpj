@@ -130,9 +130,10 @@ test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório compl
     await reopened.locator('#create-version').click();await reopened.locator('#rbt12').fill('4000000');
     await reopened.locator('#rbt12-manual-confirm').check();
     const pending=await save(reopened);
-    expect(pending.result.simplesDiagnostic.statusCode).toBe('LOCAL_TAX_REVIEW_REQUIRED');
+    expect(pending.result.simplesDiagnostic.statusCode).toBe('READY');
     await openCompleteDre(reopened);
-    await expect(reopened.locator('[data-simples-message]')).toContainText(/não (significa|confirma) exclusão/);
+    expect(pending.result.regimes.filter((row:any)=>['pure','hybrid'].includes(row.id)).every((row:any)=>row.available)).toBe(true);
+    expect(pending.result.memory.find((row:any)=>row.id==='simples.sales.icms').value).toBeGreaterThan(0);
     await reopened.locator('#icms-outside').selectOption('outside');
     await expect(reopened.locator('#results-top')).toHaveCount(0);
     const outside=await save(reopened);

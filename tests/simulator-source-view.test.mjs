@@ -114,7 +114,7 @@ test('anticipation shows source estimate distinctly from the amount applied by r
     {sourceMonth:'2025-02',anticipation:{version:'ICMS_ANTICIPATION_V4',issuerUf:'MG',baseCents:0,amountCents:0,eligibleLines:0,pendingLines:1}}];
   const html=renderAnticipationSource({reports,row:reports[1],adjusted:true});
   assert.match(html,/data-anticipation-monthly>Pendente/);assert.match(html,/Estimativa do período importado/);
-  assert.match(html,/R\$\s234,24/);assert.match(html,/Simples puro e híbrido/);assert.match(html,/sublimite alcançado/);
+  assert.match(html,/R\$\s234,24/);assert.match(html,/Simples puro e híbrido/);assert.match(html,/RBT12 isolada não bloqueia/);
   assert.match(html,/Estimativa parcial: 1 linhas aguardam UF/);assert.match(html,/data-anticipation-adjusted/);
   assert.match(html,/compras interestaduais com CPF ou CNPJ válido/);
   assert.match(html,/Somente operações COMPRAS integram a base/);assert.match(html,/prefixo 8000, inclusive com sufixos, ficam fora da antecipação e permanecem nos custos/);
@@ -211,13 +211,13 @@ test('histórico real 1.17 mantém saída positiva; marcador de versão nova só
   assert(!sourceView('exit',policy,[],{snapshot}).outgoingDisabled,'Uma célula capturada positiva nunca é sobrescrita pela apresentação.');
 });
 
-test('sublimite e ICMS fora do DAS continuam bloqueando a entrada; saída segue zero e mês ausente não ganha dados',()=>{
+test('RBT12 não bloqueia entrada, somente a escolha de ICMS fora do DAS; saída segue zero e mês ausente não ganha dados',()=>{
   const reports=difalReports(),policy=defaultDifalPolicy();
   for(const outside of [false,true]){
     const extra={row:reports[1],rbt12ByMonth:{'2025-01':100000,'2025-02':3600000},icmsOutside:outside};
     const exit=sourceView('exit',policy,reports,extra),entry=sourceView('entry',policy,reports,extra);
     assert(exit.values.every(row=>row.current===0&&row.total===0&&!row.blocked));
-    assert(entry.values.every(row=>row.current===0&&row.total===(outside?0:36.6)&&row.blocked));
+    assert(entry.values.every(row=>row.current===(outside?0:73.2)&&row.total===(outside?0:109.8)&&row.blocked===outside));
   }
   const missing=sourceView('exit',policy,reports,{row:null});
   assert(missing.values.every(row=>row.current===null&&row.total===0));assert.equal(difalApplicationSummary(missing),'Indisponível');

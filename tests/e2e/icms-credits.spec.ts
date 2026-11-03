@@ -185,7 +185,7 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
   for(const [group,internal,interstate,tax] of [['sales',100_000,200_000,42_000],['purchases',30_000,50_000,11_400],['salesReturns',10_000,20_000,4200]] as const){
     expect(operations[group]).toMatchObject({internalBaseCents:internal,interstateBaseCents:interstate,totalBaseCents:internal+interstate,taxCents:tax,eligibleLines:2,pendingLines:0,pendingBaseCents:0});
   }
-  expect(saved.source.monthlyReports[0].anticipation).toMatchObject({version:'ICMS_ANTICIPATION_V4',ratePercent:7.32,baseCents:50_000,amountCents:3660,eligibleLines:1,pendingLines:0});
+  expect(saved.source.monthlyReports[0].anticipation).toMatchObject({version:'ICMS_ANTICIPATION_V5',ratePercent:7.32,baseCents:50_000,amountCents:3660,eligibleLines:1,pendingLines:0});
   expect(saved.result.credits.icms).toEqual({debit:420,potential:156,used:156,due:264,balance:0});
   expect(saved.result.monthlyResults[0].result.credits.icms).toEqual(saved.result.credits.icms);
   for(const [id,value] of [['icms.purchaseCredit',114],['icms.returnCredit',42],['icms.excludedServices',600]] as const){

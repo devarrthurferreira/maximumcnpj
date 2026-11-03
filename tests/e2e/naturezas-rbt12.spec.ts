@@ -26,7 +26,7 @@ async function statement(page:Page,clientId:string,extractionId:string,result:an
   await page.locator('#rbt12-pdf').setInputFiles({name:'extrato-23-meses-sintetico.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic-transport-only')});
 }
 
-test('compras CPF/CNPJ preservam antecipação e vendas CPF/CNPJ mantêm saída zero no relatório, CSV e DRE',async({page,browser,baseURL},info)=>{
+test('compras CNPJ preservam antecipação e CPF é excluído e vendas CPF/CNPJ mantêm saída zero no relatório, CSV e DRE',async({page,browser,baseURL},info)=>{
   test.setTimeout(120_000);page.setDefaultTimeout(15_000);
   expect(process.env.MONGODB_URI,'Use MongoDB descartável').toBeTruthy();
   const origin=new URL(baseURL!).origin,errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
@@ -56,15 +56,15 @@ test('compras CPF/CNPJ preservam antecipação e vendas CPF/CNPJ mantêm saída 
     await expect(page.locator('#purchase-file')).toBeEnabled();await page.locator('#purchase-issuer-uf').selectOption('MG');
     await page.locator('#purchase-file').setInputFiles(report(name,[...rows]));await expect(page.locator('[data-guided-continue]')).toBeVisible();
     if(name==='compras.csv'){
-      await expect(page.locator('#purchase-report-view [data-anticipation-amount]')).toContainText('512,40');
-      await expect(page.locator('#purchase-report-view .purchase-anticipation')).toContainText('7.000,00');
+      await expect(page.locator('#purchase-report-view [data-anticipation-amount]')).toContainText('219,60');
+      await expect(page.locator('#purchase-report-view .purchase-anticipation')).toContainText('3.000,00');
       await expect(page.locator('#purchase-report-view [data-purchase-considered-total]')).toContainText('7.500,00');
       await expect(page.locator('#purchase-report-view [data-purchase-original-total]')).toContainText('9.200,00');
       await expect(page.locator('#purchase-report-view [data-purchase-excluded-total]')).toContainText('1.700,00');
       const detailed=await page.context().newPage();
       try{
         await detailed.goto((await page.locator('.purchase-guided-detail').getAttribute('href'))!);
-        await expect(detailed.locator('#purchase-report-view [data-anticipation-amount]')).toContainText('512,40');
+        await expect(detailed.locator('#purchase-report-view [data-anticipation-amount]')).toContainText('219,60');
         await expect(detailed.locator('#purchase-report-view [data-purchase-considered-total]')).toContainText('7.500,00');
         await detailed.locator('#purchase-view-filter').selectOption('lines');
         await expect(detailed.locator('#purchase-result-list tbody tr')).toHaveCount(9);
@@ -76,7 +76,7 @@ test('compras CPF/CNPJ preservam antecipação e vendas CPF/CNPJ mantêm saída 
         const at=(row:string[],header:string)=>row[headers.indexOf(header)];
         const cnpj=csvRows.slice(1).find(row=>at(row,'Documento do fornecedor (A)')==='11222333000181')!;
         expect(at(cnpj,'Total calculado (R$)')).toBe('3000,00');expect(at(cnpj,'Base DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('3000,00');expect(at(cnpj,'DIFAL de entrada — Antecipação de ICMS (R$)')).toBe('219,60');expect(at(cnpj,'Situação DIFAL de entrada — Antecipação de ICMS')).toBe('ELIGIBLE');
-        expect(at(cnpj,'Versão DIFAL de entrada — Antecipação de ICMS')).toBe('ICMS_ANTICIPATION_V4');
+        expect(at(cnpj,'Versão DIFAL de entrada — Antecipação de ICMS')).toBe('ICMS_ANTICIPATION_V5');
         expect(at(cnpj,'Origem DIFAL de entrada')).toBe('IMPORTED');
         expect(at(cnpj,'Compras consideradas (R$)')).toBe('3000,00');
         expect(at(cnpj,'Versão da seleção de compras')).toBe('PURCHASE_NATURES_V1');
@@ -87,7 +87,7 @@ test('compras CPF/CNPJ preservam antecipação e vendas CPF/CNPJ mantêm saída 
         for(const row of sourceRows.filter(row=>['1202','1949'].includes(at(row,'Natureza / CFOP'))))expect(at(row,'Compras consideradas (R$)')).toBe('0,00');
         expect(sourceRows.filter(row=>at(row,'Natureza / CFOP')==='8000').map(row=>at(row,'Compras consideradas (R$)'))).toEqual(['200,00','300,00']);
         expect(sourceRows.filter(row=>at(row,'Natureza / CFOP')==='8000').map(row=>at(row,'Situação DIFAL de entrada — Antecipação de ICMS'))).toEqual(['SERVICE_PURCHASE_EXCLUDED','SERVICE_PURCHASE_EXCLUDED']);
-        expect(csvRows.slice(1).reduce((sum,row)=>sum+Number(String(at(row,'DIFAL de entrada — Antecipação de ICMS (R$)')||'0').replace(',','.')),0)).toBeCloseTo(512.4,2);
+        expect(csvRows.slice(1).reduce((sum,row)=>sum+Number(String(at(row,'DIFAL de entrada — Antecipação de ICMS (R$)')||'0').replace(',','.')),0)).toBeCloseTo(219.6,2);
       }finally{await detailed.close();}
     }else{
       const detailed=await page.context().newPage();
@@ -123,7 +123,7 @@ test('compras CPF/CNPJ preservam antecipação e vendas CPF/CNPJ mantêm saída 
   await page.locator('.sim-report-details>summary').click();await page.locator('.sim-operation-audit>summary').click();
   await expect(page.locator('.sim-operation-audit')).toContainText('21.700,00');await expect(page.locator('.sim-operation-audit')).toContainText('7.500,00');await expect(page.locator('.sim-operation-audit')).toContainText('1.500,00');
   await page.locator('.sim-report-details>summary').click();
-  await page.locator('#report-competence').selectOption('1');await expect(page.locator('#salesCpfCents')).toHaveValue('11500.00');await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('4300.00');await expect(page.locator('[data-anticipation-monthly]')).toContainText('292,80');await expect(page.locator('#month-context')).toContainText('90.000,00');
+  await page.locator('#report-competence').selectOption('1');await expect(page.locator('#salesCpfCents')).toHaveValue('11500.00');await expect(page.locator('#purchasesNonOptantCents')).toHaveValue('4300.00');await expect(page.locator('[data-anticipation-monthly]')).toContainText('0,00');await expect(page.locator('#month-context')).toContainText('90.000,00');
   await page.locator('#report-competence').selectOption('0');
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/simulations'&&response.request().method()==='POST');
   await page.locator('#generate-simulation').click();const response=await saving;expect(response.ok(),await response.text()).toBe(true);const saved=await response.json();
@@ -135,19 +135,19 @@ test('compras CPF/CNPJ preservam antecipação e vendas CPF/CNPJ mantêm saída 
   expect(saved.draft.difalPolicy).toEqual({version:'DIFAL_SCENARIOS_V2',enabled:{pure:true,hybrid:true,presumed:false,actual:false},operations:{pure:{entry:true,exit:false},hybrid:{entry:true,exit:false}}});
   expect(saved.difalProjection.annualCents).toBe(0);
   expect(saved.difalProjection.sourceVersion).toBe('DIFAL_ESTIMATE_V6');
-  expect(saved.anticipationProjection.sourceVersion).toBe('ICMS_ANTICIPATION_V4');
+  expect(saved.anticipationProjection.sourceVersion).toBe('ICMS_ANTICIPATION_V5');
   expect(saved.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,0,0,0]);
   expect(saved.result.monthlyResults.map((row:any)=>row.engineInput.rbt12)).toEqual(Array.from({length:9},(_,index)=>78_000+index*12_000));
-  expect(saved.result.regimes.filter((regime:any)=>['pure','hybrid'].includes(regime.id)).map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([-512.4,-512.4]);
+  expect(saved.result.regimes.filter((regime:any)=>['pure','hybrid'].includes(regime.id)).map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([-219.6,-219.6]);
   expect(saved.result.regimes.filter((regime:any)=>['presumed','actual'].includes(regime.id)).map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([0,0]);
   await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');await expect(page.locator('#dre-report-period')).toHaveValue('complete');
   await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
   await expect(page.locator('#dre-demonstrativo [data-dre-row="salaries"]')).toBeVisible();
   await page.getByRole('button',{name:'Mensal',exact:true}).click();
   await page.locator('#dre-regime').selectOption('pure');await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('219,60');
-  await page.locator('#dre-month').selectOption('1');await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('292,80');
+  await page.locator('#dre-month').selectOption('1');await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('0,00');
   await page.locator('#dre-regime').selectOption('actual');await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('0,00');
-  await page.locator('#dre-demonstrativo [data-period="annual"]').click();await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('512,40');
+  await page.locator('#dre-demonstrativo [data-period="annual"]').click();await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('219,60');
   const fresh=await browser.newContext({baseURL});
   try{
     const login=await fresh.request.post('/api/auth/login',{data:{email:process.env.ADMIN_EMAIL,password:process.env.ADMIN_PASSWORD},headers:{Origin:origin}});expect(login.ok()).toBe(true);
@@ -182,10 +182,10 @@ test('compras CPF/CNPJ preservam antecipação e vendas CPF/CNPJ mantêm saída 
   await page.locator('#rbt12-manual').click();await page.locator('#rbt12').fill('3600000');await page.locator('#rbt12-manual-confirm').check();
   const atSublimit=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/simulations'&&response.request().method()==='POST');
   await page.locator('#generate-simulation').click();const sublimitResponse=await atSublimit;expect(sublimitResponse.ok(),await sublimitResponse.text()).toBe(true);const sublimit=await sublimitResponse.json();
-  expect(sublimit.result.regimes.map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([0,0,0,0]);
+  expect(sublimit.result.regimes.map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([-219.6,-219.6,0,0]);
   expect(sublimit.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,0,0,0]);
   expect(sublimit.draft.difalPolicy.enabled).toEqual(saved.draft.difalPolicy.enabled);
-  for(const regime of ['pure','hybrid']){await expect(page.locator(`#difal-enabled-${regime}`)).toBeChecked();await expect(page.locator(`[data-difal-option="${regime}"]`)).toHaveAttribute('data-state','SUBLIMIT');}
+  for(const regime of ['pure','hybrid']){await expect(page.locator(`#difal-enabled-${regime}`)).toBeChecked();await expect(page.locator(`[data-difal-option="${regime}"]`)).toHaveAttribute('data-state','ENABLED');}
   expect(sublimit.source.fields).toEqual(saved.source.fields);expect(sublimit.difalProjection).toEqual(saved.difalProjection);
   // A shorter, valid PA window cannot silently replace earlier monthly RBT12s.
   let missingHistoryWrites=0;page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/v4/simulations')missingHistoryWrites++;});

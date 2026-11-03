@@ -22,7 +22,7 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
-export const MODEL_VERSION = '1.18.0-no-outgoing-difal';
+export const MODEL_VERSION = '1.19.0-entry-without-rbt12-sublimit';
 export const OUTGOING_DIFAL_MESSAGE = 'Não possui DIFAL de saída. Cálculo de saída desativado nesta análise.';
 export const SIMPLES_DIAGNOSTIC_VERSION = 'SIMPLES_DIAGNOSTIC_V1';
 export const REVENUE_CONTEXT_VERSION = 'SIMPLES_REVENUE_CONTEXT_V1';
@@ -418,9 +418,9 @@ export function resolveDifalApplication({policy,regimeId,rbt12,icmsOutside=false
   if(typeof icmsOutside!=='boolean')failInput(['icmsOutside'],'Informe uma opção válida.');
   const selected=upgradeDifalPolicy(policy),enabled=simple&&selected.enabled[regimeId];
   const operations=simple?{...selected.operations[regimeId],exit:false}:{entry:false,exit:false};
-  const reason=!simple?'NOT_APPLICABLE':rbt12===null?'MISSING_RBT12':rbt12>=SUBLIMIT?'SUBLIMIT':icmsOutside?'ICMS_OUTSIDE_DAS':!enabled?'USER_EXCLUDED':!operations.entry&&!operations.exit?'NO_OPERATIONS':'ENABLED';
-  const blocked=reason==='MISSING_RBT12'||reason==='SUBLIMIT'||reason==='ICMS_OUTSIDE_DAS';
-  const message={NOT_APPLICABLE:'Não se aplica: antecipação das compras somente no Simples Puro e Híbrido.',MISSING_RBT12:'Aplicação da entrada pendente no Simples: RBT12 não informada. A referência dos documentos permanece preservada.',SUBLIMIT:'Zerado automaticamente: RBT12 da competência igual ou superior a R$ 3.600.000.',ICMS_OUTSIDE_DAS:'Zerado automaticamente: ICMS fora do DAS.',USER_EXCLUDED:'Excluído deste cenário por escolha do usuário.',NO_OPERATIONS:'Antecipação das compras não selecionada. DIFAL de saída desativado.',ENABLED:'Incluído: DIFAL de entrada (antecipação das compras elegíveis). DIFAL de saída desativado.'}[reason];
+  const reason=!simple?'NOT_APPLICABLE':rbt12===null?'MISSING_RBT12':icmsOutside?'ICMS_OUTSIDE_DAS':!enabled?'USER_EXCLUDED':!operations.entry&&!operations.exit?'NO_OPERATIONS':'ENABLED';
+  const blocked=reason==='MISSING_RBT12'||reason==='ICMS_OUTSIDE_DAS';
+  const message={NOT_APPLICABLE:'Não se aplica: antecipação das compras somente no Simples Puro e Híbrido.',MISSING_RBT12:'Aplicação da entrada pendente no Simples: RBT12 não informada. A referência dos documentos permanece preservada.',ICMS_OUTSIDE_DAS:'Zerado automaticamente: ICMS fora do DAS.',USER_EXCLUDED:'Excluído deste cenário por escolha do usuário.',NO_OPERATIONS:'Antecipação das compras não selecionada. DIFAL de saída desativado.',ENABLED:'Incluído: DIFAL de entrada (antecipação das compras elegíveis). DIFAL de saída desativado.'}[reason];
   return {version:DIFAL_POLICY_VERSION,enabled,operations,blocked,reason,message,rbt12:rbt12??null,icmsOutside,salesDifal:false,outgoingDisabled:true,purchaseAnticipation:enabled&&!blocked&&operations.entry};
 }
 function parseTaxInput(input) {
@@ -519,10 +519,7 @@ function diagnoseSimples(input, revenue) {
       statusCode='REVENUE_REVIEW_REQUIRED';available=false;
       message=`${referenceLabel} de ${currency(revenueReference)} supera a referência de R$ 4.800.000. A data e os efeitos de eventual exclusão precisam de análise específica.`;
       action='Confira a receita por ano-calendário e mercado, início de atividade e percentual de excesso. O total considerado não substitui essa análise.';
-    }else if(input.rbt12>SUBLIMIT&&!input.icmsOutside){
-      statusCode='LOCAL_TAX_REVIEW_REQUIRED';available=false;
-      message='A RBT12 está na sexta faixa e ICMS/ISS permanecem indicados no DAS. Essa apuração local exige revisão específica; o sublimite não exclui a empresa do Simples Nacional.';
-      action='Se ICMS/ISS já forem recolhidos fora do DAS, selecione essa situação. Se ainda estiverem no DAS, confira RBA, RBAA, parcela de excesso e a apuração local da sexta faixa; não altere a opção apenas para liberar o cálculo.';
+
     }else if(revenue===0){
       statusCode='ZERO_REVENUE';message='Cálculo disponível com receita zero; custos e despesas permanecem considerados.';
     }else if(revenue<0){
@@ -579,7 +576,7 @@ export function calculateTax(rawInput) {
     const annualDifal = 0;
     const hasAnticipation = Object.hasOwn(input, 'icmsAnticipation');
     const missingRbt12=hasSimples&&input.rbt12===null;
-    const anticipationBlocked = missingRbt12 || input.rbt12 >= SUBLIMIT || input.icmsOutside;
+    const anticipationBlocked = missingRbt12 || input.icmsOutside;
     const annualAnticipation = hasAnticipation && !anticipationBlocked ? input.icmsAnticipation.monthlyCents * MONTHS / 100 : 0;
     const difalPolicy=upgradeDifalPolicy(input.difalPolicy);
     for(const id of DIFAL_REGIME_IDS)difalPolicy.operations[id].exit=false;
@@ -661,8 +658,8 @@ export function calculateTax(rawInput) {
     add('difal.annual', 'Tributos e encargos', 'DIFAL de saída', OUTGOING_DIFAL_MESSAGE, annualDifal);
     if (hasAnticipation) {
       add('icmsAnticipation.rate', 'Antecipação de ICMS', 'Percentual sobre compras interestaduais', 'Premissa gerencial aplicada às compras elegíveis do relatório de origem.', .0732, 'percent');
-      add('icmsAnticipation.annual', 'Antecipação de ICMS', 'Referência anual da antecipação antes da opção por regime', missingRbt12?'A aplicação no Simples depende da RBT12; o valor importado permanece identificado na origem.':anticipationBlocked ? 'Zero: RBT12 atingiu R$ 3.600.000 ou ICMS está fora do DAS.' : 'Antecipação mensal importada × 12; a dedução depende da opção de cada cenário Simples, sem crédito adicional.', missingRbt12?'Não calculada':annualAnticipation,missingRbt12?'text':'currency');
-      add('icmsAnticipation.status', 'Antecipação de ICMS', 'Condição da antecipação de ICMS', 'O bloqueio por sublimite usa a RBT12 desta competência; não usa a receita mensal multiplicada por 12.', missingRbt12?'Pendente: RBT12 não informada.':anticipationBlocked ? 'Bloqueada: sublimite alcançado ou ICMS fora do DAS.' : 'Disponível abaixo do sublimite; a opção de cada cenário determina a inclusão.', 'text');
+      add('icmsAnticipation.annual', 'Antecipação de ICMS', 'Referência anual da antecipação antes da opção por regime', missingRbt12?'A aplicação no Simples depende da RBT12; o valor importado permanece identificado na origem.':anticipationBlocked ? 'Zero: ICMS fora do DAS, conforme a situação explicitamente informada.' : 'Antecipação mensal importada × 12; a dedução depende da opção de cada cenário Simples, sem crédito adicional.', missingRbt12?'Não calculada':annualAnticipation,missingRbt12?'text':'currency');
+      add('icmsAnticipation.status', 'Antecipação de ICMS', 'Condição da antecipação de ICMS', 'RBT12 define a faixa do Simples, não o impedimento por sublimite. A entrada respeita as compras elegíveis e a situação informada do ICMS.', missingRbt12?'Pendente: RBT12 não informada.':anticipationBlocked ? 'Não aplicada: ICMS fora do DAS.' : 'Disponível sem bloqueio automático por RBT12; a opção de cada cenário determina a inclusão.', 'text');
     }
     const groupNames = {
         simple: 'Simples com CBS/IBS no DAS',
@@ -736,16 +733,26 @@ export function calculateTax(rawInput) {
     const serviceBand = bandIndex >= 0 ? TAX_BANDS[input.serviceAnnex][bandIndex] : null;
     const salesEffective = salesBand ? positive((input.rbt12 * salesBand.nominal - salesBand.deduction) / input.rbt12) : 0;
     const serviceEffective = serviceBand ? positive((input.rbt12 * serviceBand.nominal - serviceBand.deduction) / input.rbt12) : 0;
+    // RBT12 alone does not establish an ICMS/ISS impediment. When the user has
+    // confirmed local taxes inside DAS, supplement the sixth federal band using
+    // fifth-band local coefficients (CGSN 140, art. 21). No inferred exclusion.
+    const localInsideSixth = bandIndex === 5 && !input.icmsOutside;
+    const fifthLocalRate = annex => {
+      const fifth = TAX_BANDS[annex][4];
+      return positive((input.rbt12 * fifth.nominal - fifth.deduction) / input.rbt12) * fifth.localShare;
+    };
+    const salesLocalSupplement = localInsideSixth ? fifthLocalRate(input.salesAnnex) : 0;
+    const serviceLocalSupplement = localInsideSixth ? Math.min(DAS_ISS_CAP, fifthLocalRate(input.serviceAnnex)) : 0;
     const salesCbsEffective = salesEffective * (salesBand?.cbsShare ?? 0);
     const salesIbsEffective = salesEffective * (salesBand?.ibsShare ?? 0);
-    const salesIcmsEffective = salesEffective * (salesBand?.localShare ?? 0);
-    const serviceIssEffective = Math.min(DAS_ISS_CAP, serviceEffective * (serviceBand?.localShare ?? 0));
+    const salesIcmsEffective = salesEffective * (salesBand?.localShare ?? 0) + salesLocalSupplement;
+    const serviceIssEffective = Math.min(DAS_ISS_CAP, serviceEffective * (serviceBand?.localShare ?? 0)) + serviceLocalSupplement;
     const cappedIII = input.serviceAnnex === 3 && bandIndex === 4 && serviceEffective * (serviceBand?.localShare ?? 0) > DAS_ISS_CAP;
     const cappedIV = input.serviceAnnex === 4 && bandIndex === 4 && serviceEffective * (serviceBand?.localShare ?? 0) > DAS_ISS_CAP;
     const serviceCbsEffective = cappedIII ? (serviceEffective - DAS_ISS_CAP) * .232 : cappedIV ? (serviceEffective - DAS_ISS_CAP) * .3627 : serviceEffective * (serviceBand?.cbsShare ?? 0);
     const serviceIbsEffective = cappedIII ? (serviceEffective - DAS_ISS_CAP) * .0026 : cappedIV ? (serviceEffective - DAS_ISS_CAP) * .004 : serviceEffective * (serviceBand?.ibsShare ?? 0);
-    const salesDas = taxableSales * salesEffective;
-    const serviceDas = annual.services * serviceEffective;
+    const salesDas = taxableSales * (salesEffective + salesLocalSupplement);
+    const serviceDas = annual.services * (serviceEffective + serviceLocalSupplement);
     const icmsRemoved = input.icmsOutside ? taxableSales * salesIcmsEffective : 0;
     const issRemoved = input.icmsOutside ? annual.services * serviceIssEffective : 0;
     const pureDas = salesDas - icmsRemoved + serviceDas - issRemoved;
@@ -790,7 +797,7 @@ export function calculateTax(rawInput) {
         [
             'sales.icms',
             'ICMS efetivo no DAS de vendas',
-            'Efetiva do anexo de vendas × participação ICMS',
+            localInsideSixth ? '((RBT12 × nominal da faixa 5 − dedução da faixa 5) ÷ RBT12) × participação ICMS da faixa 5' : 'Efetiva do anexo de vendas × participação ICMS',
             salesIcmsEffective
         ],
         [
@@ -808,7 +815,7 @@ export function calculateTax(rawInput) {
         [
             'services.iss',
             'ISS efetivo no DAS de serviços',
-            'Mínimo(5%; efetiva de serviços × participação ISS)',
+            localInsideSixth ? 'Mínimo(5%; ((RBT12 × nominal da faixa 5 − dedução da faixa 5) ÷ RBT12) × participação ISS da faixa 5)' : 'Mínimo(5%; efetiva de serviços × participação ISS)',
             serviceIssEffective
         ]
     ])add(`simples.${id}`, 'Simples Nacional', label, formula, value, 'percent');
@@ -816,13 +823,13 @@ export function calculateTax(rawInput) {
         [
             'salesDas',
             'DAS cheio de vendas',
-            'Máximo(0; receita de vendas anual após devoluções) × alíquota efetiva de vendas',
+            localInsideSixth ? 'Vendas tributáveis × (efetiva federal da faixa 6 + ICMS efetivo pelos coeficientes da faixa 5)' : 'Máximo(0; receita de vendas anual após devoluções) × alíquota efetiva de vendas',
             salesDas
         ],
         [
             'serviceDas',
             'DAS cheio de serviços',
-            'Receita de serviços anual × alíquota efetiva de serviços',
+            localInsideSixth ? 'Serviços × (efetiva federal da faixa 6 + ISS efetivo pelos coeficientes da faixa 5, limitado a 5%)' : 'Receita de serviços anual × alíquota efetiva de serviços',
             serviceDas
         ],
         [
@@ -1131,12 +1138,8 @@ export function calculateTax(rawInput) {
         ].filter(Boolean).join(' e ');
         warn('presumed-limit-reference', 'warning', 'Revise a elegibilidade ao Lucro Presumido', `${causes} supera(m) a referência de R$ 78 milhões. Confira a receita bruta total do ano-calendário anterior, o limite proporcional e as demais hipóteses de obrigatoriedade do Lucro Real. O cálculo permanece disponível porque o modelo não coleta os dados necessários para decidir o enquadramento; esse resultado não comprova o direito à opção.`);
     }
-    if (input.rbt12 > SUBLIMIT || revenueReference > SUBLIMIT) {
-        const causes = [
-            input.rbt12 > SUBLIMIT ? `RBT12 de ${currency(input.rbt12)}` : '',
-            revenueReference > SUBLIMIT ? `${input.revenueContext?'receita do período':'projeção anual'} de ${currency(revenueReference)}` : ''
-        ].filter(Boolean).join(' e ');
-        warn('sublimit', 'warning', 'Conferência do sublimite de ICMS/ISS', `${causes} supera(m) a referência de R$ 3,6 milhões. Isso não significa exclusão do Simples Nacional. A data de efeito sobre ICMS/ISS depende da receita acumulada no ano, ano anterior e excesso; RBT12 e projeções não substituem essa verificação. A opção não é alterada automaticamente.`);
+    if (hasSimples && input.rbt12 > SUBLIMIT && input.rbt12 <= SIMPLES_LIMIT) {
+        warn('sublimit', 'info', 'RBT12 na sexta faixa — sem bloqueio automático', 'A RBT12 define a faixa de cálculo, não comprova excesso do sublimite no ano-calendário. O cenário respeita a situação de ICMS/ISS informada; se dentro do DAS, as parcelas locais usam os coeficientes da quinta faixa. Confira RBA/RBAA e efeitos do excesso antes do uso fiscal.');
     }
     if (hasSimples&&!simpleAvailable) warn('simples-unavailable', 'warning', 'Simples: revisão necessária para calcular', `${simpleStatus} ${simplesDiagnostic.action}`);
     if (input.salesAnnex === 2 && input.salesRevenue > 0) warn('industry-ipi', 'warning', 'Indústria: revise o IPI antes de comparar', 'O IPI do Anexo II permanece no DAS do Puro e do Híbrido. Este modelo não inclui IPI fora do DAS nos regimes de Lucro Presumido e Real. A comparação industrial está incompleta sem essa avaliação.');
@@ -1150,7 +1153,7 @@ export function calculateTax(rawInput) {
     const operatingCosts = cmv + annual.salaries + annual.benefits + annual.administrative + annual.rent + annual.cards;
     if (operatingCosts > 0 && operatingCosts > revenue) warn('costs-above-revenue', 'warning', 'Custos e despesas superiores à receita', 'A soma de compras/CMV e despesas operacionais supera a receita. O resultado negativo é mantido e a análise continua disponível, com os valores informados e as premissas do cenário.');
     warn('outgoing-difal-disabled', 'info', 'DIFAL de saída desativado', OUTGOING_DIFAL_MESSAGE+' Regra gerencial desta análise; não constitui determinação da incidência legal. A antecipação das compras permanece independente.');
-    if (hasAnticipation) warn('icms-anticipation', 'info', 'DIFAL de entrada — antecipação de ICMS', missingRbt12?'Aplicação pendente no Simples porque a RBT12 não foi informada. A base e o valor dos documentos permanecem preservados para conferência.':anticipationBlocked ? 'Antecipação zerada nesta competência: a RBT12 alcançou o sublimite de R$ 3,6 milhões ou o ICMS está fora do DAS. A base importada permanece na memória para conferência.' : 'Premissa gerencial de 7,32% sobre compras interestaduais elegíveis, somente no Simples Puro e Híbrido, com o cenário e a entrada selecionados. A dedução entra uma única vez na DRE e não gera crédito adicional.');
+    if (hasAnticipation) warn('icms-anticipation', 'info', 'DIFAL de entrada — antecipação de ICMS', missingRbt12?'Aplicação pendente no Simples porque a RBT12 não foi informada. A base e o valor dos documentos permanecem preservados para conferência.':anticipationBlocked ? 'Antecipação zerada nesta competência pela opção confirmada de ICMS fora do DAS. A RBT12 isoladamente não zera a entrada; a base importada permanece para conferência.' : 'Premissa gerencial de 7,32% sobre compras interestaduais elegíveis, somente no Simples Puro e Híbrido, com o cenário e a entrada selecionados. A dedução entra uma única vez na DRE e não gera crédito adicional.');
     if(!simpleAvailable){
       // Memory is also an export surface. Intermediate tax arithmetic from an
       // unsupported scenario must not look like a confirmed amount (or zero).
@@ -1265,8 +1268,8 @@ export function calculateSimulation(draft, difalProjection = null, anticipationP
   }
   if (hasSimples&&anticipationProjection !== null) {
     if (Object.hasOwn(anticipationProjection,'sourceBaseCents')) result.memory.push({id:'icmsAnticipation.base',section:'Antecipação de ICMS',label:'Base de compras interestaduais importada',formula:'Compras elegíveis com UF do emitente e do fornecedor confirmadas e diferentes; ajustes manuais não alteram a origem.',value:anticipationProjection.sourceBaseCents/100,unit:'currency'});
-    if (Object.hasOwn(anticipationProjection,'sourceAmountCents')) result.memory.push({id:'icmsAnticipation.source',section:'Antecipação de ICMS',label:'Antecipação de ICMS do período importado',formula:'Estimativa de 7,32% das compras interestaduais elegíveis, antes do bloqueio por sublimite da competência.',value:anticipationProjection.sourceAmountCents/100,unit:'currency'});
-    result.memory.push({id:'icmsAnticipation.monthly',section:'Antecipação de ICMS',label:'Antecipação de ICMS mensal importada',formula:'Valor mensal confirmado da origem, antes da aplicação por regime e do bloqueio por sublimite.',value:anticipationProjection.monthlyCents/100,unit:'currency'});
+    if (Object.hasOwn(anticipationProjection,'sourceAmountCents')) result.memory.push({id:'icmsAnticipation.source',section:'Antecipação de ICMS',label:'Antecipação de ICMS do período importado',formula:'Estimativa de 7,32% das compras interestaduais elegíveis, antes da aplicação das opções do cenário; CPF excluído na regra atual.',value:anticipationProjection.sourceAmountCents/100,unit:'currency'});
+    result.memory.push({id:'icmsAnticipation.monthly',section:'Antecipação de ICMS',label:'Antecipação de ICMS mensal importada',formula:'Valor mensal confirmado da origem, antes da aplicação por regime; sem bloqueio automático pelo valor da RBT12.',value:anticipationProjection.monthlyCents/100,unit:'currency'});
     if (anticipationProjection.pendingLines > 0) result.warnings.push({code:'icms-anticipation-partial',severity:'warning',title:'Antecipação de ICMS parcial',detail:`${anticipationProjection.pendingLines} linhas aguardam confirmação da UF do emitente ou fornecedor. UFs ausentes não foram tratadas como compras interestaduais.`});
   }
   const rbt12 = result.memory.find(row => row.id === 'rbt12');

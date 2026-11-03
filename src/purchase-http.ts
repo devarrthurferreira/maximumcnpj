@@ -1,6 +1,6 @@
 import { createLookup, uploadLookup, finalizeLookup, processLookup, cancelLookup } from './lookup-jobs.ts';
 import { PURCHASE_MODE, SALES_MODE, financialLabel } from './purchase-domain.ts';
-import { purchaseJob, purchaseSummary, currentSalesDocumentDifal, purchaseHistory, purchaseRows, purchaseExport, revenueExport } from './purchase-store.ts';
+import { purchaseJob, purchaseSummary, currentSalesDocumentDifal, currentPurchaseDocumentAnticipation, purchaseHistory, purchaseRows, purchaseExport, revenueExport } from './purchase-store.ts';
 import { need, integer } from './security.ts';
 import { rateLimit, workspace } from './store.ts';
 import type { LookupActor } from './lookup-db.ts';
@@ -37,7 +37,7 @@ export async function routePurchases(actor: LookupActor, method: string, url: UR
       await rateLimit(`financial-read:${workspace()}:${actor._id}`, 120, 1);
       const status = url.searchParams.get('status') || 'ALL';
       if (action === 'summary') return purchaseSummary(id, true, mode);
-      if (action === 'difal-period' && sales) return currentSalesDocumentDifal(id);
+      if (action === 'difal-period') return sales ? currentSalesDocumentDifal(id) : currentPurchaseDocumentAnticipation(id);
       if (action === 'results') return purchaseRows(id, status, page, false, mode);
       if (action === 'lines') return purchaseRows(id, status, page, true, mode);
     }
