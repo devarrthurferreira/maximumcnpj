@@ -72,7 +72,7 @@ async function closeWizard(page:Page){
   }
 }
 async function saveSector(page:Page,id:string,sector:'fiscal'|'accounting',complete=false){
-  await switchSector(page,sector,complete?(sector==='fiscal'?'documents':'values'):undefined);
+  await switchSector(page,sector,complete?(sector==='fiscal'?'difal':'values'):undefined);
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v4/analyses/'+id+'/'+sector&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="'+(complete?'complete':'save')+'"]').click();
   const response=await saving;expect(response.ok(),await response.text()).toBe(true);

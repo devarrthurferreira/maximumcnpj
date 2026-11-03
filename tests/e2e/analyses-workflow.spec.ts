@@ -88,7 +88,7 @@ async function company(request:APIRequestContext,baseURL:string){
   return {id:created.items[0].id,code};
 }
 async function saveSector(page:Page,id:string,sector:'fiscal'|'accounting',complete=true){
-  await openSector(page,sector,complete?(sector==='fiscal'?'documents':'values'):undefined);
+  await openSector(page,sector,complete?(sector==='fiscal'?'difal':'values'):undefined);
   const saving=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/${sector}`&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="'+(complete?'complete':'save')+'"]').click();
   const response=await saving;expect(response.ok(),await response.text()).toBe(true);
@@ -286,7 +286,7 @@ test('PDF escolhido exige leitura confirmada, trocar regimes retira a referênci
   await expect(page.locator('#analysis-extrato-none')).toHaveAttribute('aria-pressed','true');
   await page.locator('#analysis-extrato-pdf').click();
   await expect(page.locator('#analysis-rbt12-pdf')).toBeVisible();
-  await wizardStep(page,'fiscal','documents');
+  await wizardStep(page,'fiscal','difal');
   const incomplete=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v4/analyses/${id}/fiscal`&&response.request().method()==='PATCH');
   await page.locator('#analysis-wizard button[value="complete"]').click();expect((await incomplete).ok()).toBe(false);
   await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','rbt12');
