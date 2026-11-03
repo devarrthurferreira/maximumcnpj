@@ -4,15 +4,18 @@ on:
     paths:
       - 'public/**'
       - 'src/analysis-*.ts'
-      - 'tests/analysis*difal*'
-      - 'tests/e2e/analyses-difal-assessment.spec.ts'
+      - 'tests/**'
       - '.github/workflows/difal-choice.yml'
 permissions:
   contents: read
 jobs:
   verify-difal-choice:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [evidence, persistence]
     services:
       mongo:
         image: mongo:7.0
@@ -24,6 +27,7 @@ jobs:
       MONGODB_URI: mongodb://127.0.0.1:27017
       MONGODB_DB: maximum_difal_choice_ci
       WORKSPACE_ID: difal_choice_ci
+      SUITE: ${{ matrix.suite }}
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 2, persist-credentials: false}
@@ -34,11 +38,16 @@ jobs:
       - run: npm test && npm run test:analyses-integration
       - run: npx playwright install --with-deps chromium
       - name: Evidencia, escolha explicita, reabertura e layout
-        run: npx playwright test tests/e2e/analyses-difal-assessment.spec.ts
+        run: |
+          if [ "$SUITE" = evidence ]; then
+            npx playwright test tests/e2e/analyses-difal-assessment.spec.ts tests/e2e/analyses-document-difal.spec.ts
+          else
+            npx playwright test tests/e2e/analyses-difal-delete.spec.ts tests/e2e/analyses-workflow.spec.ts tests/e2e/analyses-performance.spec.ts tests/e2e/analyses-extrato.spec.ts -g 'DIFAL exige|Abrir DRE atual|PDF escolhido|RBT12 é enviada|Geração realmente'
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: difal-choice-verification
+          name: difal-choice-${{ matrix.suite }}
           path: |
             playwright-report/
             test-results/
