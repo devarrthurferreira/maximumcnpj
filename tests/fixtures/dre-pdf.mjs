@@ -54,7 +54,7 @@ export function drePdfFixture({variant='complete',simulationId=ids.simulation,cl
   for(const row of reports)row.commercialComposition=composition([row]);
   const first=baselineMonth(reports[0]);
   const missingRbt12=variant==='without-rbt12'||variant==='without-rbt12-only-simples';
-  const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:missingRbt12?null:variant==='unavailable'?4000000:3300000,difalPolicy:defaultDifalPolicy(),
+  const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:missingRbt12?null:variant==='unavailable'?4900000:3300000,difalPolicy:defaultDifalPolicy(),
     ...(missingRbt12?{regimeSelection:{version:'REGIME_SELECTION_V1',selected:variant==='without-rbt12-only-simples'?['pure','hybrid']:['pure','hybrid','presumed','actual']}}:{}),
     values:{salesRevenue:sum(Object.values(first.groups).slice(0,3)),serviceRevenue:first.values.serviceRevenue,simplePurchases:first.groups.purchasesOptantCents,regularPurchases:first.groups.purchasesNonOptantCents,salaries:0,benefits:0,adminExpenses:0,rent:0,cardExpenses:0}};
   const inputs=reports.map(row=>baselineMonth(row,variant==='zero'?{}:{salaries:22000+row.month*300,benefits:3600+row.month*80,adminExpenses:row.month===3?28000:4100+row.month*90,rent:variant==='loss'?185000:6500,cardExpenses:1800+row.month*110}));

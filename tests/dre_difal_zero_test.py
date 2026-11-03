@@ -83,7 +83,7 @@ class DreDifalZeroTests(unittest.TestCase):
     def test_zero_exit_updates_months_subtotals_taxes_and_profit_without_changing_entry(self):
         previous, corrected = pair()
         self.assertTrue(previous['modelVersion'].startswith('1.17.0-'))
-        self.assertTrue(corrected['modelVersion'].startswith('1.18.0-'))
+        self.assertTrue(corrected['modelVersion'].startswith('1.19.0-'))
         self.assertTrue(corrected['result']['outgoingDifalDisabled'])
         self.assertEqual(corrected['source']['sales']['difal']['amountCents'], 0)
         self.assertEqual(corrected['difalProjection']['annualCents'], 0)

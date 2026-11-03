@@ -1,4 +1,16 @@
-# Maximum CNPJ · v0.54.2
+# Maximum CNPJ · v0.54.3
+
+
+## v0.54.3 — Entrada de ICMS e RBT12 sem bloqueio automático (2026-11-03)
+
+- RBT12 define a faixa, não determina excesso do sublimite do ano-calendário. Removido o bloqueio automático de R$ 3,6 milhões da disponibilidade do Simples e da antecipação de compras. Permanecem a referência obrigatória para calcular o Simples, o limite de tabelas suportadas e a opção **confirmada** de ICMS/ISS fora do DAS.
+- Sexta faixa com ICMS/ISS dentro do DAS: parcelas locais calculadas separadamente pelos coeficientes da quinta faixa, com teto de ISS, sem zerar essas parcelas nem alterar automaticamente o enquadramento.
+- `ICMS_ANTICIPATION_V5`: 7,32% gerenciais por linha de compra interestadual com CNPJ válido. CPF, CNO, documentos inválidos, operações internas, devoluções e serviços 8000 não geram antecipação. Compras e receitas permanecem integrais. Versões V1–V4 continuam validadas pela regra original.
+- DIFAL de saída segue desativado e zerado no cálculo, na DRE mensal/consolidada e nos arquivos da revisão atual. As opções antigas não reativam saída.
+- Cartão de compras antigas deriva uma estimativa **atual de janeiro a setembro**, via `/api/v4/purchases/:id/difal-period`, depois de validar a origem e o histórico. Não substitui nem apaga o snapshot. Falta de dados/UF continua pendência, não falso zero.
+- Motor `1.19.0-entry-without-rbt12-sublimit` e contrato `ENTRY_DIFAL_NO_RBT12_SUBLIMIT_2026_11_V14` invalidam resultados atuais antigos para revisão vinculada; versões históricas e dados contábeis são preservados.
+
+São regras de uma análise gerencial: a exclusão de CPF e a taxa fixa não representam determinação universal de incidência tributária. RBA/RBAA, efeitos do excesso, regimes e documentos devem ser conferidos pelo responsável fiscal. Referência para distinguir as bases: Resolução CGSN 140/2018, art. 21 (https://normas.receita.fazenda.gov.br/sijut2consulta/link.action?idAto=92278).
 
 ## DIFAL de saída desativado — v0.54.2
 

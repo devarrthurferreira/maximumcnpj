@@ -69,9 +69,9 @@ test('pendências de UF só bloqueiam impostos potencialmente usados por algum r
  original.draft.rbt12=3_600_000;original.rbt12Manual.rbt12Cents=360_000_000;
  original.draft.difalPolicy.enabled.presumed=false;original.draft.difalPolicy.enabled.hybrid=true;
  current.monthlyReports[0].difal.pendingLines=1;
- assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'No sublimite exato, os cenários Simples não aplicam vendas nem entradas.');
+ assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING','RBT12 no sublimite não dispensa a UF das compras elegíveis.');
  original.draft.difalPolicy.enabled.actual=true;
- assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Lucro Real legado não habilita DIFAL na revisão atual.');
+ assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING','A entrada selecionada nos Simples ainda exige UF.');
  current.purchases={...current.purchases,totalCents:999};
  original.draft.difalPolicy=difalPolicy({pure:false,hybrid:false,presumed:false,actual:false});
  assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='REPROCESS_SOURCE_TOTAL','Excluir o imposto não dispensa a conciliação das fontes.');
@@ -105,7 +105,7 @@ test('revisão exige somente a evidência da direção selecionada para Puro ou 
  assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Nenhuma direção selecionada dispensa ambas as estimativas.');
 });
 
-test('UF pendente no mês bloqueado não impede o mês aplicável com RBT12 móvel confirmada',()=>{
+test('RBT12 móvel não dispensa a UF de entrada ao alcançar R$ 3,6 milhões',()=>{
  const {original,source}=fixture();original.reportMonths=2;
  original.projection=annualizeReports(original.source.fields,2);
  original.baselineMonthlyGroups=Object.fromEntries(Object.entries(original.projection.monthlyGroupsCents).map(([key,value])=>[key,Number(value)/100]));
@@ -121,7 +121,10 @@ test('UF pendente no mês bloqueado não impede o mês aplicável com RBT12 móv
  original.draft.rbt12=3_600_000;original.rbt12Extraction={id:'10000000-0000-4000-8000-000000000006',...extraction};
  const current={...source,monthlyReports:source.monthlyReports.map((row:any,index:number)=>({...row,
   difal:{...row.difal,pendingLines:index},anticipation:{...anticipation,pendingLines:index}}))};
- const before=structuredClone(original),planned=planReprocessing(original,current,'ws');
+ const before=structuredClone(original);
+ assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING'&&error.message.includes('2025-02'));
+ current.monthlyReports[1].anticipation.pendingLines=0;
+ const planned=planReprocessing(original,current,'ws');
  assert.deepEqual(buildRbt12Schedule(planned.context.rbt12Extraction,current.monthlyReports.map((row:any)=>row.sourceMonth)).rows.map(row=>row.rbt12Cents),[359_999_999,360_000_000]);
  assert.deepEqual(original,before);
  current.monthlyReports[0].difal.pendingLines=1;

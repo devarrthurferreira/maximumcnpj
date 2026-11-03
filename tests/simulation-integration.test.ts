@@ -556,7 +556,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       await assert.rejects(createSimulation(actor,{...localInput,draft:{...localInput.draft,revenueContext:{annualRevenue:1}}}),code('VALIDATION'));
       const pending=await createSimulation(actor,localInput);
       assert.equal(pending.draft.icmsOutside,false);
-      assert.equal(pending.result.simplesDiagnostic.statusCode,'LOCAL_TAX_REVIEW_REQUIRED');
+      assert.equal(pending.result.simplesDiagnostic.statusCode,'READY');
       assert.equal(pending.result.simplesDiagnostic.eligibilityVerified,false);
       assert.equal(pending.result.simplesDiagnostic.revenueReference,pending.result.annualRevenue);
       assert.equal(pending.result.simplesDiagnostic.coveredMonths,3);

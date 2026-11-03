@@ -43,6 +43,8 @@ def selectable_generation(count=3):
         old.update(replacement)
         for row in rows:
             row.update(_id=f'{old["_id"]}:{row["index"]}', jobId=old['_id'])
+        for item in items:
+            item.update(_id=f'{old["_id"]}:{item["cnpj"]}', jobId=old['_id'], clientId=old['clientId'])
         snapshots[old['_id']] = old, rows, items
     return db, generation, jobs, snapshots
 
@@ -221,8 +223,12 @@ class DifalPolicyMongoTests(unittest.TestCase):
         _, generation, jobs, snapshots = selectable_generation(2)
         self.db.generations.insert_one(deepcopy(generation))
         self.db.lookupJobs.insert_many(deepcopy(jobs))
-        for job, rows, _ in snapshots.values():
+        for job, rows, items in snapshots.values():
             self.db.purchaseLines.insert_many(deepcopy(rows))
+            if items:
+                self.db.lookupItems.insert_many(deepcopy(items))
+                for item in items:
+                    self.db.cnpjStates.update_one({'_id': item['stateId']}, {'$setOnInsert': {'workspaceId': WORKSPACE, 'cnpj': item['cnpj'], 'status': item['status']}}, upsert=True)
         source = self.db.lookupJobs.find_one({'_id': jobs[1]['_id'], 'workspaceId': WORKSPACE})
         originals = (list(self.db.lookupJobs.find().sort('_id')), list(self.db.purchaseLines.find().sort('_id')),
                      self.db.generations.find_one({'_id': GENERATION}))

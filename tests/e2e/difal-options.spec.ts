@@ -110,7 +110,7 @@ test('opções iniciais da empresa chegam ao extrato, ao rascunho e à versão s
   await expect(page.locator('[data-guided-difal-summary]')).toContainText('Saída desativada');await expect(page.locator('#simulator-form')).toBeHidden();
   await page.locator('#guided-rbt12-skip').click();await expect(page.locator('.sim-difal-review')).not.toHaveAttribute('open','');await expect(page.locator('[data-difal-selection-summary]')).toContainText('Saída desativada');
   await page.locator('.sim-difal-review>summary').click();await expect(page.locator('#difal-enabled-pure')).not.toBeChecked();await expect(page.locator('#difal-enabled-hybrid')).toBeChecked();
-  await page.locator('#rbt12').fill('3600000');await expect(page.locator('[data-difal-option="pure"]')).toHaveAttribute('data-state','SUBLIMIT');await expect(page.locator('#difal-enabled-pure')).not.toBeChecked();
+  await page.locator('#rbt12').fill('3600000');await expect(page.locator('[data-difal-option="pure"]')).toHaveAttribute('data-state','USER_EXCLUDED');await expect(page.locator('#difal-enabled-pure')).not.toBeChecked();
   await page.locator('#rbt12').fill('100000');await page.locator('#rbt12-manual-confirm').check();await page.locator('#difal-enabled-hybrid').uncheck();
   await page.reload();await expect(page.locator('#simulator-form')).toBeVisible();await expect(page.locator('[data-difal-selection-summary]')).toContainText('Simples puro: não incluir. Simples híbrido: não incluir');
   await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('salva');
@@ -232,7 +232,7 @@ test('política V1 recebida em cálculo atual preserva a origem e mantém saída
   expect(state.writes[0].draft.difalPolicy).toEqual(selectedPolicy);expect(JSON.stringify(snapshot)).toBe(before);
 });
 
-test('RBT12 de cada competência bloqueia os Simples e preserva escolhas para os demais meses',async({page},info)=>{
+test('RBT12 na sexta faixa não bloqueia entrada e preserva escolhas por competência',async({page},info)=>{
   const state=await mount(page),extraction=section22Year2025();
   const revenues=extraction.priorRevenues.map(row=>({...row,internalCents:row.month==='2025-01'?50000000:29000000,externalCents:0,totalCents:row.month==='2025-01'?50000000:29000000}));
   state.extraction={...extraction,rbt12Cents:369000000,rbt12CalculatedCents:369000000,priorRevenues:revenues,rbt12Window:revenues.slice(11),rbt12Basis:{...extraction.rbt12Basis,internalCents:369000000,totalCents:369000000}};
@@ -261,9 +261,9 @@ test('RBT12 de cada competência bloqueia os Simples e preserva escolhas para os
   await expect(page.locator('[data-difal-option="pure"]')).toHaveAttribute('data-state','ENABLED');
   await expect(page.locator('#difal-options-context')).toContainText('3.480.000,00');
   await page.locator('#report-competence').selectOption('1');
-  for(const id of ['pure','hybrid']){await expect(page.locator(`[data-difal-option="${id}"]`)).toHaveAttribute('data-state','SUBLIMIT');await expect(page.locator(`#difal-enabled-${id}`)).toBeChecked();await expect(page.locator(`#difal-enabled-${id}`)).toBeEnabled();}
+  for(const id of ['pure','hybrid']){await expect(page.locator(`[data-difal-option="${id}"]`)).toHaveAttribute('data-state','ENABLED');await expect(page.locator(`#difal-enabled-${id}`)).toBeChecked();await expect(page.locator(`#difal-enabled-${id}`)).toBeEnabled();}
   await expect(page.locator('[data-difal-option="presumed"]')).toHaveCount(0);
-  await page.locator('#difal-enabled-pure').uncheck();await expect(page.locator('[data-difal-option="pure"]')).toHaveAttribute('data-state','SUBLIMIT');
+  await page.locator('#difal-enabled-pure').uncheck();await expect(page.locator('[data-difal-option="pure"]')).toHaveAttribute('data-state','USER_EXCLUDED');
   await page.locator('#report-competence').selectOption('0');await expect(page.locator('[data-difal-option="pure"]')).toHaveAttribute('data-state','USER_EXCLUDED');
   await page.locator('#difal-enabled-pure').check();await page.locator('#report-competence').selectOption('1');
   await capturePanel(page,'#sim-difal-options',info.outputPath('difal-bloqueado-desktop.png'));
@@ -273,12 +273,12 @@ test('RBT12 de cada competência bloqueia os Simples e preserva escolhas para os
   await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('salva');
   const saved=state.snapshots.get(state.writes[0].simulationId);
   expect(saved.result.monthlyResults.map((row:any)=>row.result.regimes.find((r:any)=>r.id==='pure').dre.difal)).toEqual([0,0]);
-  expect(saved.result.monthlyResults.map((row:any)=>row.result.regimes.find((r:any)=>r.id==='pure').dre.icmsAnticipation)).toEqual([-36.6,0]);
+  expect(saved.result.monthlyResults.map((row:any)=>row.result.regimes.find((r:any)=>r.id==='pure').dre.icmsAnticipation)).toEqual([-36.6,-73.2]);
   expect(saved.result.regimes.map((row:any)=>row.dre.difal)).toEqual([0,0,0,0]);
   await page.goto(`/simulator.html?simulation=${saved._id}`);
   await expect(page.locator('#sim-difal-options input')).toHaveCount(0);await expect(page.locator('[data-difal-option="pure"]')).toHaveAttribute('data-state','ENABLED');
   await showMonthlyDre(page);
-  await page.locator('#dre-month').selectOption('1');await expect(page.locator('[data-difal-option="pure"]')).toHaveAttribute('data-state','SUBLIMIT');await expect(page.locator('[data-difal-option="pure"]')).toContainText('Incluído por escolha');
+  await page.locator('#dre-month').selectOption('1');await expect(page.locator('[data-difal-option="pure"]')).toHaveAttribute('data-state','ENABLED');await expect(page.locator('[data-difal-option="pure"]')).toContainText('Incluído por escolha');
   expect(state.sourceReads).toBe(1);expect(state.writes).toHaveLength(1);
   await capturePanel(page,'#sim-difal-options',info.outputPath('difal-opcoes-historico.png'));
 });

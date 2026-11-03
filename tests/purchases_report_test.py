@@ -459,10 +459,13 @@ class PurchaseMongoTests(unittest.TestCase):
     def test_anticipation_survives_database_projection_and_rejects_tampering(self):
         from anticipation_report_test import anticipation_fixture
         from reporting.purchases import purchase_metadata
-        job, lines, _ = anticipation_fixture()
+        job, lines, items = anticipation_fixture()
         job['_id'] = str(uuid.uuid4())
         for row in lines:
             row.update(_id=f'{job["_id"]}:{row["index"]}', jobId=job['_id'])
+        for item in items:
+            item.update(_id=f'{job["_id"]}:{item["cnpj"]}', jobId=job['_id'])
+        self.db.lookupItems.insert_many(items)
         self.db.lookupJobs.insert_one(job)
         self.db.purchaseLines.insert_many(lines)
         meta = purchase_metadata(self.db, job, WORKSPACE)
@@ -476,10 +479,13 @@ class PurchaseMongoTests(unittest.TestCase):
     def test_old_purchase_report_derives_anticipation_without_writing_the_database(self):
         from anticipation_report_test import derivable_fixture
         from reporting.purchases import purchase_metadata
-        job, lines, _ = derivable_fixture()
+        job, lines, items = derivable_fixture()
         job['_id'] = str(uuid.uuid4())
         for row in lines:
             row.update(_id=f'{job["_id"]}:{row["index"]}', jobId=job['_id'])
+        for item in items:
+            item.update(_id=f'{job["_id"]}:{item["cnpj"]}', jobId=job['_id'])
+        self.db.lookupItems.insert_many(items)
         self.db.lookupJobs.insert_one(job)
         self.db.purchaseLines.insert_many(lines)
         frozen_job = self.db.lookupJobs.find_one({'_id': job['_id']})
@@ -531,7 +537,7 @@ class PurchaseMongoTests(unittest.TestCase):
                 self.assertIn(amount_text, text)
                 if key == 'anticipation':
                     self.assertIn('Calculado a partir dos dados salvos no relatório de origem', text)
-                    self.assertIn('CPF ou CNPJ válido', text)
+                    self.assertIn('CNPJ válido; CPF excluído', text)
                 else:
                     self.assertIn('Regra atual aplicada aos dados salvos no relatório de origem', text)
                     self.assertIn('Não possui DIFAL de saída', text)

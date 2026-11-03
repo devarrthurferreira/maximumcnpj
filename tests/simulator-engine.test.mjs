@@ -95,7 +95,7 @@ test('historical explicit CBS rates reproduce the four reviewed spreadsheet resu
 
 test('new CBS default applies 11.3% to debits and regular credits while preserving the inside-DAS credit', () => {
   assert.equal(DEFAULT_RATES.cbs, .113);
-  assert.equal(MODEL_VERSION, '1.18.0-no-outgoing-difal');
+  assert.equal(MODEL_VERSION, '1.19.0-entry-without-rbt12-sublimit');
   const input = zero();
   Object.assign(input, {salesRevenue:10000, rbt12:120000, simplePurchases:2000, simpleRegularPurchases:500, regularPurchases:3000});
   input.credits.simple.base = 1500;
@@ -426,20 +426,20 @@ test('Anexos III and IV apply capped ISS shares in band five; V uses its normal 
   }
 });
 
-test('sublimit is strict greater-than, with separate preventive projection and availability checks', () => {
+test('RBT12 no sublimite não bloqueia o cálculo; sexta faixa gera somente orientação informativa', () => {
   const input = example(); input.rbt12 = 3600000;
   assert.equal(calculateTax(input).warnings.some(w => w.code === 'sublimit'), false);
   input.rbt12 = 3600000.01;
   let result = calculateTax(input);
   assert.ok(result.warnings.some(w => w.code === 'sublimit'));
-  assert.equal(result.regimes[0].available, false);
-  assert.equal(result.regimes[1].available, false);
+  assert.equal(result.regimes[0].available, true);
+  assert.equal(result.regimes[1].available, true);
   assert.equal(result.regimes[2].available, true);
   input.icmsOutside = true;
   assert.equal(calculateTax(input).regimes[0].available, true);
   input.rbt12 = 500000; input.salesRevenue = 300001; input.icmsOutside = false;
   result = calculateTax(input);
-  assert.ok(result.warnings.some(w => w.code === 'sublimit'));
+  assert.equal(result.warnings.some(w => w.code === 'sublimit'), false);
   assert.equal(result.regimes[0].available, true, 'projected excess alone is preventive and cannot choose effective collection date');
 });
 
@@ -465,7 +465,7 @@ test('positive revenue and zero RBT12 disables only Simples', () => {
 test('diagnóstico distingue RBT12, sublimite local e limite de referência sem confirmar exclusão fiscal',()=>{
   const input=example();input.salesRevenue=100000;input.serviceRevenue=0;
   for(const [rbt12,icmsOutside,expected] of [
-    [3300000,false,'READY'],[3600000,false,'READY'],[3600000.01,false,'LOCAL_TAX_REVIEW_REQUIRED'],
+    [3300000,false,'READY'],[3600000,false,'READY'],[3600000.01,false,'READY'],
     [3600000.01,true,'READY'],[4800000,true,'READY'],[4800000.01,true,'RATE_TABLE_EXCEEDED']
   ]){
     const result=calculateTax({...input,rbt12,icmsOutside}),diagnostic=result.simplesDiagnostic;
@@ -491,7 +491,7 @@ test('opção explícita de ICMS e ISS fora do DAS é validada sem aceitar conte
   assert.equal(draftToInput(d).icmsOutside,true);assert.equal(outside.regimes[0].available,true);
   assert(outside.regimes[0].dre.icmsNet<0);assert(outside.regimes[0].dre.iss<0);
   assert.equal(outside.simplesDiagnostic.icmsOutside,true);assert.deepEqual(d,before);
-  assert.equal(calculateSimulation({...d,icmsOutside:false}).simplesDiagnostic.statusCode,'LOCAL_TAX_REVIEW_REQUIRED');
+  assert.equal(calculateSimulation({...d,icmsOutside:false}).simplesDiagnostic.statusCode,'READY');
   assert.equal(draftToInput({...d,icmsOutside:'true'}),null);
   assert.equal(draftToInput({...d,revenueContext:{revenueCents:0}}),null);
   const context={version:'SIMPLES_REVENUE_CONTEXT_V1',method:'ACTUAL_REPORT_MONTHS',revenueCents:330000000,sourceMonths:['2025-01']};
@@ -502,18 +502,18 @@ test('opção explícita de ICMS e ISS fora do DAS é validada sem aceitar conte
 });
 
 test('memória de cenário Simples pendente não apresenta impostos intermediários ou zeros como confirmados',()=>{
-  const input={...example(),salesRevenue:100000,serviceRevenue:0,rbt12:3700000,icmsOutside:false};
+  const input={...example(),salesRevenue:100000,serviceRevenue:0,rbt12:4900000,icmsOutside:false};
   const result=calculateTax(input);
-  assert.equal(result.simplesDiagnostic.statusCode,'LOCAL_TAX_REVIEW_REQUIRED');
+  assert.equal(result.simplesDiagnostic.statusCode,'RATE_TABLE_EXCEEDED');
   for(const id of ['dre.pure.revenue','dre.pure.netProfit','summary.pure.taxes','summary.hybrid.monthly','simples.pureDas','simples.hybridDas','simples.salesDas','simples.sales.effective','simples.cbsRemoved']){
     const item=result.memory.find(item=>item.id===id);assert(item,id);
     assert.equal(item.unit,'text',id);assert.equal(item.availability,'UNAVAILABLE',id);
-    assert.equal(item.value,'Conferência necessária');assert.match(item.formula,/sexta faixa/);
+    assert.equal(item.value,'Conferência necessária');assert.match(item.formula,/4.800.000/);
   }
   for(const id of ['annual.revenue','simples.revenueReference','rbt12','sublimit','simplesLimit','dre.presumed.netProfit','summary.actual.taxes']){
     const item=result.memory.find(item=>item.id===id);assert.equal(item.unit,'currency',id);assert.equal(typeof item.value,'number',id);
   }
-  const outside=calculateTax({...input,icmsOutside:true});
+  const outside=calculateTax({...input,rbt12:4000000,icmsOutside:true});
   assert.equal(outside.regimes[0].available,true);
   assert.equal(outside.memory.find(item=>item.id==='simples.pureDas').unit,'currency');
   assert.equal(typeof outside.memory.find(item=>item.id==='simples.pureDas').value,'number');
@@ -637,11 +637,11 @@ test('antecipação de ICMS deduz 7,32% de compras interestaduais somente nos do
  close(memory(result,'actual.preTax'),baseline.regimes[3].dre.preTax);
 });
 
-test('antecipação é bloqueada no sublimite inclusive, acima dele e com ICMS fora do DAS',()=>{
+test('antecipação permanece no sublimite e acima dele; somente ICMS explicitamente fora do DAS bloqueia',()=>{
  const icmsAnticipation={version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73200};
  for(const rbt12 of [3_599_999.99,3_600_000,3_600_000.01])for(const icmsOutside of [false,true]){
   const input={...example(),rbt12,icmsOutside},old=calculateTax(input),result=calculateTax({...input,icmsAnticipation});
-  const charge=rbt12<3_600_000&&!icmsOutside?8784:0;
+  const charge=!icmsOutside?8784:0;
   for(const [index,regime]of result.regimes.entries()){
    assert.equal(regime.available,old.regimes[index].available);
    close(regime.dre.icmsAnticipation,index<2?-charge:0);
@@ -710,18 +710,18 @@ test('Lucro Real sempre exclui DIFAL da base positiva, IRPJ e CSLL, com memória
   close(actual.dre.netProfit,actual.dre.preTax+actual.dre.irpj+actual.dre.csll);
  }
 });
-test('bloqueio DIFAL usa RBT12 no limite inclusive e ICMS fora do DAS somente nos regimes Simples',()=>{
+test('DIFAL de entrada não bloqueia por RBT12; ICMS fora do DAS continua uma escolha explícita',()=>{
  for(const rbt12 of [3599999.99,3600000,3600000.01])for(const icmsOutside of [false,true]){
   const result=calculateTax({...example(),rbt12,icmsOutside,difalMonthly:100,icmsAnticipation:{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73200}});
   for(const regime of result.regimes){
-   const simple=['pure','hybrid'].includes(regime.id),blocked=simple&&(rbt12>=3600000||icmsOutside);
+   const simple=['pure','hybrid'].includes(regime.id),blocked=simple&&icmsOutside;
    assert.equal(regime.difalApplication.blocked,blocked);
    close(regime.dre.difal,0);close(regime.dre.icmsAnticipation,simple&&!blocked?-8784:0);
    if(blocked)assert.match(regime.difalApplication.message,/Zerado automaticamente/);
   }
  }
  const policy=defaultDifalPolicy();policy.enabled.pure=false;
- assert.equal(resolveDifalApplication({policy,regimeId:'pure',rbt12:3600000}).reason,'SUBLIMIT');
+ assert.equal(resolveDifalApplication({policy,regimeId:'pure',rbt12:3600000}).reason,'USER_EXCLUDED');
  assert.equal(resolveDifalApplication({regimeId:'actual',rbt12:5000000,icmsOutside:true}).salesDifal,false);
  assert.equal(resolveDifalApplication({regimeId:'actual',rbt12:5000000}).purchaseAnticipation,false);
  const noSource=calculateTax({...example(),difalPolicy:policy});assert.equal(noSource.regimes[0].dre.difal,0);
@@ -769,7 +769,7 @@ test('matriz de cenários, entrada/saída e sublimite aplica cada dedução uma 
   const result=calculateTax({...input,difalPolicy:policy,difalMonthly:100,icmsAnticipation:{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:73200}});
   for(const [index,id]of ids.entries()){
    const regime=result.regimes[index],reference=baseline.regimes[index],simple=index<2;
-   const allowed=simple&&policy.enabled[id]&&rbt12<3600000&&!icmsOutside;
+   const allowed=simple&&policy.enabled[id]&&!icmsOutside;
    const outgoing=0,incoming=allowed&&policy.operations[id].entry?8784:0;
    const charge=reference.available?outgoing+incoming:0;
    close(regime.dre.difal,reference.available?-outgoing:0);close(regime.dre.icmsAnticipation,reference.available?-incoming:0);
@@ -778,7 +778,7 @@ test('matriz de cenários, entrada/saída e sublimite aplica cada dedução uma 
    close(regime.dre.irpj,reference.dre.irpj);close(regime.dre.csll,reference.dre.csll);
    assert.equal(regime.difalApplication.salesDifal,!!outgoing);assert.equal(regime.difalApplication.purchaseAnticipation,!!incoming);
    if(!simple)assert.equal(regime.difalApplication.reason,'NOT_APPLICABLE');
-   else if(rbt12<3600000&&!icmsOutside&&policy.enabled[id]&&!policy.operations[id].entry&&!policy.operations[id].exit)assert.equal(regime.difalApplication.reason,'NO_OPERATIONS');
+   else if(!icmsOutside&&policy.enabled[id]&&!policy.operations[id].entry&&!policy.operations[id].exit)assert.equal(regime.difalApplication.reason,'NO_OPERATIONS');
   }
   const applied=structuredClone(policy);for(const id of ['pure','hybrid'])applied.operations[id].exit=false;assert.deepEqual(result.difalPolicy,applied);assert.deepEqual(policy,before);
  }
