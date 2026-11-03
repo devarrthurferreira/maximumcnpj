@@ -1,0 +1,37 @@
+name: Interface simples e feedback de carregamento
+on:
+  pull_request:
+    paths: ['public/**', 'tests/e2e/analyses-*.spec.ts', '.github/workflows/ui-feedback.yml']
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      mongo:
+        image: mongo:7.0
+        ports: ['27017:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MONGODB_URI: mongodb://127.0.0.1:27017
+      MONGODB_DB: maximum_ui_feedback_ci
+      WORKSPACE_ID: maximum_ui_feedback_ci
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false, fetch-depth: 2}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '22'}
+      - run: npm ci --include=dev
+      - run: npm run check:release && npm run check && npm run build && npm test
+      - run: npx playwright install --with-deps chromium
+      - name: Navegação, escolha, carregamento e falhas de gravação
+        run: npx playwright test --trace=off tests/e2e/analyses-loading.spec.ts tests/e2e/analyses-difal-assessment.spec.ts tests/e2e/analyses-monthly-average.spec.ts tests/e2e/analyses-document-difal.spec.ts tests/e2e/analyses-usability.spec.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maximum-ui-screenshots
+          path: test-results/**/*.png
+          retention-days: 3

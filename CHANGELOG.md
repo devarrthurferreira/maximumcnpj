@@ -1,5 +1,12 @@
 # Histórico de alterações
 
+## [0.54.5] - 2026-11-03
+
+- Simplifica a conferência de DIFAL, com valor de entrada em destaque, saída compacta e uma escolha por regime, preservando preferências não editadas.
+- Adiciona telas de carregamento ao abrir análises e DRE, salvar, ler e enviar documentos, gerar resultado e consultar histórico.
+- Mostra a etapa real da importação, evita cliques repetidos e encerra o indicador em erros, sem porcentagens fictícias.
+- Mantém cálculo, autenticação, histórico e período de janeiro a setembro sem alterações.
+
 ## [0.54.4] - 2026-11-03
 
 - Conferência por relatório antes das opções de inclusão; pendências não viram ausência ou zero.

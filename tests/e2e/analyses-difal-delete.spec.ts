@@ -307,8 +307,8 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   await page.locator('#analysis-difal-yes').check();await expect(details).toHaveJSProperty('open',true);
   await expect(enabled('pure')).toBeChecked();await expect(enabled('hybrid')).not.toBeChecked();
   await expect(direction('pure','entry')).toBeChecked();await expect(direction('pure','exit')).toHaveCount(0);
-  await expect(direction('hybrid','entry')).not.toBeChecked();await expect(direction('hybrid','exit')).not.toBeChecked();
-  await expect(direction('hybrid','entry')).toBeDisabled();await expect(direction('hybrid','exit')).toBeDisabled();
+  await expect(direction('hybrid','entry')).not.toBeChecked();await expect(direction('hybrid','exit')).toHaveCount(0);
+  await expect(direction('hybrid','entry')).toBeEnabled();
   expect(policyWrites).toEqual([]);
   expect((await api(page.request,baseURL!,'GET','/api/v4/analyses/'+id)).analysis.fiscal).toEqual(savedFiscal);
   await page.locator('#analysis-difal-no').check();await expect(page.locator('#analysis-difal-details')).toBeHidden();
