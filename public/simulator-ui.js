@@ -1,3 +1,4 @@
+import {loadingMarkup} from './ui-loading.js';
 import {monthlyProjection, monthlyDifal, baselineMonth, calculateMonthlySimulation, MONTHLY_MODEL_VERSION} from './simulator-monthly.js';
 import {buildRbt12Schedule, reconcileSection22Extraction} from './simulator-rbt12.js';
 import {renderOperationAudit,renderRbt12Schedule,renderAnticipationSource,buildDifalApplicationView,difalApplicationSummary,renderDifalAppliedSource} from './simulator-source-view.js';
@@ -1068,7 +1069,7 @@ async function openSavedSnapshot(snapshot,{current=false,historical=false}={}) {
       showSnapshot(snapshot);snapshotNotice(snapshot,{historical:true});return;
     }catch(error){refreshFailure(snapshot,error);return;}
   }
-  $('#simulator-app').innerHTML='<section class="card sim-empty" data-simulation-refresh="loading" aria-busy="true"><h2>Conferindo a DRE atual</h2><p role="status">Verificando o DIFAL de saída e os totais com os relatórios salvos…</p></section>';
+  $('#simulator-app').innerHTML='<div data-simulation-refresh="loading">'+loadingMarkup({title:'Conferindo a DRE atual',detail:'Conferindo os relatórios e recalculando os totais. O histórico será preservado.'})+'</div>';
   try{
     const response=await api('/api/v4/simulations/'+snapshot._id+'/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     const next=response.simulation;
@@ -1109,6 +1110,7 @@ function exportDre() {
   const anchor=document.createElement('a');anchor.href=url;anchor.download=`dre-${String(S.source.company.code||'empresa').replace(/[^\w-]/g,'_')}-${S.result.input.year}-${S.dreReportPeriod==='monthly'?'mensal':S.dreReportPeriod==='complete'?'completo':'anual'}.csv`;document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);
 }
 async function boot() {
+  $('#simulator-app').innerHTML=loadingMarkup({title:'Carregando a DRE…',detail:'Buscando os relatórios e conferindo seu acesso.'});
   try {
     S.user=(await api('/api/auth/session')).user;mountNavigation(S.user,'simulations');
     if(!S.user||S.user.mustChangePassword){$('#simulator-app').innerHTML=`<section class="card sim-empty"><h2>${S.user?.mustChangePassword?'Redefina sua senha para continuar':'Entre para continuar'}</h2><p>Use sua conta Maximum para acessar os relatórios e o simulador.</p><a class="sim-back" href="/">Acessar painel →</a></section>`;return;}

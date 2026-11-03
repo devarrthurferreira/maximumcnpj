@@ -1,3 +1,5 @@
+import {loadingMarkup} from './ui-loading.js';
+import {includesEntry} from './analysis-difal-inclusion.js';
 import {isReadyToFinalize} from './purchase-finalization.js';
 import {icon} from './navigation.js';
 import {REGIME_IDS,REGIME_LABELS,resolveRegimeSelection,requiresSimplesReference} from './regime-selection.js';
@@ -223,31 +225,34 @@ export function renderDifalAssessment(assessment) {
   const states={waiting:'Aguardando relatório',reading:'Conferindo relatório',unavailable:'Leitura indisponível',
     pending:'Conferência pendente',partial:'Valor parcial — conferência pendente',available:'Entrada identificada',
     none:'Sem entrada elegível no relatório',disabled:'Saída não aplicada pela regra da análise'};
-  return `<div class="analysis-difal-assessment" aria-label="DIFAL identificado nos relatórios" aria-live="polite">${['entry','exit'].map(direction=>{
+  return `<div class="analysis-difal-assessment is-simple" aria-label="DIFAL identificado nos relatórios" aria-live="polite">${['entry','exit'].map(direction=>{
     const item=assessment?.[direction]||{state:'waiting',amountCents:null,note:'Adicione e confira o relatório antes de decidir.'};
-    return `<article data-difal-assessment="${direction}" data-difal-state="${esc(item.state)}"><h3>${direction==='entry'?'Entradas · compras':'Saídas · vendas'}</h3><strong>${esc(states[item.state]||states.unavailable)}</strong>${item.amountCents!==null&&item.amountCents!==undefined?`<p data-difal-detected-amount>${money(item.amountCents/100)}</p>`:''}${item.eligibleLines!==null&&item.eligibleLines!==undefined&&direction==='entry'?`<p>${esc(item.eligibleLines)} operação(ões) elegível(is) · Base: ${money(item.baseCents/100)}</p>`:''}<p>${esc(item.note||item.context||'Estimativa conferida nos documentos de janeiro a setembro.')}</p></article>`;
+    const note=item.note||item.context||'Estimativa dos documentos de janeiro a setembro.';
+    return `<article class="analysis-difal-${direction}" data-difal-assessment="${direction}" data-difal-state="${esc(item.state)}"><div class="analysis-difal-result-heading"><h3>${direction==='entry'?'DIFAL de entrada':'DIFAL de saída'}</h3><strong>${item.state==='reading'?'<span class="max-loading-spinner" aria-hidden="true"></span>':''}${esc(states[item.state]||states.unavailable)}</strong></div>${item.amountCents!==null&&item.amountCents!==undefined?`<p data-difal-detected-amount>${money(item.amountCents/100)}</p>`:''}${item.eligibleLines!==null&&item.eligibleLines!==undefined&&direction==='entry'?`<p class="analysis-difal-base">${esc(item.eligibleLines)} operação(ões) elegível(is) · Base: ${money(item.baseCents/100)}</p>`:''}${direction==='exit'&&item.state==='disabled'?`<details class="analysis-difal-rule"><summary>Entender a saída</summary><p>${esc(note)}</p></details>`:`<p class="analysis-difal-source-note">${esc(note)}</p>`}</article>`;
   }).join('')}</div>`;
 }
 
-export function renderDifalChoice(selection,policy,{prefix='analysis',choice,assessment}={}) {
+export function renderDifalChoice(selection,policy,{prefix='analysis',choice,assessment,reading=false}={}) {
   const selected=resolveRegimeSelection(selection).selected.filter(id=>['pure','hybrid'].includes(id));
   if(!selected.length)return '';
   const decision=choice===undefined?(selected.some(id=>policy?.enabled?.[id])?'yes':'no'):choice;
   const canChoose=assessment?.entry?.state==='available';
-  const explanation=assessment?.entry?.state==='none'?'Nenhuma entrada elegível foi encontrada. A DRE fica com R$ 0,00 para essa entrada; suas preferências salvas não são alteradas.':canChoose?'Confira a estimativa acima e escolha se deseja incluí-la na DRE.':'Leia e confira o relatório de entradas antes de escolher. Pendência ou erro não significam ausência de DIFAL.';
-  return `<section class="analysis-difal-panel" id="${esc(prefix)}-difal-panel" data-evidence-ready="${canChoose}">
+  const explanation=assessment?.entry?.state==='none'?'Nenhuma entrada elegível: R$ 0,00 na DRE. Suas preferências salvas são preservadas.':canChoose?'A leitura não altera sua escolha. Confirme abaixo a inclusão na DRE.':'Adicione ou confira o relatório de entradas. Pendência não é valor zero.';
+  return `<section class="analysis-difal-panel is-simple" id="${esc(prefix)}-difal-panel" data-evidence-ready="${canChoose}">
+    <div class="analysis-difal-period"><span>Resultado dos relatórios</span><span>Janeiro a setembro</span></div>
+    ${reading?loadingMarkup({title:'Conferindo os relatórios…',detail:'Atualizando a leitura sem alterar suas escolhas.',compact:true}):''}
     ${renderDifalAssessment(assessment)}<p class="analysis-note">${esc(explanation)}</p>
-    <fieldset class="analysis-difal-question" ${canChoose?'':'disabled'} aria-describedby="${esc(prefix)}-difal-summary"><legend>Incluir o DIFAL de entrada identificado na DRE?</legend><div class="analysis-difal-choice-options">${[['yes','Sim'],['no','Não']].map(([value,label])=>`<label for="${esc(prefix)}-difal-${value}"><input id="${esc(prefix)}-difal-${value}" type="radio" name="${esc(prefix)}-difal-choice" value="${value}" data-difal-choice="${value}" data-difal-context="${esc(prefix)}" ${decision===value?'checked':''}><span>${label}</span></label>`).join('')}</div></fieldset>
-    <p class="analysis-difal-summary" id="${esc(prefix)}-difal-summary" role="status" aria-live="polite">${esc(difalChoiceSummary(selection,policy,choice))}</p>
-    <details class="analysis-difal-details" id="${esc(prefix)}-difal-details" ${decision==='yes'&&canChoose?'open':'hidden'}><summary>Definir regimes para a entrada identificada</summary>${difalOptions(selection,policy)}</details>
-    ${prefix==='analysis'?'<div class="analysis-actions"><button type="button" id="analysis-difal-documents">Conferir relatórios</button><button type="button" id="analysis-difal-retry">Atualizar leitura do DIFAL</button></div>':''}
+    <fieldset class="analysis-difal-question" ${canChoose?'':'disabled hidden'} aria-describedby="${esc(prefix)}-difal-summary"><legend>Incluir este DIFAL de entrada na DRE?</legend><div class="analysis-difal-choice-options">${[['yes','Sim'],['no','Não']].map(([value,label])=>`<label for="${esc(prefix)}-difal-${value}"><input id="${esc(prefix)}-difal-${value}" type="radio" name="${esc(prefix)}-difal-choice" value="${value}" data-difal-choice="${value}" data-difal-context="${esc(prefix)}" ${decision===value?'checked':''}><span>${label}</span></label>`).join('')}</div></fieldset>
+    <p class="analysis-difal-summary" id="${esc(prefix)}-difal-summary" role="status" aria-live="polite" ${canChoose?'':'hidden'}>${esc(difalChoiceSummary(selection,policy,choice))}</p>
+    <details class="analysis-difal-details" id="${esc(prefix)}-difal-details" ${decision==='yes'&&canChoose?'open':'hidden'}><summary>Escolher regimes</summary>${difalOptions(selection,policy,prefix)}</details>
+    ${prefix==='analysis'?`<div class="analysis-actions"><button type="button" id="analysis-difal-documents">Conferir relatórios</button><button type="button" id="analysis-difal-retry" ${reading?'disabled':''}>${reading?'Conferindo…':'Atualizar leitura'}</button></div>`:''}
   </section>`;
 }
 
-function difalOptions(selection,policy) {
+function difalOptions(selection,policy,prefix='analysis') {
   const selected=resolveRegimeSelection(selection).selected.filter(id=>['pure','hybrid'].includes(id));
   if(!selected.length)return '';
-  return `<div class="analysis-difal-options">${selected.map(id=>`<fieldset data-analysis-difal="${id}"><legend>${esc(REGIME_LABELS[id])}</legend><label class="analysis-check"><input type="checkbox" data-analysis-difal-enabled="${id}" ${policy?.enabled?.[id]?'checked':''}>Incluir entrada identificada neste regime</label><label class="analysis-check"><input type="checkbox" data-analysis-difal-operation="entry" data-analysis-difal-regime="${id}" ${policy?.operations?.[id]?.entry?'checked':''} ${!policy?.enabled?.[id]?'disabled':''}>ENTRADA - antecipação das compras elegíveis</label></fieldset>`).join('')}</div><p class="analysis-note">A leitura identifica a base e o valor; esta escolha apenas autoriza sua inclusão. CPF continua excluído conforme a regra desta análise. A saída não é reativada por estas opções.</p>`;
+  return `<div class="analysis-difal-options is-simple">${selected.map(id=>`<fieldset data-analysis-difal="${id}"><label class="analysis-difal-regime-choice"><input type="checkbox" id="${esc(prefix)}-difal-include-${id}" data-difal-include="${id}" data-analysis-difal-enabled="${id}" data-analysis-difal-operation="entry" data-analysis-difal-regime="${id}" ${includesEntry(policy,id)?'checked':''}><span><strong>${esc(REGIME_LABELS[id])}</strong><small>Incluir a entrada identificada</small></span></label></fieldset>`).join('')}</div>`;
 }
 
 function fiscalAdjustments(draft,source,canWrite,analysis,generation) {
@@ -280,7 +285,7 @@ function fiscalPanel(options) {
       ${wizardStep('regimes','Quais regimes terão DRE?','Selecione os regimes da comparação.',regimes,{first:true})}
       ${wizardStep('rbt12','RBT12 / PGDAS-D · opcional','',extratoPanel({...options,draft}))}
       ${wizardStep('documents','Relatórios de entradas e saídas','Importe e confira somente as competências disponíveis entre janeiro e setembro.',`<div id="analysis-fiscal-period">${renderAnalysisPeriod(options,{compact:true})}</div><div id="analysis-fiscal-evidence">${renderFiscalEvidence(options)}</div><div id="analysis-fiscal-documents-view">${renderFiscalReports(options)}</div>${simples?`<div id="analysis-inline-rbt12-view">${renderInlineRbt12(options)}</div>`:''}<div id="analysis-commercial-composition">${renderFiscalComposition(options)}</div>${tax}`)}
-      ${wizardStep('difal','DIFAL identificado nos relatórios','Confira a leitura e depois escolha a inclusão por regime.',`<div id="analysis-difal-view">${renderDifalChoice(analysis.config.regimeSelection,draft.difalPolicy,{choice:options.fiscalDifalChoice,assessment:assessAnalysisDifal(options)})||'<p class="analysis-note">Os regimes selecionados não utilizam a antecipação de entrada nesta análise.</p>'}</div>`)}
+      ${wizardStep('difal','Conferir DIFAL','Veja a leitura e confirme o que entra na DRE.',`<div id="analysis-difal-view">${renderDifalChoice(analysis.config.regimeSelection,draft.difalPolicy,{choice:options.fiscalDifalChoice,assessment:assessAnalysisDifal(options)})||'<p class="analysis-note">Os regimes selecionados não utilizam a antecipação de entrada nesta análise.</p>'}</div>`)}
     </fieldset></div>${wizardFooter({canWrite,sector:'fiscal',analysisId:analysis.id,finalAction:canWrite?`<button type="submit" name="intent" value="complete" class="primary" ${configDirty?'disabled':''}>Salvar e concluir</button>`:''})}</form>`;
   return wizardFrame('fiscal','Fiscal',analysis.company?.name||'Documentos e tributação.',form);
 }

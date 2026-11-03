@@ -1,3 +1,5 @@
+import {loadingMarkup,createLoadingScreen} from './ui-loading.js';
+import {includesEntry,captureEntryInclusions} from './analysis-difal-inclusion.js';
 import {assessAnalysisDifal,savedDifalChoice} from './analysis-difal-assessment.js';
 import {loadDocumentDifal} from './analysis-document-difal.js';
 import {mountNavigation} from './navigation.js';
@@ -36,6 +38,8 @@ const S={user:null,clients:null,analysis:null,sector:null,source:null,generation
   accountingAverageRaw:null,accountingYearRaw:null,draftRevisions:{config:null,fiscal:null,accounting:null},
   modalKind:null,modalOpen:false,modalSteps:{},modalReturn:null};
 let modal=null;
+const activity=createLoadingScreen({id:'analysis-busy-screen',target:()=>document.querySelector('dialog[open] .analysis-wizard-frame')});
+let busyMessage='Processando…';
 let companyCheckController=null,evidenceTask=null,metadataTask=null,accountingSummaryFrame=0;
 let scheduleCache={reference:null,months:null,value:null};
 const writable=()=>['admin','operator'].includes(S.user?.role);
@@ -90,14 +94,18 @@ function refreshDraftStatus() {
   const host=$('#analysis-draft-status');if(!host)return;
   if(S.modalKind==='new'){host.textContent='';return;}
   if(!writable()){host.textContent='Somente consulta';host.dataset.state='saved';return;}
-  if(S.busy){host.textContent='Salvando…';host.dataset.state='pending';return;}
+  if(S.busy){host.textContent=busyMessage;host.dataset.state='pending';return;}
   const pending=S.modalKind==='accounting'&&S.paste.pending;
   const changed=S[S.modalKind+'Dirty'];
   host.textContent=pending?'Colagem aguardando aplicação':changed?'Alterações não salvas':S.modalKind==='config'?'Escolhas salvas':S.analysis?.[S.modalKind]?.revision>0&&S.analysis?.[S.modalKind]?.updatedAt?'Dados salvos':'Salve para continuar depois';
   host.dataset.state=pending||changed?'pending':'saved';
 }
 function setBusy(value,message='') {
-  S.busy=value;$('#analyses-app').setAttribute('aria-busy',String(value));
+  S.busy=value;$('#analyses-app').setAttribute('aria-busy',String(value&&!S.modalOpen));
+  if(value){
+    if(message)busyMessage=message;
+    activity.show({title:busyMessage,detail:'Aguarde a confirmação. Não é necessário clicar novamente.'});
+  }else{activity.hide();busyMessage='Processando…';}
   refreshDraftStatus();
   if(value){
     document.querySelectorAll('#analyses-app fieldset.analysis-fields,#analysis-new-form fieldset').forEach(field=>field.disabled=true);
@@ -105,7 +113,7 @@ function setBusy(value,message='') {
     if($('#analysis-accounting-paste'))$('#analysis-accounting-paste').disabled=true;
     if($('#analysis-paste-replace-confirm'))$('#analysis-paste-replace-confirm').disabled=true;
     if($('#analysis-company-search'))$('#analysis-company-search').disabled=true;
-    if(message)feedback(message,'info');
+    feedback('');
   }
   if(modal&&S.modalKind)modal.sync(currentWizardState(),{busy:value||S.pdfBusy});
 }
@@ -118,7 +126,7 @@ function currentWizardState() {
   }
   S.modalSteps[kind]=step;return wizardStep(kind,step,{resume});
 }
-function releaseWizard() {modal?.dispose();modal=null;restoreAnalysisNotices();}
+function releaseWizard() {activity.park();modal?.dispose();modal=null;restoreAnalysisNotices();}
 function wizardReturnTarget() {
   if(S.modalReturn?.isConnected)return S.modalReturn;
   if(S.modalKind==='new')return $('#analysis-resume-new');
@@ -209,6 +217,7 @@ function bindWizard() {
     onPrevious:step=>setWizardStep(step),onClose:closeWizard});
   modal.sync(currentWizardState());
   if(S.modalOpen)modal.open(currentWizardState());
+  activity.relocate();
   refreshDraftStatus();
   dialog.addEventListener('keydown',event=>{
     if(event.key!=='Enter'||event.isComposing||!event.target.matches('input:not([type=file])'))return;
@@ -376,13 +385,13 @@ function difalSelection(prefix) {
   return prefix==='new'?{version:REGIME_SELECTION_VERSION,selected:S.newChoiceIds}:S.analysis.config.regimeSelection;
 }
 function selectedDifalRegimes(selection) {return selection.selected.filter(id=>id==='pure'||id==='hybrid');}
-function difalChoice(policy,selection) {return selectedDifalRegimes(selection).some(id=>policy.enabled[id])?'yes':'no';}
+function difalChoice(policy,selection) {return selectedDifalRegimes(selection).some(id=>includesEntry(policy,id))?'yes':'no';}
 function captureDifalPolicy(prefix,base) {
-  const panel=$('#'+prefix+'-difal-panel'),policy=clone(base||defaultDifalPolicy());
+  const panel=$('#'+prefix+'-difal-panel');
+  let policy=clone(base||defaultDifalPolicy());
   for(const id of ['pure','hybrid'])policy.operations[id].exit=false;
   if(!panel)return parseDifalPolicy(policy);
-  panel.querySelectorAll('[data-analysis-difal-enabled]').forEach(input=>policy.enabled[input.dataset.analysisDifalEnabled]=input.checked);
-  panel.querySelectorAll('[data-analysis-difal-operation="entry"]').forEach(input=>policy.operations[input.dataset.analysisDifalRegime].entry=input.checked);
+  policy=captureEntryInclusions(policy,[...panel.querySelectorAll('[data-difal-include]')].map(input=>[input.dataset.difalInclude,input.checked]));
   return parseDifalPolicy(policy);
 }
 function refreshDifalControls(prefix,policy,selection,choice=difalChoice(policy,selection)) {
@@ -390,12 +399,8 @@ function refreshDifalControls(prefix,policy,selection,choice=difalChoice(policy,
   const canChoose=panel.dataset.evidenceReady==='true';
   panel.querySelector('.analysis-difal-question').disabled=!canChoose;
   panel.querySelectorAll('[data-difal-choice]').forEach(input=>input.checked=input.value===choice);
-  panel.querySelectorAll('[data-analysis-difal-enabled]').forEach(input=>{
-    input.checked=policy.enabled[input.dataset.analysisDifalEnabled];input.disabled=!canChoose||choice!=='yes';
-  });
-  panel.querySelectorAll('[data-analysis-difal-operation]').forEach(input=>{
-    const id=input.dataset.analysisDifalRegime,outgoing=input.dataset.analysisDifalOperation==='exit';
-    input.checked=!outgoing&&policy.operations[id].entry;input.disabled=!canChoose||outgoing||choice!=='yes'||!policy.enabled[id];
+  panel.querySelectorAll('[data-difal-include]').forEach(input=>{
+    input.checked=includesEntry(policy,input.dataset.difalInclude);input.disabled=!canChoose||choice!=='yes';
   });
   const details=$('#'+prefix+'-difal-details');if(details)details.hidden=!canChoose||choice!=='yes';
   const summary=$('#'+prefix+'-difal-summary');if(summary)summary.textContent=difalChoiceSummary(selection,policy,choice);
@@ -407,16 +412,16 @@ function changeDifal(prefix,input) {
   if(input.matches('[data-difal-choice]')){
     choice=input.value;
     if(choice==='no'){
-      if(selected.some(id=>before.enabled[id]))S.difalEnabledMemory[prefix]=clone(before.enabled);
+      if(selected.some(id=>before.enabled[id]))S.difalEnabledMemory[prefix]=clone(before);
       policy.enabled.pure=policy.enabled.hybrid=false;
-    }else if(!selected.some(id=>policy.enabled[id])){
-      const memory=S.difalEnabledMemory[prefix],restore=memory&&selected.some(id=>memory[id]);
-      selected.forEach(id=>policy.enabled[id]=restore?memory[id]===true:true);
+    }else if(!selected.some(id=>includesEntry(policy,id))){
+      const memory=S.difalEnabledMemory[prefix],restore=memory&&selected.some(id=>includesEntry(memory,id));
+      selected.forEach(id=>{const include=restore?includesEntry(memory,id):true;policy.enabled[id]=include;policy.operations[id].entry=include;});
     }
   }else{
     choice=difalChoice(policy,selection);
     if(choice==='no'){
-      if(selected.some(id=>before.enabled[id]))S.difalEnabledMemory[prefix]=clone(before.enabled);
+      if(selected.some(id=>before.enabled[id]))S.difalEnabledMemory[prefix]=clone(before);
     }
   }
   if(prefix==='new'){S.newDifalPolicy=policy;S.newDifalChoice=choice;}
@@ -765,7 +770,7 @@ async function openAnalysis(id) {
   const sequence=++S.sequence;
   cancelEvidence();cancelMetadata();
   releaseWizard();
-  $('#analyses-app').innerHTML='<div class="initial">Abrindo o trabalho salvo desta empresa…</div>';
+  $('#analyses-app').innerHTML='<div class="initial">'+loadingMarkup({title:'Abrindo a análise…',detail:'Buscando os dados salvos desta empresa.'})+'</div>';
   const response=await analysisRequest(apiPath('/'+encodeURIComponent(id)+'?summary=1'));
   if(sequence!==S.sequence)return;
   S.analysis=null;adoptAnalysis(response.analysis);S.generateRequest=null;
@@ -1054,12 +1059,13 @@ function editFiscalAdjustments() {
 function refreshDifalAssessment() {
   const host=$('#analysis-difal-view');if(!host||!S.analysis)return;
   const active=document.activeElement?.id,open=$('#analysis-difal-details')?.open;
+  const reading=S.evidenceState==='loading';
   host.innerHTML=renderDifalChoice(S.analysis.config.regimeSelection,S.fiscalDraft.difalPolicy,
-    {choice:S.fiscalDifalChoice,assessment:assessAnalysisDifal(detailOptions())})||'<p>Os regimes selecionados não utilizam antecipação de entrada.</p>';
+    {choice:S.fiscalDifalChoice,assessment:assessAnalysisDifal(detailOptions()),reading})||'<p>Os regimes selecionados não utilizam antecipação de entrada.</p>';
   refreshDifalControls('analysis',S.fiscalDraft.difalPolicy,S.analysis.config.regimeSelection,S.fiscalDifalChoice);
   if(open&&$('#analysis-difal-details')&&!$('#analysis-difal-details').hidden)$('#analysis-difal-details').open=true;
   const documents=$('#analysis-difal-documents');if(documents)documents.onclick=()=>setWizardStep('documents');
-  const retry=$('#analysis-difal-retry');if(retry){retry.disabled=S.busy||S.evidenceState==='loading';retry.onclick=()=>void ensureEvidence({force:true});}
+  const retry=$('#analysis-difal-retry');if(retry){retry.disabled=S.busy||reading;retry.textContent=reading?'Conferindo…':'Atualizar leitura';retry.onclick=()=>void ensureEvidence({force:true});}
   if(active&&host.contains(document.getElementById(active)))document.getElementById(active)?.focus({preventScroll:true});
 }
 function bindFiscal() {
@@ -1159,7 +1165,7 @@ async function addFiscalDocument(type,file,{retry=false}={}) {
   try {
     clearError();captureAll();
     if(S.configDirty)throw new Error('Salve as escolhas de regimes e ano antes de adicionar os documentos.');
-    setBusy(true);state.error='';state.status='reading';refreshDocumentUploads();
+    setBusy(true,`Lendo o relatório de ${type==='SALES'?'saídas':'entradas'}…`);state.error='';state.status='reading';refreshDocumentUploads();
     await loadDocumentUf();
     // The generation lookup is read-only. Validate the file before preparing the first import.
     let generation;
@@ -1171,7 +1177,7 @@ async function addFiscalDocument(type,file,{retry=false}={}) {
     if(resume&&['CANCELLED','INVALID'].includes(resume.status))resume=null;
     if(resume?.status==='COMPLETED'&&!state.pending)throw new Error('Este documento já foi adicionado. Use Conferir relatório para abri-lo.');
     if(file&&isReadyToFinalize(resume)&&file.name!==resume.fileName)throw new Error('Já existe um arquivo enviado neste cartão. Use Retomar leitura para concluir esse documento.');
-    const progress=message=>{state.progress=message;refreshDocumentUploads();};
+    const progress=message=>{state.progress=message;activity.update({title:message,detail:state.fileName||'Conferindo o documento desta empresa.'});refreshDocumentUploads();};
     if(!state.pending&&resume?.status!=='PROCESSING'&&!isReadyToFinalize(resume)){
       if(!resume&&!normalizeUf(S.documentIssuerUf))throw new Error('Selecione a UF da empresa e adicione o arquivo novamente.');
       state.review=await readFiscalDocument(file,{type,companyCode:S.analysis.company.code,issuerUf:S.documentIssuerUf,resume,onProgress:progress});
@@ -1253,6 +1259,7 @@ function bindInlineRbt12() {
   const options=$('#analysis-inline-rbt12-view');if(options)bindAnalysisActions(options);
 }
 function pdfProgress(message){
+  if(S.pdfBusy&&S.busy)activity.update({title:message,detail:'Extrato do Simples · aguarde a confirmação.'});
   S.pdfStatus=message;
   for(const id of ['analysis-pdf-status','analysis-inline-pdf-status']){const host=$('#'+id);if(host)host.textContent=message;}
 }
@@ -1390,7 +1397,7 @@ async function loadVersions(page) {
   if(S.versionsLoading||!S.analysis)return;
   const id=S.analysis.id,sequence=S.sequence;S.versionsLoading=true;
   try {
-    $('#analysis-version-list').innerHTML='<p class="analysis-note">Carregando as versões desta empresa…</p>';
+    $('#analysis-version-list').innerHTML=loadingMarkup({title:'Carregando o histórico…',detail:'Buscando as versões salvas desta empresa.',compact:true});
     const response=await analysisRequest(apiPath('/'+id+'/versions?'+new URLSearchParams({page:String(page)})));
     if(!currentContext(id,sequence))return;
     if(!Array.isArray(response.items))throw new Error('Não foi possível confirmar as versões salvas.');
@@ -1402,6 +1409,7 @@ async function loadVersions(page) {
 }
 
 async function boot() {
+  $('#analyses-app').innerHTML='<div class="initial">'+loadingMarkup({title:'Carregando suas análises…',detail:'Conferindo seu acesso e o trabalho salvo.'})+'</div>';
   try {
     const session=await analysisRequest('/api/auth/session');S.user=session.user;
     mountNavigation(S.user,'analyses');

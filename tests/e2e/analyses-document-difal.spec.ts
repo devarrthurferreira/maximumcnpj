@@ -156,9 +156,9 @@ test('evidência da entrada permanece ao excluir da DRE e saída segue a regra s
   await fiscalStep(page,'difal');
   await details.locator('[data-analysis-difal-regime="pure"][data-analysis-difal-operation="entry"]').uncheck();
   await expect(details.locator('[data-analysis-difal-operation="exit"]')).toHaveCount(0);
-  await page.locator('#analysis-wizard button[value="complete"]').click();
-  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','difal');
-  await expect(page.locator('#analysis-wizard [role="alert"]')).toContainText('Escolha entrada');
+  // Unchecking both inclusion cards is an explicit choice not to include entry.
+  await expect(page.locator('#analysis-difal-no')).toBeChecked();
+  await expect(page.locator('#analysis-difal-details')).toBeHidden();
   await page.locator('#analysis-difal-no').check();
   await fiscalStep(page,'documents');await expect(amount(page,'PURCHASES')).toHaveText('R$ 36,60');await expect(amount(page,'SALES')).toHaveText('R$ 0,00');
   expect(writes).toEqual([]);

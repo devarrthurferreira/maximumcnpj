@@ -1,4 +1,10 @@
-# Maximum CNPJ · v0.54.4
+# Maximum CNPJ · v0.54.5
+
+## v0.54.5 — Fluxo simples e carregamento visível (2026-11-03)
+
+Conferência do DIFAL com valor encontrado em destaque, saída compacta e uma escolha por regime. Ler ou atualizar relatórios não decide pela inclusão e não altera preferências salvas. Sem relatório ou com pendência, nenhum zero é inventado.
+
+A abertura de análises, o histórico e a DRE têm estados visuais de carregamento. Salvar, enviar relatórios, ler o extrato e gerar o resultado mostram uma tela de processamento com mensagens reais da etapa; operações são protegidas contra clique repetido. O aviso é encerrado tanto no sucesso como no erro e respeita movimento reduzido. Não há porcentagem simulada. As regras de cálculo e o histórico permanecem inalterados.
 
 ## v0.54.4 — Conferência de DIFAL antes da escolha (2026-11-03)
 

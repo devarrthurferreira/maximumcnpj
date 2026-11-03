@@ -162,7 +162,8 @@ test('RBT12 é enviada junto de entradas e saídas, retomada em nova sessão e d
     await page.getByRole('button',{name:'Adicionar RBT12 em PDF',exact:true}).click();
     await (await chooser).setFiles({name:fileName,mimeType:'application/pdf',buffer:pdf});
     await expect.poll(()=>counts.reads).toBe(1);
-    await expect(page.locator('#analyses-app')).toHaveAttribute('aria-busy','true');
+    await expect(page.locator('#analysis-fiscal-form')).toHaveAttribute('aria-busy','true');
+    await expect(page.locator('#analysis-busy-screen')).toBeVisible();
     await expect(page.locator('#analysis-wizard-close')).toBeDisabled();
     await page.keyboard.press('Escape');
     await expect(page.locator('#analysis-wizard')).toBeVisible();

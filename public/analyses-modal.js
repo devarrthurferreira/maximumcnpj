@@ -50,7 +50,8 @@ export function createAnalysisModal({dialog,onNext,onBack,onPrevious,onClose,isB
   }
   function sync(state,{focus=false,busy=isBusy()}={}) {
     if(disposed)return;
-    dialog.dataset.wizardStep=state.id;dialog.setAttribute('aria-busy',String(busy));
+    dialog.dataset.wizardStep=state.id;
+    dialog.querySelector('form')?.setAttribute('aria-busy',String(busy));
     dialog.querySelectorAll('[data-wizard-step]').forEach(panel=>panel.hidden=panel.dataset.wizardStep!==state.id);
     const progress=$('#analysis-wizard-progress',dialog);progress.hidden=state.total===1;
     const key=JSON.stringify([state.id,state.steps]);
