@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.54.4] - 2026-11-03
+
+- Conferência por relatório antes das opções de inclusão; pendências não viram ausência ou zero.
+- Estimativas de entrada visíveis independentemente da opção Sim/Não, sem modificar fontes.
+- Decisão pendente persistida em rascunhos novos; servidor impede concluir entrada positiva sem confirmação quando marcada pendente.
+- Regimes preservados nas atualizações de leitura. Sem opções de saída redundantes ou afirmação automática de ausência de vendas.
+- Testes de estados, identidade, valores monetários, contrato fiscal e navegação do fluxo revisto.
+
 
 ## [0.54.3] - 2026-11-03
 

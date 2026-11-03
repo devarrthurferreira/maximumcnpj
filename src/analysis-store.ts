@@ -198,14 +198,14 @@ function seedLegacy(item:Analysis,snapshot:any,actor:LookupActor){
   item.currentSimulation=currentOf(snapshot,null,true);item.legacy=true;
   item.legacyReference={simulationId:snapshot._id,monthlyInputsPreserved:inputs.length>0};
 }
-async function ensureAnalysis(actor:LookupActor,clientId:string,year:2027|2028,selection:AnalysisConfig['regimeSelection'],activate:boolean,difalPolicy?:DifalPolicy):Promise<{item:Analysis;created:boolean}>{
+async function ensureAnalysis(actor:LookupActor,clientId:string,year:2027|2028,selection:AnalysisConfig['regimeSelection'],activate:boolean,difalPolicy?:DifalPolicy,deferDifalChoice=false):Promise<{item:Analysis;created:boolean}>{
   const c=await analyses();let existing=await c.findOne(scope({clientId}));
   if(existing){
     const receipt=await analysisDeletion(existing._id);
     if(receipt || existing.deletionStartedAt){
       // The deletion was explicitly confirmed already. Repair a failed purge before opening fresh work.
       await deleteAnalysis(actor,existing._id,{expectedRevision:receipt?.revision??existing.deletionRevision,confirmed:true});
-      return ensureAnalysis(actor,clientId,year,selection,activate,difalPolicy);
+      return ensureAnalysis(actor,clientId,year,selection,activate,difalPolicy,deferDifalChoice);
     }
     return {item:existing as Analysis,created:false};
   }
@@ -215,6 +215,7 @@ async function ensureAnalysis(actor:LookupActor,clientId:string,year:2027|2028,s
     activated:activate,revision:0,config:{revision:0,year,regimeSelection:selection},fiscal:sector(defaultFiscalData(selection),actor,now),
     accounting:sector({months:[]},actor,now),currentSimulation:null,legacy:false,createdAt:now,createdBy:author(actor),updatedAt:now};
   if(difalPolicy)item.fiscal.data.difalPolicy=structuredClone(difalPolicy);
+  if(deferDifalChoice)item.fiscal.data.difalChoice=null;
   // Reserve only empty data. A delayed insert cannot publish a legacy seed read before another deletion.
   try{await c.insertOne(item);}
   catch(error:any){if(error.code!==11000)throw error;existing=await c.findOne(scope({clientId}));need(existing,'Não foi possível abrir a análise.',409,'ANALYSIS_CONFLICT');await assertAnalysisNotDeleted(existing._id);return {item:existing as Analysis,created:false};}
@@ -274,9 +275,11 @@ async function saveGenerationRequest(id:string,key:string,data:Record<string,unk
   }
 }
 export async function openAnalysis(actor:LookupActor,input:unknown,options:AnalysisReadOptions={}){
-  write(actor);analysisObject(input,['clientId','year','regimeSelection'],['difalPolicy']);
+  write(actor);analysisObject(input,['clientId','year','regimeSelection'],['difalPolicy','difalChoice']);
+  const deferDifalChoice=Object.hasOwn(input,'difalChoice');
+  need(!deferDifalChoice||input.difalChoice===null,'Ao abrir uma análise nova, a decisão de DIFAL deve aguardar a leitura dos relatórios.');
   const difalPolicy=Object.hasOwn(input,'difalPolicy')?analysisDifalPolicy(input.difalPolicy):undefined;
-  const {item,created}=await ensureAnalysis(actor,analysisId(input.clientId),analysisYear(input.year),analysisSelection(input.regimeSelection),true,difalPolicy);
+  const {item,created}=await ensureAnalysis(actor,analysisId(input.clientId),analysisYear(input.year),analysisSelection(input.regimeSelection),true,difalPolicy,deferDifalChoice);
   if(!item.activated){
     await withAnalysis(item._id,async(current,owner)=>{
       const latest=await companyHasAnalysisDeletion(item.clientId)?null:await(await collection('simulations')).find(scope({clientId:item.clientId,deletedAt:{$exists:false},analysisPublication:{$ne:'PENDING'}})).sort({createdAt:-1,_id:-1}).limit(1).next();
@@ -332,7 +335,10 @@ export async function updateAnalysisSector(actor:LookupActor,id:string,kind:'fis
       }
     }
     if(fiscal.generationId!==prior.fiscal.data.generationId)need(fiscal.monthlyOverrides===null,'Ao trocar os arquivos, revise os ajustes fiscais anteriores.',409,'ANALYSIS_SOURCE_CHANGED');
-    if(input.complete){const checked=await fiscalSource(prior,fiscal);confirmation={fingerprint:checked.fingerprint,generationId:fiscal.generationId!,purchaseJobId:checked.source.purchases.jobId,
+    if(input.complete){const checked=await fiscalSource(prior,fiscal);
+      need(!(fiscal.difalChoice===null&&requiresSimplesReference(prior.config.regimeSelection)&&checked.source.monthlyReports?.some(row=>row.anticipation?.amountCents>0)),
+        'Confira a entrada identificada nos relatórios e confirme sua inclusão ou exclusão na DRE.',422,'ANALYSIS_DIFAL_CHOICE');
+      confirmation={fingerprint:checked.fingerprint,generationId:fiscal.generationId!,purchaseJobId:checked.source.purchases.jobId,
       salesJobId:checked.source.sales.jobId,extractionId:fiscal.rbt12ExtractionId,months:checked.months,configRevision,analysisPeriod:checked.source.analysisPeriod};}
   }
   const now=new Date();const value={revision:expected+1,status:input.complete?'COMPLETE':'DRAFT',data,completedAt:input.complete?now:null,updatedAt:now,updatedBy:author(actor),confirmation};

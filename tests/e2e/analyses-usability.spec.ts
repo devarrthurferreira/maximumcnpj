@@ -8,7 +8,7 @@ type Workspace={db:Db;workspaceId:string;account:Account};
 type Method='GET'|'POST'|'PATCH';
 type WizardKind='new'|'fiscal'|'accounting';
 const wizardSteps:Record<WizardKind,string[]>={
-  new:['company','sector'],fiscal:['regimes','difal','rbt12','documents'],accounting:['values']
+  new:['company','sector'],fiscal:['regimes','rbt12','documents','difal'],accounting:['values']
 };
 const test=base.extend<{analysisWorkspace:Workspace}>({
   analysisWorkspace:async({},use)=>{

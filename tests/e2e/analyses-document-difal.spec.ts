@@ -101,7 +101,7 @@ async function attach(request:APIRequestContext,baseURL:string,analysis:any,gene
   return attached.job._id;
 }
 async function fiscalStep(page:Page,step:'regimes'|'difal'|'rbt12'|'documents'){
-  const wizard=page.locator('#analysis-wizard'),steps=['regimes','difal','rbt12','documents'];
+  const wizard=page.locator('#analysis-wizard'),steps=['regimes','rbt12','documents','difal'];
   for(let attempt=0;attempt<steps.length;attempt++){
     const current=await wizard.getAttribute('data-wizard-step');expect(steps).toContain(current);if(current===step)return;
     await page.locator(steps.indexOf(current!)>steps.indexOf(step)?'#analysis-wizard-back':'#analysis-wizard-next').click();

@@ -65,7 +65,7 @@ async function createCompany(request:APIRequestContext,baseURL:string,prefix='Em
   expect(imported.success).toBe(1);return {id:imported.items[0].id,code,name};
 }
 async function fiscalStep(page:Page,step:'regimes'|'difal'|'rbt12'|'documents'){
-  const wizard=page.locator('#analysis-wizard'),steps=['regimes','difal','rbt12','documents'];
+  const wizard=page.locator('#analysis-wizard'),steps=['regimes','rbt12','documents','difal'];
   await expect(page.locator('[data-analysis-sector="fiscal"]').first()).toBeAttached();
   if(!await wizard.isVisible())await page.locator('[data-analysis-sector="fiscal"]').first().click();
   else if(await wizard.getAttribute('data-wizard-kind')!=='fiscal')await wizard.locator('[data-analysis-sector="fiscal"]').click();

@@ -63,7 +63,7 @@ async function switchSector(page:Page,sector:'fiscal'|'accounting'){
 }
 
 async function fiscalDocuments(page:Page){
-  const wizard=page.locator('#analysis-wizard'),steps=['regimes','difal','rbt12','documents'];
+  const wizard=page.locator('#analysis-wizard'),steps=['regimes','rbt12','documents','difal'];
   for(let attempt=0;attempt<steps.length;attempt++){
     const current=await wizard.getAttribute('data-wizard-step');expect(steps).toContain(current);
     if(current==='documents')return;
