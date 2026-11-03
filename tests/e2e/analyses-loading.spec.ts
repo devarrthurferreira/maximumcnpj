@@ -96,7 +96,7 @@ test('atualizar conferência mostra atividade sem salvar ou alterar a preferênc
   await expect(detected(page)).toHaveAttribute('data-difal-state','available');await expect(page.locator('#analysis-difal-retry')).toBeEnabled();
   await page.locator('#analysis-difal-no').check();
   const before=(await api(page.request,baseURL!,'GET',`/api/v4/analyses/${analysis.id}?summary=1`)).analysis;
-  const hold=gate();await page.route(`**/api/v4/analyses/${analysis.id}?includeSource=1`,async route=>{await hold.promise;await route.continue();});
+  const hold=gate();await page.route('**/api/v4/purchases/*/difal-period',async route=>{await hold.promise;await route.continue();});
   try{
     await page.locator('#analysis-difal-retry').click();await expect(page.locator('#analysis-difal-view .max-loading')).toBeVisible();
     await expect(page.locator('#analysis-difal-retry')).toBeDisabled();await expect(page.locator('#analysis-difal-no')).toBeChecked();

@@ -1,7 +1,7 @@
 import {documentDifalSummary} from './analysis-document-difal.js';
 
 /** Evidence from the current linked reports, never from a checkbox or saved DRE. */
-export function assessAnalysisDifal({analysis,generation,documentUploads={},generationError='',generationUnavailable=false}={}) {
+export function assessAnalysisDifal({analysis,generation,documentUploads={},generationError='',generationUnavailable=false,metadataState=''}={}) {
   const generationId=analysis?.fiscal?.data?.generationId,clientId=analysis?.clientId;
   const companies=generation?._id===generationId?generation?.companies?.filter(item=>item.clientId===clientId):[];
   const company=companies?.length===1?companies[0]:null;
@@ -9,9 +9,11 @@ export function assessAnalysisDifal({analysis,generation,documentUploads={},gene
     const label=direction==='entry'?'DIFAL de entrada':'DIFAL de saída';
     const unknown=(state,note)=>({direction,label,state,amountCents:null,baseCents:null,eligibleLines:null,pendingLines:null,note,confirmed:false});
     const upload=documentUploads[type];
-    if(upload?.error||generationError||generationUnavailable)return [direction,unknown('unavailable','Leitura indisponível. Confira ou tente novamente; não é um zero confirmado.')];
+    if(upload?.error||generationError||generationUnavailable)return [direction,unknown('unavailable',
+      upload?.error||generationError||'Os documentos vinculados não estão disponíveis. Confira os relatórios antes de tentar novamente.')];
     if(upload?.busy||['reading','preparing','uploading','processing'].includes(upload?.status?.toLowerCase()))return [direction,unknown('reading','Relatório em leitura. O resultado anterior não confirma este arquivo.')];
     if(!generationId)return [direction,unknown('waiting','Adicione o relatório para verificar as operações de janeiro a setembro.')];
+    if(metadataState==='loading')return [direction,unknown('reading','Conferindo os relatórios vinculados a esta empresa.')];
     if(!company)return [direction,unknown(generation?'unavailable':'reading','Aguardando conferência dos relatórios vinculados à empresa.')];
     const job=company[slot],jobId=company[idKey];
     if(!jobId&&!job)return [direction,unknown('waiting','Adicione o relatório para verificar as operações de janeiro a setembro.')];
