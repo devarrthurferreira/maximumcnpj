@@ -75,6 +75,39 @@ process.stdout.write(JSON.stringify(JSON.parse(input).map(row=>reconcileIrpj(row
 
 
 class DreQuarterlyIrpjTests(unittest.TestCase):
+
+    def test_prejuizo_jan_set_real_zero_is_audited_independently(self):
+        script = r"""
+import {assessQuarterlyIncomeTaxes} from './public/simulator-income-tax.js';
+const incomes=[50000,20000,10000,-180000,-10000,-5000,-5000,-5000,-5000];
+const months=incomes.map((value,index)=>({sourceMonth:'2025-'+String(index+1).padStart(2,'0'),month:index+1,
+  salesRevenue:100000,serviceRevenue:0,preTax:value}));
+const tax=assessQuarterlyIncomeTaxes({year:2027,months,annualLossZeroForReal:true});
+const regimes=container=>['presumed','actual'].map(id=>({id,available:container.regimes[id].available,
+  dre:{irpj:-container.regimes[id].movement.irpjTotalCents/100,csll:-container.regimes[id].movement.csllCents/100}}));
+const saved={version:'1.20.0-quarterly-income-tax',analysisPeriod:{version:'JAN_SEP_V1'},
+  incomeTaxAssessment:tax.incomeTaxAssessment,regimes:regimes(tax.incomeTaxAssessment),
+  monthlyResults:months.map(m=>({sourceMonth:m.sourceMonth,month:m.month,
+    result:{incomeTaxAssessment:tax.monthlyAssessments[m.sourceMonth],
+      regimes:regimes(tax.monthlyAssessments[m.sourceMonth]).map(r=>({...r,dre:{...r.dre,
+        sales:m.salesRevenue,services:m.serviceRevenue,preTax:m.preTax}}))}}))};
+process.stdout.write(JSON.stringify(saved));
+"""
+        executed = subprocess.run(['node', '--input-type=module', '-e', script], cwd=ROOT,
+                                  capture_output=True, text=True, check=True, timeout=30)
+        saved = json.loads(executed.stdout)
+        checked = reconcile_irpj(saved, 'actual')
+        self.assertTrue(checked['available'], checked['reason'])
+        self.assertEqual(checked['values']['irpjTotalAssessed'], 0)
+        for row in saved['monthlyResults']:
+            monthly = reconcile_irpj(saved, 'actual', source_month=row['sourceMonth'])
+            self.assertTrue(monthly['available'], monthly['reason'])
+            self.assertEqual(monthly['values']['irpjCurrentMovement'], 0)
+        tampered = copy.deepcopy(saved)
+        del tampered['incomeTaxAssessment']['realAnnualLossZero']
+        self.assertFalse(reconcile_irpj(tampered, 'actual')['available'])
+
+
     maxDiff = 1200
 
     def assert_unavailable(self, checked):
