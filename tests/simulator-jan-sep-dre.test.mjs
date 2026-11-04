@@ -175,6 +175,28 @@ test('CPF de outra UF e estimativas V5 positivas permanecem com saída zero em t
  }
 });
 
+test('Jan–Set coloca Impostos após as ações de relatório e mostra IRPJ sem o rodapé extenso',()=>{
+  const input=fixture(),before=structuredClone(input),p=input.presentation,html=renderAnnualDre(input);
+  const reportPosition=html.indexOf('id="dre-report-period"'),taxPosition=html.indexOf('id="tax-demonstrativo"'),
+    followUpPosition=html.indexOf('data-revenue-reconciliation="dre"');
+  assert(reportPosition>=0&&taxPosition>reportPosition&&followUpPosition>taxPosition);
+  assert.match(html,/APURAÇÃO DOS TRIBUTOS/);assert.match(html,/data-tax-row="irpj"/);
+  const captured=p.sections.flatMap(section=>section.rows).find(item=>item.key==='irpj'),assessed=tax(p,'irpj');
+  const normal=row(p,'irpjBasic'),additional=row(p,'irpjAdditional');
+  for(const id of ['pure','hybrid','presumed','actual']){
+    near(assessed.values[id],-captured.values[id]);
+    if(Number.isFinite(normal?.values?.[id])&&Number.isFinite(additional?.values?.[id]))
+      near(assessed.values[id],-(normal.values[id]+additional.values[id]));
+  }
+  for(const phrase of ['Referências deste demonstrativo','DIFAL nos cenários',
+    'RBT12 por competência · extrato','Movimento da parcela normal:',
+    'Janela de janeiro a setembro:','PDF, CSV e impressão incluem'])assert(!html.includes(phrase),phrase);
+  const print=renderDrePrintDocument({...input,period:'annual'});
+  assert(!print.includes('RBT12 por competência · extrato'));
+  assert(!print.includes('DIFAL nos cenários'));
+  assert.deepEqual(input,before);
+});
+
 test('DRE completa aparece imediatamente e preserva todas as contas de janeiro a setembro',()=>{
   const input=fixture(),html=renderAnnualDre(input);
   assert.match(html,/DRE completa/);assert.doesNotMatch(html,/DRE resumida/);assert.equal((html.match(/data-dre-regime-result=/g)||[]).length,4);
