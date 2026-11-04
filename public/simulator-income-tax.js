@@ -68,7 +68,10 @@ function periodFor(regimeId,quarter,inputs,year,rates,previousPeriods,overrideEx
   let irBase,csBase,irIncrease=zero(),csIncrease=zero(),lc224=null;
   if(regimeId==='actual'){
     if(values.preTax===null)return pending('Resultado antes de IRPJ/CSLL indisponível em uma ou mais competências do trimestre.');
-    irBase=positive(values.preTax);csBase=irBase;
+    // Never assess IRPJ or CSLL on a non-positive taxable quarter.
+    // A negative monthly tax movement is only a reversal of a prior provision.
+    const taxableResult=positive(values.preTax);
+    irBase=taxableResult;csBase=taxableResult;
   }else{
     // Signed monthly activity values are accumulated before the non-negative
     // quarterly tax base is applied. A return month can reverse a provision.
@@ -99,7 +102,7 @@ function periodFor(regimeId,quarter,inputs,year,rates,previousPeriods,overrideEx
   const bases={salesRevenue:amount(values.sales),serviceRevenue:amount(values.services),revenue:amount(revenue),preTax:values.preTax===null?null:amount(values.preTax),
     irpjBaseWithoutIncrease:amount(irBase),csllBaseWithoutIncrease:amount(csBase),irpjIncrease:amount(irIncrease),csllIncrease:amount(csIncrease),
     irpjBase:amount(irTotal),csllBase:amount(csTotal),irpjAdditionalLimit:LIMIT,irpjBaseWithinLimit:amount(sub(irTotal,excessBase)),irpjExcessBase:amount(excessBase)};
-  const reason=complete?(regimeId==='actual'?'Estimativa gerencial trimestral; não inclui ajustes fiscais, estoques ou compensação de prejuízos.':'Trimestre completo calculado com os dados e as premissas capturados.'):
+  const reason=complete?(regimeId==='actual'?(values.preTax.n<=0n?'Sem base tributável positiva no trimestre: IRPJ e CSLL devidos são zero. Uma provisão mensal anterior pode ser estornada.':'Estimativa gerencial trimestral; não inclui ajustes fiscais, estoques ou compensação de prejuízos.'):'Trimestre completo calculado com os dados e as premissas capturados.'):
     `Provisão cumulativa somente das competências conhecidas; faltam ${missingMonths.map(value=>String(value).padStart(2,'0')).join(', ')} para concluir o trimestre. O limite do adicional permanece R$ 60.000.`;
   // In Q4 a missing earlier quarter also prevents the statutory annual review.
   const closeAvailable=complete&&!(regimeId==='presumed'&&quarter===4&&!lc224.priorHistoryComplete);

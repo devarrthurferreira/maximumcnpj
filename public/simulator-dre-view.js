@@ -33,8 +33,8 @@ function tableRow(row,columns,options){
   const quarterly=options.presentation?.irpjReconciliation?.version==='IRPJ_RECONCILIATION_V2';
   const taxRow=options.rowContext==='taxes';
   const note=row.key==='irpj'?`<small class="dre-irpj-total-note">${taxRow?'Normal e adicional incluídos; confira a memória abaixo.':quarterly?'No mês: provisão acumulada menos provisão anterior. Normal e adicional já incluídos.':'Normal e adicional já incluídos neste valor.'}</small>`:
-    row.kind==='detail'&&!irpjComponent?'<small class="dre-composition-label">Composição</small>':'';
-  const label=taxRow?row.label:irpjRowLabel(row,options.presentation,columns.some(column=>column.mode==='month'));
+    row.key==='taxesDeduction'&&row.informative?'<small class="dre-composition-label">Conferência · já deduzido nos grupos acima</small>':row.kind==='detail'&&!irpjComponent?'<small class="dre-composition-label">Composição</small>':'';
+  const label=taxRow||options.presentation?.statement?.version==='DRE_STATEMENT_V1'&&options.rowContext==='dre'?row.label:irpjRowLabel(row,options.presentation,columns.some(column=>column.mode==='month'));
   const denominator=taxRow&&row.unit==='percent'?row.key==='taxBurden'?'Total de impostos sobre a receita total utilizada':'Resultado sobre a receita total utilizada':null;
   return `<tr class="dre-row dre-${esc(kind)}${total?' total':''}${row.informative?' dre-informative':''}${row.key==='irpj'?' dre-irpj-total':''}${irpjComponent?' dre-irpj-component':''}${['irpjTotalAssessed','irpjCurrentMovement'].includes(row.key)?' dre-irpj-assessed-total':''}" data-dre-row="${esc(row.key)}"${taxRow?' data-tax-row="'+esc(row.key)+'"':''}><th scope="row"${denominator?` aria-label="${esc(denominator)}"`:''}><span>${esc(label)}</span>${note}</th>${columns.map(column=>cell(row,column,options)).join('')}</tr>`;
 }

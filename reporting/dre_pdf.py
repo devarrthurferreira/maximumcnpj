@@ -454,8 +454,8 @@ class Report:
                             [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes), highlights=highlights, groups=groups,
                             compact='statement' if m.compact_statement else False))
         self.add(self.note('n/d significa valor indisponível ou não aplicável nesta versão. Zero é apresentado como 0,00. ' +
-                          ('A linha (-) Total de impostos deduz uma única vez o total apresentado no bloco Impostos. '
-                           'Esse total já considera os créditos utilizados, os encargos e a antecipação. '
+                          ('Os tributos são distribuídos e deduzidos uma única vez nos grupos de receitas, compras, encargos e resultado. '
+                           'A linha (-) Total de impostos é uma conferência informativa; não deduzir novamente. '
                            'O percentual do resultado usa a Receita Total utilizada do mesmo período e regime; receita não positiva não recebe percentual. '
                            if m.compact_statement else
                            'Créditos de CBS e IBS são adicionados uma vez; o crédito de ICMS já está refletido no ICMS líquido. ') +

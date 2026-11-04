@@ -40,7 +40,7 @@ test('quarterly normal, additional and movement reconcile without summing monthl
   assert.deepEqual(row(p,'irpj').monthlyValues.presumed,[-4800,-3600,-1600]);
   assert.match(p.irpjReconciliation.note,/Não some os acumulados mensais/);
   const keys=unifiedDreRows(p).map(item=>item.key);
-  assert(!keys.includes('irpj'),'O imposto fica no quadro próprio; a DRE contém somente a dedução total.');
+  assert(keys.includes('irpj'),'O IRPJ está distribuído no resultado da DRE e no quadro de impostos.');
   const taxes=p.taxStatement.rows.filter(item=>item.key==='irpj');assert.equal(taxes.length,1);
   assert.deepEqual(taxes[0].monthlyValues.presumed,[4800,3600,1600]);assert.equal(taxes[0].values.presumed,10000);
   for(const key of ['irpjBasic','irpjAdditional',...QUARTERLY_IRPJ_RECONCILIATION_KEYS])assert.equal(keys.filter(value=>value===key).length,1);
@@ -60,6 +60,22 @@ test('Real loss month reverses normal and additional provision without becoming 
   assert.equal(row(p,'irpjAdditional').monthlyValues.actual[1],4000);
   assert.equal(reconcileIrpj(saved.result,'actual').values.irpjTotalAssessed,3000);
   assert.equal(row(p,'totalTaxes').values.actual,record(saved.result,'actual').totalTaxes);
+});
+
+test('Lucro Real com base trimestral negativa ou nula não calcula IRPJ e CSLL novos',()=>{
+  for(const preTax of [-85000,0]){
+    const inputs=[month(1,150000,0,preTax),month(2,0,0,0),month(3,0,0,0)];
+    const result=capturedAssessment(inputs),checked=reconcileIrpj(result,'actual'),quarter=result.incomeTaxAssessment.regimes.actual.periods[0];
+    assert.equal(checked.available,true);assert.equal(checked.values.irpjTaxBase,0);
+    assert.equal(checked.values.irpjNormalAssessed,0);assert.equal(checked.values.irpjAdditionalAssessed,0);
+    assert.equal(checked.values.irpjTotalAssessed,0);
+    assert.equal(quarter.provision.irpjTotalCents,0);assert.equal(quarter.provision.csllCents,0);
+    for(const entry of result.monthlyResults){
+      const taxes=record(entry.result,'actual').dre;
+      assert.equal(taxes.irpj,0);assert.equal(taxes.csll,0);
+    }
+    assert.match(quarter.reason,/Sem base tributável positiva/);
+  }
 });
 
 test('partial quarter uses the full quarterly limit and missing months stay missing',()=>{

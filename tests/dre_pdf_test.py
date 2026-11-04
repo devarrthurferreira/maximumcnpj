@@ -120,6 +120,9 @@ class DrePdfTests(unittest.TestCase):
                 self.assertNotIn(label, statement)
             self.assertIn('D = Débito; C = Crédito utilizado', taxes)
             self.assertIn('(-) Total de impostos', statement)
+            for label in ('(-) Simples Nacional', '(-) ICMS líquido', '(-) CBS/IBS líquido',
+                          '(-) Antecipação de ICMS', '(-) INSS', '(-) IRPJ normal e adicional', '(-) CSLL'):
+                self.assertIn(label, statement)
             self.assertIn('% sobre a receita - resultado', statement)
             self.assertIn('% sobre a receita', taxes)
             self.assertIn('Total / Receita Total utilizada', taxes)
@@ -146,7 +149,7 @@ class DrePdfTests(unittest.TestCase):
                 for label in ('Simples', 'CBS/IBS (D - C)', 'IRPJ', 'CSLL', 'Antecipação',
                               'DIFAL', 'INSS', 'ISS fora do DAS', 'Total', '% sobre a receita', 'Resultado'):
                     self.assertIn(label, tax_page)
-                self.assertNotIn('CBS/IBS (D - C)', pages[0])
+                self.assertIn('CBS/IBS líquido (D - C)', pages[0])
                 self.assertIn('Receita Total utilizada', pages[0])
                 self.assertIn('(-) Total de impostos', pages[0])
 
