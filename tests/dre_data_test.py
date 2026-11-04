@@ -61,6 +61,20 @@ class DreDataTests(unittest.TestCase):
             self.assertEqual(options['period'], period)
             self.assertFalse(options['showPercent'])
 
+    def test_pdf_subset_requires_unique_known_ids_without_client_financial_values(self):
+        regimes = ['hybrid', 'actual']
+        options = validate({'action': 'dre-pdf', 'simulationId': SIMULATION, 'regimeIds': regimes})
+        self.assertEqual(options['regimeIds'], ['hybrid', 'actual'])
+        regimes.append('pure')
+        self.assertEqual(options['regimeIds'], ['hybrid', 'actual'])
+        for invalid in (None, [], ['unknown'], ['actual', 'actual'], ['actual', {}],
+                        'actual', {}, ['pure', 'hybrid', 'presumed', 'actual', 'pure']):
+            with self.subTest(invalid=invalid), self.assertRaises(ReportError):
+                validate({'action': 'dre-pdf', 'simulationId': SIMULATION, 'regimeIds': invalid})
+        for addition in ({'regimeId': 'pure'}, {'result': {'regimes': []}}, {'totalTaxes': 1}):
+            with self.subTest(addition=addition), self.assertRaises(ReportError):
+                validate({'action': 'dre-pdf', 'simulationId': SIMULATION, 'regimeIds': ['actual'], **addition})
+
     def test_engine_snapshots_preserve_partial_loss_zero_and_unavailable(self):
         for variant in fixtures():
             with self.subTest(variant=variant):
@@ -293,6 +307,20 @@ class DreDataMongoTests(unittest.TestCase):
         with self.assertRaises(ReportError) as caught:
             self.meta(regimeId='pure')
         self.assertEqual(caught.exception.code, 'DRE_REGIME')
+        self.assertEqual(self.meta(regimeIds=['actual'])['options']['regimeIds'], ['actual'])
+        self.assertEqual(len(self.meta(regimeIds=['actual'])['snapshot']['result']['regimes']), 2)
+        for invalid in (['pure'], ['actual', 'hybrid'], ['actual', 'actual'], []):
+            with self.subTest(invalid=invalid), self.assertRaises(ReportError) as caught:
+                self.meta(regimeIds=invalid)
+            self.assertEqual(caught.exception.code, 'DRE_REGIME')
+
+    def test_visible_subset_keeps_validated_snapshot_and_saved_selection_intact(self):
+        before = self.db.simulations.find_one({'_id': SIMULATION})
+        meta = self.meta(regimeIds=['hybrid', 'actual'])
+        self.assertEqual(meta['options']['regimeIds'], ['hybrid', 'actual'])
+        self.assertEqual(meta['snapshot']['result'], before['result'])
+        self.assertEqual(meta['snapshot']['monthlyDre'], before['monthlyDre'])
+        self.assertEqual(self.db.simulations.find_one({'_id': SIMULATION}), before)
 
     def test_http_download_requires_session_origin_active_account_and_server_snapshot(self):
         from http.server import ThreadingHTTPServer
@@ -327,6 +355,18 @@ class DreDataMongoTests(unittest.TestCase):
                         self.assertTrue(data.startswith(b'%PDF-'))
                         self.assertGreater(len(data), 10_000)
                     self.assertEqual(self.db.simulations.find_one({'_id': SIMULATION}), before)
+                with call({**self.options, 'regimeIds': ['actual']}) as response:
+                    import pymupdf
+                    with pymupdf.open(stream=response.read(), filetype='pdf') as document:
+                        sections = {title: page - 1 for _, title, page in document.get_toc()}
+                        text = ' '.join(document[index].get_text() for index in
+                            [*range(sections['Premissas, cobertura e conferências']),
+                             *range(sections['Memória de cálculo'], document.page_count)])
+                    self.assertIn('Lucro Real', text)
+                    self.assertNotIn('Simples Puro', text)
+                    self.assertNotIn('Simples Híbrido', text)
+                    self.assertNotIn('Lucro Presumido', text)
+                self.assertEqual(self.db.simulations.find_one({'_id': SIMULATION}), before)
                 for headers, expected in (({'Cookie': ''}, 401), ({'Origin': 'https://evil.test'}, 403)):
                     with self.subTest(headers=headers), self.assertRaises(HTTPError) as caught:
                         call(headers=headers)

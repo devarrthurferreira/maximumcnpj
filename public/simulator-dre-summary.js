@@ -1,4 +1,4 @@
-import {unifiedDreRows} from './simulator-dre.js';
+import {capturedDreRows} from './simulator-dre.js';
 
 /** Read the exact table frame. Never use the tax engine or repair saved values here. */
 export function readDreValue(row, {id,mode,month}) {
@@ -7,7 +7,7 @@ export function readDreValue(row, {id,mode,month}) {
 }
 
 export function buildDreSummary(presentation,column) {
-  const rows=unifiedDreRows(presentation),get=key=>readDreValue(rows.find(row=>row.key===key),column);
+  const rows=capturedDreRows(presentation),get=key=>readDreValue(rows.find(row=>row.key===key),column);
   const movements=[
     ['revenue','Receita utilizada','revenue'],
     ['revenueDeductions','Tributos sobre a receita','deduction'],
@@ -27,7 +27,7 @@ export function buildDreSummary(presentation,column) {
 
 /** A short comparison, using only reconciled cells of the complete DRE. */
 export function buildDreExecutiveSummary(presentation,column) {
-  const rows=unifiedDreRows(presentation),get=key=>readDreValue(rows.find(row=>row.key===key),column);
+  const rows=capturedDreRows(presentation),get=key=>readDreValue(rows.find(row=>row.key===key),column);
   const summary=buildDreSummary(presentation,column);
   return {...summary,taxes:get('totalTaxes'),creditsApplied:readDreValue(presentation.appliedCredits,column),
     rows:[
@@ -57,7 +57,7 @@ const monthOrdinal = value => /^\d{4}-(0[1-9]|1[0-2])$/.test(value || '')
 export function buildDreEvolution(presentation,calendar,regimeId,selectedMonth=0) {
   const actual=presentation?.method==='REPORT_MONTHS_V1'&&((calendar?.version==='DRE_CALENDAR_V3'&&calendar?.months?.length===12)||(calendar?.version==='DRE_CALENDAR_V4'&&presentation.analysisPeriod?.version==='JAN_SEP_V1'&&calendar?.months?.length>0&&calendar.months.length===presentation.analysisPeriod.includedMonths?.length));
   if(!actual)return {available:false,reason:'Esta simulação usa a projeção mensal salva. A evolução exige valores individuais por competência.',months:[],metrics:[]};
-  const rows=unifiedDreRows(presentation),regime=presentation.regimes.find(item=>item.id===regimeId);
+  const rows=capturedDreRows(presentation),regime=presentation.regimes.find(item=>item.id===regimeId);
   const months=calendar.months.map((month,index)=>{
     const sourceMonth=monthOrdinal(month.sourceMonth)!==null?month.sourceMonth:null;
     const available=Array.isArray(regime?.monthlyAvailability)?regime.monthlyAvailability[index]===true:regime?.available===true;

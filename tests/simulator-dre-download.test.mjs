@@ -14,6 +14,19 @@ test('pedido de PDF envia somente a referência salva e opções, nunca os valor
   for(const value of [{},{simulationId:'../empresa'},{simulationId,period:'selected'},{simulationId,regimeId:'all'},{simulationId,showPercent:1}])assert.throws(()=>buildDrePdfRequest(value));
 });
 
+test('PDF aceita um subconjunto explícito sem alterar a seleção original nem aceitar listas inválidas',()=>{
+  const regimeIds=['hybrid','actual'];
+  const payload=buildDrePdfRequest({simulationId,regimeIds,result:{regimes:[{id:'pure',totalTaxes:1}]}});
+  assert.deepEqual(payload,{action:'dre-pdf',simulationId,period:'complete',regimeIds:['hybrid','actual'],showPercent:false});
+  regimeIds.push('pure');
+  assert.deepEqual(payload.regimeIds,['hybrid','actual']);
+  assert.deepEqual(buildDrePdfRequest({simulationId,regimeId:'actual',regimeIds:['actual']}).regimeIds,['actual']);
+  for(const invalid of [null,[],['actual','actual'],['unknown'],['actual',{}],'actual',{},['pure','hybrid','presumed','actual','pure']]){
+    assert.throws(()=>buildDrePdfRequest({simulationId,regimeIds:invalid}),/regime válido/);
+  }
+  assert.throws(()=>buildDrePdfRequest({simulationId,regimeIds:['actual'],regimeId:'pure'}),/regime válido/);
+});
+
 test('download autenticado preserva bytes, nome do servidor e sinal de cancelamento',async()=>{
   const controller=new AbortController();let request;
   const result=await fetchDrePdf({simulationId,period:'annual',showPercent:true},{signal:controller.signal,fetchImpl:async(url,options)=>{

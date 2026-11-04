@@ -2,15 +2,16 @@ import {unifiedDreRows,dreDifalNotes,dreReportCoverage,dreRegimeStatuses,dreRepo
 import {readDreValue,buildDreSummary,buildDreExecutiveSummary,buildDreEvolution} from './simulator-dre-summary.js';
 import {requiresSimplesReference} from './regime-selection.js';
 import {renderCommercialComposition} from './simulator-commercial-view.js';
+import {DRE_REGIME_OPTIONS,resolveDreVisibleRegimeIds,filterDreVisibleRegimes} from './simulator-dre-visibility.js';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const moneyFormatter=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
 const percentFormatter=new Intl.NumberFormat('pt-BR',{maximumFractionDigits:2});
 const money=value=>value==null||!Number.isFinite(value)?'—':moneyFormatter.format(value).replace(/\u00a0/g,' ');
 const percent=value=>value==null||!Number.isFinite(value)?'—':percentFormatter.format(value*100)+'%';
-const TOTALS=new Set(['revenue','netRevenue','grossProfit','preTax','netProfit','revenueAfterReturns','revenueUsed']);
+const TOTALS=new Set(['revenue','netRevenue','grossProfit','preTax','totalTaxes','netProfit','revenueAfterReturns','revenueUsed']);
 const annualColumn=regime=>({id:regime.id,label:regime.name,mode:'annual'});
 const regimeScope=presentation=>presentation.regimes.length===4?'todos os regimes':presentation.regimes.length===1?'regime selecionado':'regimes selecionados';
-const simplesApplies=(presentation,calendar)=>requiresSimplesReference(presentation?.regimeSelection??calendar?.regimeSelection);
+const simplesApplies=(presentation,calendar)=>Array.isArray(presentation?.regimes)&&presentation.regimes.every(regime=>DRE_REGIME_OPTIONS.some(option=>option.id===regime.id))?presentation.regimes.some(regime=>['pure','hybrid'].includes(regime.id)):requiresSimplesReference(presentation?.regimeSelection??calendar?.regimeSelection);
 const fixedPeriod=(presentation,calendar=null)=>presentation?.analysisPeriod?.version==='JAN_SEP_V1'||calendar?.analysisPeriod?.version==='JAN_SEP_V1';
 const totalLabel=(presentation,calendar=null)=>fixedPeriod(presentation,calendar)?'Consolidado Jan–Set':'Total anual';
 const actualCalendar=calendar=>['DRE_CALENDAR_V3','DRE_CALENDAR_V4'].includes(calendar?.version);
@@ -27,7 +28,11 @@ function tableRow(row,columns,options){
 function table({presentation,columns,showPercent,label='DRE comparativa com rolagem horizontal',className='',highlightId=null,rows=null,indicatorLabel='Indicador',indicatorNote=''}){
   const reconciliationKeys=new Set([...(presentation.revenueReconciliation?.rows||[]),...(presentation.icmsReconciliation?.rows||[])].map(row=>row.key));
   const displayed=rows||unifiedDreRows(presentation).filter(row=>!reconciliationKeys.has(row.key));
-  return `<div class="sim-table-wrap dre-table-wrap ${className}" tabindex="0" role="region" aria-label="${esc(label)}"><table><thead><tr><th scope="col">${esc(indicatorLabel)}${indicatorNote?`<small>${esc(indicatorNote)}</small>`:''}</th>${columns.map(column=>`<th scope="col"${column.id===highlightId&&column.mode==='annual'?' class="dre-active-column"':''}>${esc(column.label)}${column.year?`<small>${esc(column.year)}</small>`:''}</th>`).join('')}</tr></thead><tbody>${displayed.map(row=>tableRow(row,columns,{presentation,showPercent,highlightId})).join('')}</tbody></table></div>`;
+  const sections=new Map(!rows?(presentation.statement?.sections||[]).filter(section=>section.rows?.length).map(section=>[section.rows[0].key,section]):[]);
+  return `<div class="sim-table-wrap dre-table-wrap ${className}" tabindex="0" role="region" aria-label="${esc(label)}"><table><thead><tr><th scope="col">${esc(indicatorLabel)}${indicatorNote?`<small>${esc(indicatorNote)}</small>`:''}</th>${columns.map(column=>`<th scope="col"${column.id===highlightId&&column.mode==='annual'?' class="dre-active-column"':''}>${esc(column.label)}${column.year?`<small>${esc(column.year)}</small>`:''}</th>`).join('')}</tr></thead><tbody>${displayed.map(row=>{
+    const section=sections.get(row.key);
+    return `${section?`<tr class="dre-section-row" data-dre-section="${esc(section.key)}"><th colspan="${columns.length+1}">${esc(section.label)}</th></tr>`:''}${tableRow(row,columns,{presentation,showPercent,highlightId})}`;
+  }).join('')}</tbody></table></div>`;
 }
 function mobileRevenueReconciliation({rows,column,label,showPercent,total='Total anual'}){
   if(!column)return '';
@@ -141,10 +146,10 @@ function monthlyEvolution(presentation,calendar,regimeId,month){
     <div class="dre-evolution-metrics">${data.metrics.map(metric=>`<article data-dre-change="${metric.key}"><span>${esc(metric.label)}</span><strong>${change(metric)}</strong><small>${esc(note(metric))}</small>${metric.key==='difal'&&!metric.reason?'<small>Variação do valor deduzido na DRE.</small>':''}</article>`).join('')}</div>
     ${data.reason&&context!==data.reason?`<p class="dre-evolution-unavailable">${esc(data.reason)}</p>`:''}</section>`;
 }
-function annualEvolution(presentation,calendar,regimeId){
+function annualEvolution(presentation,calendar,regimeId,regimeName=null){
   const data=buildDreEvolution(presentation,calendar,regimeId);
   if(!data.available)return '';
-  return `<details id="dre-evolution-year" class="dre-evolution-year"><summary>Evolução por competência <span>${data.importedCount} de ${data.months.length} meses com dados importados</span></summary>
+  return `<details id="dre-evolution-year${regimeName?'-'+esc(regimeId):''}" class="dre-evolution-year"${regimeName?` data-state-key="dre-evolution-${esc(regimeId)}"`:''}><summary>Evolução por competência${regimeName?' · '+esc(regimeName):''} <span>${data.importedCount} de ${data.months.length} meses com dados importados</span></summary>
     <p>Valores do regime selecionado, iguais aos da DRE mensal. A margem usa a receita utilizada na DRE de cada mês. Meses ausentes permanecem sem dados.</p>
     <ol class="dre-evolution-months">${data.months.map((month,index)=>`<li data-dre-evolution-month="${index}" class="${!month.sourceMonth?'is-missing':''}"><h4>${esc(month.label)}</h4>${month.sourceMonth?`<small>Origem: ${esc(month.sourceMonth)}</small><dl><div><dt>Receita</dt><dd>${money(month.revenue)}</dd></div><div><dt>Resultado</dt><dd class="${month.netProfit<0?'is-loss':''}">${money(month.netProfit)}</dd></div><div><dt>Margem</dt><dd>${percent(month.netMargin)}</dd></div></dl>`:'<p>Sem dados importados</p>'}</li>`).join('')}</ol></details>`;
 }
@@ -156,6 +161,7 @@ function coverageNote(presentation,{compact=false}={}){
   return `<div class="dre-report-coverage" data-report-coverage><strong>${esc(coverage.label)}</strong><p>${esc(coverage.detail)}</p></div>`;
 }
 function simplesDiagnostic(presentation,sourceMonth=null){
+  if(!simplesApplies(presentation))return '';
   const annual=presentation.simplesDiagnostic;
   if(annual?.version!=='SIMPLES_DIAGNOSTIC_V1')return '';
   const diagnostic=sourceMonth?annual.months?.find(row=>row.sourceMonth===sourceMonth)||annual:annual;
@@ -195,38 +201,60 @@ function commercialAdjustments(presentation,composition,columns){
   });
   return adjusted?'<p class="dre-commercial-adjustments" role="note">A composição acima pertence aos documentos. Os ajustes manuais estão refletidos na DRE e não redistribuem os valores entre clientes ou fornecedores.</p>':'';
 }
+function statementControls(presentation,{visibleRegimeIds,monthly,selectedMonth,months,year}){
+  const selected=new Set(visibleRegimeIds),last=selected.size===1;
+  const originYear=item=>item?.sourceMonth?.slice(0,4)||presentation.analysisPeriod?.sourceYear||year;
+  const selectedLabel=monthly?`${months[selectedMonth]?.label||'Competência'} / ${originYear(months[selectedMonth])}`:'Consolidado de janeiro a setembro';
+  return `<div class="dre-statement-controls"><fieldset class="dre-regime-visibility" aria-describedby="dre-regime-visibility-help"><legend>Regimes na DRE</legend><p id="dre-regime-visibility-help">Marque os regimes que deseja comparar. Mantenha pelo menos um visível.</p><div class="dre-regime-options">${DRE_REGIME_OPTIONS.map(option=>{
+    const generated=presentation.regimes.find(regime=>regime.id===option.id),checked=selected.has(option.id),pending=generated&&!regimeAvailable(generated,monthly?selectedMonth:null);
+    const disabled=!generated||(checked&&last);
+    const state=!generated?'Não gerado nesta versão':pending?'Cálculo pendente':checked?'Visível':'Oculto';
+    return `<label class="dre-regime-option${checked?' is-selected':''}${!generated?' is-missing':''}${pending?' is-pending':''}"><input type="checkbox" data-dre-visible-regime="${option.id}" value="${option.id}"${checked?' checked':''}${disabled?' disabled':''}${checked&&last?' title="Mantenha pelo menos um regime visível"':''}><span><strong>${option.name}</strong><small>${state}</small></span></label>`;
+  }).join('')}</div></fieldset><label class="dre-display-period" for="dre-display-period">Período da DRE<select id="dre-display-period" aria-describedby="dre-display-status"><option value="annual"${!monthly?' selected':''}>Consolidado Jan–Set</option>${months.map((item,index)=>`<option value="month:${index}"${monthly&&index===selectedMonth?' selected':''}>${esc(item.label)} / ${esc(originYear(item))}</option>`).join('')}</select></label><p id="dre-display-status" class="dre-display-status" role="status" aria-live="polite">Exibindo ${selected.size} de ${presentation.regimes.length} ${presentation.regimes.length===1?'regime gerado':'regimes gerados'} · ${esc(selectedLabel)}.</p></div>`;
+}
+function statementRate(presentation,sourceMonth=null){
+  const rates=sourceMonth?presentation.statement?.taxRates?.monthly?.find(row=>row.sourceMonth===sourceMonth):presentation.statement?.taxRates;
+  if(!rates||![rates.cbs,rates.ibs,rates.combined].every(Number.isFinite))return '';
+  const rate=value=>(value*100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%';
+  return `<p class="dre-statement-rate" data-dre-combined-rate><span>CBS/IBS · parâmetro do cenário</span><strong>${rate(rates.combined)}</strong><small>CBS ${rate(rates.cbs)} + IBS ${rate(rates.ibs)}</small></p>`;
+}
+function visibleEvolution(presentation,calendar,monthly,month){
+  return `<div class="dre-visible-evolution">${presentation.regimes.map(regime=>monthly?`<details class="dre-regime-evolution" data-state-key="dre-evolution-${esc(regime.id)}"><summary>Evolução por competência · ${esc(regime.name)}</summary>${monthlyEvolution(presentation,calendar,regime.id,month)}</details>`:annualEvolution(presentation,calendar,regime.id,regime.name)).join('')}</div>`;
+}
 /** January–September always opens the complete statement, using captured cells only. */
-function renderJanSepDre({presentation,calendar,year,regimeId,showPercent=false,reportPeriod='complete',monthly=false,monthView=true,month=0}){
-  const context=monthlyContext({presentation,calendar,year,regimeId,monthView,month});
-  const {months,selectedMonth}=context,regime=monthly?context.regime:selectRegime(presentation,regimeId);
-  const comparisonColumns=presentation.regimes.map(item=>monthly?{id:item.id,label:item.name,mode:'month',month:selectedMonth}:annualColumn(item));
-  const columns=monthly?context.columns:comparisonColumns;
-  const summaries=comparisonColumns.map(column=>buildDreExecutiveSummary(presentation,column));
-  const sourceMonth=monthly?calendar.months[selectedMonth]?.sourceMonth:null;
-  const composition=monthly?presentation.monthlyCommercialComposition?.[sourceMonth]:presentation.commercialComposition;
+function renderJanSepDre({presentation,calendar,year,showPercent=false,reportPeriod='complete',monthly=false,month=0,visibleRegimeIds}){
+  const months=presentation.months||calendar?.months||[],selectedMonth=Math.max(0,Math.min(months.length-1,Number(month)||0));
+  const visible=resolveDreVisibleRegimeIds(presentation,visibleRegimeIds),shown=filterDreVisibleRegimes(presentation,visible);
+  const columns=shown.regimes.map(item=>monthly?{id:item.id,label:item.name,mode:'month',month:selectedMonth}:annualColumn(item));
+  const summaries=columns.map(column=>buildDreExecutiveSummary(shown,column));
+  const sourceMonth=monthly?calendar?.months?.[selectedMonth]?.sourceMonth||months[selectedMonth]?.sourceMonth:null;
+  const composition=monthly?shown.monthlyCommercialComposition?.[sourceMonth]:shown.commercialComposition;
   const baseLabel=monthly?sourceMonth?`${months[selectedMonth]?.label} / ${sourceMonth.slice(0,4)}`:'Sem dados nesta competência':`Jan–Set / ${presentation.analysisPeriod.sourceYear}`;
-  const summaryColumn=monthly?{id:regime.id,mode:'month',month:selectedMonth}:annualColumn(regime);
-  const summaryLabel=`${regime.name} · ${monthly?months[selectedMonth]?.label:totalLabel(presentation)} / ${year}`;
-  const tableDescription=monthly?monthView?'Mês selecionado e consolidado de janeiro a setembro.':'Competências disponíveis de janeiro a setembro e consolidado do período.':presentation.regimes.length===1?'Todas as contas do regime selecionado.':'Todas as contas, com os regimes lado a lado.';
-  return `<section class="card sim-dre dre-complete dre-visual dre-executive dre-fixed-complete${monthly?' sim-calendar':''}${monthly&&monthView?' dre-single-month':''}" id="dre-demonstrativo"><div class="dre-heading"><div><span class="eyebrow">DEMONSTRAÇÃO DO RESULTADO</span><h2>DRE completa</h2><p>${presentation.regimes.length} ${presentation.regimes.length===1?'regime selecionado':'regimes comparados'} · janeiro a setembro</p></div><div class="dre-base-context" aria-label="Base dos documentos e cenário tributário"><div><span>Base dos documentos</span><strong>${esc(baseLabel)}</strong></div><div><span>Cenário tributário</span><strong>${esc(year)}</strong></div></div></div>
-    ${periodControl({monthly,calendar,year,months,selectedMonth})}${executiveCards(presentation,comparisonColumns,summaries)}
-    ${coverageNote(presentation)}
-    <div class="dre-complete-controls">${regimeControl(presentation,regime,!monthly,monthly?selectedMonth:null)}${percentControl(showPercent)}</div>
-    <div class="dre-table-heading"><div><h3>Demonstrativo completo</h3><p>${tableDescription} Receitas, tributos, compras, despesas, lucro e prejuízo detalhados nas linhas abaixo.</p></div></div>
-    ${monthly?`<div class="dre-calendar-controls"><div role="group" aria-label="Visualização do calendário"><button type="button" data-dre-month-view="single" aria-pressed="${monthView}">Um mês por vez</button><button type="button" data-dre-month-view="all" aria-pressed="${!monthView}">${months.length} ${months.length===1?'mês':'meses'}</button></div></div>`:''}
-    ${quickNavigation()}${readingNote(showPercent)}
-    <p class="dre-table-scroll-note">Deslize a tabela para conferir ${monthly&&!monthView?'as competências':'os valores'} <span aria-hidden="true">→</span></p>
-    ${table({presentation,columns,showPercent,highlightId:regime.id,className:monthly?'dre-calendar-screen':'',label:monthly?'DRE mensal completa de janeiro a setembro':'DRE completa por regime',indicatorLabel:'DRE completa'})}
+  return `<section class="card sim-dre dre-complete dre-visual dre-executive dre-fixed-complete" id="dre-demonstrativo" data-dre-visible-count="${visible.length}" style="--dre-visible-count:${Math.max(1,visible.length)};--dre-table-min-width:${260+visible.length*165}px"><div class="dre-heading"><div><span class="eyebrow">DEMONSTRAÇÃO DO RESULTADO</span><h2>DRE completa</h2><p>Receitas, despesas e tributos apurados · janeiro a setembro</p></div><div class="dre-base-context" aria-label="Base dos documentos e cenário tributário"><div><span>Base dos documentos</span><strong>${esc(baseLabel)}</strong></div><div><span>Cenário tributário</span><strong>${esc(year)}</strong></div></div></div>
+    ${statementControls(presentation,{visibleRegimeIds:visible,monthly,selectedMonth,months,year})}
+    ${executiveCards(shown,columns,summaries)}
+    ${coverageNote(presentation,{compact:true})}${statementRate(presentation,sourceMonth)}
+    <p class="dre-reading-note">R$ · valores negativos são deduções. Percentuais sobre a receita total utilizada no mesmo período e regime. — indica indisponível.</p>
+    <p class="dre-table-scroll-note">Deslize a tabela para comparar os regimes <span aria-hidden="true">→</span></p>
+    ${table({presentation:shown,columns,showPercent,label:monthly?'DRE mensal por regime':'DRE completa por regime',indicatorLabel:monthly?`DRE · ${months[selectedMonth]?.label||'Competência'}`:'DRE · consolidado Jan–Set'})}
+    ${presentation.statement?.note?`<p class="dre-calculation-note">${esc(presentation.statement.note)}</p>`:''}
+    ${icmsReconciliation({presentation:shown,columns,showPercent})}${appliedCredits(shown,columns)}
     <div class="dre-toolbar dre-report-toolbar">${reportOptions(reportPeriod,true)}</div>
-    ${finalReconciliations({presentation,columns,showPercent,summaryColumn,summaryLabel})}
-    ${appliedCredits(presentation,comparisonColumns)}${compactDifal(presentation)}${simplesDiagnostic(presentation,sourceMonth)}
-    ${composition?renderCommercialComposition(composition,{periodLabel:monthly?sourceMonth:`${presentation.analysisPeriod.startMonth} a ${presentation.analysisPeriod.endMonth}`,title:'Composição dos documentos',compact:true})+commercialAdjustments(presentation,composition,comparisonColumns):''}
-    ${monthly?monthlyEvolution(presentation,calendar,regime.id,selectedMonth):annualEvolution(presentation,calendar,regime.id)}
-    ${contextFooter(presentation,calendar,year,sourceMonth)}
-    <p class="dre-report-complete-note">Tela, PDF e CSV usam os valores desta versão salva. Meses sem dados permanecem identificados na cobertura; não são preenchidos com zero.</p></section>`;
+    ${revenueReconciliation({presentation:shown,columns,showPercent})}
+    ${compactDifal(shown)}${shown.regimes.some(regime=>['pure','hybrid'].includes(regime.id))?simplesDiagnostic(shown,sourceMonth):''}
+    ${composition?renderCommercialComposition(composition,{periodLabel:monthly?sourceMonth:`${presentation.analysisPeriod.startMonth} a ${presentation.analysisPeriod.endMonth}`,title:'Composição dos documentos',compact:true})+commercialAdjustments(shown,composition,columns):''}
+    ${visibleEvolution(shown,calendar,monthly,selectedMonth)}
+    ${contextFooter(shown,calendar,year,sourceMonth)}
+    <p class="dre-report-complete-note">PDF, CSV e impressão incluem os regimes visíveis e o conteúdo de período escolhido para o relatório. Os cálculos e os dados salvos da análise permanecem preservados.</p></section>`;
 }
 /** Shared complete detail renderer retained for previously opened views and reports. */
-export function renderDreCompleteDetails({presentation,calendar,year,regimeId,showPercent=false,monthly=false,monthView=true,month=0}){
+export function renderDreCompleteDetails({presentation,calendar,year,regimeId,showPercent=false,monthly=false,monthView=true,month=0,visibleRegimeIds}){
+  if(fixedPeriod(presentation,calendar)){
+    const shown=filterDreVisibleRegimes(presentation,visibleRegimeIds),months=shown.months||calendar?.months||[],selectedMonth=Math.max(0,Math.min(months.length-1,Number(month)||0));
+    const columns=shown.regimes.map(regime=>monthly?{id:regime.id,label:regime.name,mode:'month',month:selectedMonth}:annualColumn(regime));
+    const sourceMonth=monthly?calendar?.months?.[selectedMonth]?.sourceMonth||months[selectedMonth]?.sourceMonth:null;
+    return `${table({presentation:shown,columns,showPercent,label:monthly?'DRE mensal por regime':'DRE completa por regime'})}${appliedCredits(shown,columns)}${finalReconciliations({presentation:shown,columns,showPercent})}${contextFooter(shown,calendar,year,sourceMonth)}`;
+  }
   const context=monthly?monthlyContext({presentation,calendar,year,regimeId,monthView,month}):null;
   const regime=context?.regime||selectRegime(presentation,regimeId),columns=context?.columns||presentation.regimes.map(annualColumn);
   const sourceMonth=monthly?calendar.months[context.selectedMonth]?.sourceMonth:null;
@@ -238,8 +266,8 @@ export function renderDreCompleteDetails({presentation,calendar,year,regimeId,sh
     ${quickNavigation()}${readingNote(showPercent)}${table({presentation,columns,showPercent,highlightId:regime.id,className:monthly?'dre-calendar-screen':'',label:monthly?'DRE mensal completa de janeiro a setembro':'DRE completa por regime'})}
     ${contextFooter(presentation,calendar,year,sourceMonth)}${finalReconciliations({presentation,columns,showPercent,summaryColumn,summaryLabel})}`;
 }
-export function renderAnnualDre({presentation,calendar,year,regimeId,showPercent=false,reportPeriod='complete'}){
-  if(fixedPeriod(presentation,calendar))return renderJanSepDre({presentation,calendar,year,regimeId,showPercent,reportPeriod});
+export function renderAnnualDre({presentation,calendar,year,regimeId,showPercent=false,reportPeriod='complete',visibleRegimeIds}){
+  if(fixedPeriod(presentation,calendar))return renderJanSepDre({presentation,calendar,year,showPercent,reportPeriod,visibleRegimeIds});
   const columns=presentation.regimes.map(annualColumn),regime=selectRegime(presentation,regimeId);
   return `<section class="card sim-dre dre-complete dre-visual" id="dre-demonstrativo"><div class="dre-heading"><div><span class="eyebrow">DEMONSTRAÇÃO DO RESULTADO</span><h2>DRE anual</h2><p>Consolidado de ${esc(year)} · ${presentation.method==='REPORT_MONTHS_V1'?'soma das competências importadas':'projeção anual salva'}</p></div>${regimeControl(presentation,regime,true)}</div>
   ${periodControl({calendar,year})}
@@ -257,8 +285,8 @@ function monthlyContext({presentation,calendar,year,regimeId,monthView=false,mon
   columns.push({id:regime.id,label:totalLabel(presentation,calendar),mode:'calendarAnnual'});
   return {regime,months,columns,selectedMonth};
 }
-export function renderCompleteMonthlyDre({presentation,calendar,year,regimeId,showPercent=false,monthView=true,month=0,reportPeriod='complete'}){
-  if(fixedPeriod(presentation,calendar))return renderJanSepDre({presentation,calendar,year,regimeId,showPercent,reportPeriod,monthly:true,monthView,month});
+export function renderCompleteMonthlyDre({presentation,calendar,year,regimeId,showPercent=false,monthView=true,month=0,reportPeriod='complete',visibleRegimeIds}){
+  if(fixedPeriod(presentation,calendar))return renderJanSepDre({presentation,calendar,year,showPercent,reportPeriod,monthly:true,month,visibleRegimeIds});
   const {regime,months,columns,selectedMonth}=monthlyContext({presentation,calendar,year,regimeId,monthView,month});
   const selected=months[selectedMonth],summaryColumn={id:regime.id,mode:'month',month:selectedMonth};
   return `<section class="card sim-dre sim-calendar dre-complete dre-visual${monthView?' dre-single-month':''}" id="dre-demonstrativo"><div class="dre-heading"><div><span class="eyebrow">DEMONSTRAÇÃO DO RESULTADO</span><h2>DRE mensal</h2><p>Cenário ${esc(year)} · ${calendar?.version==='DRE_CALENDAR_V3'?'valores por competência dos relatórios':'projeção pela média mensal salva'}</p></div>${regimeControl(presentation,regime,false,selectedMonth)}</div>
@@ -278,8 +306,9 @@ export function renderDrePrintCalendar({presentation,calendar,year,regimeId,show
   return `<div class="dre-print-calendar"><h3>${esc(regime.name)} · Janeiro a ${fixedPeriod(presentation,calendar)?'setembro':'dezembro'} de ${esc(year)}</h3>${table({presentation,columns,showPercent,label:'DRE mensal completa'})}${finalReconciliations({presentation,columns,showPercent})}</div>`;
 }
 /** Temporary standalone print document; reads the same presentation as the screen. */
-export function renderDrePrintDocument({presentation,calendar,year,regimeId,showPercent=false,period='annual',company={}}){
+export function renderDrePrintDocument({presentation,calendar,year,regimeId,showPercent=false,period='annual',company={},visibleRegimeIds}){
   if(!['annual','monthly','complete'].includes(period))throw new TypeError('Conteúdo do relatório inválido.');
+  if(visibleRegimeIds!==undefined)presentation=filterDreVisibleRegimes(presentation,visibleRegimeIds);
   const monthly=period==='monthly',complete=period==='complete',columns=presentation.regimes.map(annualColumn),fixed=fixedPeriod(presentation,calendar);
   const regimeLabel=presentation.regimes.map(regime=>regime.name).join(' · ');
   const modelWarning=presentation.report?.warnings?.find(item=>item.code==='model-period');

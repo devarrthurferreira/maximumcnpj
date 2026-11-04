@@ -358,7 +358,7 @@
 .dre-fixed-complete .dre-table-heading { padding-top:18px; }
 .dre-fixed-complete .dre-report-coverage { margin-bottom:0; }
 .simulator-clean .dre-fixed-complete > .dre-table-wrap { max-height:none; }
-.dre-fixed-complete .dre-table-wrap table { min-width:760px; }
+.dre-fixed-complete .dre-table-wrap table { min-width:var(--dre-table-min-width,760px); }
 .dre-fixed-complete .dre-table-wrap:focus-visible { outline:2px solid #750207; outline-offset:3px; }
 @media(max-width:650px) {
  .dre-fixed-complete .dre-complete-controls { align-items:stretch; gap:10px; margin:16px 0; }
@@ -367,3 +367,63 @@
  .dre-fixed-complete .dre-table-heading { padding-top:16px; }
 }
 @media print { .dre-complete-controls { display:none!important; } .dre-fixed-complete .dre-table-wrap table { min-width:0; } }
+
+/* Visibility belongs to the statement; it never changes the fiscal selection. */
+.dre-statement-controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(190px,230px); align-items:start; gap:12px 22px; margin:18px 0; padding:16px; border:1px solid #e5e7ec; border-radius:10px; background:#fafbfc; }
+.dre-regime-visibility { min-width:0; margin:0; padding:0; border:0; }
+.dre-regime-visibility legend { padding:0; color:#344054; font-size:13px; font-weight:700; }
+.dre-regime-visibility>p { margin:5px 0 12px; color:#667085; font-size:11px; line-height:1.5; }
+.dre-regime-options { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+.dre-regime-option { display:flex; align-items:center; min-width:0; min-height:58px; gap:9px; padding:10px; border:1px solid #d8dee8; border-radius:8px; background:#fff; cursor:pointer; }
+.dre-regime-option.is-selected { border-color:#750207; background:#fbf3f4; }
+.dre-regime-option.is-missing { border-style:dashed; background:#f1f3f6; cursor:default; }
+.dre-regime-option input { width:17px; height:17px; flex:none; padding:0; margin:0; accent-color:#750207; }
+.dre-regime-option input:disabled { opacity:1; }
+.dre-regime-option:focus-within { outline:2px solid #750207; outline-offset:3px; }
+.dre-regime-option span { min-width:0; }
+.dre-regime-option strong { display:block; color:#344054; font-size:12px; line-height:1.4; font-weight:650; }
+.dre-regime-option.is-selected strong { color:#750207; }
+.dre-regime-option small { display:block; margin-top:3px; color:#667085; font-size:10px; line-height:1.4; }
+.dre-regime-option.is-pending small { color:#805d23; }
+.dre-display-period { display:grid; gap:8px; color:#344054; font-size:12px; font-weight:650; }
+.dre-display-period select { min-width:0; width:100%; min-height:44px; color:#344054; font-size:13px; background:#fff; }
+.dre-display-status { grid-column:1/-1; margin:0; padding-top:2px; color:#667085; font-size:11px; line-height:1.6; }
+.dre-statement-rate { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 12px; margin:18px 0 8px; color:#667085; font-size:12px; }
+.dre-statement-rate strong { color:#750207; font-size:18px; font-variant-numeric:tabular-nums; }
+.dre-statement-rate small { font-size:11px; }
+.dre-calculation-note { color:#667085; font-size:11px; line-height:1.65; margin:12px 0; }
+.simulator-clean .dre-fixed-complete .dre-table-wrap .dre-section-row th { position:static; background:#f0f2f5; padding:10px 14px; color:#475467; font-size:10px; line-height:1.5; font-weight:700; letter-spacing:.07em; text-transform:uppercase; border-top:1px solid #dfe4eb; }
+.simulator-clean .dre-fixed-complete .dre-table-wrap [data-dre-row=totalTaxes] th,.simulator-clean .dre-fixed-complete .dre-table-wrap [data-dre-row=totalTaxes] td { background:#f7edef; font-weight:750; color:#750207; border-top:2px solid #d7bac0; }
+.simulator-clean .dre-fixed-complete .dre-table-wrap [data-dre-row=taxBurden] th,.simulator-clean .dre-fixed-complete .dre-table-wrap [data-dre-row=taxBurden] td,.simulator-clean .dre-fixed-complete .dre-table-wrap [data-dre-row=netMargin] th,.simulator-clean .dre-fixed-complete .dre-table-wrap [data-dre-row=netMargin] td { font-weight:650; background:#f8f9fb; }
+.dre-fixed-complete[data-dre-visible-count="1"] .dre-regime-results,.dre-fixed-complete[data-dre-visible-count="1"] .dre-applied-credits dl { grid-template-columns:1fr; }
+.dre-fixed-complete .dre-applied-credits dl { grid-template-columns:repeat(var(--dre-visible-count,4),minmax(0,1fr)); }
+.dre-visible-evolution { display:grid; gap:10px; margin:24px 0; }
+.dre-visible-evolution .dre-evolution-year { margin:0; }
+.dre-regime-evolution { border:1px solid #e5e7ec; border-radius:10px; background:#fff; }
+.dre-regime-evolution>summary { padding:14px 16px; color:#344054; font-size:12px; font-weight:650; cursor:pointer; }
+.dre-regime-evolution .dre-evolution { margin:0 14px 14px; }
+.dre-regime-evolution>summary:focus-visible { outline:2px solid #750207; outline-offset:3px; border-radius:8px; }
+@media(max-width:1100px) {
+ .dre-statement-controls { grid-template-columns:minmax(0,1fr); }
+ .dre-display-period { width:260px; max-width:100%; }
+ .dre-fixed-complete .dre-applied-credits dl { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:650px) {
+ .dre-statement-controls { padding:14px 12px; gap:14px; }
+ .dre-regime-options { grid-template-columns:repeat(2,minmax(0,1fr)); }
+ .dre-regime-option { min-height:62px; gap:8px; padding:9px; }
+ .dre-display-period { width:100%; }
+ .dre-display-period select { font-size:16px; }
+ .dre-display-status { font-size:10px; }
+ .dre-statement-rate { padding:12px 0 4px; margin:12px 0 0; }
+ .dre-statement-rate>span { flex:1 1 100%; }
+ .dre-fixed-complete .dre-applied-credits dl { grid-template-columns:1fr; }
+ .simulator-clean .dre-fixed-complete[data-dre-visible-count="1"] .dre-table-wrap table { min-width:0; table-layout:fixed; }
+ .simulator-clean .dre-fixed-complete[data-dre-visible-count="1"] .dre-table-wrap th:first-child { min-width:0; max-width:none; width:52%; }
+ .simulator-clean .dre-fixed-complete[data-dre-visible-count="1"] .dre-table-wrap td { font-size:11px; }
+ .simulator-clean .dre-fixed-complete[data-dre-visible-count="1"] .dre-amount { white-space:normal; }
+}
+@media print {
+ .dre-statement-controls,.dre-visible-evolution { display:none!important; }
+ .dre-fixed-complete .dre-table-wrap table { min-width:0; }
+}

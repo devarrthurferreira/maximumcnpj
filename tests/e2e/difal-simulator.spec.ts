@@ -1,4 +1,5 @@
 import {legacyOutgoingDreFixture,legacyWithoutOutgoingDreFixture} from '../fixtures/dre-outgoing-legacy.mjs';
+import {showDreRegimes,showDreMonth} from './dre-controls.ts';
 import {test,expect,type Page} from '@playwright/test';
 import {annualizeReports,projectDifal} from '../../public/simulator-projection.js';
 import {calculateSimulation,createEmptyDraft,draftToInput,MODEL_VERSION,OUTGOING_DIFAL_MESSAGE,TAX_SOURCES,CALCULATOR_SOURCE_COMMIT} from '../../public/simulator-engine.js';
@@ -124,14 +125,13 @@ test('histórico 1.17 mantém valores positivos da saída e células mensais cap
   await expect(page.locator('#simulator-difal [data-difal-annual]')).toContainText('3.780,00');
   await expect(page.locator('[data-difal-applied-regime="pure"] [data-difal-applied-month]')).toContainText('84,00');
   await expect(page.locator('[data-difal-applied-regime="hybrid"] [data-difal-applied-month]')).toContainText('84,00');
-  await expect(page.locator('.sim-dre')).toContainText('DIFAL sobre vendas (10%)');
+  await expect(page.locator('.sim-dre [data-dre-row="difal"] th')).toHaveText('DIFAL');
   await expect(page.locator('#simulator-difal [data-difal-disabled]')).toHaveCount(0);
   await expect(page.locator('[data-difal-option="pure"] .sim-difal-scope')).toHaveText('entrada e saída');
-  await page.getByRole('button',{name:'Mensal',exact:true}).click();
-  await page.locator('#dre-regime').selectOption('pure');
+  await showDreRegimes(page,['pure']);
+  await showDreMonth(page,0);
   await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('84,00');
-  await page.getByRole('button',{name:'Um mês por vez',exact:true}).click();
-  await page.locator('#dre-month').selectOption('1');
+  await showDreMonth(page,1);
   await expect(page.locator('[data-difal-applied-regime="pure"] [data-difal-applied-month]')).toContainText('168,00');
   await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('168,00');
   expect(sourceReads).toBe(0);expect(saved).toEqual(captured);

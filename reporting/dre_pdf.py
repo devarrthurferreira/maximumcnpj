@@ -24,7 +24,7 @@ from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate, Paragraph,
                                PageBreak, KeepTogether, LongTable, Table, TableStyle)
 
 from .core import VERSION, display_date
-from .dre_model import (DreModel, SUBTOTALS, DERIVED, GROUP_LABELS, finite, close,
+from .dre_model import (DreModel, SUBTOTALS, DERIVED, PERCENT_ROWS, GROUP_LABELS, finite, close,
                         total, money, percentage, decimal_text, month_label)
 from .dre_charts import (Bars, Trend, Waterfall, Donut, draw_text, TEAL, DEEP, CORAL,
                          MINT, INK, MUTED, LINE, PALE, COLORS, FONT, BOLD, CoverageStrip)
@@ -188,7 +188,7 @@ class Report:
         ]))
         return table
 
-    def table(self, headers, rows, widths=None, *, highlights=(), groups=(), spans=(), small=False, compact=False, repeat_context=None):
+    def table(self, headers, rows, widths=None, *, highlights=(), groups=(), spans=(), blocks=(), small=False, compact=False, repeat_context=None):
         widths = widths or [WIDTH / len(headers)] * len(headers)
         content = [[self.p(value, 'head') for value in headers]]
         if repeat_context:
@@ -202,8 +202,8 @@ class Report:
             ('BACKGROUND', (0, 0), (-1, offset - 1), colors.HexColor(TEAL)),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('LEFTPADDING', (0, 0), (-1, -1), 8), ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-            ('TOPPADDING', (0, 0), (-1, -1), 1 if compact == 'monthly' else 2.6 if compact else 6 if not small else 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 1 if compact == 'monthly' else 2.6 if compact else 6 if not small else 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 1 if compact == 'monthly' else 1.8 if compact == 'statement' else 2.6 if compact else 6 if not small else 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1 if compact == 'monthly' else 1.8 if compact == 'statement' else 2.6 if compact else 6 if not small else 4),
             ('ROWBACKGROUNDS', (0, offset), (-1, -1), [colors.white, colors.HexColor('#F7FAFA')]),
             ('LINEBELOW', (0, 0), (-1, 0), .5, colors.HexColor(TEAL)),
             ('LINEBELOW', (0, -1), (-1, -1), .6, colors.HexColor(LINE)),
@@ -221,6 +221,8 @@ class Report:
                 commands.append(('NOSPLIT', (0, index + offset), (-1, index + offset + 1)))
         for index in spans:
             commands.append(('SPAN', (0, index + offset), (-1, index + offset)))
+        for start, end in blocks:
+            commands.append(('NOSPLIT', (0, start + offset), (-1, end + offset)))
         table.setStyle(TableStyle(commands))
         return table
 
@@ -234,6 +236,23 @@ class Report:
             label = 'AV ' + percentage(ratio) if compact else percentage(ratio) + ' da receita'
             value_text += f'<br/><font color="{MUTED}" size="6.5">{text(label)}</font>'
         return self.p(value_text, 'monthly_number' if compact else 'number', True)
+
+    def statement_cell(self, regime, key, index=None, *, compact=False):
+        m = self.model
+        if key in PERCENT_ROWS:
+            return self.p(percentage(m.value(regime, key, index), 2), 'monthly_number' if compact else 'number')
+        return self.number(m.value(regime, key, index),
+                           ratio=m.ratio(regime, key, index) if m.show_percent else None,
+                           bold=key in SUBTOTALS, compact=compact, result=key == 'netProfit')
+
+    def tax_rate_note(self):
+        rates = self.model.tax_rates()
+        if all(finite(rates[key]) for key in ('cbs', 'ibs', 'combined')):
+            return ('Alíquotas capturadas no cenário: CBS ' + percentage(rates['cbs'], 2) +
+                    ' + IBS ' + percentage(rates['ibs'], 2) + ' = CBS/IBS ' + percentage(rates['combined'], 2) +
+                    '. D - C significa débito menos crédito utilizado; o valor apurado já considera esses créditos.')
+        return ('CBS/IBS reúne os valores apurados de CBS e IBS. As alíquotas variam por competência ou não estão '
+                'integralmente confirmadas nesta versão. O relatório preserva os valores capturados, sem aplicar uma taxa atual.')
 
     def kpis(self, items):
         gap = 10
@@ -334,6 +353,8 @@ class Report:
                         '   |   ' + str(m.snapshot.get('title') or 'Análise gerencial de cenários'), 'small'))
         self.add(self.table(['BASE DOS DOCUMENTOS', 'CENÁRIO TRIBUTÁRIO', 'COBERTURA'],
                             [[m.period_label, str(m.year), m.coverage]], [WIDTH * .43, WIDTH * .27, WIDTH * .30]))
+        if m.options.get('regimeIds') is not None:
+            self.add(self.p('Regimes exibidos neste PDF: ' + ', '.join(row['name'] for row in m.regimes) + '.', 'small'))
         focus = m.focus
         net = m.value(focus, 'netProfit')
         amount = money(net)
@@ -365,7 +386,10 @@ class Report:
             insight = ('Maior resultado capturado: ' + ', '.join(row['name'] for row in same) + '. ' +
                        'A comparação usa as mesmas competências e as premissas desta versão; não confirma enquadramento fiscal.')
         else:
-            insight = 'Esta versão não registra um regime vencedor. Consulte a disponibilidade e as condições dos cenários nas próximas páginas.'
+            insight = (('A referência de maior resultado da versão não faz parte dos regimes exibidos. '
+                        if m.result.get('bestRegimeId') and m.options.get('regimeIds') is not None else
+                        'Esta versão não registra um regime vencedor. ') +
+                       'Consulte a disponibilidade e as condições dos cenários nas próximas páginas.')
         self.add(self.note(insight), Spacer(1, 8))
         self.add(self.p('Emitido em ' + display_date(m.emitted_at) + ' (horário de Brasília). '
                         'Versão salva em ' + display_date(m.snapshot.get('createdAt')) + '.', 'small'))
@@ -399,37 +423,53 @@ class Report:
         self.title('DRE comparativa detalhada', 'Demonstrativo consolidado de ' + m.period_label + '. Sinais negativos representam deduções. Valores em R$.')
         self.add(self.p('As linhas de total e subtotal explicam a formação do resultado. Não some novamente os subtotais às contas que os compõem. ' +
                         ('A análise vertical (AV) usa a receita utilizada do respectivo regime como denominador.' if m.show_percent else ''), 'small'))
-        rows, highlights, groups = [], [], []
+        if m.compact_statement:
+            self.add(self.p(self.tax_rate_note(), 'small'))
+        rows, highlights, groups, tax_start = [], [], [], None
         for section, definitions in m.sections():
+            if m.compact_statement and section == 'Tributos apurados':
+                tax_start = len(rows)
             groups.append(len(rows))
             rows.append([self.p('<b>' + text(section) + '</b>', 'cell', True)] + [''] * len(m.regimes))
             for key, label in definitions:
                 if key in SUBTOTALS:
                     highlights.append(len(rows))
                 rows.append([self.p(('<b>' + text(label) + '</b>') if key in SUBTOTALS else text(label), 'cell', True)] + [
-                    self.number(m.value(regime, key), ratio=m.ratio(regime, key) if m.show_percent else None, bold=key in SUBTOTALS, result=key == 'netProfit')
+                    self.statement_cell(regime, key)
                     for regime in m.regimes])
         self.add(self.table(['Conta / subtotal'] + [row['name'] for row in m.regimes], rows,
-                            [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes), highlights=highlights, groups=groups))
-        self.add(self.note('n/d significa valor indisponível ou não aplicável nesta versão. Zero é apresentado como 0,00. '
-                          'Créditos de CBS e IBS são adicionados uma vez; o crédito de ICMS já está refletido no ICMS líquido. '
+                            [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes), highlights=highlights, groups=groups,
+                            compact='statement' if m.compact_statement else False,
+                            blocks=[(tax_start, len(rows) - 1)] if tax_start is not None else []))
+        self.add(self.note('n/d significa valor indisponível ou não aplicável nesta versão. Zero é apresentado como 0,00. ' +
+                          ('CBS/IBS e ICMS já estão líquidos dos créditos utilizados. INSS e antecipação entram uma única vez no total de tributos. '
+                           'Os percentuais de tributos e resultado usam a Receita Total utilizada do mesmo período e regime; receita não positiva não recebe percentual. '
+                           if m.compact_statement else
+                           'Créditos de CBS e IBS são adicionados uma vez; o crédito de ICMS já está refletido no ICMS líquido. ') +
                           'Os valores são exibidos com duas casas, preservando a precisão do cálculo salvo.'))
 
     def formation(self):
         m, regime = self.model, self.model.focus
         self.title('Como o resultado se forma', regime['name'] + ' - ' + m.period_label)
-        keys = [('revenue', 'Receita\nutilizada'), ('revenueDeductions', 'Tributos da\nreceita'),
-                ('netCosts', 'Compras após\ncréditos'), ('operatingExpenses', 'Despesas\noperacionais'),
-                ('incomeTaxes', 'IRPJ e\nCSLL'), ('netProfit', 'Resultado\nlíquido')]
-        self.add(Waterfall(WIDTH, [(label, m.value(regime, key)) for key, label in keys]))
+        keys = ([('revenue', 'Receita\nutilizada', 1), ('cmv', 'Compras /\nCMV', 1),
+                 ('operatingExpensesBeforePayroll', 'Despesas\noperacionais', 1),
+                 ('totalTaxes', 'Tributos\napurados', -1), ('netProfit', 'Resultado', 1)] if m.compact_statement else
+                [('revenue', 'Receita\nutilizada', 1), ('revenueDeductions', 'Tributos da\nreceita', 1),
+                 ('netCosts', 'Compras após\ncréditos', 1), ('operatingExpenses', 'Despesas\noperacionais', 1),
+                 ('incomeTaxes', 'IRPJ e\nCSLL', 1), ('netProfit', 'Resultado\nlíquido', 1)])
+        impact = lambda key, sign: m.value(regime, key) * sign if finite(m.value(regime, key)) else None
+        self.add(Waterfall(WIDTH, [(label, impact(key, sign)) for key, label, sign in keys]))
         self.add(self.table(['Etapa', 'Impacto no resultado', '% da receita'], [
-            [label.replace('\n', ' '), self.number(m.value(regime, key), bold=key == 'netProfit'),
-             self.p(percentage(m.ratio(regime, key)), 'number')] for key, label in keys], [WIDTH * .48, WIDTH * .29, WIDTH * .23], highlights=[5], small=True))
-        expenses = [('Pessoal e encargos', 'personnel'), ('Outras despesas', 'administrative'),
+            [label.replace('\n', ' '), self.number(impact(key, sign), bold=key == 'netProfit'),
+             self.p(percentage(m.ratio(regime, key) * sign if finite(m.ratio(regime, key)) else None), 'number')]
+            for key, label, sign in keys], [WIDTH * .48, WIDTH * .29, WIDTH * .23], highlights=[len(keys) - 1], small=True))
+        expenses = ([('Salários e pró-labore', 'salaries'), ('Benefícios', 'benefits')] if m.compact_statement else
+                    [('Pessoal e encargos', 'personnel')]) + [('Outras despesas', 'administrative'),
                     ('Aluguéis', 'rent'), ('Taxas de cartão', 'cards')]
         self.add(KeepTogether([self.p('Composição das despesas operacionais', 'h2'),
-                 self.p('Participações calculadas sobre o total de despesas operacionais confirmado. '
-                        'Pessoal e encargos agrega salários, benefícios e encargos adicionais.', 'small'),
+                 self.p('Participações calculadas sobre o total de despesas operacionais confirmado. ' +
+                        ('INSS e encargos da folha estão no quadro de tributos e não são somados novamente às despesas.' if m.compact_statement else
+                         'Pessoal e encargos agrega salários, benefícios e encargos adicionais.'), 'small'),
                  Donut(WIDTH, [(label, -value if finite(value) else None) for label, key in expenses
                               for value in [m.value(regime, key)]], 'Despesas')]))
 
@@ -467,20 +507,31 @@ class Report:
     def taxes(self):
         m = self.model
         self.title('Tributos, encargos e créditos', 'Valores do período. Os quadros de crédito explicam os valores já considerados na DRE.')
-        keys = [('DAS', 'das', -1), ('CBS - débito', 'cbsDebit', -1), ('IBS - débito', 'ibsDebit', -1),
-                ('ICMS líquido', 'icmsNet', -1), ('ISS', 'iss', -1), ('DIFAL sobre vendas', 'difal', -1),
-                ('Antecipação de ICMS', 'icmsAnticipation', -1), ('Encargos da folha', 'payroll', -1),
-                ('IRPJ e adicional', 'irpj', -1), ('CSLL', 'csll', -1),
-                ('(-) Crédito CBS utilizado', 'cbsUsed', -1), ('(-) Crédito IBS utilizado', 'ibsUsed', -1),
-                ('Tributos e encargos líquidos', 'totalTaxes', 1)]
+        if m.compact_statement:
+            self.add(self.p(self.tax_rate_note(), 'small'))
+            tax_rows = next(definitions for section, definitions in m.sections() if section == 'Tributos apurados')
+            keys = [('Receita Total utilizada', 'revenue', 1)] + [
+                (label, key, 1 if key in PERCENT_ROWS or key == 'totalTaxes' else -1) for key, label in tax_rows]
+            keys += [('Resultado', 'netProfit', 1), ('% sobre a receita - resultado', 'netMargin', 1)]
+        else:
+            keys = [('DAS', 'das', -1), ('CBS - débito', 'cbsDebit', -1), ('IBS - débito', 'ibsDebit', -1),
+                    ('ICMS líquido', 'icmsNet', -1), ('ISS', 'iss', -1), ('DIFAL sobre vendas', 'difal', -1),
+                    ('Antecipação de ICMS', 'icmsAnticipation', -1), ('Encargos da folha', 'payroll', -1),
+                    ('IRPJ e adicional', 'irpj', -1), ('CSLL', 'csll', -1),
+                    ('(-) Crédito CBS utilizado', 'cbsUsed', -1), ('(-) Crédito IBS utilizado', 'ibsUsed', -1),
+                    ('Tributos e encargos líquidos', 'totalTaxes', 1)]
         keys = [row for row in keys if row[1] not in ('difal', 'icmsAnticipation') or any(row[1] in regime['dre'] for regime in m.regimes)]
-        rows = [[label] + [self.number(value * sign if finite(value) else None, bold=key == 'totalTaxes')
-                           for regime in m.regimes for value in [m.value(regime, key)]] for label, key, sign in keys]
+        rows = [[label] + [self.p(percentage(value, 2), 'number') if key in PERCENT_ROWS else
+                          self.number(value * sign if finite(value) else None, bold=key in ('totalTaxes', 'netProfit'), result=key == 'netProfit')
+                          for regime in m.regimes for value in [m.value(regime, key)]] for label, key, sign in keys]
         self.add(self.table(['Tributo / encargo'] + [row['name'] for row in m.regimes], rows,
-                            [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes), highlights=[len(rows) - 1]))
+                            [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes),
+                            highlights=[index for index, (_, key, _) in enumerate(keys) if key in ('totalTaxes', 'netProfit')]))
         self.add(self.note('O total é o mesmo indicador de tributos e encargos capturado no cenário. '
-                          'No Simples, tributos incluídos no DAS não são somados separadamente. '
-                          'O ICMS desta tabela já é líquido do crédito utilizado.'))
+                          'No Simples, tributos incluídos no DAS não são somados separadamente. ' +
+                          ('ICMS e CBS/IBS são apresentados pelo valor apurado, líquido dos créditos utilizados. Os tributos a recolher são positivos neste quadro. '
+                           'Percentuais usam a Receita Total utilizada do mesmo regime e período.' if m.compact_statement else
+                           'O ICMS desta tabela já é líquido do crédito utilizado.')))
         self.add(self.p('IRPJ normal e adicional', 'h2'))
         memory = {item.get('id'): item for item in m.result.get('memory', [])}
         rows = []
@@ -492,13 +543,22 @@ class Report:
         self.add(self.table(['Regime', 'IRPJ normal', 'Adicional'], rows, [WIDTH * .44, WIDTH * .28, WIDTH * .28]),
                  self.p('Quando o IRPJ está incluído no DAS ou a memória da versão não permite conferir as parcelas, o detalhamento é indicado como n/d.', 'small'))
         self.title('Conferência dos créditos', 'Débito - crédito utilizado = valor a recolher. Crédito potencial - utilizado = saldo potencial.')
-        for tax in ('cbs', 'ibs', 'icms'):
-            self.add(self.p(tax.upper(), 'h2'))
+        for tax in ('cbsIbs', 'icms') if m.compact_statement else ('cbs', 'ibs', 'icms'):
+            tax_label = 'CBS/IBS' if tax == 'cbsIbs' else tax.upper()
+            self.add(self.p(tax_label, 'h2'))
             definitions = [('debit', 'Débito'), ('potential', 'Crédito potencial'), ('used', 'Crédito utilizado'),
                            ('due', 'Valor líquido a recolher'), ('balance', 'Saldo credor potencial')]
             rows = [[label] + [self.number(m.credit(tax, regime, field), bold=field == 'due') for regime in m.regimes] for field, label in definitions]
-            self.add(self.table(['Apuração de ' + tax.upper()] + [row['name'] for row in m.regimes], rows,
+            self.add(self.table(['Apuração de ' + tax_label] + [row['name'] for row in m.regimes], rows,
                                 [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes), highlights=[3], small=True))
+        if m.compact_statement and any('icmsAnticipation' in regime['dre'] for regime in m.regimes):
+            self.add(self.p('Antecipação de ICMS', 'h2'))
+            self.add(self.table(['Conferência - já incluída nos tributos'] + [row['name'] for row in m.regimes],
+                [['Antecipação de ICMS apurada'] + [self.number(-value if finite(value) else None)
+                  for regime in m.regimes for value in [m.value(regime, 'icmsAnticipation')]]],
+                [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes), small=True))
+            self.add(self.p('A antecipação é uma obrigação tributária, não um crédito. Este quadro confere o valor já incluído '
+                            'uma vez no total de tributos e no resultado; não soma nem compensa novamente.', 'small'))
         self.add(self.note('Os créditos são exibidos somente quando aplicáveis ao regime e conciliados com a versão salva. '
                           'Saldo credor potencial é informativo: não aumenta o lucro nem representa restituição automática. '
                           'Créditos de ICMS de compras e devoluções são componentes do potencial, e não deduções adicionais.'))
@@ -572,9 +632,8 @@ class Report:
                         if key in SUBTOTALS:
                             highlights.append(len(rows))
                         rows.append([self.p(('<b>' + text(label) + '</b>') if key in SUBTOTALS else text(label), 'tiny', True)] +
-                                    [self.number(m.value(regime, key, index), ratio=m.ratio(regime, key, index) if m.show_percent else None,
-                                                 bold=key == 'netProfit', compact=True, result=key == 'netProfit') for index in indices] +
-                                    [self.number(m.value(regime, key), ratio=m.ratio(regime, key) if m.show_percent else None, bold=key == 'netProfit', compact=True, result=key == 'netProfit')])
+                                    [self.statement_cell(regime, key, index, compact=True) for index in indices] +
+                                    [self.statement_cell(regime, key, compact=True)])
                 columns = len(indices) + 1
                 self.add(self.table(['Conta'] + [month_label(m.months[index], True) for index in indices] + ['Total do período'], rows,
                                     [165] + [(WIDTH - 165) / columns] * columns, highlights=highlights,
@@ -587,19 +646,21 @@ class Report:
         m = self.model
         self.title('Premissas, cobertura e conferências', 'Condições e referências capturadas na versão que deu origem a este relatório.')
         self.add(self.note(m.coverage_note), Spacer(1, 9))
-        if m.snapshot.get('rbt12Source'):
+        has_simples = any(regime['id'] in ('pure', 'hybrid') for regime in m.regimes)
+        if has_simples and m.snapshot.get('rbt12Source'):
             labels = {'MANUAL': 'Informada manualmente e confirmada no cenário', 'NOT_REQUIRED': 'Não exigida pelos regimes selecionados',
                       'NOT_PROVIDED': 'Não informada nesta versão; os cenários do Simples não foram calculados',
                       'SIMPLES_SECTION_22': 'Extrato do Simples, seção 2.2', 'SIMPLES_PDF': 'PDF do Simples, leitura histórica'}
             self.add(self.p('Referência de RBT12: ' + labels.get(m.snapshot['rbt12Source'], str(m.snapshot['rbt12Source'])) + '.', 'body'))
         schedule = m.snapshot.get('rbt12Schedule') or m.result.get('rbt12Schedule') or m.calendar.get('rbt12Schedule')
-        if isinstance(schedule, dict) and isinstance(schedule.get('rows'), list):
+        if has_simples and isinstance(schedule, dict) and isinstance(schedule.get('rows'), list):
             self.add(self.table(['Competência', 'RBT12 anterior ao mês', 'Condição'], [
                 [month_label(row.get('sourceMonth'), True), self.number(row['rbt12Cents'] / 100 if row.get('status') == 'CONFIRMED' and type(row.get('rbt12Cents')) is int else None),
                  'Confirmada' if row.get('status') == 'CONFIRMED' else 'Há meses ausentes'] for row in schedule['rows']], [125, 160, WIDTH - 285]))
         for warning in m.warnings():
             self.add(self.p(warning, 'small'))
-        applications = [(regime, regime.get('difalApplication')) for regime in m.regimes if isinstance(regime.get('difalApplication'), dict)]
+        applications = [(regime, regime.get('difalApplication')) for regime in m.regimes
+                        if has_simples and isinstance(regime.get('difalApplication'), dict)]
         if applications:
             self.add(self.p('Aplicação do DIFAL por cenário', 'h2'))
             for regime, application in applications:

@@ -1,3 +1,4 @@
+import {showDreRegimes,showDreMonth,showDreConsolidated} from './dre-controls.ts';
 import {expect,type Page} from '@playwright/test';
 import {test} from './isolated-auth-test.ts';
 import {randomUUID} from 'node:crypto';
@@ -83,7 +84,7 @@ test('receita bruta menos devoluções concilia relatório, DRE salva e nova ses
   expect(saved.reportMonths).toBe(9);expect(saved.analysisPeriod.version).toBe('JAN_SEP_V1');
   expect(saved.result.monthlyResults.map((month:any)=>month.result.regimes[0].dre.revenue)).toEqual([...Array(7).fill(0),1050,750]);
   expect(saved.result.regimes.map((regime:any)=>regime.dre.difal)).toEqual([0,0,0,0]);
-  await page.locator('[data-period="annual"]').click();
+  await showDreConsolidated(page);
   await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
   await expect(page.locator('#dre-demonstrativo [data-dre-row="salaries"]')).toBeVisible();
   await expect(page.locator('.sim-dre').getByRole('heading',{name:'Fechamento da receita',exact:true})).toBeVisible();
@@ -101,10 +102,10 @@ test('receita bruta menos devoluções concilia relatório, DRE salva e nova ses
     await page.setViewportSize({width,height:900});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
     if(width===320){
-      await expect(closing.locator('[data-revenue-mobile]')).toBeVisible();
-      await expect(closing.locator('[data-revenue-mobile-row="revenueSourceGross"] [data-revenue-mobile-value]')).toContainText('2.200,00');
-      await expect(closing.locator('[data-revenue-mobile-row="revenueSalesReturns"] [data-revenue-mobile-value]')).toContainText('400,00');
-      await expect(closing.locator('[data-revenue-mobile-row="revenueUsed"] [data-revenue-mobile-value]')).toContainText('1.800,00');
+      await expect(closing.locator('.dre-table-wrap')).toBeVisible();
+      await expect(closing.locator('[data-dre-row="revenueSourceGross"] td').first()).toContainText('2.200,00');
+      await expect(closing.locator('[data-dre-row="revenueSalesReturns"] td').first()).toContainText('400,00');
+      await expect(closing.locator('[data-dre-row="revenueUsed"] td').first()).toContainText('1.800,00');
     }
     await closing.screenshot({path:info.outputPath(`fechamento-receita-${width}.png`)});
   }
@@ -132,16 +133,16 @@ test('receita bruta menos devoluções concilia relatório, DRE salva e nova ses
     const reopened=await fresh.newPage();reopened.on('pageerror',error=>errors.push(error.message));
     await reopened.goto(`/simulator.html?simulation=${saved._id}`);
     await expect(reopened.locator('#simulation-snapshot')).toBeVisible();
-    await expect(reopened.locator('[data-period="annual"]')).toHaveAttribute('aria-pressed','true');
-    await reopened.locator('[data-period="monthly"]').click();
-    await reopened.locator('#dre-month').selectOption('7');
+    await expect(reopened.locator('#dre-display-period')).toHaveValue('annual');
+    await showDreMonth(reopened,0);
+    await showDreMonth(reopened,7);
     await expect(reopened.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
-    await reopened.locator('#dre-regime').selectOption('pure');
+    await showDreRegimes(reopened,['pure']);
     const savedClosing=reopened.locator('[data-revenue-reconciliation="dre"]');
     await expect(savedClosing.locator('[data-dre-row="revenueSourceGross"] td').first()).toContainText('1.200,00');
     await expect(savedClosing.locator('[data-dre-row="revenueSalesReturns"] td').first()).toContainText('150,00');
     await expect(savedClosing.locator('[data-dre-row="revenueUsed"] td').first()).toContainText('1.050,00');
-    await reopened.locator('#dre-month').selectOption('8');
+    await showDreMonth(reopened,8);
     await expect(savedClosing.locator('[data-dre-row="revenueSourceGross"] td').first()).toContainText('1.000,00');
     await expect(savedClosing.locator('[data-dre-row="revenueSalesReturns"] td').first()).toContainText('250,00');
     await expect(savedClosing.locator('[data-dre-row="revenueUsed"] td').first()).toContainText('750,00');

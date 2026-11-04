@@ -281,6 +281,13 @@ def dre_metadata(db, simulation_id, workspace, options):
     regime = options.get('regimeId')
     require(regime is None or any(row['id'] == regime for row in record['result']['regimes']),
             400, 'DRE_REGIME', 'Selecione um dos regimes capturados nesta versão.')
+    if 'regimeIds' in options:
+        selected = options['regimeIds']
+        captured = {row['id'] for row in record['result']['regimes']}
+        require(isinstance(selected, list) and 1 <= len(selected) <= 4 and
+                all(isinstance(identifier, str) and identifier in captured for identifier in selected) and
+                len(set(selected)) == len(selected) and (regime is None or regime in selected),
+                400, 'DRE_REGIME', 'Selecione somente regimes capturados nesta versão para exibir no PDF.')
     snapshot = {key: value for key, value in record.items() if key not in ('workspaceId', 'requestHash')}
     parent = record.get('parentSimulationId')
     if parent and not db.simulations.find_one({'_id': parent, 'workspaceId': workspace, 'deletedAt': {'$exists': False}}, {'_id': 1}):

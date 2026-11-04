@@ -17,6 +17,8 @@ export type DrePresentation = {
   rbt12Source?:'NOT_PROVIDED'|'NOT_REQUIRED'|'MANUAL'|'SIMPLES_SECTION_22'|'SIMPLES_PDF';
   simplesDiagnostic?:any;
   sections:Array<{key:string;label:string;rows:DrePresentationRow[]}>;
+  statement?:{version:'DRE_STATEMENT_V1';sections:Array<{key:string;label:string;rows:DrePresentationRow[]}>;note:string;
+    taxRates:{cbs:number|null;ibs:number|null;combined:number|null;monthly:Array<{sourceMonth:string;cbs:number|null;ibs:number|null;combined:number|null}>}};
   details:Array<{key:string;label:string;parentKey:string;rows:DrePresentationRow[]}>;indicators:DrePresentationRow[];
   revenueReconciliation?:{key:'revenueReconciliation';label:string;note:string;rows:DrePresentationRow[]};
   icmsReconciliation?:{key:'icmsReconciliation';label:string;note:string;rows:DrePresentationRow[]};
@@ -26,6 +28,7 @@ export type DrePresentation = {
 };
 export function buildDrePresentation(input:{result:any;monthlyGroups?:any;projection?:any;source?:any;reportMonths?:number;engineInput?:any;reprocessing?:any;calendar?:any;taxSources?:any;rbt12Source?:string}):DrePresentation;
 export function unifiedDreRows(presentation:DrePresentation):DrePresentationRow[];
+export function capturedDreRows(presentation:DrePresentation):DrePresentationRow[];
 export function dreDifalNotes(presentation:DrePresentation,options?:{sourceMonth?:string|null}):string[];
 export function dreReportCoverage(presentation:DrePresentation):{actual:boolean;sourceMonths:string[];count:number|null;completeYear:boolean;completePeriod?:boolean;label:string;detail:string};
 export function dreRegimeStatuses(presentation:DrePresentation,options?:{sourceMonth?:string|null}):Array<{id:string;name:string;available:boolean;status:string;months:Array<{available:boolean;status:string;months:string[]}>}>;

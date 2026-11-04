@@ -114,22 +114,33 @@ class DreInsightsTests(unittest.TestCase):
     def test_expense_composition_does_not_double_count_personnel_subtotals(self):
         saved = fixture()
         selected = next(row for row in saved['result']['regimes'] if row['id'] == 'actual')['dre']
-        expected_total = -sum(selected[key] for key in ('personnel', 'administrative', 'rent', 'cards'))
+        expected_total = -sum(selected[key] for key in ('salaries', 'benefits', 'administrative', 'rent', 'cards'))
         view = model(saved)
         expenses = expense_breakdown(view)
-        self.assertEqual(len(expenses), 4)
+        self.assertEqual(len(expenses), 5)
         self.assertAlmostEqual(sum(row['amount'] for row in expenses), expected_total)
         self.assertAlmostEqual(sum(row['share'] for row in expenses), 1)
-        self.assertEqual(expenses[0]['key'], 'personnel')
-        self.assertAlmostEqual(expenses[0]['amount'], -selected['personnel'])
+        self.assertEqual(expenses[0]['key'], 'salaries')
+        self.assertAlmostEqual(expenses[0]['amount'], -selected['salaries'])
+        self.assertNotIn('payroll', [row['key'] for row in expenses])
         reading = cards(executive_insights(view))['main_expense']
-        self.assertEqual(reading['value'], brl(-selected['personnel']))
-        self.assertIn(percent(-selected['personnel'] / expected_total), reading['detail'])
+        self.assertEqual(reading['value'], brl(-selected['salaries']))
+        self.assertIn(percent(-selected['salaries'] / expected_total), reading['detail'])
         self.assertIn(brl(expected_total), reading['detail'])
         # An incomplete denominator cannot silently omit a component.
         del selected['rent']
         self.assertEqual(expense_breakdown(view), [])
         self.assertEqual(cards(executive_insights(view))['main_expense']['value'], 'n/d')
+
+        legacy_saved = fixture('legacy')
+        legacy_amounts = next(row for row in legacy_saved['result']['regimes'] if row['id'] == 'actual')['dre']
+        legacy_amounts.update(personnel=-300, salaries=-100, benefits=-150, payroll=-50,
+                              administrative=-30, rent=-20, cards=-10)
+        legacy = model(legacy_saved)
+        expenses = expense_breakdown(legacy)
+        self.assertEqual(len(expenses), 4)
+        self.assertIn('personnel', [row['key'] for row in expenses])
+        self.assertAlmostEqual(sum(row['amount'] for row in expenses), -legacy.value(legacy.focus, 'operatingExpenses'))
 
     def test_tied_results_name_every_tied_regime_and_do_not_invent_a_gap(self):
         saved = fixture()

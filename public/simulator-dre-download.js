@@ -4,10 +4,14 @@ const PERIODS = new Set(['complete','annual','monthly']);
 const REGIMES = new Set(['pure','hybrid','presumed','actual']);
 const MAX_PDF_BYTES = 4_000_000;
 
-export function buildDrePdfRequest({simulationId,period='complete',regimeId,showPercent=false}={}) {
+export function buildDrePdfRequest({simulationId,period='complete',regimeId,regimeIds,showPercent=false}={}) {
   if(typeof simulationId!=='string'||!UUID.test(simulationId))throw new Error('Abra uma versão salva da simulação para baixar o PDF.');
   if(!PERIODS.has(period)||typeof showPercent!=='boolean'||(regimeId!=null&&!REGIMES.has(regimeId)))throw new Error('Confira as opções do relatório e tente novamente.');
-  return {action:'dre-pdf',simulationId,period,...(regimeId?{regimeId}:{}),showPercent};
+  if(regimeIds!==undefined&&(!Array.isArray(regimeIds)||regimeIds.length<1||regimeIds.length>4||
+    regimeIds.some(id=>!REGIMES.has(id))||new Set(regimeIds).size!==regimeIds.length||
+    (regimeId!=null&&!regimeIds.includes(regimeId))))throw new Error('Selecione ao menos um regime válido para o PDF da DRE.');
+  return {action:'dre-pdf',simulationId,period,...(regimeId?{regimeId}:{}),
+    ...(regimeIds!==undefined?{regimeIds:[...regimeIds]}:{}),showPercent};
 }
 
 function safeFilename(disposition,fallback) {

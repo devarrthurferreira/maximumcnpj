@@ -7,6 +7,7 @@ import {hashPassword} from '../../src/security.ts';
 import {csvParse} from '../../src/domain.ts';
 import {processLookup} from '../../src/lookup-jobs.ts';
 import {closeDatabase} from '../../src/store.ts';
+import {showDreMonth} from './dre-controls.ts';
 
 
 type Account={id:string;email:string;password:string;role:'admin'|'operator'|'viewer'};
@@ -201,7 +202,7 @@ test('Abrir DRE atual zera saída mesmo para CPF interestadual e mantém a vers�
   expect(latest.fiscal).toEqual(generated.analysis.fiscal);expect(latest.accounting).toEqual(generated.analysis.accounting);
   const downloading=page.waitForEvent('download');await page.locator('#export-dre-csv').click();
   const download=await downloading,stream=await download.createReadStream();let csv='';for await(const chunk of stream!)csv+=chunk;
-  const annual=csvParse(csv,';').find(row=>row[2]==="'− DIFAL de saída — desativado");expect(annual?.slice(5,7)).toEqual(['0,00','0,00']);
+  const annual=csvParse(csv,';').find(row=>row[2]==='DIFAL');expect(annual?.slice(5,7)).toEqual(['0,00','0,00']);
   await page.screenshot({path:info.outputPath('dre-current-no-exit-difal.png'),fullPage:true});
   await page.reload();await expect(page.locator('#simulation-snapshot')).toBeVisible();
   expect(await db.collection('simulations').countDocuments({workspaceId,analysisId:analysis.id})).toBe(2);
@@ -255,22 +256,18 @@ async function fullDre(page:Page){
   await expect(host.locator('[data-dre-row="netProfit"]')).toBeVisible();return host;
 }
 async function expectZeroDre(page:Page){
-  await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('#dre-display-period')).toHaveValue('annual');
   let complete=await fullDre(page);
   for(const key of ['difal','icmsAnticipation']){
     const cells=complete.locator('[data-dre-row="'+key+'"] td');
     await expect(cells).toHaveCount(2);for(const cell of await cells.all())await expect(cell).toHaveText('R$ 0,00');
   }
-  await page.locator('#dre-demonstrativo [data-period="monthly"]').click();
-  for(const regime of ['pure','hybrid']){
-    complete=await fullDre(page);
-    await page.locator('#dre-regime').selectOption(regime);
-    complete=await fullDre(page);
-    await complete.locator('[data-dre-month-view="all"]').click();
+  for(let month=0;month<9;month++){
+    await showDreMonth(page,month);
     complete=await fullDre(page);
     for(const key of ['difal','icmsAnticipation']){
       const cells=complete.locator('[data-dre-row="'+key+'"] td');
-      await expect(cells).toHaveCount(10);for(const cell of await cells.all())await expect(cell).toHaveText('R$ 0,00');
+      await expect(cells).toHaveCount(2);for(const cell of await cells.all())await expect(cell).toHaveText('R$ 0,00');
     }
   }
 }
@@ -339,11 +336,9 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   const download=await downloading;await download.saveAs(info.outputPath('analysis-difal-excluded-dre.csv'));
   const stream=await download.createReadStream();let csv='';for await(const chunk of stream!)csv+=chunk;
   const rows=csvParse(csv,';');
-  for(const label of ['− DIFAL de saída — desativado','− Antecipação de ICMS']){
-    // The exported text keeps its Excel formula guard; numeric cells remain real numbers.
-    const escapedLabel="'"+label;
-    const annual=rows.filter(row=>row[2]===escapedLabel);expect(annual).toHaveLength(1);expect(annual[0].slice(5,7)).toEqual(['0,00','0,00']);
-    const monthly=rows.filter(row=>row[3]===escapedLabel);expect(monthly).toHaveLength(2);
+  for(const label of ['DIFAL','Antecipação de ICMS']){
+    const annual=rows.filter(row=>row[2]===label);expect(annual).toHaveLength(1);expect(annual[0].slice(5,7)).toEqual(['0,00','0,00']);
+    const monthly=rows.filter(row=>row[3]===label);expect(monthly).toHaveLength(2);
     for(const row of monthly){expect(row.slice(6,15)).toEqual(Array(9).fill('0,00'));expect(row[15]).toBe('0,00');}
   }
   expect(await api(page.request,baseURL!,'GET','/api/v4/simulations/'+included._id)).toEqual(included);

@@ -1,6 +1,8 @@
 /** Exports the presentation already prepared for the screen; never runs the calculator. */
 import {unifiedDreRows,dreDifalNotes,dreReportCoverage,dreRegimeStatuses,dreReportMemory} from './simulator-dre.js';
 import {buildDreExecutiveSummary,readDreValue} from './simulator-dre-summary.js';
+import {filterDreVisibleRegimes} from './simulator-dre-visibility.js';
+import {regimeMemoryApplies,regimeWarningApplies} from './regime-selection.js';
 
 const BOM = '\uFEFF';
 const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -27,6 +29,7 @@ function rowContexts(presentation) {
   for (const row of presentation.indicators || []) contexts.set(row, ['Indicadores','Indicadores']);
   for (const row of presentation.revenueReconciliation?.rows || []) contexts.set(row, ['Conferência da receita',presentation.revenueReconciliation.label]);
   for (const row of presentation.icmsReconciliation?.rows || []) contexts.set(row, ['Apuração do crédito de ICMS',presentation.icmsReconciliation.label]);
+  for (const section of presentation.statement?.sections || []) for (const row of section.rows || []) contexts.set(row, ['DRE',section.label]);
   return contexts;
 }
 
@@ -68,11 +71,19 @@ export function buildDreExportPayload(payload, presentation) {
  * Annual view compares regimes in columns. Monthly view identifies each regime in
  * a column and retains the captured months plus the captured period total.
  */
-export function buildDreCsv({presentation, period = 'annual', company = {}, year, showPercent = false}) {
+export function buildDreCsv({presentation, period = 'annual', company = {}, year, showPercent = false,visibleRegimeIds}) {
   if (!presentation || !Array.isArray(presentation.regimes) || !Array.isArray(presentation.sections)) {
     throw new TypeError('DRE inválida para exportação.');
   }
   if (!['annual','monthly','complete'].includes(period)) throw new TypeError('Período da DRE inválido.');
+  if(Array.isArray(visibleRegimeIds)){
+    presentation=filterDreVisibleRegimes(presentation,visibleRegimeIds);
+    const selection={version:'REGIME_SELECTION_V1',selected:presentation.regimes.map(regime=>regime.id)};
+    if(!selection.selected.length)throw new TypeError('Não há regimes capturados para exportar.');
+    if(presentation.report)presentation={...presentation,report:{...presentation.report,
+      memory:(presentation.report.memory||[]).filter(item=>regimeMemoryApplies(item.id,selection)),
+      warnings:(presentation.report.warnings||[]).filter(item=>regimeWarningApplies(item.code,selection))}};
+  }
   const lines = [];
   const textLine = cells => lines.push(cells.map(textCell).join(';'));
   const monthly = period === 'monthly',complete=period==='complete';
@@ -86,6 +97,14 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   textLine(['Ano do cenário', year ?? presentation.year ?? presentation.calendarYear ?? '', 'Versão da apresentação', presentation.version || '']);
   textLine(['Unidades', 'Valores monetários em BRL (R$); percentuais em %.']);
   textLine(['Critério',fixed?`Janela de janeiro a setembro: consolidado de ${monthCount} competências confirmadas, sem zerar ou projetar os meses ausentes. A RBT12 do Simples mantém sua referência própria de 12 meses.`:presentation.method==='REPORT_MONTHS_V1'?'Valores por competência dos relatórios. Total anual é a soma dos meses importados; meses fora do período sem dados.':'Valores da simulação preservados. Projeção mensal, não lançamentos históricos.']);
+  if(presentation.statement?.version==='DRE_STATEMENT_V1'){
+    textLine(['Critério da DRE',presentation.statement.note]);
+    const rates=presentation.statement.taxRates;
+    const percentage=value=>typeof value==='number'&&Number.isFinite(value)?(value*100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%':'Não disponível';
+    textLine(['CBS/IBS · alíquotas capturadas',`CBS ${percentage(rates.cbs)} + IBS ${percentage(rates.ibs)} = CBS/IBS ${percentage(rates.combined)}`,
+      'Premissas do cenário fora do DAS. O valor apurado considera os créditos efetivamente utilizados, sem segunda dedução.']);
+    if(rates.combined===null)for(const rate of rates.monthly||[])textLine(['CBS/IBS por competência',rate.sourceMonth,`CBS ${percentage(rate.cbs)} + IBS ${percentage(rate.ibs)} = CBS/IBS ${percentage(rate.combined)}`]);
+  }
   textLine(['Arredondamento', `Exibição com duas casas decimais; a soma dos meses exibidos pode diferir por centavos do ${fixed?'consolidado Jan–Set':'total anual'} preservado.`]);
   const coverage=dreReportCoverage(presentation);
   textLine(['Cobertura dos relatórios',coverage.label,coverage.detail]);
