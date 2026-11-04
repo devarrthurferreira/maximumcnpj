@@ -1,25 +1,26 @@
+import {assessQuarterlyIncomeTaxes,INCOME_TAX_MODEL_VERSION} from './simulator-income-tax.js';
 import {REPORT_GROUPS} from './simulator-projection.js';
 import {calculateSimulation, draftToInput, SIMULATION_VALUE_FIELDS, REVENUE_CONTEXT_VERSION, SIMPLES_DIAGNOSTIC_VERSION} from './simulator-engine.js';
 import {parseIcmsOperations} from './simulator-icms.js';
 import {resolveRegimeSelection,requiresSimplesReference} from './regime-selection.js';
 import {JAN_SEP_MODEL_VERSION,assertCompleteAnalysisPeriod} from './analysis-period.js';
 
-export const MONTHLY_MODEL_VERSION='1.19.0-entry-without-rbt12-sublimit';
+export const MONTHLY_MODEL_VERSION=INCOME_TAX_MODEL_VERSION;
 export const MONTHLY_VERSION='REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS=Object.freeze([...REPORT_GROUPS,'serviceRevenueCents']);
 const sum=values=>values.reduce((a,b)=>a+b,0);
 const fixedMemory=id=>['rbt12','sublimit','simplesLimit','simples.revenueReference','revenue.reference'].includes(id)||/^simples\..+\.deduction$/.test(id);
 const IRPJ_MONTHLY_FORMULAS={
-  'presumed.irIncrease':'Parcela da receita excedente atribuída à competência × coeficiente médio ponderado IRPJ × 10%.',
-  'presumed.irTotalBase':'Base de IRPJ da competência sem acréscimo + acréscimo da base da competência.',
-  'presumed.irBasic':'Base presumida total da competência × 15%.',
-  'presumed.irAdditional':'Máximo(0; base presumida total da competência − R$ 20.000) × 10%.',
-  'presumed.irTotal':'IRPJ normal da competência + adicional da competência.',
+  'presumed.irIncrease':'Excedente trimestral da LC 224/2025 × coeficiente ponderado das atividades × 10%.',
+  'presumed.irTotalBase':'Base acumulada do trimestre sem acréscimo + acréscimo da base.',
+  'presumed.irBasic':'Movimento da provisão normal: base acumulada do trimestre × 15%, em centavos, menos a provisão anterior.',
+  'presumed.irAdditional':'Movimento do adicional: máximo(0; base acumulada do trimestre − R$ 60.000) × 10%, em centavos, menos a provisão anterior.',
+  'presumed.irTotal':'Movimentos do IRPJ normal e adicional da competência.',
   'actual.preTax':'Resultado operacional da competência − CBS líquido − IBS líquido − ICMS líquido − ISS − encargos LP/LR. DIFAL não se aplica ao Lucro Real.',
-  'actual.base':'Máximo(0; resultado antes de IRPJ/CSLL da competência); sem ajustes fiscais ou compensações.',
-  'actual.irBasic':'Base positiva da competência × 15%.',
-  'actual.irAdditional':'Máximo(0; base positiva da competência − R$ 20.000) × 10%.',
-  'actual.irTotal':'IRPJ normal da competência + adicional da competência.'
+  'actual.base':'Máximo(0; soma dos resultados com sinal no trimestre); sem ajustes fiscais ou compensações.',
+  'actual.irBasic':'Movimento da provisão normal: base positiva acumulada do trimestre × 15%, em centavos, menos a provisão anterior.',
+  'actual.irAdditional':'Movimento do adicional: máximo(0; base acumulada do trimestre − R$ 60.000) × 10%, em centavos, menos a provisão anterior.',
+  'actual.irTotal':'Movimentos do IRPJ normal e adicional da competência.'
 };
 const monthlyMemory=item=>{
   if(item.id==='months')return {...item,value:1,formula:'Uma competência dos relatórios, calculada separadamente com as premissas do modelo.'};
@@ -32,6 +33,58 @@ const asCents=(value,signed=false)=>{
   check(typeof value==='number'&&Number.isFinite(value)&&(signed||value>=0)&&Math.abs(value)<=1e12&&value===Math.round(value*100)/100,'Preencha cada competência com valores válidos em reais e até duas casas decimais.');
   return Math.round(value*100);
 };
+/** Capture monthly movements and their cumulative-quarter explanation together. */
+function applyIncomeTaxAssessment(result,container,monthly){
+  const setMemory=(id,value,label,formula,reason='')=>{
+    const item=result.memory.find(entry=>entry.id===id);if(!item)return;
+    if(reason){Object.assign(item,{unit:'text',value:'Conferência necessária',availability:'UNAVAILABLE',label,formula:reason});return;}
+    Object.assign(item,{value,unit:'currency',label,formula});delete item.availability;
+  };
+  for(const id of ['presumed','actual']){
+    const assessment=container.regimes[id],regime=result.regimes.find(row=>row.id===id);
+    if(!regime||!assessment)continue;
+    const available=regime.available&&assessment.available;
+    const reason=!assessment.available?assessment.reason:!regime.available?regime.status:'';
+    const b=assessment.bases,t=assessment.movement;
+    if(available){
+      regime.dre.irpj=t.irpjTotalCents===0?0:-t.irpjTotalCents/100;regime.dre.csll=t.csllCents===0?0:-t.csllCents/100;
+      regime.dre.netProfit=regime.dre.preTax+regime.dre.irpj+regime.dre.csll;
+      const d=regime.dre;
+      regime.totalTaxes=-d.das-d.cbsDebit-d.ibsDebit-d.icmsNet-d.iss-(d.difal??0)-(d.icmsAnticipation??0)-d.payroll-d.irpj-d.csll-d.cbsUsed-d.ibsUsed;
+      regime.annualProfit=d.netProfit;regime.monthlyProfit=monthly?d.netProfit:null;
+      regime.margin=result.annualRevenue>0?d.netProfit/result.annualRevenue:null;
+      regime.taxBurden=result.annualRevenue>0?regime.totalTaxes/result.annualRevenue:null;
+      regime.status=assessment.status==='PROVISIONAL'?'Provisão trimestral disponível; fechamento incompleto.':id==='actual'?'Estimativa gerencial dos trimestres capturados; sujeita aos ajustes fiscais.':'Trimestres capturados conciliados; simulação sujeita ao enquadramento.';
+    }else{
+      // Numeric legacy-shaped fields remain unconfirmed behind available=false.
+      // Metadata and memory carry null/unavailable rather than certifying a zero.
+      regime.available=false;regime.status=reason;regime.margin=null;regime.taxBurden=null;
+    }
+    const baseLabel=monthly?(assessment.scope==='ANNUAL_ADJUSTMENT'?'das apurações ajustadas no ano':'acumulada do trimestre'):'dos trimestres do período';
+    const baseFormula=monthly?'Base acumulada das competências conhecidas do trimestre; receitas e resultados mantêm o sinal antes do mínimo zero.':'Soma das bases finais de cada trimestre capturado, sem somar novamente os acumulados mensais.';
+    const taxFormula=monthly?'Movimento em centavos = provisão cumulativa arredondada − provisão anterior; pode ser negativo em uma reversão.':'Soma dos movimentos mensais em centavos; concilia com os componentes arredondados de cada trimestre.';
+    for(const [suffix,key,label] of [['irBasic','irpjNormalCents','IRPJ normal'],['irAdditional','irpjAdditionalCents','Adicional de IRPJ'],['irTotal','irpjTotalCents','IRPJ total'],['csTotal','csllCents','CSLL']]){
+      setMemory(`${id}.${suffix}`,t?.[key]/100,`${label}: ${monthly?'movimento da competência':'total do período'}`,taxFormula,reason);
+    }
+    if(id==='presumed'){
+      for(const [suffix,key,label]of [['irBase','irpjBaseWithoutIncrease','Base IRPJ sem acréscimo'],['irIncrease','irpjIncrease','Acréscimo da base IRPJ'],['irTotalBase','irpjBase','Base presumida total IRPJ'],['csBase','csllBaseWithoutIncrease','Base CSLL sem acréscimo'],['csIncrease','csllIncrease','Acréscimo da base CSLL'],['csTotalBase','csllBase','Base presumida total CSLL']])setMemory(`${id}.${suffix}`,b?.[key],`${label} ${baseLabel}`,baseFormula,reason);
+      setMemory('presumed.excessRevenue',assessment.available?sum(assessment.periods.map(period=>period.lc224?.excessRevenue??0)):null,`Receita excedente LC 224/2025 ${baseLabel}`,'Excedente após o limite de R$ 1.250.000 por trimestre e saldo anterior conhecido; ajuste anual quando disponível. O ano usado é o do cenário.',reason);
+      for(const [suffix,key]of [['irCoefficient','irpjBaseWithoutIncrease'],['csCoefficient','csllBaseWithoutIncrease']]){
+        const item=result.memory.find(entry=>entry.id===`presumed.${suffix}`);if(!item)continue;
+        if(reason)Object.assign(item,{value:'Conferência necessária',unit:'text',availability:'UNAVAILABLE',formula:reason});
+        else{Object.assign(item,{value:b.revenue>0?b[key]/b.revenue:0,unit:'percent',formula:'Base acumulada sem acréscimo dividida pela receita líquida acumulada do trimestre; não usar a composição de um mês isolado.'});delete item.availability;}
+      }
+    }else setMemory('actual.base',b?.irpjBase,`Base positiva estimada ${baseLabel}`,baseFormula+' O Lucro Real é gerencial, sem ajustes fiscais ou compensações.',reason);
+    for(const key of ['irpj','csll','netProfit'])setMemory(`dre.${id}.${key}`,regime.dre[key],result.memory.find(item=>item.id===`dre.${id}.${key}`)?.label||key,key==='netProfit'?'Resultado antes de IRPJ/CSLL menos os movimentos de IRPJ e CSLL.':`Sinal oposto do movimento ${key.toUpperCase()} do período; reversões aumentam o resultado.`,reason);
+    setMemory(`summary.${id}.taxes`,regime.totalTaxes,'Tributos e encargos totais','Soma dos tributos, encargos e movimentos de IRPJ/CSLL, deduzidos os créditos utilizados; sem duplicar composições.',reason);
+    for(const [suffix,value]of [['margin',regime.margin],['burden',regime.taxBurden]]){
+      const item=result.memory.find(entry=>entry.id===`summary.${id}.${suffix}`);
+      if(item)Object.assign(item,{value:value??'Não aplicável',unit:value===null?'text':'percent'});
+    }
+  }
+  const ranked=result.annualRevenue>0?result.regimes.filter(regime=>regime.available).sort((a,b)=>b.annualProfit-a.annualProfit):[];
+  result.bestRegimeId=ranked[0]?.id??null;result.difference=ranked.length?ranked[0].annualProfit-ranked.at(-1).annualProfit:0;
+}
 export function monthlyProjection(reports){
   check(Array.isArray(reports)&&reports.length>=1&&reports.length<=12,'Reimporte compras e vendas com as datas da coluna H para calcular cada competência.');
   const seen=new Set();
@@ -131,6 +184,18 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
       memory:raw.memory.filter(item=>!/^summary\..+\.monthly$/.test(item.id)&&!['difal.monthly','icmsAnticipation.monthly'].includes(item.id)).map(monthlyMemory)};
     return {sourceMonth:row.sourceMonth,month:row.month,groups,values,engineInput,result};
   });
+  const incomeTaxes=assessQuarterlyIncomeTaxes({year:draft.year,basis:'ACTUAL_REPORT_MONTHS',
+    regimeIds:regimeSelection.selected.filter(id=>['presumed','actual'].includes(id)),
+    months:monthlyResults.map(row=>{
+      const actual=row.result.regimes.find(regime=>regime.id==='actual');
+      const projectedExact=row.result.incomeTaxAssessment.monthlyAssessments?.[`${draft.year}-01`]?.regimes.actual?.periods[0]?.inputs[0]?.preTaxExact;
+      return {sourceMonth:row.sourceMonth,month:row.month,salesRevenue:row.values.salesRevenue,serviceRevenue:row.values.serviceRevenue,
+        preTax:actual?.available?actual.dre.preTax:null,...(actual?.available&&projectedExact?{preTaxExact:projectedExact}:{}),actualAvailable:actual?.available===true};
+    })});
+  for(const row of monthlyResults){
+    row.result.incomeTaxAssessment=incomeTaxes.monthlyAssessments[row.sourceMonth];
+    applyIncomeTaxAssessment(row.result,row.result.incomeTaxAssessment,true);
+  }
   const first=monthlyResults[0].result,annualRevenue=sum(monthlyResults.map(row=>row.result.annualRevenue));
   const regimes=first.regimes.map(regime=>{
     const all=monthlyResults.map(row=>row.result.regimes.find(item=>item.id===regime.id));
@@ -169,7 +234,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
   }
   const warningGroups=new Map();
   for(const row of monthlyResults)for(const item of row.result.warnings){
-    if(['difal-estimate','projection'].includes(item.code))continue;
+    if(['difal-estimate','projection','presumption-increase'].includes(item.code))continue;
     // Coalesce identical explanations while retaining every affected competence.
     const key=JSON.stringify([item.code,item.severity,item.title,item.detail]);
     const group=warningGroups.get(key)||{...item,sourceMonths:[]};
@@ -177,7 +242,8 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
   }
   const warnings=[...warningGroups.values()].map(({sourceMonths,...item})=>({...item,detail:`${sourceMonths.join(', ')}: ${item.detail}`}));
   warnings.push({code:'actual-months',severity:'info',title:'Valores por competência',detail:`Compras, vendas e serviços seguem cada mês da coluna H.${hasSimples?` O DIFAL de saída permanece desativado. A antecipação das compras respeita as opções de cada regime. ${first.rbt12Source==='NOT_PROVIDED'?'RBT12 não informada; os cenários do Simples permanecem sem cálculo confirmado.':rbt12Schedule?'RBT12 móvel composta pelas 12 receitas anteriores de cada competência, exclusivamente do quadro 2.2.':'RBT12 fixa informada para o cenário.'}`:''} ${analysisPeriod?'O consolidado é a soma efetiva de janeiro a setembro. Outubro a dezembro permanecem fora do cálculo; quando informada, a referência de RBT12 conserva doze meses.':'Total anual é a soma dos meses importados. Meses fora do período não têm dados.'} Não há compensação automática de créditos entre competências.`});
-  warnings.push({code:'monthly-model-scope',severity:'info',title:'Escopo do cálculo por competência',detail:'O consolidado soma os resultados dos meses informados. Compras/CMV simplificam o custo; o modelo não controla estoques, ajustes fiscais do Lucro Real, compensação de prejuízos ou apuração trimestral. A comparação depende das premissas e do enquadramento.'});
+  warnings.push({code:'monthly-model-scope',severity:'info',title:'Escopo do cálculo por competência',detail:'IRPJ e CSLL acumulam as bases do trimestre; a DRE mensal reconhece a diferença da provisão, inclusive reversões. O limite do adicional é R$ 60.000 por trimestre, sem redução por meses ausentes. Compras/CMV simplificam o custo; o Lucro Real é gerencial, sem estoques, ajustes fiscais ou compensação de prejuízos. Fechamentos incompletos permanecem pendentes.'});
+  if(incomeTaxes.incomeTaxAssessment.regimes.presumed?.periods.some(period=>(period.lc224?.excessRevenue??0)>0))warnings.push({code:'presumption-increase',severity:'warning',title:'Acréscimo trimestral dos coeficientes de presunção',detail:`LC 224/2025 aplicada no cenário ${draft.year}: limite de R$ 1.250.000 por trimestre com saldo anterior conhecido, proporção das atividades do trimestre e ajuste anual de encerramento. A origem dos arquivos não altera o ano das regras do cenário.`});
   let simplesDiagnostic;
   if(hasSimples){
   const diagnoses=monthlyResults.map(row=>({sourceMonth:row.sourceMonth,...row.result.simplesDiagnostic}));
@@ -194,8 +260,9 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
   memory.push({id:'simples.diagnostic',section:'Simples Nacional',label:'Condição do cálculo no período',formula:'Cada competência mantém sua RBT12 e seu motivo; disponibilidade não confirma enquadramento fiscal.',value:diagnoses.map(item=>`${item.sourceMonth}: ${item.message}`).join(' '),unit:'text'},
     {id:'simples.action',section:'Simples Nacional',label:'Conferência necessária',formula:simplesDiagnostic.statusCode,value:simplesDiagnostic.action,unit:'text'});
   }
-  const result={...first,version:analysisPeriod?JAN_SEP_MODEL_VERSION:MONTHLY_MODEL_VERSION,method:MONTHLY_VERSION,...(analysisPeriod?{analysisPeriod}:{}),annualRevenue,...(simplesDiagnostic?{simplesDiagnostic}:{}),regimes,credits,memory,warnings,monthlyResults,...(rbt12Schedule?{rbt12Schedule}:{}),
+  const result={...first,incomeTaxAssessment:incomeTaxes.incomeTaxAssessment,version:analysisPeriod?JAN_SEP_MODEL_VERSION:MONTHLY_MODEL_VERSION,method:MONTHLY_VERSION,...(analysisPeriod?{analysisPeriod}:{}),annualRevenue,...(simplesDiagnostic?{simplesDiagnostic}:{}),regimes,credits,memory,warnings,monthlyResults,...(rbt12Schedule?{rbt12Schedule}:{}),
     bestRegimeId:ranked[0]?.id||null,difference:ranked.length?ranked[0].annualProfit-ranked.at(-1).annualProfit:0};
+  applyIncomeTaxAssessment(result,incomeTaxes.incomeTaxAssessment,false);
   projection.scenario={unit:'CENTS',annual:{revenueCents:sum(monthlyResults.map(row=>asCents(row.values.salesRevenue,true)+asCents(row.values.serviceRevenue)))},months:monthlyResults.map(({sourceMonth,groups,values})=>({sourceMonth,groups,values}))};
   if(analysisPeriod)projection.analysisPeriod=analysisPeriod;
   return {result,projection,difalProjection,anticipationProjection,...(rbt12Schedule?{rbt12Schedule}:{}),adjustments,monthlyInputs:monthlyResults.map(({sourceMonth,groups,values})=>({sourceMonth,groups,values:Object.fromEntries(['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,values[key]]))})),

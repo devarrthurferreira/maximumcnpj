@@ -1,0 +1,1311 @@
+{
+  "year": 2027,
+  "analysisPeriod": {
+    "version": "JAN_SEP_V1",
+    "sourceYear": 2025,
+    "startMonth": "2025-01",
+    "endMonth": "2025-09",
+    "months": 9,
+    "expectedMonths": [
+      "2025-01",
+      "2025-02",
+      "2025-03",
+      "2025-04",
+      "2025-05",
+      "2025-06",
+      "2025-07",
+      "2025-08",
+      "2025-09"
+    ],
+    "includedMonths": [
+      "2025-01",
+      "2025-02",
+      "2025-03",
+      "2025-04",
+      "2025-05",
+      "2025-06",
+      "2025-07",
+      "2025-08",
+      "2025-09"
+    ],
+    "excludedMonths": [
+      "2025-10",
+      "2025-11",
+      "2025-12"
+    ],
+    "missingMonths": [],
+    "complete": true
+  },
+  "reportMonths": 9,
+  "company": {
+    "code": "DEMO-01",
+    "name": "COMÉRCIO E SERVIÇOS DEMONSTRAÇÃO LTDA."
+  },
+  "monthlyDre": {
+    "version": "DRE_CALENDAR_V4",
+    "year": 2027,
+    "unit": "BRL",
+    "method": "REPORT_MONTHS_FIXED_RBT12",
+    "regimeSelection": {
+      "version": "REGIME_SELECTION_V1",
+      "selected": [
+        "pure",
+        "hybrid",
+        "presumed",
+        "actual"
+      ]
+    },
+    "analysisPeriod": {
+      "version": "JAN_SEP_V1",
+      "sourceYear": 2025,
+      "startMonth": "2025-01",
+      "endMonth": "2025-09",
+      "months": 9,
+      "expectedMonths": [
+        "2025-01",
+        "2025-02",
+        "2025-03",
+        "2025-04",
+        "2025-05",
+        "2025-06",
+        "2025-07",
+        "2025-08",
+        "2025-09"
+      ],
+      "includedMonths": [
+        "2025-01",
+        "2025-02",
+        "2025-03",
+        "2025-04",
+        "2025-05",
+        "2025-06",
+        "2025-07",
+        "2025-08",
+        "2025-09"
+      ],
+      "excludedMonths": [
+        "2025-10",
+        "2025-11",
+        "2025-12"
+      ],
+      "missingMonths": [],
+      "complete": true
+    },
+    "reportPeriod": {
+      "startMonth": "2025-01",
+      "endMonth": "2025-09",
+      "startDate": "2025-01-01",
+      "endDate": "2025-09-30",
+      "months": 9,
+      "observedMonths": 9,
+      "missingMonths": []
+    },
+    "rbt12Reference": {
+      "source": "MANUAL",
+      "rbt12Cents": 330000000
+    },
+    "months": [
+      {
+        "number": 1,
+        "label": "Janeiro",
+        "period": "2027-01",
+        "sourceMonth": "2025-01"
+      },
+      {
+        "number": 2,
+        "label": "Fevereiro",
+        "period": "2027-02",
+        "sourceMonth": "2025-02"
+      },
+      {
+        "number": 3,
+        "label": "Março",
+        "period": "2027-03",
+        "sourceMonth": "2025-03"
+      },
+      {
+        "number": 4,
+        "label": "Abril",
+        "period": "2027-04",
+        "sourceMonth": "2025-04"
+      },
+      {
+        "number": 5,
+        "label": "Maio",
+        "period": "2027-05",
+        "sourceMonth": "2025-05"
+      },
+      {
+        "number": 6,
+        "label": "Junho",
+        "period": "2027-06",
+        "sourceMonth": "2025-06"
+      },
+      {
+        "number": 7,
+        "label": "Julho",
+        "period": "2027-07",
+        "sourceMonth": "2025-07"
+      },
+      {
+        "number": 8,
+        "label": "Agosto",
+        "period": "2027-08",
+        "sourceMonth": "2025-08"
+      },
+      {
+        "number": 9,
+        "label": "Setembro",
+        "period": "2027-09",
+        "sourceMonth": "2025-09"
+      }
+    ],
+    "rounding": "Valores completos preservados. Exibição com duas casas; somas de células exibidas podem diferir por centavos do consolidado de janeiro a setembro.",
+    "regimes": [
+      {
+        "id": "pure",
+        "name": "Simples Puro",
+        "available": true,
+        "rows": [
+          {
+            "key": "revenue",
+            "label": "Receita total utilizada",
+            "annual": 1886945,
+            "months": [
+              163325,
+              182570,
+              122030,
+              214165,
+              205830,
+              241820,
+              227575,
+              257655,
+              271975
+            ]
+          },
+          {
+            "key": "irpj",
+            "label": "− IRPJ e adicional",
+            "annual": 0,
+            "months": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "id": "hybrid",
+        "name": "Simples Híbrido",
+        "available": true,
+        "rows": [
+          {
+            "key": "revenue",
+            "label": "Receita total utilizada",
+            "annual": 1886945,
+            "months": [
+              163325,
+              182570,
+              122030,
+              214165,
+              205830,
+              241820,
+              227575,
+              257655,
+              271975
+            ]
+          },
+          {
+            "key": "irpj",
+            "label": "− IRPJ e adicional",
+            "annual": 0,
+            "months": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "id": "presumed",
+        "name": "Lucro Presumido",
+        "available": true,
+        "rows": [
+          {
+            "key": "revenue",
+            "label": "Receita total utilizada",
+            "annual": 1886945,
+            "months": [
+              163325,
+              182570,
+              122030,
+              214165,
+              205830,
+              241820,
+              227575,
+              257655,
+              271975
+            ]
+          },
+          {
+            "key": "irpj",
+            "label": "− IRPJ e adicional",
+            "annual": -36822.060000000005,
+            "months": [
+              -2697.9,
+              -3031.4,
+              -2382.3599999999997,
+              -3963.3000000000006,
+              -3946.600000000001,
+              -4816.400000000001,
+              -4681.5,
+              -5433.100000000001,
+              -5869.5
+            ]
+          }
+        ]
+      },
+      {
+        "id": "actual",
+        "name": "Lucro Real",
+        "available": true,
+        "rows": [
+          {
+            "key": "revenue",
+            "label": "Receita total utilizada",
+            "annual": 1886945,
+            "months": [
+              163325,
+              182570,
+              122030,
+              214165,
+              205830,
+              241820,
+              227575,
+              257655,
+              271975
+            ]
+          },
+          {
+            "key": "irpj",
+            "label": "− IRPJ e adicional",
+            "annual": -91173.1275,
+            "months": [
+              -4144.477500000002,
+              -6903.534999999999,
+              0,
+              -11162.6825,
+              -8885.87,
+              -14702.420000000004,
+              -11346.4925,
+              -16083.927499999998,
+              -17943.7225
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "source": {
+    "monthlyReports": [
+      {
+        "sourceMonth": "2025-01"
+      },
+      {
+        "sourceMonth": "2025-02"
+      },
+      {
+        "sourceMonth": "2025-03"
+      },
+      {
+        "sourceMonth": "2025-04"
+      },
+      {
+        "sourceMonth": "2025-05"
+      },
+      {
+        "sourceMonth": "2025-06"
+      },
+      {
+        "sourceMonth": "2025-07"
+      },
+      {
+        "sourceMonth": "2025-08"
+      },
+      {
+        "sourceMonth": "2025-09"
+      }
+    ]
+  },
+  "result": {
+    "version": "1.19.0-entry-without-rbt12-sublimit-available-months",
+    "method": "REPORT_MONTHS_V1",
+    "analysisPeriod": {
+      "version": "JAN_SEP_V1",
+      "sourceYear": 2025,
+      "startMonth": "2025-01",
+      "endMonth": "2025-09",
+      "months": 9,
+      "expectedMonths": [
+        "2025-01",
+        "2025-02",
+        "2025-03",
+        "2025-04",
+        "2025-05",
+        "2025-06",
+        "2025-07",
+        "2025-08",
+        "2025-09"
+      ],
+      "includedMonths": [
+        "2025-01",
+        "2025-02",
+        "2025-03",
+        "2025-04",
+        "2025-05",
+        "2025-06",
+        "2025-07",
+        "2025-08",
+        "2025-09"
+      ],
+      "excludedMonths": [
+        "2025-10",
+        "2025-11",
+        "2025-12"
+      ],
+      "missingMonths": [],
+      "complete": true
+    },
+    "bestRegimeId": "pure",
+    "regimes": [
+      {
+        "id": "pure",
+        "name": "Simples Puro",
+        "available": true,
+        "status": "Cálculo disponível nas competências informadas · ICMS/ISS no DAS",
+        "dre": {
+          "irpj": 0,
+          "revenue": 1886945
+        }
+      },
+      {
+        "id": "hybrid",
+        "name": "Simples Híbrido",
+        "available": true,
+        "status": "Cálculo disponível nas competências informadas · ICMS/ISS no DAS",
+        "dre": {
+          "irpj": 0,
+          "revenue": 1886945
+        }
+      },
+      {
+        "id": "presumed",
+        "name": "Lucro Presumido",
+        "available": true,
+        "status": "Simulação sujeita ao enquadramento",
+        "dre": {
+          "irpj": -36822.060000000005,
+          "revenue": 1886945
+        }
+      },
+      {
+        "id": "actual",
+        "name": "Lucro Real",
+        "available": true,
+        "status": "Cálculo disponível nas competências informadas",
+        "dre": {
+          "irpj": -91173.1275,
+          "revenue": 1886945
+        }
+      }
+    ],
+    "memory": [
+      {
+        "id": "presumed.irTotalBase",
+        "unit": "currency",
+        "value": 216835.6
+      },
+      {
+        "id": "presumed.irBasic",
+        "unit": "currency",
+        "value": 32525.34
+      },
+      {
+        "id": "presumed.irAdditional",
+        "unit": "currency",
+        "value": 4296.720000000001
+      },
+      {
+        "id": "presumed.irTotal",
+        "unit": "currency",
+        "value": 36822.060000000005
+      },
+      {
+        "id": "actual.base",
+        "unit": "currency",
+        "value": 428692.51
+      },
+      {
+        "id": "actual.irBasic",
+        "unit": "currency",
+        "value": 64303.8765
+      },
+      {
+        "id": "actual.irAdditional",
+        "unit": "currency",
+        "value": 26869.251
+      },
+      {
+        "id": "actual.irTotal",
+        "unit": "currency",
+        "value": 91173.1275
+      }
+    ],
+    "monthlyResults": [
+      {
+        "month": 1,
+        "sourceMonth": "2025-01",
+        "result": {
+          "version": "1.19.0-entry-without-rbt12-sublimit",
+          "bestRegimeId": "pure",
+          "regimes": [
+            {
+              "id": "pure",
+              "name": "Simples Puro",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 163325
+              }
+            },
+            {
+              "id": "hybrid",
+              "name": "Simples Híbrido",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 163325
+              }
+            },
+            {
+              "id": "presumed",
+              "name": "Lucro Presumido",
+              "available": true,
+              "status": "Simulação sujeita ao enquadramento",
+              "dre": {
+                "irpj": -2697.9,
+                "revenue": 163325
+              }
+            },
+            {
+              "id": "actual",
+              "name": "Lucro Real",
+              "available": true,
+              "status": "Disponível",
+              "dre": {
+                "irpj": -4144.477500000002,
+                "revenue": 163325
+              }
+            }
+          ],
+          "memory": [
+            {
+              "id": "presumed.irTotalBase",
+              "unit": "currency",
+              "value": 17986
+            },
+            {
+              "id": "presumed.irBasic",
+              "unit": "currency",
+              "value": 2697.9
+            },
+            {
+              "id": "presumed.irAdditional",
+              "unit": "currency",
+              "value": 0
+            },
+            {
+              "id": "presumed.irTotal",
+              "unit": "currency",
+              "value": 2697.9
+            },
+            {
+              "id": "actual.base",
+              "unit": "currency",
+              "value": 24577.910000000007
+            },
+            {
+              "id": "actual.irBasic",
+              "unit": "currency",
+              "value": 3686.686500000001
+            },
+            {
+              "id": "actual.irAdditional",
+              "unit": "currency",
+              "value": 457.79100000000085
+            },
+            {
+              "id": "actual.irTotal",
+              "unit": "currency",
+              "value": 4144.477500000002
+            }
+          ]
+        }
+      },
+      {
+        "month": 2,
+        "sourceMonth": "2025-02",
+        "result": {
+          "version": "1.19.0-entry-without-rbt12-sublimit",
+          "bestRegimeId": "pure",
+          "regimes": [
+            {
+              "id": "pure",
+              "name": "Simples Puro",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 182570
+              }
+            },
+            {
+              "id": "hybrid",
+              "name": "Simples Híbrido",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 182570
+              }
+            },
+            {
+              "id": "presumed",
+              "name": "Lucro Presumido",
+              "available": true,
+              "status": "Simulação sujeita ao enquadramento",
+              "dre": {
+                "irpj": -3031.4,
+                "revenue": 182570
+              }
+            },
+            {
+              "id": "actual",
+              "name": "Lucro Real",
+              "available": true,
+              "status": "Disponível",
+              "dre": {
+                "irpj": -6903.534999999999,
+                "revenue": 182570
+              }
+            }
+          ],
+          "memory": [
+            {
+              "id": "presumed.irTotalBase",
+              "unit": "currency",
+              "value": 20125.600000000002
+            },
+            {
+              "id": "presumed.irBasic",
+              "unit": "currency",
+              "value": 3018.84
+            },
+            {
+              "id": "presumed.irAdditional",
+              "unit": "currency",
+              "value": 12.560000000000096
+            },
+            {
+              "id": "presumed.irTotal",
+              "unit": "currency",
+              "value": 3031.4
+            },
+            {
+              "id": "actual.base",
+              "unit": "currency",
+              "value": 35614.13999999999
+            },
+            {
+              "id": "actual.irBasic",
+              "unit": "currency",
+              "value": 5342.120999999999
+            },
+            {
+              "id": "actual.irAdditional",
+              "unit": "currency",
+              "value": 1561.4139999999995
+            },
+            {
+              "id": "actual.irTotal",
+              "unit": "currency",
+              "value": 6903.534999999999
+            }
+          ]
+        }
+      },
+      {
+        "month": 3,
+        "sourceMonth": "2025-03",
+        "result": {
+          "version": "1.19.0-entry-without-rbt12-sublimit",
+          "bestRegimeId": "pure",
+          "regimes": [
+            {
+              "id": "pure",
+              "name": "Simples Puro",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 122030
+              }
+            },
+            {
+              "id": "hybrid",
+              "name": "Simples Híbrido",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 122030
+              }
+            },
+            {
+              "id": "presumed",
+              "name": "Lucro Presumido",
+              "available": true,
+              "status": "Simulação sujeita ao enquadramento",
+              "dre": {
+                "irpj": -2382.3599999999997,
+                "revenue": 122030
+              }
+            },
+            {
+              "id": "actual",
+              "name": "Lucro Real",
+              "available": true,
+              "status": "Disponível",
+              "dre": {
+                "irpj": 0,
+                "revenue": 122030
+              }
+            }
+          ],
+          "memory": [
+            {
+              "id": "presumed.irTotalBase",
+              "unit": "currency",
+              "value": 15882.4
+            },
+            {
+              "id": "presumed.irBasic",
+              "unit": "currency",
+              "value": 2382.3599999999997
+            },
+            {
+              "id": "presumed.irAdditional",
+              "unit": "currency",
+              "value": 0
+            },
+            {
+              "id": "presumed.irTotal",
+              "unit": "currency",
+              "value": 2382.3599999999997
+            },
+            {
+              "id": "actual.base",
+              "unit": "currency",
+              "value": 0
+            },
+            {
+              "id": "actual.irBasic",
+              "unit": "currency",
+              "value": 0
+            },
+            {
+              "id": "actual.irAdditional",
+              "unit": "currency",
+              "value": 0
+            },
+            {
+              "id": "actual.irTotal",
+              "unit": "currency",
+              "value": 0
+            }
+          ]
+        }
+      },
+      {
+        "month": 4,
+        "sourceMonth": "2025-04",
+        "result": {
+          "version": "1.19.0-entry-without-rbt12-sublimit",
+          "bestRegimeId": "pure",
+          "regimes": [
+            {
+              "id": "pure",
+              "name": "Simples Puro",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 214165
+              }
+            },
+            {
+              "id": "hybrid",
+              "name": "Simples Híbrido",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 214165
+              }
+            },
+            {
+              "id": "presumed",
+              "name": "Lucro Presumido",
+              "available": true,
+              "status": "Simulação sujeita ao enquadramento",
+              "dre": {
+                "irpj": -3963.3000000000006,
+                "revenue": 214165
+              }
+            },
+            {
+              "id": "actual",
+              "name": "Lucro Real",
+              "available": true,
+              "status": "Disponível",
+              "dre": {
+                "irpj": -11162.6825,
+                "revenue": 214165
+              }
+            }
+          ],
+          "memory": [
+            {
+              "id": "presumed.irTotalBase",
+              "unit": "currency",
+              "value": 23853.2
+            },
+            {
+              "id": "presumed.irBasic",
+              "unit": "currency",
+              "value": 3577.98
+            },
+            {
+              "id": "presumed.irAdditional",
+              "unit": "currency",
+              "value": 385.3200000000002
+            },
+            {
+              "id": "presumed.irTotal",
+              "unit": "currency",
+              "value": 3963.3000000000006
+            },
+            {
+              "id": "actual.base",
+              "unit": "currency",
+              "value": 52650.73
+            },
+            {
+              "id": "actual.irBasic",
+              "unit": "currency",
+              "value": 7897.6095
+            },
+            {
+              "id": "actual.irAdditional",
+              "unit": "currency",
+              "value": 3265.0730000000003
+            },
+            {
+              "id": "actual.irTotal",
+              "unit": "currency",
+              "value": 11162.6825
+            }
+          ]
+        }
+      },
+      {
+        "month": 5,
+        "sourceMonth": "2025-05",
+        "result": {
+          "version": "1.19.0-entry-without-rbt12-sublimit",
+          "bestRegimeId": "pure",
+          "regimes": [
+            {
+              "id": "pure",
+              "name": "Simples Puro",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 205830
+              }
+            },
+            {
+              "id": "hybrid",
+              "name": "Simples Híbrido",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 205830
+              }
+            },
+            {
+              "id": "presumed",
+              "name": "Lucro Presumido",
+              "available": true,
+              "status": "Simulação sujeita ao enquadramento",
+              "dre": {
+                "irpj": -3946.600000000001,
+                "revenue": 205830
+              }
+            },
+            {
+              "id": "actual",
+              "name": "Lucro Real",
+              "available": true,
+              "status": "Disponível",
+              "dre": {
+                "irpj": -8885.87,
+                "revenue": 205830
+              }
+            }
+          ],
+          "memory": [
+            {
+              "id": "presumed.irTotalBase",
+              "unit": "currency",
+              "value": 23786.400000000005
+            },
+            {
+              "id": "presumed.irBasic",
+              "unit": "currency",
+              "value": 3567.9600000000005
+            },
+            {
+              "id": "presumed.irAdditional",
+              "unit": "currency",
+              "value": 378.6400000000004
+            },
+            {
+              "id": "presumed.irTotal",
+              "unit": "currency",
+              "value": 3946.600000000001
+            },
+            {
+              "id": "actual.base",
+              "unit": "currency",
+              "value": 43543.48
+            },
+            {
+              "id": "actual.irBasic",
+              "unit": "currency",
+              "value": 6531.522
+            },
+            {
+              "id": "actual.irAdditional",
+              "unit": "currency",
+              "value": 2354.3480000000004
+            },
+            {
+              "id": "actual.irTotal",
+              "unit": "currency",
+              "value": 8885.87
+            }
+          ]
+        }
+      },
+      {
+        "month": 6,
+        "sourceMonth": "2025-06",
+        "result": {
+          "version": "1.19.0-entry-without-rbt12-sublimit",
+          "bestRegimeId": "pure",
+          "regimes": [
+            {
+              "id": "pure",
+              "name": "Simples Puro",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 241820
+              }
+            },
+            {
+              "id": "hybrid",
+              "name": "Simples Híbrido",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 241820
+              }
+            },
+            {
+              "id": "presumed",
+              "name": "Lucro Presumido",
+              "available": true,
+              "status": "Simulação sujeita ao enquadramento",
+              "dre": {
+                "irpj": -4816.400000000001,
+                "revenue": 241820
+              }
+            },
+            {
+              "id": "actual",
+              "name": "Lucro Real",
+              "available": true,
+              "status": "Disponível",
+              "dre": {
+                "irpj": -14702.420000000004,
+                "revenue": 241820
+              }
+            }
+          ],
+          "memory": [
+            {
+              "id": "presumed.irTotalBase",
+              "unit": "currency",
+              "value": 27265.600000000002
+            },
+            {
+              "id": "presumed.irBasic",
+              "unit": "currency",
+              "value": 4089.84
+            },
+            {
+              "id": "presumed.irAdditional",
+              "unit": "currency",
+              "value": 726.5600000000001
+            },
+            {
+              "id": "presumed.irTotal",
+              "unit": "currency",
+              "value": 4816.400000000001
+            },
+            {
+              "id": "actual.base",
+              "unit": "currency",
+              "value": 66809.68000000001
+            },
+            {
+              "id": "actual.irBasic",
+              "unit": "currency",
+              "value": 10021.452000000001
+            },
+            {
+              "id": "actual.irAdditional",
+              "unit": "currency",
+              "value": 4680.968000000002
+            },
+            {
+              "id": "actual.irTotal",
+              "unit": "currency",
+              "value": 14702.420000000004
+            }
+          ]
+        }
+      },
+      {
+        "month": 7,
+        "sourceMonth": "2025-07",
+        "result": {
+          "version": "1.19.0-entry-without-rbt12-sublimit",
+          "bestRegimeId": "pure",
+          "regimes": [
+            {
+              "id": "pure",
+              "name": "Simples Puro",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 227575
+              }
+            },
+            {
+              "id": "hybrid",
+              "name": "Simples Híbrido",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 227575
+              }
+            },
+            {
+              "id": "presumed",
+              "name": "Lucro Presumido",
+              "available": true,
+              "status": "Simulação sujeita ao enquadramento",
+              "dre": {
+                "irpj": -4681.5,
+                "revenue": 227575
+              }
+            },
+            {
+              "id": "actual",
+              "name": "Lucro Real",
+              "available": true,
+              "status": "Disponível",
+              "dre": {
+                "irpj": -11346.4925,
+                "revenue": 227575
+              }
+            }
+          ],
+          "memory": [
+            {
+              "id": "presumed.irTotalBase",
+              "unit": "currency",
+              "value": 26726
+            },
+            {
+              "id": "presumed.irBasic",
+              "unit": "currency",
+              "value": 4008.8999999999996
+            },
+            {
+              "id": "presumed.irAdditional",
+              "unit": "currency",
+              "value": 672.6
+            },
+            {
+              "id": "presumed.irTotal",
+              "unit": "currency",
+              "value": 4681.5
+            },
+            {
+              "id": "actual.base",
+              "unit": "currency",
+              "value": 53385.97
+            },
+            {
+              "id": "actual.irBasic",
+              "unit": "currency",
+              "value": 8007.8955
+            },
+            {
+              "id": "actual.irAdditional",
+              "unit": "currency",
+              "value": 3338.597
+            },
+            {
+              "id": "actual.irTotal",
+              "unit": "currency",
+              "value": 11346.4925
+            }
+          ]
+        }
+      },
+      {
+        "month": 8,
+        "sourceMonth": "2025-08",
+        "result": {
+          "version": "1.19.0-entry-without-rbt12-sublimit",
+          "bestRegimeId": "pure",
+          "regimes": [
+            {
+              "id": "pure",
+              "name": "Simples Puro",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 257655
+              }
+            },
+            {
+              "id": "hybrid",
+              "name": "Simples Híbrido",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 257655
+              }
+            },
+            {
+              "id": "presumed",
+              "name": "Lucro Presumido",
+              "available": true,
+              "status": "Simulação sujeita ao enquadramento",
+              "dre": {
+                "irpj": -5433.100000000001,
+                "revenue": 257655
+              }
+            },
+            {
+              "id": "actual",
+              "name": "Lucro Real",
+              "available": true,
+              "status": "Disponível",
+              "dre": {
+                "irpj": -16083.927499999998,
+                "revenue": 257655
+              }
+            }
+          ],
+          "memory": [
+            {
+              "id": "presumed.irTotalBase",
+              "unit": "currency",
+              "value": 29732.400000000005
+            },
+            {
+              "id": "presumed.irBasic",
+              "unit": "currency",
+              "value": 4459.860000000001
+            },
+            {
+              "id": "presumed.irAdditional",
+              "unit": "currency",
+              "value": 973.2400000000004
+            },
+            {
+              "id": "presumed.irTotal",
+              "unit": "currency",
+              "value": 5433.100000000001
+            },
+            {
+              "id": "actual.base",
+              "unit": "currency",
+              "value": 72335.70999999999
+            },
+            {
+              "id": "actual.irBasic",
+              "unit": "currency",
+              "value": 10850.356499999998
+            },
+            {
+              "id": "actual.irAdditional",
+              "unit": "currency",
+              "value": 5233.570999999999
+            },
+            {
+              "id": "actual.irTotal",
+              "unit": "currency",
+              "value": 16083.927499999998
+            }
+          ]
+        }
+      },
+      {
+        "month": 9,
+        "sourceMonth": "2025-09",
+        "result": {
+          "version": "1.19.0-entry-without-rbt12-sublimit",
+          "bestRegimeId": "pure",
+          "regimes": [
+            {
+              "id": "pure",
+              "name": "Simples Puro",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 271975
+              }
+            },
+            {
+              "id": "hybrid",
+              "name": "Simples Híbrido",
+              "available": true,
+              "status": "Cálculo disponível com ICMS/ISS no DAS, conforme as premissas informadas.",
+              "dre": {
+                "irpj": 0,
+                "revenue": 271975
+              }
+            },
+            {
+              "id": "presumed",
+              "name": "Lucro Presumido",
+              "available": true,
+              "status": "Simulação sujeita ao enquadramento",
+              "dre": {
+                "irpj": -5869.5,
+                "revenue": 271975
+              }
+            },
+            {
+              "id": "actual",
+              "name": "Lucro Real",
+              "available": true,
+              "status": "Disponível",
+              "dre": {
+                "irpj": -17943.7225,
+                "revenue": 271975
+              }
+            }
+          ],
+          "memory": [
+            {
+              "id": "presumed.irTotalBase",
+              "unit": "currency",
+              "value": 31478
+            },
+            {
+              "id": "presumed.irBasic",
+              "unit": "currency",
+              "value": 4721.7
+            },
+            {
+              "id": "presumed.irAdditional",
+              "unit": "currency",
+              "value": 1147.8
+            },
+            {
+              "id": "presumed.irTotal",
+              "unit": "currency",
+              "value": 5869.5
+            },
+            {
+              "id": "actual.base",
+              "unit": "currency",
+              "value": 79774.89
+            },
+            {
+              "id": "actual.irBasic",
+              "unit": "currency",
+              "value": 11966.2335
+            },
+            {
+              "id": "actual.irAdditional",
+              "unit": "currency",
+              "value": 5977.4890000000005
+            },
+            {
+              "id": "actual.irTotal",
+              "unit": "currency",
+              "value": 17943.7225
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "_fixtureOrigin": "a16ac5e",
+  "_fixtureNote": "Synthetic evidence generated with the complete public modules and dre-pdf fixture from a16ac5e. Captured V1 values must remain unchanged; this is not customer data."
+}

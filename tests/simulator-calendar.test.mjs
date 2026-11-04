@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildMonthlyDre,DRE_ROWS,MONTH_NAMES,dreRows} from '../public/simulator-calendar.js';
 import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
+import {calculateTax,EXAMPLE_INPUT} from '../public/simulator-engine.js';
 const result=()=>({regimes:[{id:'a',name:'Cenário A',available:true,dre:Object.fromEntries(DRE_ROWS.filter(([key])=>key!=='icmsAnticipation').map(([key],i)=>[key,i%2?-123.45:1200]))},{id:'b',name:'Revisar',available:false,dre:{}}]});
 test('DIFAL aparece no calendárioV2, enquanto histórico sem valor capturado conserva calendárioV1 sem linha inventada',()=>{
  const current=result();current.regimes[0].dre.difal=-1200;
@@ -77,4 +78,24 @@ test('RBT12 mensal ausente permanece sem valor e referência inválida não é a
  for(const mutate of [s=>s.version='UNKNOWN',s=>s.rows[0].rbt12Cents=0,s=>s.rows.push(structuredClone(s.rows[0])),s=>s.rows[0].sourceMonth='bad']){
   const invalid=structuredClone(data);mutate(invalid.rbt12Schedule);assert.throws(()=>buildMonthlyDre(invalid,2027),/RBT12 mensal/);
  }
+});
+
+test('uniform quarterly projection uses captured monthly provisions instead of dividing income taxes by twelve',()=>{
+ const input=structuredClone(EXAMPLE_INPUT);input.serviceRevenue=100000;input.salesRevenue=0;
+ const data=calculateTax(input),before=structuredClone(data),calendar=buildMonthlyDre(data,2027);
+ const presumed=calendar.regimes.find(row=>row.id==='presumed'),row=key=>presumed.rows.find(entry=>entry.key===key);
+ assert.deepEqual(row('irpj').months,Array.from({length:4},()=>[-4800,-5200,-8000]).flat());
+ assert.equal(row('irpj').annual,-72000);
+ for(const key of ['irpj','csll','netProfit'])assert(Math.abs(row(key).months.reduce((sum,value)=>sum+value,0)-row(key).annual)<1e-7);
+ for(let i=0;i<12;i++)assert(Math.abs(row('netProfit').months[i]-(row('preTax').months[i]+row('irpj').months[i]+row('csll').months[i]))<1e-7);
+ assert.deepEqual(data,before);assert.throws(()=>buildMonthlyDre(data,2028),/ano do cenário/);
+ const legacy=structuredClone(data);delete legacy.incomeTaxAssessment;
+ assert(buildMonthlyDre(legacy,2027).regimes.find(row=>row.id==='presumed').rows.find(row=>row.key==='irpj').months.every(value=>value===-6000));
+});
+
+test('a missing uniform monthly assessment is unavailable without fabricating a zero income tax',()=>{
+ const data=calculateTax(EXAMPLE_INPUT);delete data.incomeTaxAssessment.monthlyAssessments['2027-02'];
+ const calendar=buildMonthlyDre(data,2027),actual=calendar.regimes.find(row=>row.id==='actual');
+ for(const key of ['irpj','csll','netProfit'])assert.equal(actual.rows.find(row=>row.key===key).months[1],null);
+ assert.equal(typeof actual.rows.find(row=>row.key==='revenue').months[1],'number');
 });

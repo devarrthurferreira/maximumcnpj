@@ -1,5 +1,6 @@
 """DRE access and snapshot-integrity tests using synthetic production-engine data."""
 import copy
+import gzip
 import hashlib
 import json
 import os
@@ -13,7 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from reporting.core import ReportError, utcnow, validate
-from reporting.dre_data import dre_metadata, validate_dre_snapshot
+from reporting.dre_data import BASE_ROWS, OPTIONAL_ROWS, dre_metadata, validate_dre_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
 SIMULATION = '96969696-9696-4696-8696-969696969601'
@@ -198,6 +199,59 @@ class DreDataTests(unittest.TestCase):
         saved['monthlyInputs'].reverse()
         with self.assertRaises(ReportError):
             validate_dre_snapshot(saved)
+
+    def test_uniform_v2_calendar_uses_proven_tax_movements_and_preserves_result(self):
+        saved = fixture('legacy')  # Current engine: uniform projection with V2 evidence.
+        before = copy.deepcopy(saved)
+        self.assertIs(validate_dre_snapshot(saved), saved)
+        regime = next(row for row in saved['result']['regimes'] if row['id'] == 'actual')
+        calendar = next(row for row in saved['monthlyDre']['regimes'] if row['id'] == 'actual')
+        irpj = next(row for row in calendar['rows'] if row['key'] == 'irpj')
+        self.assertNotEqual(irpj['months'][0], regime['dre']['irpj'] / 12)
+        self.assertAlmostEqual(sum(irpj['months']), regime['dre']['irpj'], places=7)
+        self.assertEqual(saved, before)
+
+    def test_uniform_v2_calendar_rejects_unproved_evidence_or_annual_twelfths(self):
+        for corruption in ('irpj', 'csll', 'netProfit', 'proof', 'missing', 'calendar_year'):
+            with self.subTest(corruption=corruption):
+                saved = fixture('legacy')
+                calendar = next(row for row in saved['monthlyDre']['regimes'] if row['id'] == 'actual')
+                if corruption in ('irpj', 'csll', 'netProfit'):
+                    row = next(row for row in calendar['rows'] if row['key'] == corruption)
+                    # CSLL can be uniform apart from cents, so make its edit
+                    # explicit; IRPJ/result must not fall back to annual/12.
+                    row['months'][0] = row['annual'] / 12 if corruption != 'csll' else row['months'][0] + .001
+                elif corruption == 'proof':
+                    frame = saved['result']['incomeTaxAssessment']['monthlyAssessments']['2027-01']['regimes']['actual']
+                    frame['periods'][0]['exactBases']['irpjBase']['numerator'] = '1'
+                elif corruption == 'missing':
+                    del saved['result']['incomeTaxAssessment']
+                else:
+                    saved['monthlyDre']['months'][0]['period'] = '2028-01'
+                with self.assertRaises(ReportError) as caught:
+                    validate_dre_snapshot(saved)
+                self.assertEqual(caught.exception.code, 'DRE_SNAPSHOT_INVALID')
+
+    def test_authentic_v1_uniform_projection_keeps_captured_annual_twelfths(self):
+        with gzip.open(ROOT / 'tests/fixtures/irpj-monthly-v1.json.gz', 'rt') as stream:
+            frozen = json.load(stream)
+        self.assertEqual(frozen['origin'], 'a16ac5e')
+        result = frozen['projections']['45150']
+        self.assertNotIn('quarterly-income-tax', result['version'])
+        keys = [*BASE_ROWS, *(key for key in OPTIONAL_ROWS if any(key in row['dre'] for row in result['regimes']))]
+        calendar = {'version': 'DRE_CALENDAR_V3', 'year': 2027, 'unit': 'BRL',
+                    'months': [{'number': month, 'period': f'2027-{month:02d}'} for month in range(1, 13)],
+                    'regimes': [{'id': row['id'], 'available': row['available'], 'rows': [
+                        {'key': key, 'annual': row['dre'][key] if row['available'] else None,
+                         'months': [row['dre'][key] / 12 if row['available'] else None] * 12} for key in keys]}
+                        for row in result['regimes']]}
+        saved = {'_id': SIMULATION, 'clientId': '96969696-9696-4696-8696-969696969602',
+                 'generationId': '96969696-9696-4696-8696-969696969603', 'year': 2027,
+                 'company': {'code': 'DEMO-V1', 'name': 'Demonstração sintética V1'},
+                 'result': result, 'monthlyDre': calendar}
+        before = copy.deepcopy(saved)
+        self.assertIs(validate_dre_snapshot(saved), saved)
+        self.assertEqual(saved, before)
 
 
 @unittest.skipUnless(os.getenv('REPORT_TEST_MONGO') == '1', 'MongoDB descartável não solicitado')

@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import re
 from decimal import Decimal, ROUND_HALF_UP
+from fractions import Fraction
 
 MONTHS = ('Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
           'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro')
@@ -65,6 +66,28 @@ IRPJ_ROWS = (
     ('irpjTotalAssessed', 'IRPJ total (normal + adicional)'),
 )
 IRPJ_KEYS = tuple(key for key, _ in IRPJ_ROWS)
+INCOME_TAX_ASSESSMENT_VERSION = 'INCOME_TAX_ASSESSMENT_V2'
+IRPJ_RECONCILIATION_VERSION_V2 = 'IRPJ_RECONCILIATION_V2'
+IRPJ_V2_ROWS = (
+    ('irpjTaxBase', 'Base tributável acumulada do IRPJ'),
+    ('irpjAdditionalLimit', 'Limite do adicional dos trimestres'),
+    ('irpjBaseWithinLimit', 'Base dentro do limite'),
+    ('irpjExcessBase', 'Base excedente ao limite'),
+    ('irpjNormalAssessed', 'IRPJ normal acumulado (15%)'),
+    ('irpjAdditionalAssessed', 'Adicional acumulado (10%)'),
+    ('irpjTotalAssessed', 'IRPJ acumulado dos períodos'),
+    ('irpjPreviousProvision', 'Provisão de IRPJ anterior'),
+    ('irpjCurrentMovement', 'Movimento de IRPJ no período'),
+)
+IRPJ_V2_KEYS = tuple(key for key, _ in IRPJ_V2_ROWS)
+INCOME_TAX_AMOUNT_KEYS = ('irpjNormalCents', 'irpjAdditionalCents', 'irpjTotalCents', 'csllCents')
+INCOME_TAX_RATE_KEYS = ('irSales', 'irServices', 'csSales', 'csServices')
+INCOME_TAX_BASE_KEYS = ('salesRevenue', 'serviceRevenue', 'revenue', 'preTax', 'irpjBaseWithoutIncrease',
+                        'csllBaseWithoutIncrease', 'irpjIncrease', 'csllIncrease', 'irpjBase', 'csllBase',
+                        'irpjAdditionalLimit', 'irpjBaseWithinLimit', 'irpjExcessBase')
+IRPJ_V2_EMPTY_REASON = 'A apuração trimestral do IRPJ está ausente ou incompleta nesta versão.'
+IRPJ_V2_INVALID_REASON = 'A apuração trimestral do IRPJ não concilia com as bases, provisões ou movimentos salvos.'
+IRPJ_V2_PERIOD_REASON = 'As competências e os trimestres do IRPJ estão ausentes, duplicados ou divergem do período salvo.'
 IRPJ_EMPTY_REASON = 'A memória do IRPJ está ausente ou incompleta nesta versão.'
 IRPJ_INVALID_REASON = 'A memória do IRPJ não concilia com a base, as alíquotas ou o total salvo.'
 IRPJ_PERIOD_REASON = 'As competências do IRPJ estão ausentes, duplicadas ou divergem do período salvo.'
@@ -102,6 +125,345 @@ def _irpj_unavailable(reason=IRPJ_EMPTY_REASON, status='UNAVAILABLE'):
 
 def _irpj_confirmed(values):
     return {'available': True, 'status': 'CONFIRMED', 'reason': '', 'values': values}
+
+
+def _irpj_v2_unavailable(reason=IRPJ_V2_INVALID_REASON, status='UNAVAILABLE'):
+    return {'version': IRPJ_RECONCILIATION_VERSION_V2, 'available': False, 'status': status, 'reason': reason,
+            'values': dict.fromkeys(IRPJ_V2_KEYS), 'componentMovements': None}
+
+
+def uses_quarterly_income_tax(result):
+    if not isinstance(result, dict):
+        return False
+    months = result.get('monthlyResults')
+    return ('incomeTaxAssessment' in result
+            or any('quarterly-income-tax' in str(result.get(key, '')) for key in ('modelVersion', 'version'))
+            or (isinstance(months, list) and any(isinstance(row, dict) and isinstance(row.get('result'), dict)
+                                                and 'incomeTaxAssessment' in row['result'] for row in months)))
+
+
+class _IncomeTaxEvidenceError(ValueError):
+    pass
+
+
+def _income_require(condition, reason=IRPJ_V2_INVALID_REASON):
+    if not condition:
+        raise _IncomeTaxEvidenceError(reason)
+
+
+def _income_amounts(value, *, signed=False):
+    _income_require(isinstance(value, dict))
+    _income_require(all(type(value.get(key)) in (int, float) and finite(value[key]) and value[key] == int(value[key])
+                        and abs(value[key]) <= 9007199254740991 and (signed or value[key] >= 0)
+                        for key in INCOME_TAX_AMOUNT_KEYS))
+    _income_require(value['irpjNormalCents'] + value['irpjAdditionalCents'] == value['irpjTotalCents'])
+    return {key: int(value[key]) for key in INCOME_TAX_AMOUNT_KEYS}
+
+
+def _income_fraction(value):
+    _income_require(isinstance(value, dict) and isinstance(value.get('numerator'), str)
+                    and isinstance(value.get('denominator'), str)
+                    and re.fullmatch(r'-?\d{1,128}', value['numerator']) and re.fullmatch(r'\d{1,128}', value['denominator']))
+    denominator = int(value['denominator'])
+    _income_require(denominator > 0)
+    return Fraction(int(value['numerator']), denominator)
+
+
+def _income_round_cents(value):
+    """Exact half-up; tax components, never their bases, are rounded to cents."""
+    scaled = abs(value) * 100
+    rounded = (scaled.numerator * 2 + scaled.denominator) // (scaled.denominator * 2)
+    return -rounded if value < 0 else rounded
+
+
+def _income_closure(closure, provision, *, complete):
+    _income_require(isinstance(closure, dict) and type(closure.get('available')) is bool
+                    and isinstance(closure.get('reason'), str))
+    if closure['available']:
+        _income_require(complete and closure.get('status') == 'CONFIRMED'
+                        and _income_amounts(closure.get('taxes')) == provision)
+    else:
+        _income_require(closure.get('status') == 'UNAVAILABLE' and closure.get('taxes') is None)
+
+
+def _income_period(period, regime_id, scenario_year, inputs_by_month, rates, basis):
+    _income_require(isinstance(period, dict) and period.get('regimeId') == regime_id)
+    quarter = period.get('quarter')
+    _income_require(type(quarter) is int and 1 <= quarter <= 4 and period.get('periodId') == f'{scenario_year}-Q{quarter}')
+    expected = list(range(quarter * 3 - 2, quarter * 3 + 1))
+    observed, sources, inputs = period.get('observedMonths'), period.get('sourceMonths'), period.get('inputs')
+    _income_require(period.get('expectedMonths') == expected and isinstance(observed, list) and 1 <= len(observed) <= 3
+                    and all(type(month) is int and month in expected for month in observed)
+                    and observed == sorted(set(observed)) and period.get('throughMonth') == observed[-1]
+                    and isinstance(sources, list) and len(sources) == len(observed) and len(set(sources)) == len(sources)
+                    and isinstance(inputs, list) and len(inputs) == len(sources))
+    missing = [month for month in expected if month not in observed]
+    _income_require(period.get('missingMonths') == missing and type(period.get('complete')) is bool
+                    and period['complete'] == (not missing))
+    captured_sources = sorted(source for source in inputs_by_month
+                              if int(source[5:]) in expected and int(source[5:]) <= period['throughMonth'])
+    _income_require(sources == captured_sources and 'sourceQuarter' in period
+                    and (period['sourceQuarter'] == f'{sources[0][:4]}-Q{quarter}'
+                         or (basis == 'UNIFORM_PROJECTION' and period['sourceQuarter'] is None)), IRPJ_V2_PERIOD_REASON)
+    for number, source, item in zip(observed, sources, inputs):
+        _income_require(isinstance(source, str) and re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', source)
+                        and int(source[5:]) == number and isinstance(item, dict)
+                        and item.get('month') == number and item.get('sourceMonth') == source
+                        and finite(item.get('salesRevenue')) and finite(item.get('serviceRevenue'))
+                        and item['serviceRevenue'] >= 0
+                        and (finite(item.get('preTax')) or item.get('preTax') is None))
+        captured = inputs_by_month.get(source)
+        _income_require(captured is not None)
+        _income_require(irpj_close(item['salesRevenue'], captured.get('salesRevenue'))
+                        and irpj_close(item['serviceRevenue'], captured.get('serviceRevenue')))
+        if regime_id == 'actual':
+            pre_tax = captured.get('preTax')
+            _income_require(finite(pre_tax) and item.get('actualAvailable') is not False
+                            and irpj_close(item.get('preTax'), pre_tax))
+    _income_require(period.get('available') is True)
+    bases, exact = period.get('bases'), period.get('exactBases')
+    _income_require(isinstance(bases, dict) and isinstance(exact, dict)
+                    and all(finite(bases.get(key)) or (key == 'preTax' and bases.get(key) is None)
+                            for key in INCOME_TAX_BASE_KEYS))
+    tax_base, excess, csll_base = (_income_fraction(exact.get(key)) for key in ('irpjBase', 'irpjExcessBase', 'csllBase'))
+    _income_require(tax_base >= 0 and excess >= 0 and csll_base >= 0
+                    and bases['irpjAdditionalLimit'] == 60000
+                    and excess == max(Fraction(0), tax_base - 60000)
+                    and irpj_close(bases['irpjBase'], float(tax_base))
+                    and irpj_close(bases['irpjExcessBase'], float(excess))
+                    and irpj_close(bases['csllBase'], float(csll_base))
+                    and irpj_close(bases['irpjBaseWithinLimit'], float(tax_base - excess)))
+    for key, input_key in (('salesRevenue', 'salesRevenue'), ('serviceRevenue', 'serviceRevenue')):
+        _income_require(irpj_close(bases[key], sum(item[input_key] for item in inputs)))
+    _income_require(irpj_close(bases['revenue'], bases['salesRevenue'] + bases['serviceRevenue'])
+                    and irpj_close(bases['irpjBase'], bases['irpjBaseWithoutIncrease'] + bases['irpjIncrease'])
+                    and irpj_close(bases['csllBase'], bases['csllBaseWithoutIncrease'] + bases['csllIncrease']))
+    if regime_id == 'actual':
+        signed = _income_fraction(exact.get('preTax'))
+        signed_inputs = [_income_fraction(item['preTaxExact']) if item.get('preTaxExact') is not None
+                         else Fraction(str(item['preTax'])) for item in inputs]
+        # Only this link allows the binary residue from cancelling very large
+        # captured operands. Tax bases, components and DRE bridges stay strict.
+        _income_require(all(abs(float(exact_input) - item['preTax']) <= max(1e-7, 32 * 2.220446049250313e-16 *
+                            max(abs(item['salesRevenue']), abs(item['serviceRevenue']), abs(item['preTax']), abs(float(exact_input))))
+                            for exact_input, item in zip(signed_inputs, inputs))
+                        and signed == sum(signed_inputs, Fraction(0))
+                        and irpj_close(bases['preTax'], float(signed))
+                        and tax_base == csll_base == max(Fraction(0), signed))
+    else:
+        # Prove the saved LP bases from the captured coefficients and inputs.
+        # A missing coefficient is unavailable; no current default rewrites history.
+        sales = sum((Fraction(str(item['salesRevenue'])) for item in inputs), Fraction(0))
+        services = sum((Fraction(str(item['serviceRevenue'])) for item in inputs), Fraction(0))
+        lc224 = period.get('lc224')
+        _income_require(isinstance(lc224, dict) and finite(lc224.get('excessRevenue'))
+                        and lc224['excessRevenue'] >= 0)
+        revenue, increased_revenue = sales + services, Fraction(str(lc224['excessRevenue']))
+        _income_require(increased_revenue == 0 or revenue > 0)
+        for exact_base, sales_key, services_key, plain_key, increase_key in (
+                (tax_base, 'irSales', 'irServices', 'irpjBaseWithoutIncrease', 'irpjIncrease'),
+                (csll_base, 'csSales', 'csServices', 'csllBaseWithoutIncrease', 'csllIncrease')):
+            plain = max(Fraction(0), sales * Fraction(str(rates[sales_key])) + services * Fraction(str(rates[services_key])))
+            increase = increased_revenue * plain / revenue / 10 if increased_revenue else Fraction(0)
+            _income_require(exact_base == plain + increase
+                            and irpj_close(bases[plain_key], float(plain))
+                            and irpj_close(bases[increase_key], float(increase)))
+    amounts = _income_amounts(period.get('provision'))
+    _income_require(amounts['irpjNormalCents'] == _income_round_cents(tax_base * Fraction(15, 100))
+                    and amounts['irpjAdditionalCents'] == _income_round_cents(excess * Fraction(10, 100))
+                    and amounts['csllCents'] == _income_round_cents(csll_base * Fraction(9, 100)))
+    _income_closure(period.get('closure'), amounts, complete=period['complete'])
+    _income_require(period.get('status') == ('CONFIRMED' if period['closure']['available'] else 'PROVISIONAL'))
+    return bases, amounts
+
+
+def _income_assessment(assessment, regime_id, scenario_year, inputs_by_month, rates, basis):
+    _income_require(isinstance(assessment, dict))
+    if assessment.get('available') is not True:
+        _income_require(assessment.get('status') == 'UNAVAILABLE')
+        reason = assessment.get('reason')
+        raise _IncomeTaxEvidenceError(reason if isinstance(reason, str) and reason else IRPJ_V2_INVALID_REASON)
+    periods = assessment.get('periods')
+    _income_require(isinstance(periods, list) and 1 <= len(periods) <= 4
+                    and len({period.get('quarter') for period in periods if isinstance(period, dict)}) == len(periods)
+                    and assessment.get('scope') in ('QUARTER', 'PERIOD', 'ANNUAL_ADJUSTMENT')
+                    and type(assessment.get('complete')) is bool)
+    verified = [_income_period(period, regime_id, scenario_year, inputs_by_month, rates, basis) for period in periods]
+    complete = all(period['complete'] for period in periods)
+    _income_require(assessment['complete'] == complete)
+    bases = assessment.get('bases')
+    _income_require(isinstance(bases, dict))
+    for key in INCOME_TAX_BASE_KEYS:
+        values = [period_bases[key] for period_bases, _ in verified]
+        _income_require(bases.get(key) is None if any(value is None for value in values)
+                        else irpj_close(bases.get(key), sum(values)))
+    provision = _income_amounts(assessment.get('provision'))
+    previous = _income_amounts(assessment.get('previousProvision'))
+    movement = _income_amounts(assessment.get('movement'), signed=True)
+    for key in INCOME_TAX_AMOUNT_KEYS:
+        _income_require(provision[key] == sum(amounts[key] for _, amounts in verified)
+                        and movement[key] == provision[key] - previous[key])
+    _income_closure(assessment.get('closure'), provision, complete=complete)
+    all_closed = all(period['closure']['available'] for period in periods)
+    _income_require(assessment['closure']['available'] == all_closed
+                    and assessment.get('status') == ('CONFIRMED' if all_closed else 'PROVISIONAL'))
+    return {'bases': bases, 'provision': provision, 'previous': previous, 'movement': movement, 'assessment': assessment}
+
+
+def _income_container(container, frame, source_months, rates=None):
+    _income_require(isinstance(container, dict)
+                    and container.get('version') == INCOME_TAX_ASSESSMENT_VERSION
+                    and container.get('method') == 'QUARTERLY_CUMULATIVE_PROVISION'
+                    and container.get('rounding') == 'HALF_UP_COMPONENT_CENTS'
+                    and container.get('frame') == frame and type(container.get('scenarioYear')) is int
+                    and container['scenarioYear'] in (2027, 2028)
+                    and container.get('basis') in ('ACTUAL_REPORT_MONTHS', 'UNIFORM_PROJECTION')
+                    and isinstance(container.get('regimes'), dict))
+    captured_rates = container.get('presumptionRates')
+    _income_require(isinstance(captured_rates, dict)
+                    and all(finite(captured_rates.get(key)) and 0 <= captured_rates[key] <= 1
+                            and (rates is None or captured_rates[key] == rates.get(key)) for key in INCOME_TAX_RATE_KEYS))
+    captured = container.get('sourceMonths')
+    _income_require(isinstance(captured, list) and len(captured) == len(source_months)
+                    and all(isinstance(month, str) for month in captured)
+                    and len(set(captured)) == len(captured) and captured == source_months, IRPJ_V2_PERIOD_REASON)
+
+
+def _reconcile_irpj_v2(result, regime_id, *, source_month=None, expected_source_months=None, expected_count=None):
+    """Verify new quarterly evidence only; the V1 read path is intentionally separate."""
+    try:
+        container = result.get('incomeTaxAssessment')
+        if not isinstance(container, dict):
+            return _irpj_v2_unavailable(IRPJ_V2_EMPTY_REASON)
+        actual = container.get('basis') == 'ACTUAL_REPORT_MONTHS'
+        entries, containers, inputs_by_month, regimes_by_month = {}, {}, {}, {}
+        if actual:
+            months = result.get('monthlyResults')
+            _income_require(isinstance(months, list) and 1 <= len(months) <= 12, IRPJ_V2_PERIOD_REASON)
+            for entry in months:
+                _income_require(isinstance(entry, dict) and isinstance(entry.get('result'), dict), IRPJ_V2_PERIOD_REASON)
+                source = entry.get('sourceMonth')
+                _income_require(isinstance(source, str) and re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', source)
+                                and type(entry.get('month')) is int and entry['month'] == int(source[5:])
+                                and source not in entries, IRPJ_V2_PERIOD_REASON)
+                entries[source] = entry['result']
+                containers[source] = entry['result'].get('incomeTaxAssessment')
+                regime = _unique(entry['result'].get('regimes'), 'id', regime_id)
+                regimes_by_month[source] = regime
+                dre = (regime or {}).get('dre') or {}
+                inputs_by_month[source] = ({'salesRevenue': dre.get('sales'), 'serviceRevenue': dre.get('services'),
+                                           'preTax': dre.get('preTax')} if regime and regime.get('available') is True else None)
+        else:
+            _income_require(isinstance(container, dict) and container.get('basis') == 'UNIFORM_PROJECTION')
+            containers = container.get('monthlyAssessments')
+            _income_require(isinstance(containers, dict) and len(containers) == 12, IRPJ_V2_PERIOD_REASON)
+            regime = _unique(result.get('regimes'), 'id', regime_id)
+            dre = (regime or {}).get('dre') or {}
+            for source in containers:
+                _income_require(isinstance(source, str) and re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', source), IRPJ_V2_PERIOD_REASON)
+                inputs_by_month[source] = {
+                    key: dre.get(dre_key) / 12 if finite(dre.get(dre_key)) else None
+                    for key, dre_key in (('salesRevenue', 'sales'), ('serviceRevenue', 'services'), ('preTax', 'preTax'))}
+        sources = sorted(containers, key=lambda month: int(month[5:]))
+        _income_require(len({month[5:] for month in sources}) == len(sources) and len({month[:4] for month in sources}) == 1,
+                        IRPJ_V2_PERIOD_REASON)
+        if expected_count is not None:
+            _income_require(finite(expected_count) and expected_count == len(sources), IRPJ_V2_PERIOD_REASON)
+        if expected_source_months is not None:
+            _income_require(isinstance(expected_source_months, list) and len(expected_source_months) == len(sources)
+                            and len(set(expected_source_months)) == len(expected_source_months)
+                            and set(expected_source_months) == set(sources), IRPJ_V2_PERIOD_REASON)
+        _income_container(container, 'CONSOLIDATED', sources)
+        rates = container['presumptionRates']
+        _income_require(container['basis'] == ('ACTUAL_REPORT_MONTHS' if actual else 'UNIFORM_PROJECTION'))
+        for source, month_container in containers.items():
+            _income_container(month_container, 'MONTH', [source], rates)
+            _income_require(month_container['scenarioYear'] == container['scenarioYear']
+                            and month_container['basis'] == container['basis'])
+        if source_month is not None:
+            _income_require(source_month in containers, IRPJ_V2_PERIOD_REASON)
+        regime = _unique(result.get('regimes'), 'id', regime_id) if source_month is None or not actual else regimes_by_month.get(source_month)
+        _income_require(isinstance(regime, dict))
+        if regime.get('available') is not True:
+            reason = regime.get('status')
+            return _irpj_v2_unavailable(reason if isinstance(reason, str) and reason else IRPJ_EMPTY_REASON)
+        if regime_id in ('pure', 'hybrid'):
+            if source_month is not None:
+                _income_container(containers[source_month], 'MONTH', [source_month])
+            _income_require((regime.get('dre') or {}).get('irpj') == 0)
+            return _irpj_v2_unavailable(IRPJ_DAS_REASON, 'INCLUDED_IN_DAS')
+        _income_require(regime_id in ('presumed', 'actual'))
+        checked = {}
+
+        def check_month(source):
+            # Only a quarter's own earlier provisions belong to its bridge;
+            # December's annual adjustment explicitly uses earlier movements.
+            if source in checked:
+                return checked[source]
+            month_container = containers[source]
+            assessed = _income_assessment(month_container['regimes'].get(regime_id), regime_id,
+                                           container['scenarioYear'], inputs_by_month, rates, container['basis'])
+            assessment = assessed['assessment']
+            month_number, quarter = int(source[5:]), (int(source[5:]) - 1) // 3 + 1
+            if assessment['scope'] == 'ANNUAL_ADJUSTMENT':
+                _income_require(month_number == 12 and regime_id == 'presumed'
+                                and [period['quarter'] for period in assessment['periods']] == [1, 2, 3, 4])
+                prior = [check_month(item) for item in sources if int(item[5:]) < month_number]
+                previous = {key: sum(item['movement'][key] for item in prior) for key in INCOME_TAX_AMOUNT_KEYS}
+            else:
+                _income_require(assessment['scope'] == 'QUARTER' and len(assessment['periods']) == 1
+                                and assessment['periods'][0]['quarter'] == quarter)
+                prior = [item for item in sources if int(item[5:]) < month_number and (int(item[5:]) - 1) // 3 + 1 == quarter]
+                previous = check_month(prior[-1])['provision'] if prior else dict.fromkeys(INCOME_TAX_AMOUNT_KEYS, 0)
+            _income_require(assessed['previous'] == previous)
+            for period in assessment['periods']:
+                expected = [item for item in sources if (int(item[5:]) - 1) // 3 + 1 == period['quarter']
+                            and int(item[5:]) <= month_number]
+                _income_require(period['sourceMonths'] == expected, IRPJ_V2_PERIOD_REASON)
+            if actual:
+                saved_regime = regimes_by_month.get(source)
+                saved_dre = (saved_regime or {}).get('dre') or {}
+                _income_require(saved_regime and saved_regime.get('available') is True
+                                and irpj_close(saved_dre.get('irpj'), -assessed['movement']['irpjTotalCents'] / 100)
+                                and irpj_close(saved_dre.get('csll'), -assessed['movement']['csllCents'] / 100))
+            checked[source] = assessed
+            return assessed
+
+        if source_month is None:
+            assessed = _income_assessment(container['regimes'].get(regime_id), regime_id,
+                                           container['scenarioYear'], inputs_by_month, rates, container['basis'])
+            assessment = assessed['assessment']
+            _income_require(assessment['scope'] == 'PERIOD'
+                            and assessed['previous'] == dict.fromkeys(INCOME_TAX_AMOUNT_KEYS, 0)
+                            and {source for period in assessment['periods'] for source in period['sourceMonths']} == set(sources))
+            for source in sources:
+                check_month(source)
+            for key in INCOME_TAX_AMOUNT_KEYS:
+                _income_require(assessed['movement'][key] == sum(item['movement'][key] for item in checked.values()))
+            dre = regime.get('dre') or {}
+            _income_require(irpj_close(dre.get('irpj'), -assessed['movement']['irpjTotalCents'] / 100)
+                            and irpj_close(dre.get('csll'), -assessed['movement']['csllCents'] / 100))
+        else:
+            assessed = check_month(source_month)
+            assessment = assessed['assessment']
+        bases, provision, previous, movement = (assessed[key] for key in ('bases', 'provision', 'previous', 'movement'))
+        values = {'irpjTaxBase': bases['irpjBase'], 'irpjAdditionalLimit': bases['irpjAdditionalLimit'],
+                  'irpjBaseWithinLimit': bases['irpjBaseWithinLimit'], 'irpjExcessBase': bases['irpjExcessBase'],
+                  'irpjNormalAssessed': provision['irpjNormalCents'] / 100,
+                  'irpjAdditionalAssessed': provision['irpjAdditionalCents'] / 100,
+                  'irpjTotalAssessed': provision['irpjTotalCents'] / 100,
+                  'irpjPreviousProvision': previous['irpjTotalCents'] / 100,
+                  'irpjCurrentMovement': movement['irpjTotalCents'] / 100}
+        return {'version': IRPJ_RECONCILIATION_VERSION_V2, 'available': True, 'status': assessment['status'],
+                'reason': assessment['reason'], 'scope': assessment['scope'], 'complete': assessment['complete'],
+                'closure': {**assessment['closure'], 'taxes': dict(assessment['closure']['taxes']) if assessment['closure']['taxes'] else None},
+                'basis': container['basis'], 'scenarioYear': container['scenarioYear'],
+                'periods': [{key: period.get(key) for key in ('periodId', 'sourceQuarter', 'quarter', 'sourceMonths', 'complete', 'throughMonth')}
+                            for period in assessment['periods']], 'values': values,
+                'componentMovements': {'normal': movement['irpjNormalCents'] / 100,
+                                      'additional': movement['irpjAdditionalCents'] / 100, 'total': movement['irpjTotalCents'] / 100}}
+    except (_IncomeTaxEvidenceError, TypeError, ValueError, KeyError, OverflowError, ZeroDivisionError) as exc:
+        return _irpj_v2_unavailable(str(exc) if isinstance(exc, _IncomeTaxEvidenceError) else IRPJ_V2_INVALID_REASON)
 
 
 def _irpj_captured(result, regime_id):
@@ -151,6 +513,9 @@ def reconcile_irpj(result, regime_id, *, source_month=None, expected_source_mont
     A consolidated managerial report sums independently checked monthly excesses;
     an unused limit in another month cannot reduce a captured monthly additional.
     """
+    if uses_quarterly_income_tax(result):
+        return _reconcile_irpj_v2(result, regime_id, source_month=source_month,
+                                  expected_source_months=expected_source_months, expected_count=expected_count)
     if result.get('method') != 'REPORT_MONTHS_V1':
         return _irpj_period(result, regime_id, 12) if source_month is None else _irpj_unavailable(IRPJ_PERIOD_REASON)
     rows = result.get('monthlyResults')
@@ -242,6 +607,7 @@ class DreModel:
         if not self.regimes:
             raise ValueError('A DRE exige ao menos um regime capturado para exibição.')
         self.actual = self.result.get('method') == 'REPORT_MONTHS_V1'
+        self.quarterly_income_tax = uses_quarterly_income_tax(self.result)
         self.monthly = self.result.get('monthlyResults', []) if self.actual else []
         self.calendar = self.snapshot.get('monthlyDre') or {}
         self.months = [row['sourceMonth'] for row in self.monthly] if self.actual else [
@@ -297,9 +663,13 @@ class DreModel:
         return {'id': regime['id'], 'available': saved.get('available') is True, 'dre': values}
 
     def value(self, regime, key, index=None):
-        if key in IRPJ_KEYS or key in ('irpjBasic', 'irpjAdditional'):
+        if key in IRPJ_V2_KEYS or key in ('irpjBasic', 'irpjAdditional'):
+            assessed = self.irpj(regime, index)
+            if key in ('irpjBasic', 'irpjAdditional') and assessed.get('version') == IRPJ_RECONCILIATION_VERSION_V2:
+                movement = (assessed.get('componentMovements') or {}).get('normal' if key == 'irpjBasic' else 'additional')
+                return -movement if finite(movement) else None
             target = {'irpjBasic': 'irpjNormalAssessed', 'irpjAdditional': 'irpjAdditionalAssessed'}.get(key, key)
-            value = self.irpj(regime, index)['values'][target]
+            value = assessed['values'].get(target)
             return -value if key in ('irpjBasic', 'irpjAdditional') and finite(value) else value
         frame = self.frame(regime, index)
         if frame.get('available') is not True:
@@ -334,7 +704,7 @@ class DreModel:
 
     def sections(self):
         for title, rows in STATEMENT_SECTIONS if self.compact_statement else SECTIONS:
-            yield title, [(key, label) for key, label in rows if
+            yield title, [(key, 'IRPJ do período (provisão/ajuste)' if key == 'irpj' and self.quarterly_income_tax else label) for key, label in rows if
                           (key not in ('difal', 'icmsAnticipation') or any(key in regime.get('dre', {}) for regime in self.result['regimes'])) and
                           (not self.compact_statement or key != 'iss' or
                            any(self.value(regime, key, index) is None or self.value(regime, key, index) != 0
@@ -342,6 +712,8 @@ class DreModel:
 
     def irpj(self, regime, index=None):
         """Reconcile the displayed period from captured evidence, without new tax amounts."""
+        quarterly = self.quarterly_income_tax
+        unavailable = _irpj_v2_unavailable if quarterly else _irpj_unavailable
         period = self.result.get('analysisPeriod') or {}
         period = period if self.actual and period.get('version') == 'JAN_SEP_V1' else {}
         calendar_months = self.calendar.get('months')
@@ -373,22 +745,24 @@ class DreModel:
             if count is None:
                 count = source.get('reportMonths')
             if index is not None and (type(index) is not int or not 0 <= index < len(self.months)):
-                return _irpj_unavailable(IRPJ_PERIOD_REASON)
+                return unavailable(IRPJ_V2_PERIOD_REASON if quarterly else IRPJ_PERIOD_REASON)
             assessed = reconcile_irpj(self.result, regime['id'], source_month=self.months[index] if index is not None else None,
                                       expected_source_months=expected, expected_count=count)
         else:
-            assessed = reconcile_irpj(self.result, regime['id'])
+            if index is not None and (type(index) is not int or not 0 <= index < len(self.months)):
+                return unavailable(IRPJ_V2_PERIOD_REASON if quarterly else IRPJ_PERIOD_REASON)
+            assessed = reconcile_irpj(self.result, regime['id'], source_month=self.months[index] if quarterly and index is not None else None)
         # The browser's DAS label additionally requires a captured zero. The
         # shared fiscal helper alone only identifies this regime's tax scope.
         if assessed['status'] == 'INCLUDED_IN_DAS':
             captured_value = (self.frame(regime, index if self.actual else None).get('dre') or {}).get('irpj')
             if not finite(captured_value) or captured_value != 0:
-                return _irpj_unavailable(IRPJ_INVALID_REASON)
+                return unavailable(IRPJ_INVALID_REASON)
         if index is None or (not assessed['available'] and assessed['status'] != 'INCLUDED_IN_DAS'):
             return assessed
         if type(index) is not int or not 0 <= index < len(self.months):
-            return _irpj_unavailable(IRPJ_PERIOD_REASON)
-        scale = 1 if self.actual else 1 / 12
+            return unavailable(IRPJ_V2_PERIOD_REASON if quarterly else IRPJ_PERIOD_REASON)
+        scale = 1 if self.actual or quarterly else 1 / 12
         if self.snapshot.get('monthlyDre') is not None:
             saved = _unique(self.calendar.get('regimes'), 'id', regime['id']) if valid_calendar else None
             calendar_index = next((i for i, row in enumerate(calendar_months or [])
@@ -396,17 +770,20 @@ class DreModel:
             if (not saved or calendar_index is None or (not self.actual and saved.get('available') is not True)
                     or (self.actual and (self.calendar.get('version') not in ('DRE_CALENDAR_V3', 'DRE_CALENDAR_V4')
                                          or calendar_months[calendar_index].get('number') != int(self.months[index][5:])))):
-                return _irpj_unavailable(IRPJ_CALENDAR_MISSING_REASON)
+                return unavailable(IRPJ_CALENDAR_MISSING_REASON)
             line = _unique(saved.get('rows'), 'key', 'irpj') if saved else None
             values = line.get('months') if line else None
             value = values[calendar_index] if isinstance(values, list) and calendar_index is not None and calendar_index < len(values) else None
             # Match irpjIncludedInDas: a missing/nonzero displayed calendar cell
             # must not be described as an IRPJ included in the DAS.
             if assessed['status'] == 'INCLUDED_IN_DAS':
-                return assessed if finite(value) and value == 0 else _irpj_unavailable(IRPJ_CALENDAR_REASON)
-            if not finite(value) or not irpj_close(-value, assessed['values']['irpjTotalAssessed'] * scale):
-                return _irpj_unavailable(IRPJ_CALENDAR_REASON)
+                return assessed if finite(value) and value == 0 else unavailable(IRPJ_CALENDAR_REASON)
+            expected = assessed['componentMovements']['total'] if quarterly else assessed['values']['irpjTotalAssessed'] * scale
+            if not finite(value) or not irpj_close(-value, expected):
+                return unavailable(IRPJ_CALENDAR_REASON)
         if assessed['status'] == 'INCLUDED_IN_DAS':
+            return assessed
+        if quarterly:
             return assessed
         return _irpj_confirmed({key: value * scale for key, value in assessed['values'].items()})
 

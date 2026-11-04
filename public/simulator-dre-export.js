@@ -3,6 +3,7 @@ import {unifiedDreRows,dreDifalNotes,dreReportCoverage,dreRegimeStatuses,dreRepo
 import {buildDreExecutiveSummary,readDreValue} from './simulator-dre-summary.js';
 import {filterDreVisibleRegimes} from './simulator-dre-visibility.js';
 import {regimeMemoryApplies,regimeWarningApplies} from './regime-selection.js';
+import {irpjRowLabel} from './simulator-irpj-display.js';
 
 const BOM = '\uFEFF';
 const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -108,7 +109,8 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
       'Premissas do cenário fora do DAS. O valor apurado considera os créditos efetivamente utilizados, sem segunda dedução.']);
     if(rates.combined===null)for(const rate of rates.monthly||[])textLine(['CBS/IBS por competência',rate.sourceMonth,`CBS ${percentage(rate.cbs)} + IBS ${percentage(rate.ibs)} = CBS/IBS ${percentage(rate.combined)}`]);
   }
-  textLine(['Arredondamento', `Exibição com duas casas decimais; a soma dos meses exibidos pode diferir por centavos do ${fixed?'consolidado Jan–Set':'total anual'} preservado.`]);
+  const quarterlyIrpj=presentation.irpjReconciliation?.version==='IRPJ_RECONCILIATION_V2';
+  textLine(['Arredondamento', quarterlyIrpj?'IRPJ e CSLL: bases sem arredondamento intermediário; provisões fechadas por componente em centavos (metade para cima). Movimentos mensais são diferenças dessas provisões. Demais valores preservam a precisão capturada.':`Exibição com duas casas decimais; a soma dos meses exibidos pode diferir por centavos do ${fixed?'consolidado Jan–Set':'total anual'} preservado.`]);
   const coverage=dreReportCoverage(presentation);
   textLine(['Cobertura dos relatórios',coverage.label,coverage.detail]);
   if(coverage.actual)textLine(['Competências de origem',coverage.sourceMonths.join(', ')]);
@@ -132,6 +134,15 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   if (presentation.revenueReconciliation?.note) textLine(['Fechamento da receita',presentation.revenueReconciliation.note]);
   if (presentation.icmsReconciliation?.note) textLine(['Critério do crédito de ICMS',presentation.icmsReconciliation.note]);
   if (presentation.irpjReconciliation?.note) textLine(['Critério do IRPJ',presentation.irpjReconciliation.note]);
+  if(quarterlyIrpj){
+    textLine(['Ponte do IRPJ','Normal + adicional = provisão acumulada. Provisão acumulada − provisão anterior = movimento na DRE. A memória não deve ser somada novamente.']);
+    for(const regime of regimes){
+      const frames=presentation.irpjReconciliation.frames?.[regime.id];
+      if(frames?.period?.available)textLine(['Fechamento do IRPJ',regime.name,frames.period.closed?'Períodos confirmados':'Provisão parcial; fechamento indisponível',frames.period.reason]);
+      for(const [index,state] of (frames?.months||[]).entries())if(state.available&&state.status==='PROVISIONAL')textLine([
+        'Provisão mensal do IRPJ',regime.name,presentation.months?.[index]?.sourceMonth||presentation.months?.[index]?.period||MONTHS[index],state.reason]);
+    }
+  }
   lines.push('');
 
   if(fixed&&!monthly){
@@ -159,7 +170,7 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
     lines.push('');
   }
 
-  const prefix = row => [...(contexts.get(row.key) || ['DRE','']), row.label, row.kind || 'line', row.unit === 'percent' ? '%' : 'BRL'];
+  const prefix = (row,monthlyFrame=false) => [...(contexts.get(row.key) || ['DRE','']), irpjRowLabel(row,presentation,monthlyFrame), row.kind || 'line', row.unit === 'percent' ? '%' : 'BRL'];
   const annualTable=()=>{
     if(complete)textLine([fixed?'Demonstrativo consolidado · janeiro a setembro':'Demonstrativo anual consolidado']);
     textLine(['Escopo','Seção','Indicador','Tipo','Unidade', ...regimes.flatMap(regime => showPercent ? [regime.name, `${regime.name} · % da receita`] : [regime.name]), 'Observações','Referências']);
@@ -180,7 +191,7 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
     textLine(['Regime','Escopo','Seção','Indicador','Tipo','Unidade', ...columns.flatMap(label => showPercent ? [label, `${label} · % da receita`] : [label]), 'Observações','Referências']);
     for (const regime of regimes) {
       for (const row of rows) {
-        const cells = [regime.name,...prefix(row)].map(textCell);
+        const cells = [regime.name,...prefix(row,true)].map(textCell);
         for (let index = 0; index <= monthCount; index++) {
           const frame = index === monthCount ? 'calendarAnnual' : 'monthly';
           cells.push(numberCell(valueFor(row, regime, frame, index), row.unit === 'percent'));

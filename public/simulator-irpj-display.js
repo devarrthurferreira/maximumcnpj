@@ -1,7 +1,24 @@
 /** Show the captured IRPJ components; never recalculate or rewrite a saved tax. */
 const IRPJ_ROWS=new Set(['irpj','irpjBasic','irpjAdditional','irpjTaxBase','irpjAdditionalLimit',
-  'irpjBaseWithinLimit','irpjExcessBase','irpjNormalAssessed','irpjAdditionalAssessed','irpjTotalAssessed']);
+  'irpjBaseWithinLimit','irpjExcessBase','irpjNormalAssessed','irpjAdditionalAssessed','irpjTotalAssessed',
+  'irpjPreviousProvision','irpjCurrentMovement']);
 const INCLUDED_IN_DAS='IRPJ incluído no DAS; sem parcela externa neste regime.';
+
+/** The selected frame changes the wording, never the captured amount. */
+export function irpjRowLabel(row,presentation,monthly=false){
+  if(presentation?.irpjReconciliation?.version!=='IRPJ_RECONCILIATION_V2')return row.label;
+  const labels={
+    irpj:'IRPJ do período (provisão/ajuste)',
+    irpjBasic:'IRPJ normal · movimento do período',
+    irpjAdditional:'Adicional de IRPJ · movimento do período',
+    irpjTaxBase:monthly?'Base do IRPJ acumulada':'Base do IRPJ · soma dos períodos',
+    irpjNormalAssessed:monthly?'IRPJ normal acumulado · 15% da base':'IRPJ normal · 15% por trimestre',
+    irpjAdditionalAssessed:monthly?'Adicional acumulado · 10% do excedente':'Adicional de IRPJ · 10% por trimestre',
+    irpjTotalAssessed:monthly?'IRPJ acumulado até a competência':'IRPJ total dos períodos',
+    irpjCurrentMovement:monthly?'Movimento de IRPJ no mês':'IRPJ reconhecido na DRE'
+  };
+  return labels[row.key]||row.label;
+}
 
 /** A zero outside the DAS is not an unavailable calculation or a second tax. */
 export function irpjIncludedInDas(presentation,row,column) {
@@ -24,17 +41,18 @@ export function irpjIncludedInDas(presentation,row,column) {
 }
 
 export function withIrpjBreakdown(presentation,captured) {
+  const quarterly=presentation?.irpjReconciliation?.version==='IRPJ_RECONCILIATION_V2';
   const labels={
     irpj:'IRPJ total (normal + adicional)',
     irpjBasic:'IRPJ normal (15% da base)',
     irpjAdditional:'Adicional de IRPJ (10% do excedente)'
   };
   const descriptions={
-    irpj:'IRPJ total = IRPJ normal + adicional. As linhas de composição já estão incluídas neste total; não somar novamente.',
-    irpjBasic:'IRPJ normal: 15% da base tributável. Esta parcela não é o adicional de IRPJ.',
-    irpjAdditional:'Adicional: 10% somente sobre a parcela positiva da base acima do limite do período. No modelo mensal, o limite equivale a R$ 20.000 por competência; o consolidado soma os adicionais mensais, sem fechamento trimestral.'
+    irpj:quarterly?'Movimento de IRPJ = provisão acumulada − provisão anterior. Normal e adicional detalham esse movimento; não somar novamente. Reversão de provisão não é restituição automática.':'IRPJ total = IRPJ normal + adicional. As linhas de composição já estão incluídas neste total; não somar novamente.',
+    irpjBasic:quarterly?'Movimento da parcela normal: diferença entre as provisões acumuladas de 15%. A base e o imposto acumulados estão na memória do IRPJ.':'IRPJ normal: 15% da base tributável. Esta parcela não é o adicional de IRPJ.',
+    irpjAdditional:quarterly?'Movimento do adicional: diferença entre as provisões acumuladas de 10% sobre o excedente ao limite trimestral. Pode haver reversão; não é 10% da base isolada do mês.':'Adicional: 10% somente sobre a parcela positiva da base acima do limite do período. No modelo mensal, o limite equivale a R$ 20.000 por competência; o consolidado soma os adicionais mensais, sem fechamento trimestral.'
   };
-  const explain=row=>labels[row.key]?{...row,label:labels[row.key],
+  const explain=row=>labels[row.key]?{...row,label:quarterly?irpjRowLabel(row,presentation):labels[row.key],
     notes:[...new Set([...(Array.isArray(row.notes)?row.notes:[]),descriptions[row.key]])]}:row;
   if(presentation?.statement?.version!=='DRE_STATEMENT_V1')return captured.map(explain);
   const components=['irpjBasic','irpjAdditional'].map(key=>captured.find(row=>row.key===key)).filter(Boolean);

@@ -1,5 +1,16 @@
 # Histórico de alterações
 
+## [0.57.0] - 2026-11-04
+
+- Corrige IRPJ e CSLL do comparativo para apuração por trimestre civil, substituindo a soma de adicionais mensais. O adicional considera o limite trimestral de R$ 60.000.
+- Soma o resultado com sinal no Lucro Real gerencial antes de aplicar a base positiva do trimestre; meses com prejuízo podem reduzir a base do mesmo período.
+- Registra provisões mensais pela diferença entre o imposto acumulado e a provisão anterior, inclusive estornos, com componentes fechados em centavos por período.
+- Acrescenta a ponte entre apuração acumulada, provisão anterior e valor reconhecido no mês à memória de IRPJ da DRE, CSV e PDF.
+- Identifica provisões e fechamentos incompletos sem tratar competências ausentes como zero nem encurtar artificialmente o limite trimestral.
+- Distingue as competências de origem do ano do cenário e confere a cobertura dos limites e do histórico da LC 224/2025.
+- Adota motor 1.20 e revisão V15, preservando snapshots anteriores, ajustes contábeis e a validação das memórias V1.
+- Explicita na conferência de documentos quando devoluções de compras foram excluídas da receita, mas ainda não abatidas do custo pelo modelo; o aviso não cria créditos nem substitui o vínculo das notas originais.
+
 ## [0.56.2] - 2026-11-04
 
 - Completa a apresentação do IRPJ com base tributável, limite, parcela dentro do limite, excedente, imposto normal de 15%, adicional de 10% e total, por competência e no consolidado.

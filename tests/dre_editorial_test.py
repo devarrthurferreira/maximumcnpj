@@ -1,5 +1,6 @@
 """Regressions for calendars, large percentages and shifted PDF navigation."""
 import copy
+import gzip
 import json
 import subprocess
 import unittest
@@ -18,38 +19,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @lru_cache(maxsize=1)
 def engine_fixtures():
-    # Build fresh synthetic scenarios through the production engine. Dates are
-    # assigned to the synthetic documents before calculation, never to results.
+    # The old model allowed mixed source years. Preserve its original synthetic
+    # capture to exercise historical PDF coverage; V2 rejects mixed source years.
+    historical = json.loads(gzip.decompress((ROOT / 'tests/fixtures/dre-cross-year-v1.json.gz').read_bytes()))
+    # Fresh uniform scenarios continue exercising the current production engine.
     script = """
 import {drePdfFixture} from './tests/fixtures/dre-pdf.mjs';
 import {calculateSimulation} from './public/simulator-engine.js';
-import {calculateMonthlySimulation} from './public/simulator-monthly.js';
 import {buildMonthlyDre} from './public/simulator-calendar.js';
-const cross = drePdfFixture({variant:'partial'});
-const months = ['2024-11','2025-01','2025-09'];
-const reports = cross.source.monthlyReports.map((row,index)=>({
-  ...row, sourceMonth:months[index], month:Number(months[index].slice(5)),
-  icmsOperations:{...row.icmsOperations,sourceMonth:months[index]},
-  commercialComposition:{...row.commercialComposition,sourceMonths:[months[index]]}
-}));
-const inputs = cross.monthlyInputs.map((row,index)=>({...row,sourceMonth:months[index]}));
-const computed = calculateMonthlySimulation(cross.draft,reports,inputs,cross.source.sales.jobId);
-Object.assign(cross,computed);
-cross.source.monthlyReports = reports;
-cross.source.projection = computed.projection;
-cross.source.commercialComposition.sourceMonths = months;
-const period = {startMonth:months[0],endMonth:months.at(-1),
-  startDate:'2024-11-01',endDate:'2025-09-30',months:3,observedMonths:3,
-  missingMonths:['2024-12','2025-02','2025-03','2025-04','2025-05','2025-06','2025-07','2025-08']};
-cross.reportPeriod = period; cross.source.period = period;
-cross.source.purchases.period = period; cross.source.sales.period = period;
-cross.modelVersion = computed.result.version;
-cross.annualRevenue = computed.result.annualRevenue;
-cross.bestRegimeId = computed.result.bestRegimeId;
-delete cross.analysisPeriod; delete cross.source.analysisPeriod;
-// Older snapshots may omit the stored presentation calendar. The actual
-// report-month entries remain the authoritative, validated chronological base.
-delete cross.monthlyDre;
 const tiny = drePdfFixture();
 tiny.draft.values = {salesRevenue:1,serviceRevenue:0,simplePurchases:0,
   regularPurchases:0,salaries:1000000,benefits:0,adminExpenses:0,rent:0,cardExpenses:0};
@@ -60,12 +37,12 @@ tiny.annualRevenue = tiny.result.annualRevenue;
 tiny.bestRegimeId = tiny.result.bestRegimeId;
 tiny.manuallyAdjusted = true;
 delete tiny.analysisPeriod; delete tiny.source.analysisPeriod;
-process.stdout.write(JSON.stringify({cross,tiny}));
+process.stdout.write(JSON.stringify(tiny));
 """
     result = subprocess.run(['node', '--input-type=module', '-e', script],
                             cwd=ROOT, check=True, capture_output=True, text=True,
                             timeout=30)
-    return json.loads(result.stdout)
+    return {'cross': historical['snapshot'], 'tiny': json.loads(result.stdout)}
 
 
 def sections(document):

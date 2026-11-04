@@ -13,12 +13,19 @@ const make=(month,sales,purchases,services,difal)=>({sourceMonth:`2025-${String(
  difal:{version:'DIFAL_ESTIMATE_V2',ratePercent:10,issuerUf:'MG',amountCents:difal,baseCents:difal*10,eligibleLines:sales?1:0,pendingLines:0}});
 const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:500000,values:{serviceRevenue:0,salesRevenue:0,simplePurchases:0,regularPurchases:0,salaries:0,benefits:0,adminExpenses:0,rent:0,cardExpenses:0}};
 const reports=[make(1,100001,50000,10003,10000),make(2,0,0,0,0),make(3,400009,100000,30007,40001)];
+test('movimentos tributários confirmados iguais a zero não capturam menos zero',()=>{
+ const rows=[make(1,0,0,0,0)],result=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales').result;
+ for(const id of ['presumed','actual'])for(const frame of [result,result.monthlyResults[0].result]){
+  const d=frame.regimes.find(row=>row.id===id).dre;assert.equal(d.irpj,0);assert.equal(d.csll,0);
+  assert.equal(Object.is(d.irpj,-0),false);assert.equal(Object.is(d.csll,-0),false);
+ }
+});
 test('CBS de 11,3% fica capturada em cada competência e soma apenas os meses Jan–Set selecionados',()=>{
  const rows=[1,4,9].map(month=>make(month,1000000,300000,0,0));
  const range={startMonth:'2025-01',endMonth:'2025-09',months:9};
  const period=selectAnalysisPeriod(buildAnalysisPeriod(range,range),rows.map(row=>row.sourceMonth));
  const out=calculateMonthlySimulation(draft,rows,rows.map(row=>baselineMonth(row)),'sales',null,period);
- assert.equal(out.result.version,'1.19.0-entry-without-rbt12-sublimit-available-months');
+ assert.equal(out.result.version,'1.20.0-quarterly-income-tax-available-months');
  assert.equal(out.result.version,JAN_SEP_MODEL_VERSION);assert.notEqual(JAN_SEP_MODEL_VERSION,MONTHLY_MODEL_VERSION);
  assert.deepEqual(out.engineInput.months.map(row=>row.sourceMonth),['2025-01','2025-04','2025-09']);
  for(const month of out.engineInput.months){
@@ -271,8 +278,7 @@ test('competências parciais e limites exatos não anualizam receita nem fabrica
   assert(result.simplesDiagnostic.assumptions.some(item=>/não cobre um ano-calendário completo/.test(item)));
  }
  const acrossYears=Array.from({length:12},(_,index)=>({...make(index+1,10000,0,0,0),sourceMonth:`${index<6?'2026':'2025'}-${String(index+1).padStart(2,'0')}`}));
- const cross=calculateMonthlySimulation(draft,acrossYears,acrossYears.map(row=>baselineMonth(row)),'sales');
- assert.equal(cross.result.simplesDiagnostic.completeYear,false);
+ assert.throws(()=>calculateMonthlySimulation(draft,acrossYears,acrossYears.map(row=>baselineMonth(row)),'sales'),/mesmo ano de origem/);
 });
 
 test('sexta faixa usa escolha local explícita e conserva motivo de cada competência no consolidado',()=>{
@@ -298,36 +304,39 @@ test('sexta faixa usa escolha local explícita e conserva motivo de cada compet�
  assert(outside.result.monthlyResults.every(month=>month.result.simplesDiagnostic.icmsOutside===true));
 });
 
-test('excedente gerencial do Presumido acima de R$ 5 milhões é rateado uma vez pelo período real',()=>{
+test('LC224 usa composição trimestral e deixa redução anual ambígua explicitamente pendente',()=>{
  const rows=[1000000,1000000,...Array(10).fill(400000)].map((revenue,index)=>make(index+1,revenue*100,0,0,0));
  for(const mixed of [false,true]){
   const selected=structuredClone(rows);
   if(mixed){selected[0].fields.serviceRevenueCents=selected[0].fields.salesCpfCents;selected[0].fields.salesCpfCents=0;}
-  const {result}=calculateMonthlySimulation({...draft,rbt12:3300000},selected,selected.map(row=>baselineMonth(row)),'sales');
+  const janSep=selected.slice(0,9),{result}=calculateMonthlySimulation({...draft,rbt12:3300000},janSep,janSep.map(row=>baselineMonth(row)),'sales');
   const value=id=>result.memory.find(item=>item.id===`presumed.${id}`).value;
-  close(value('excessRevenue'),1000000);close(value('irIncrease'),mixed?12000:8000);close(value('csIncrease'),mixed?15333.333333333334:12000);
-  close(result.regimes[2].dre.irpj,mixed?-159000:-98000);close(result.regimes[2].dre.csll,mixed?-84180:-65880);
-  // CBS=R$6,000,000×11.3%, IBS=R$6,000; mixed has R$1m services (ISS) and R$5m goods (ICMS).
-  close(result.regimes[2].dre.netProfit,mixed?6000000-678000-6000-900000-50000-159000-84180:6000000-678000-6000-1080000-98000-65880);
-  assert(result.warnings.some(item=>item.code==='presumption-increase'&&/não substitui a apuração/.test(item.detail)));
+  close(value('excessRevenue'),1150000);close(value('irIncrease'),mixed?20700:9200);close(value('csIncrease'),mixed?23383.333333333332:13800);
+  close(result.regimes[2].dre.irpj,mixed?-143175:-80300);close(result.regimes[2].dre.csll,mixed?-71944.5:-53082);
+  close(result.regimes[2].dre.netProfit,mixed?4800000-542400-4800-684000-50000-143175-71944.5:4800000-542400-4800-864000-80300-53082);
+  assert(result.warnings.some(item=>item.code==='presumption-increase'&&/trimestre/.test(item.detail)));
+  const annual=calculateMonthlySimulation({...draft,rbt12:3300000},selected,selected.map(row=>baselineMonth(row)),'sales').result;
+  assert.equal(annual.regimes[2].available,false);assert.equal(annual.incomeTaxAssessment.regimes.presumed.movement,null);
+  assert.match(annual.monthlyResults[11].result.incomeTaxAssessment.regimes.presumed.reason,/rateio da redução precisa de validação/);
+  assert.equal(annual.memory.find(item=>item.id==='presumed.irTotal').availability,'UNAVAILABLE');
  }
 });
 
-test('mês com devoluções não infla o excedente do Presumido nem gera imposto negativo',()=>{
+test('devolução mensal reduz a base acumulada e reverte provisões dentro do trimestre',()=>{
  const revenues=[6000000,-500000,3000000],rows=revenues.map((revenue,index)=>make(index+1,revenue*100,0,0,0));
  const {result,engineInput}=calculateMonthlySimulation({...draft,rbt12:3300000},rows,rows.map(row=>baselineMonth(row)),'sales');
  assert.equal(result.annualRevenue,8500000);
  const context=engineInput.months[0].input.revenueContext;
  assert.equal(context.revenueCents,850000000);assert.equal(context.positiveRevenueCents,900000000);
  const excess=result.monthlyResults.map(row=>row.result.memory.find(item=>item.id==='presumed.excessRevenue').value);
- close(excess[0],3500000*2/3);assert.equal(excess[1],0);close(excess[2],3500000/3);
- close(excess.reduce((sum,value)=>sum+value,0),3500000);
- close(result.memory.find(item=>item.id==='presumed.excessRevenue').value,3500000);
+ assert.deepEqual(excess,[4750000,4250000,7250000]);
+ close(result.memory.find(item=>item.id==='presumed.excessRevenue').value,7250000);
  const negative=result.monthlyResults[1].result.regimes.find(row=>row.id==='presumed');
  assert.equal(negative.available,true);assert.equal(negative.dre.revenue,-500000);
- assert.equal(negative.dre.irpj,0);assert.equal(negative.dre.csll,0);assert.equal(negative.dre.netProfit,-500000);
- close(result.memory.find(item=>item.id==='presumed.irIncrease').value,3500000*.08*.1);
- close(result.memory.find(item=>item.id==='presumed.csIncrease').value,3500000*.12*.1);
+ assert.equal(negative.dre.irpj,11000);assert.equal(negative.dre.csll,5940);assert.equal(negative.dre.netProfit,-483060);
+ close(result.memory.find(item=>item.id==='presumed.irIncrease').value,58000);
+ close(result.memory.find(item=>item.id==='presumed.csIncrease').value,87000);
+ close(result.regimes[2].dre.irpj,-178500);close(result.regimes[2].dre.csll,-99630);
 });
 
 test('mês inicial sem receita não atribui receita zero ao consolidado dos meses seguintes',()=>{

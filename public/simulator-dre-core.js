@@ -1,7 +1,7 @@
 import {dreRows, MONTH_NAMES} from './simulator-calendar.js';
 import {buildRevenueReconciliation} from './revenue-reconciliation.js';
 import {resolveRegimeSelection,requiresSimplesReference,regimeMemoryApplies,regimeWarningApplies} from './regime-selection.js';
-import {reconcileIrpj,IRPJ_RECONCILIATION_VERSION} from './irpj-reconciliation.js';
+import {reconcileIrpj,IRPJ_RECONCILIATION_VERSION,QUARTERLY_IRPJ_RECONCILIATION_VERSION,usesQuarterlyIncomeTax} from './irpj-reconciliation.js';
 
 /** Read-only presentation: no tax engine, source hydration or snapshot mutation. */
 export const DRE_PRESENTATION_VERSION = 'DRE_PRESENTATION_V1';
@@ -134,6 +134,8 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   const capturedRbt12Source=rbt12Source??result?.rbt12Source??calendar?.rbt12Source;
   const originals = (Array.isArray(result?.regimes) ? result.regimes : []).filter(regime=>!regimeSelection||regimeSelection.selected.includes(regime.id));
   const actual=result?.method==='REPORT_MONTHS_V1';
+  const quarterlyIrpj=usesQuarterlyIncomeTax(result);
+  const uniformQuarterly=quarterlyIrpj&&!actual&&result?.incomeTaxAssessment?.basis==='UNIFORM_PROJECTION';
   const analysisPeriod=actual&&result.analysisPeriod?.version==='JAN_SEP_V1'?structuredClone(result.analysisPeriod):null;
   const hasCalendar = calendar != null;
   const validCalendar = Array.isArray(calendar?.months) && (analysisPeriod?
@@ -157,6 +159,13 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
       get(key) {
         if(!available)return null;
         if(actual&&kind==='month'&&!hasCalendar){const value=effective.dre?.[key];return finite(value)?value:null;}
+        if(uniformQuarterly&&kind==='month'&&!hasCalendar&&['irpj','csll','netProfit'].includes(key)&&['presumed','actual'].includes(regime.id)){
+          const period=`${result.incomeTaxAssessment.scenarioYear}-${String(months[index].number).padStart(2,'0')}`;
+          const captured=result.incomeTaxAssessment.monthlyAssessments?.[period]?.regimes?.[regime.id];
+          if(!captured?.available||!captured.movement)return null;
+          const irpj=-captured.movement.irpjTotalCents/100,csll=-captured.movement.csllCents/100;
+          return key==='irpj'?irpj:key==='csll'?csll:regime.dre.preTax/12+irpj+csll;
+        }
         if(kind==='annual'||!hasCalendar){const value=regime.dre?.[key];return finite(value)?value*(kind==='month'?1/12:1):null;}
         const row=unique(saved.rows,'key',key),value=kind==='month'?row?.months?.[index]:row?.annual;
         return finite(value)?value:null;
@@ -277,12 +286,13 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   const icmsReconciliation={key:'icmsReconciliation',label:'Apuração do crédito de ICMS',
     note:`Débito de ICMS menos crédito utilizado = valor líquido a recolher. O crédito utilizado já está abatido na linha “${analysisPeriod?'ICMS (D − C) apurado':'− ICMS líquido fora do DAS'}” desta DRE. Este quadro é informativo e não acrescenta uma segunda dedução ao resultado. Crédito potencial menos crédito utilizado = saldo credor potencial, sem restituição ou compensação automática.`,
     rows:[...icmsRows.slice(0,2),...(capturedOrigin?icmsOriginRows:[]),...icmsRows.slice(2)]};
-  const irpjExpectedMonths=analysisPeriod?.includedMonths??(Array.isArray(source?.monthlyReports)?
+  const irpjExpectedMonths=uniformQuarterly?null:analysisPeriod?.includedMonths??(Array.isArray(source?.monthlyReports)?
     source.monthlyReports.map(entry=>entry?.sourceMonth):validCalendar?calendar.months.filter(month=>month.sourceMonth).map(month=>month.sourceMonth):null);
-  const irpjExpectedCount=analysisPeriod?.months??reportMonths??source?.reportMonths??null;
+  const irpjExpectedCount=uniformQuarterly?null:analysisPeriod?.months??reportMonths??source?.reportMonths??null;
   const irpjCache=new Map();
   const irpjAssessment=f=>{
-    const sourceMonth=actual&&f.kind==='month'?f.monthlyEntry?.sourceMonth:null;
+    const sourceMonth=f.kind==='month'?(actual?f.monthlyEntry?.sourceMonth:uniformQuarterly?
+      `${result.incomeTaxAssessment.scenarioYear}-${String(months[f.index]?.number).padStart(2,'0')}`:null):null;
     if(actual&&f.kind==='month'&&(!sourceMonth||(months[f.index]?.sourceMonth&&months[f.index].sourceMonth!==sourceMonth)))
       return {available:false,reason:'As competências do IRPJ estão ausentes, duplicadas ou divergem do período salvo.'};
     const key=f.regime.id+':'+(sourceMonth||'period');
@@ -290,42 +300,67 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
       expectedSourceMonths:irpjExpectedMonths,expectedCount:irpjExpectedCount}));
     const assessed=irpjCache.get(key);
     if(!assessed.available)return assessed;
-    if(!close(-assessed.values.irpjTotalAssessed,f.regime.dre?.irpj)||
-       !close(-assessed.values.irpjTotalAssessed*f.scale,f.get('irpj')))
+    const movement=assessed.componentMovements?.total??assessed.values.irpjTotalAssessed;
+    const scale=quarterlyIrpj?1:f.scale;
+    if((!(uniformQuarterly&&f.kind==='month')&&!close(-movement,f.regime.dre?.irpj))||
+       !close(-movement*scale,f.get('irpj')))
       return {available:false,reason:'A memória do IRPJ não concilia com o total do calendário salvo.'};
     return assessed;
   };
   const irpjValue=(key,sign=1)=>f=>{
     const assessed=irpjAssessment(f);
-    return assessed.available?good(sign*assessed.values[key]*f.scale):missing(assessed.reason);
+    return assessed.available?{value:sign*assessed.values[key]*(quarterlyIrpj?1:f.scale),
+      reason:quarterlyIrpj&&assessed.status==='PROVISIONAL'?assessed.reason:''}:missing(assessed.reason);
   };
-  const irpjDetail=part=>irpjValue(part==='basic'?'irpjNormalAssessed':'irpjAdditionalAssessed',-1);
-  const irpjReconciliation={key:'irpjReconciliation',version:IRPJ_RECONCILIATION_VERSION,label:'Memória de cálculo do IRPJ',
-    note:actual?'Estimativa gerencial mensal. O consolidado soma os cálculos de cada competência. O limite não utilizado em um mês não reduz o excedente de outro. Base dentro do limite + base excedente = base do IRPJ. IRPJ normal + adicional = IRPJ total. Estes valores são informativos e já estão incluídos nos tributos da DRE.':
+  const irpjDetail=part=>f=>{
+    const assessed=irpjAssessment(f);
+    if(!assessed.available)return missing(assessed.reason);
+    return quarterlyIrpj?{value:assessed.componentMovements[part==='basic'?'normal':'additional']===0?0:-assessed.componentMovements[part==='basic'?'normal':'additional'],
+      reason:assessed.status==='PROVISIONAL'?assessed.reason:''}:
+      good(-assessed.values[part==='basic'?'irpjNormalAssessed':'irpjAdditionalAssessed']*f.scale);
+  };
+  const irpjReconciliation={key:'irpjReconciliation',version:quarterlyIrpj?QUARTERLY_IRPJ_RECONCILIATION_VERSION:IRPJ_RECONCILIATION_VERSION,label:'Memória de cálculo do IRPJ',
+    note:quarterlyIrpj?'IRPJ e CSLL por trimestre civil. No mês, a memória mostra a provisão acumulada no trimestre e desconta a provisão anterior para explicar o movimento lançado na DRE. O limite do adicional permanece R$ 60.000 por trimestre, inclusive na provisão parcial. Não some os acumulados mensais: o consolidado usa o último acumulado de cada trimestre, com centavos fechados por componente. Competências ausentes não viram zero: provisão parcial não é fechamento confirmado. O Real é uma estimativa gerencial, sem ajustes fiscais, estoques ou compensação de prejuízos.':actual?'Estimativa gerencial mensal histórica. O consolidado soma os cálculos de cada competência. O limite não utilizado em um mês não reduz o excedente de outro. Base dentro do limite + base excedente = base do IRPJ. IRPJ normal + adicional = IRPJ total. Estes valores são informativos e já estão incluídos nos tributos da DRE.':
       'Projeção anual capturada: limite de R$ 240.000 para o adicional. A visualização mensal divide a projeção por 12, com limite equivalente a R$ 20.000; não representa movimentos históricos. Base dentro do limite + base excedente = base do IRPJ. As parcelas já estão incluídas nos tributos da DRE.',
     rows:[
       row('irpjTaxBase','Base do IRPJ','detail',irpjValue('irpjTaxBase'),{informative:true,
-        notes:['Presumido: base presumida total capturada. Real: base positiva capturada do resultado anterior ao IRPJ/CSLL.'],
+        notes:[quarterlyIrpj?'No mês: base acumulada nas competências conhecidas do trimestre. No consolidado: soma das bases de cada período. Real: resultado com sinal agregado antes do piso de zero.':'Presumido: base presumida total capturada. Real: base positiva capturada do resultado anterior ao IRPJ/CSLL.'],
         sourceRefs:['result.memory:presumed.irTotalBase','result.memory:actual.base']}),
       row('irpjAdditionalLimit','Limite do adicional','detail',irpjValue('irpjAdditionalLimit'),{informative:true,
-        notes:['R$ 20.000 por competência calculada; o consolidado mostra a soma dos limites mensais. Projeção anual: R$ 240.000.'],
+        notes:[quarterlyIrpj?'R$ 60.000 por trimestre civil. Meses ausentes não reduzem esse limite; o consolidado soma os limites dos períodos.':'R$ 20.000 por competência calculada; o consolidado mostra a soma dos limites mensais. Projeção anual: R$ 240.000.'],
         sourceRefs:['result.method','result.monthlyResults[].sourceMonth']}),
       row('irpjBaseWithinLimit','Base dentro do limite','detail',irpjValue('irpjBaseWithinLimit'),{informative:true,
-        notes:['Menor valor entre a base e o limite, calculado antes de somar as competências.'],
+        notes:[quarterlyIrpj?'Menor valor entre a base acumulada e o limite do trimestre; no consolidado, soma das parcelas de cada período.':'Menor valor entre a base e o limite, calculado antes de somar as competências.'],
         sourceRefs:['result.memory:presumed.irTotalBase','result.memory:actual.base']}),
       row('irpjExcessBase','Base excedente ao limite','detail',irpjValue('irpjExcessBase'),{informative:true,
-        notes:['Máximo(0; base do IRPJ − limite), calculado por competência antes da soma.'],
+        notes:[quarterlyIrpj?'Máximo(0; base acumulada do IRPJ − R$ 60.000), calculado por trimestre antes de somar os períodos.':'Máximo(0; base do IRPJ − limite), calculado por competência antes da soma.'],
         sourceRefs:['result.memory:presumed.irTotalBase','result.memory:actual.base']}),
       row('irpjNormalAssessed','IRPJ normal · 15% da base','detail',irpjValue('irpjNormalAssessed'),{informative:true,
-        notes:['Base do IRPJ × 15%; parcela capturada conferida contra a base.'],
+        notes:[quarterlyIrpj?'Base acumulada × 15%; provisão arredondada por componente. No consolidado, soma das parcelas de cada período.':'Base do IRPJ × 15%; parcela capturada conferida contra a base.'],
         sourceRefs:['result.memory:presumed.irBasic','result.memory:actual.irBasic']}),
       row('irpjAdditionalAssessed','Adicional de IRPJ · 10% do excedente','detail',irpjValue('irpjAdditionalAssessed'),{informative:true,
-        notes:['Base excedente ao limite × 10%; parcela capturada conferida em cada competência.'],
+        notes:[quarterlyIrpj?'Excedente do trimestre × 10%; provisão arredondada por componente. Não é o movimento isolado do mês.':'Base excedente ao limite × 10%; parcela capturada conferida em cada competência.'],
         sourceRefs:['result.memory:presumed.irAdditional','result.memory:actual.irAdditional']}),
       row('irpjTotalAssessed','IRPJ total apurado','detail',irpjValue('irpjTotalAssessed'),{informative:true,
-        notes:['IRPJ normal + adicional; mesmo imposto da DRE, apresentado como valor positivo para conferência.'],
+        notes:[quarterlyIrpj?'Normal + adicional acumulados. Subtraia a provisão anterior para chegar ao movimento reconhecido na DRE.':'IRPJ normal + adicional; mesmo imposto da DRE, apresentado como valor positivo para conferência.'],
         sourceRefs:['result.memory:presumed.irTotal','result.memory:actual.irTotal','result.regimes[].dre.irpj']})
+      ,...(quarterlyIrpj?[
+        row('irpjPreviousProvision','Provisão anterior','detail',irpjValue('irpjPreviousProvision'),{informative:true,
+          notes:['No mês: valor já reconhecido no trimestre. No consolidado: zero na ponte com a soma dos períodos.'],sourceRefs:['result.incomeTaxAssessment.regimes[].previousProvision']}),
+        row('irpjCurrentMovement','Movimento reconhecido na DRE','detail',irpjValue('irpjCurrentMovement'),{informative:true,
+          notes:['IRPJ acumulado − provisão anterior. Valor negativo é reversão de provisão; não é restituição automática. A DRE usa o sinal oposto uma única vez.'],sourceRefs:['result.incomeTaxAssessment.regimes[].movement','result.regimes[].dre.irpj']})
+      ]:[])
     ]};
+  if(quarterlyIrpj){
+    for(const item of irpjReconciliation.rows)item.sourceRefs=[...new Set([...item.sourceRefs,
+      'result.incomeTaxAssessment.regimes[].periods','result.monthlyResults[].result.incomeTaxAssessment',
+      'result.incomeTaxAssessment.monthlyAssessments'])];
+    irpjReconciliation.frames=Object.fromEntries(originals.map(regime=>{
+      const describe=f=>{const assessed=irpjAssessment(f);return {available:assessed.available,status:assessed.status||'UNAVAILABLE',
+        reason:assessed.reason||'',scope:assessed.scope||null,closed:assessed.closure?.available===true};};
+      return [regime.id,{period:describe(frame(regime,'annual')),months:months.map((_,index)=>describe(frame(regime,'month',index)))}];
+    }));
+  }
   const details=[
     {key:'salesBreakdown',label:'Composição das vendas utilizadas',parentKey:'sales',rows:GROUPS.map((key,index)=>detail(key,['Vendas a optantes do Simples','Vendas a não optantes do Simples','Vendas a CPFs'][index],'sales',salesDetail(index),{notes:['Valores utilizados no cenário. O fechamento ao final separa a receita da fonte, as devoluções já abatidas e os ajustes manuais quando há evidência capturada.'],sourceRefs:[`monthlyGroups.${key}`]}))},
     {key:'serviceBreakdown',label:'Composição da receita de serviços',parentKey:'services',rows:[detail('serviceReport',actual?'Serviços dos relatórios · por competência':'Serviços dos relatórios · média projetada','services',servicesDetail(false),{sourceRefs:['projection.monthlyGroupsCents.serviceRevenueCents']}),detail('serviceAdjustment','Ajuste de serviços no cenário','services',servicesDetail(true),{notes:[reprocessing?.serviceRevenueMigration?.warning||'Diferença entre os serviços do cenário e a base importada; pode ser positiva, negativa ou zero.'],sourceRefs:['result.regimes[].dre.services','projection.monthlyGroupsCents.serviceRevenueCents']})]},

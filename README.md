@@ -1,4 +1,18 @@
-# Maximum CNPJ · v0.56.2
+# Maximum CNPJ · v0.57.0
+
+## v0.57.0 — IRPJ e CSLL por trimestre, com provisões mensais (2026-11-04)
+
+O comparativo passa a agrupar as bases de **IRPJ e CSLL por trimestre civil**. No Lucro Presumido, o IRPJ normal corresponde a 15% da base e o adicional a 10% da parcela que supera **R$ 60.000 no trimestre**. A consolidação soma os trimestres calculados. O método anterior somava adicionais mensais com limite de R$ 20.000 e podia gerar adicional na comparação mesmo quando a base do trimestre não superava o limite. Por exemplo, bases mensais de R$ 10 mil, R$ 30 mil e R$ 20 mil totalizam R$ 60 mil: o adicional trimestral é zero.
+
+A DRE de cada mês recebe a **diferença entre a provisão acumulada do trimestre e a provisão anteriormente reconhecida**. Isso permite estornos quando a base diminui. A memória distingue base e imposto acumulados, provisão anterior e valor reconhecido no mês; as parcelas informativas não entram novamente no total de tributos. Cada componente do imposto fecha em centavos, com arredondamento comercial, e os totais somam esses lançamentos. Tela, CSV, impressão e PDF respeitam a captura e a mesma ponte de conferência.
+
+No Lucro Real, a estimativa gerencial soma o resultado antes de IRPJ/CSLL **com seu sinal** antes de aplicar a base positiva do trimestre. Um prejuízo em um mês pode reduzir o resultado de outro mês do mesmo trimestre. Esta comparação continua dependendo do CMV, despesas e premissas informados; não substitui o lucro fiscal, adições, exclusões, compensações ou a opção entre apuração anual e trimestral. Um trimestre incompleto pode mostrar uma provisão identificada, mas o seu fechamento permanece indisponível. Meses ausentes não são preenchidos com zero e não encurtam o limite de R$ 60.000.
+
+Os relatórios de origem e o ano do cenário permanecem separados: documentos de um ano podem sustentar a comparação de 2027/2028, sem transformar os tributos projetados em apuração histórica. A premissa conjunta de CBS/IBS continua **11,40%**, conforme os parâmetros do cenário. O modelo trimestral observa o limite proporcional da LC 224/2025 e a cobertura necessária do histórico; ajustes de encerramento que exijam validação permanecem identificados como pendentes.
+
+Motor `1.20.0-quarterly-income-tax` e revisão `QUARTERLY_INCOME_TAX_2026_11_V15`. Uma atualização cria outra versão vinculada; os valores, ajustes contábeis e memórias dos originais permanecem preservados. As memórias V1 continuam explicadas pela regra capturada, sem serem reinterpretadas como trimestrais. Referências e limites: [IRPJ: base, adicional e período](docs/irpj-adicional.md).
+
+A conferência também identifica devoluções de compras excluídas da receita que ainda não foram abatidas das compras usadas como custo. O responsável pode conciliar os documentos e ajustar o custo; o ajuste manual não cria ou estorna créditos fiscais. Essa pendência fica explícita para evitar que a leitura correta do CSV seja confundida com a validação completa do resultado contábil.
 
 ## v0.56.2 — IRPJ com base, excedente e conferência por competência (2026-11-04)
 

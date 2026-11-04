@@ -10,7 +10,8 @@ import pymupdf
 from dre_data_test import ROOT, fixture
 from dre_model_test import model
 from dre_pdf_test import amount, render, section_text
-from reporting.dre_model import (IRPJ_KEYS, IRPJ_ROWS, IRPJ_EMPTY_REASON, IRPJ_INVALID_REASON,
+from reporting.dre_model import (IRPJ_KEYS, IRPJ_V2_KEYS, IRPJ_V2_ROWS, IRPJ_EMPTY_REASON, IRPJ_INVALID_REASON,
+                                 IRPJ_V2_EMPTY_REASON, IRPJ_V2_INVALID_REASON, IRPJ_V2_PERIOD_REASON,
                                  IRPJ_PERIOD_REASON, IRPJ_CALENDAR_REASON, IRPJ_CALENDAR_MISSING_REASON, reconcile_irpj)
 from reporting.dre_pdf import Report
 
@@ -57,11 +58,24 @@ const output=JSON.parse(input).map(s=>{
 
 
 class DreIrpjTests(unittest.TestCase):
+    maxDiff = 1200
+
+    def assertIn(self, member, container, msg=None):
+        if isinstance(container, str) and len(container) > 500:
+            return self.assertTrue(member in container, msg or f'Expected PDF text is absent: {member!r}')
+        return super().assertIn(member, container, msg)
+
+    def assertNotIn(self, member, container, msg=None):
+        if isinstance(container, str) and len(container) > 500:
+            return self.assertFalse(member in container, msg or f'Unexpected PDF text is present: {member!r}')
+        return super().assertNotIn(member, container, msg)
+
     def assert_unavailable(self, assessed, reason):
         self.assertFalse(assessed['available'])
         self.assertEqual(assessed['status'], 'UNAVAILABLE')
         self.assertEqual(assessed['reason'], reason)
-        self.assertEqual(assessed['values'], dict.fromkeys(IRPJ_KEYS))
+        keys = IRPJ_V2_KEYS if assessed.get('version') == 'IRPJ_RECONCILIATION_V2' else IRPJ_KEYS
+        self.assertEqual(assessed['values'], dict.fromkeys(keys))
 
     def test_monthly_28000_base_is_4200_normal_plus_800_additional(self):
         result = monthly([28000])
@@ -143,16 +157,17 @@ class DreIrpjTests(unittest.TestCase):
         self.assert_unavailable(reconcile_irpj(result, 'presumed'), IRPJ_INVALID_REASON)
         self.assertTrue(reconcile_irpj(result, 'presumed', source_month='2025-01')['available'])
 
-    def test_legacy_projection_keeps_annual_limit_and_checks_saved_month(self):
+    def test_uniform_v2_projection_keeps_quarter_limit_and_checks_saved_month(self):
         saved = fixture('legacy')
         before = copy.deepcopy(saved)
         view = model(saved)
         regime = next(row for row in view.regimes if row['id'] == 'actual')
         annual, month = view.irpj(regime), view.irpj(regime, 0)
         self.assertEqual(annual['values']['irpjAdditionalLimit'], 240000)
-        self.assertEqual(month['values']['irpjAdditionalLimit'], 20000)
-        for key in IRPJ_KEYS:
-            self.assertAlmostEqual(month['values'][key], annual['values'][key] / 12, places=8)
+        self.assertEqual(month['values']['irpjAdditionalLimit'], 60000)
+        captured = saved['result']['incomeTaxAssessment']['monthlyAssessments']['2027-01']['regimes']['actual']
+        self.assertEqual(month['values']['irpjCurrentMovement'], captured['movement']['irpjTotalCents'] / 100)
+        self.assertNotEqual(month['values']['irpjCurrentMovement'], annual['values']['irpjCurrentMovement'] / 12)
         self.assertEqual(saved, before)
         calendar = next(row for row in saved['monthlyDre']['regimes'] if row['id'] == 'actual')
         next(row for row in calendar['rows'] if row['key'] == 'irpj')['months'][0] -= .001
@@ -186,7 +201,7 @@ class DreIrpjTests(unittest.TestCase):
         regime = next(row for row in report.model.regimes if row['id'] == 'pure')
         self.assertEqual(report.statement_cell(regime, 'irpj').getPlainText(), 'Incluído no DAS')
         saved['result']['monthlyResults'].append(copy.deepcopy(saved['result']['monthlyResults'][0]))
-        self.assert_unavailable(report.model.irpj(regime), IRPJ_PERIOD_REASON)
+        self.assert_unavailable(report.model.irpj(regime), IRPJ_V2_PERIOD_REASON)
         self.assertEqual(report.statement_cell(regime, 'irpj').getPlainText(), '0,00')
 
     def test_included_in_das_requires_available_monthly_calendar_frame(self):
@@ -244,7 +259,7 @@ class DreIrpjTests(unittest.TestCase):
         with pymupdf.open(stream=render(saved, period='annual', regime_id='pure', regime_ids=['pure']), filetype='pdf') as document:
             content = section_text(document, 'Tributos, encargos e créditos', 'Conferência dos créditos')
             self.assertNotIn('Incluído no DAS', content)
-            self.assertIn(IRPJ_INVALID_REASON, content)
+            self.assertIn(IRPJ_V2_INVALID_REASON, content)
             self.assertIn('n/d', content)
 
     def test_python_and_screen_reconciliation_match_every_regime_and_period(self):
@@ -256,16 +271,16 @@ class DreIrpjTests(unittest.TestCase):
             before = copy.deepcopy(saved)
             view = model(saved)
             rows = {row['key']: row for row in reference['rows']}
-            self.assertEqual(set(rows), set(IRPJ_KEYS))
+            self.assertEqual(set(rows), set(IRPJ_V2_KEYS))
             for regime in view.regimes:
                 for index in (None, *range(len(view.months))):
                     assessed = view.irpj(regime, index)
-                    for key, part in (('irpjBasic', 'irpjNormalAssessed'), ('irpjAdditional', 'irpjAdditionalAssessed')):
-                        value = assessed['values'][part]
+                    for key, part in (('irpjBasic', 'normal'), ('irpjAdditional', 'additional')):
+                        value = (assessed.get('componentMovements') or {}).get(part)
                         self.assertEqual(view.value(regime, key, index), -value if value is not None else None)
                     j = None if index is None else next(j for j, month in enumerate(reference['months']) if
                         (month.get('sourceMonth') if view.actual else month.get('period')) == view.months[index])
-                    for key in IRPJ_KEYS:
+                    for key in IRPJ_V2_KEYS:
                         expected = rows[key]['values'][regime['id']] if j is None else rows[key]['monthlyValues'][regime['id']][j]
                         with self.subTest(regime=regime['id'], key=key, month=index):
                             if expected is None:
@@ -281,11 +296,11 @@ class DreIrpjTests(unittest.TestCase):
         regime = view.regimes[0]
         with pymupdf.open(stream=render(saved, regime_id='presumed', regime_ids=['presumed']), filetype='pdf') as document:
             content = section_text(document, 'Tributos, encargos e créditos', 'Conferência dos créditos')
-            self.assertIn('Memória de cálculo do IRPJ', content)
-            self.assertIn('Estimativa gerencial mensal.', content)
-            self.assertIn('10% somente do excedente', content)
-            self.assertIn('não representa fechamento trimestral', content)
-            for _, label in IRPJ_ROWS:
+            self.assertIn('IRPJ trimestral e movimentos da DRE', content)
+            self.assertIn('IRPJ acumulado menos provisão anterior', content)
+            self.assertIn('R$ 60.000,00 por trimestre', content)
+            self.assertIn('Regras do cenário tributário: 2027', content)
+            for _, label in IRPJ_V2_ROWS:
                 self.assertIn(label, content)
             for index in (None, *range(len(view.months))):
                 for value in view.irpj(regime, index)['values'].values():
@@ -297,11 +312,11 @@ class DreIrpjTests(unittest.TestCase):
 
     def test_pdf_missing_memory_has_reason_and_keeps_original_tax_amount(self):
         saved = fixture()
-        saved['result']['memory'].append(copy.deepcopy(memory(saved['result'], 'presumed.irBasic')))
+        saved['result']['incomeTaxAssessment'] = None
         regime = next(row for row in saved['result']['regimes'] if row['id'] == 'presumed')
         with pymupdf.open(stream=render(saved, period='annual', regime_id='presumed', regime_ids=['presumed']), filetype='pdf') as document:
             content = section_text(document, 'Tributos, encargos e créditos', 'Conferência dos créditos')
-            self.assertIn(IRPJ_EMPTY_REASON, content)
+            self.assertIn(IRPJ_V2_EMPTY_REASON, content)
             self.assertIn('n/d', content)
             self.assertIn(amount(-regime['dre']['irpj']), content)
             self.assertIn(amount(regime['totalTaxes']), content)

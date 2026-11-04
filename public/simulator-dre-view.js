@@ -3,7 +3,7 @@ import {readDreValue,buildDreSummary,buildDreExecutiveSummary,buildDreEvolution}
 import {requiresSimplesReference} from './regime-selection.js';
 import {renderCommercialComposition} from './simulator-commercial-view.js';
 import {DRE_REGIME_OPTIONS,resolveDreVisibleRegimeIds,filterDreVisibleRegimes} from './simulator-dre-visibility.js';
-import {irpjIncludedInDas} from './simulator-irpj-display.js';
+import {irpjIncludedInDas,irpjRowLabel} from './simulator-irpj-display.js';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const moneyFormatter=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
 const percentFormatter=new Intl.NumberFormat('pt-BR',{maximumFractionDigits:2});
@@ -18,7 +18,7 @@ const totalLabel=(presentation,calendar=null)=>fixedPeriod(presentation,calendar
 const actualCalendar=calendar=>['DRE_CALENDAR_V3','DRE_CALENDAR_V4'].includes(calendar?.version);
 const reportIcon=kind=>`<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${kind==='download'?'<path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4"/>':'<path d="M7 8V3h10v5M7 17H4V8h16v9h-3M7 14h10v7H7z"/><path d="M16 11h1"/>'}</svg>`;
 const IRPJ_MEMORY_ROWS=new Set(['irpjTaxBase','irpjAdditionalLimit','irpjBaseWithinLimit','irpjExcessBase',
-  'irpjNormalAssessed','irpjAdditionalAssessed','irpjTotalAssessed']);
+  'irpjNormalAssessed','irpjAdditionalAssessed','irpjTotalAssessed','irpjPreviousProvision','irpjCurrentMovement']);
 const irpjReason=(row,column)=>column.mode==='month'?row.monthlyReasonByRegime?.[column.id]?.[column.month]??row.calendarReasonByRegime?.[column.id]:
   (column.mode==='annual'?row.reasonByRegime:row.calendarReasonByRegime)?.[column.id];
 function cell(row,column,{presentation,showPercent,highlightId}){
@@ -32,10 +32,12 @@ function cell(row,column,{presentation,showPercent,highlightId}){
 function tableRow(row,columns,options){
   const total=TOTALS.has(row.key),kind=row.kind||'line';
   const irpjComponent=['irpjBasic','irpjAdditional'].includes(row.key),irpjMemory=IRPJ_MEMORY_ROWS.has(row.key);
-  const note=row.key==='irpj'?'<small class="dre-irpj-total-note">Normal e adicional já incluídos neste valor.</small>':
+  const quarterly=options.presentation?.irpjReconciliation?.version==='IRPJ_RECONCILIATION_V2';
+  const note=row.key==='irpj'?`<small class="dre-irpj-total-note">${quarterly?'No mês: provisão acumulada menos provisão anterior. Normal e adicional já incluídos.':'Normal e adicional já incluídos neste valor.'}</small>`:
     irpjMemory&&row.notes?.length?`<small class="dre-irpj-formula">${esc(row.notes.join(' '))}</small>`:
     row.kind==='detail'&&!irpjComponent?'<small class="dre-composition-label">Composição</small>':'';
-  return `<tr class="dre-row dre-${esc(kind)}${total?' total':''}${row.informative?' dre-informative':''}${row.key==='irpj'?' dre-irpj-total':''}${irpjComponent?' dre-irpj-component':''}${row.key==='irpjTotalAssessed'?' dre-irpj-assessed-total':''}" data-dre-row="${esc(row.key)}"><th scope="row"><span>${esc(row.label)}</span>${note}</th>${columns.map(column=>cell(row,column,options)).join('')}</tr>`;
+  const label=irpjRowLabel(row,options.presentation,columns.some(column=>column.mode==='month'));
+  return `<tr class="dre-row dre-${esc(kind)}${total?' total':''}${row.informative?' dre-informative':''}${row.key==='irpj'?' dre-irpj-total':''}${irpjComponent?' dre-irpj-component':''}${['irpjTotalAssessed','irpjCurrentMovement'].includes(row.key)?' dre-irpj-assessed-total':''}" data-dre-row="${esc(row.key)}"><th scope="row"><span>${esc(label)}</span>${note}</th>${columns.map(column=>cell(row,column,options)).join('')}</tr>`;
 }
 function table({presentation,columns,showPercent,label='DRE comparativa com rolagem horizontal',className='',highlightId=null,rows=null,indicatorLabel='Indicador',indicatorNote=''}){
   const reconciliationKeys=new Set([...(presentation.revenueReconciliation?.rows||[]),...(presentation.icmsReconciliation?.rows||[]),...(presentation.irpjReconciliation?.rows||[])].map(row=>row.key));
@@ -90,7 +92,8 @@ function icmsReconciliation({presentation,columns,showPercent,summaryColumn=null
 }
 function irpjReconciliation({presentation,columns,showPercent}){
   const reconciliation=presentation.irpjReconciliation;
-  if(reconciliation?.version!=='IRPJ_RECONCILIATION_V1'||!reconciliation.rows?.length)return '';
+  if(!['IRPJ_RECONCILIATION_V1','IRPJ_RECONCILIATION_V2'].includes(reconciliation?.version)||!reconciliation.rows?.length)return '';
+  const quarterly=reconciliation.version==='IRPJ_RECONCILIATION_V2';
   const reasons=new Set();
   for(const row of reconciliation.rows)for(const column of columns){
     if(readDreValue(row,column)!==null||irpjIncludedInDas(presentation,row,column))continue;
@@ -102,7 +105,20 @@ function irpjReconciliation({presentation,columns,showPercent}){
   }
   const includesDas=columns.some(column=>irpjIncludedInDas(presentation,{key:'irpj'},column));
   const monthly=columns.some(column=>column.mode==='month');
-  return `<section class="dre-irpj-reconciliation" data-irpj-reconciliation="dre" data-irpj-period="${monthly?'monthly':'annual'}" aria-label="${esc(reconciliation.label)}"><header><span class="eyebrow">CONFERÊNCIA DO IRPJ</span><h3>${esc(reconciliation.label)}</h3><p>Da base tributável ao imposto: normal de 15% e adicional de 10% sobre o excedente. Valores informativos já incluídos no total da DRE.</p></header><p class="dre-irpj-method" data-irpj-method>${esc(reconciliation.note)}</p>${table({presentation,columns,showPercent:false,rows:reconciliation.rows,label:'Base, limite e cálculo do IRPJ por regime e período',className:'dre-irpj-table',indicatorLabel:'Conferência do IRPJ'})}${includesDas?'<p class="dre-irpj-das-note">No DAS: o IRPJ já integra o Simples. Não há outra parcela a somar nesta DRE.</p>':''}${reasons.size?`<p class="dre-irpj-unavailable" data-irpj-unavailable>${[...reasons].map(esc).join(' ')}</p>`:''}<p class="dre-irpj-note">A base dentro do limite e a base excedente explicam a base do IRPJ. Somente o excedente recebe o adicional. Normal + adicional = IRPJ total apurado.</p></section>`;
+  const states=new Set();
+  let annualAdjustment=false;
+  if(quarterly)for(const column of columns){
+    const frames=reconciliation.frames?.[column.id],state=column.mode==='month'?frames?.months?.[column.month]:frames?.period;
+    if(!state?.available)continue;
+    const regime=presentation.regimes.find(item=>item.id===column.id)?.name||column.id;
+    if(state.status==='PROVISIONAL')states.add(`${regime}: provisão parcial; fechamento indisponível. ${state.reason}`);
+    if(state.scope==='ANNUAL_ADJUSTMENT')annualAdjustment=true;
+  }
+  const introduction=quarterly?(monthly?
+    'Base e imposto acumulados até a competência. A última linha explica o movimento reconhecido neste mês; as linhas anteriores não são novas deduções.':
+    'Soma das apurações e provisões dos períodos capturados. A situação de fechamento identifica os períodos completos; as linhas de memória não são novas deduções.'):
+    'Da base tributável ao imposto: normal de 15% e adicional de 10% sobre o excedente. Valores informativos já incluídos no total da DRE.';
+  return `<section class="dre-irpj-reconciliation" data-irpj-reconciliation="dre" data-irpj-version="${esc(reconciliation.version)}" data-irpj-period="${monthly?'monthly':'annual'}" aria-label="${esc(reconciliation.label)}"><header><span class="eyebrow">CONFERÊNCIA DO IRPJ${quarterly?' · TRIMESTRAL':''}</span><h3>${esc(reconciliation.label)}</h3><p>${introduction}</p></header><p class="dre-irpj-method" data-irpj-method>${esc(reconciliation.note)}</p>${annualAdjustment?'<p class="dre-irpj-method" data-irpj-annual-adjustment>Ajuste anual de presunção: as bases abrangem os trimestres recalculados; a provisão anterior reúne o valor já reconhecido até novembro.</p>':''}${table({presentation,columns,showPercent:false,rows:reconciliation.rows,label:'Base, limite e cálculo do IRPJ por regime e período',className:'dre-irpj-table',indicatorLabel:'Conferência do IRPJ'})}${includesDas?'<p class="dre-irpj-das-note">No DAS: o IRPJ já integra o Simples. Não há outra parcela a somar nesta DRE.</p>':''}${states.size?`<p class="dre-irpj-unavailable" data-irpj-provisional>${[...states].map(esc).join(' ')}</p>`:''}${reasons.size?`<p class="dre-irpj-unavailable" data-irpj-unavailable>${[...reasons].map(esc).join(' ')}</p>`:''}<p class="dre-irpj-note">${quarterly?'Normal + adicional = IRPJ acumulado. Acumulado − provisão anterior = movimento reconhecido na DRE. Movimento negativo é reversão de provisão, sem restituição automática.':'A base dentro do limite e a base excedente explicam a base do IRPJ. Somente o excedente recebe o adicional. Normal + adicional = IRPJ total apurado.'}</p></section>`;
 }
 function finalReconciliations(options){return irpjReconciliation(options)+revenueReconciliation(options)+icmsReconciliation(options);}
 const percentControl=showPercent=>`<label class="dre-percent-control"><input id="dre-show-percent" type="checkbox" ${showPercent?'checked':''}>Mostrar % da receita</label>`;

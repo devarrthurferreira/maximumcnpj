@@ -17,6 +17,8 @@ export function buildMonthlyDre(result, year, reference=null, reportPeriod=null)
   const missingRbt12=hasSimples&&result.rbt12Source==='NOT_PROVIDED';
   const regimes=selection?result.regimes.filter(regime=>selection.selected.includes(regime.id)):result.regimes;
   const actual=result.method==='REPORT_MONTHS_V1';
+  const quarterlyProjection=!actual&&result.incomeTaxAssessment?.version==='INCOME_TAX_ASSESSMENT_V2'&&result.incomeTaxAssessment.basis==='UNIFORM_PROJECTION';
+  if(quarterlyProjection&&result.incomeTaxAssessment.scenarioYear!==year)throw new Error('O calendário deve usar o ano do cenário de IRPJ/CSLL.');
   const analysisPeriod=actual&&result.analysisPeriod?.version==='JAN_SEP_V1'?structuredClone(assertCompleteAnalysisPeriod(result.analysisPeriod,result.monthlyResults)):null;
   const months=(analysisPeriod?analysisPeriod.includedMonths.map(sourceMonth=>Number(sourceMonth.slice(5))):MONTH_NAMES.map((_,index)=>index+1)).map(number=>({number,label:MONTH_NAMES[number-1],period:`${year}-${String(number).padStart(2,'0')}`}));
   let rbt12Schedule=null;
@@ -44,13 +46,22 @@ export function buildMonthlyDre(result, year, reference=null, reportPeriod=null)
       const scheduled=rbt12Schedule?.rows.find(row=>row.sourceMonth===sourceMonth);
       return {...month,sourceMonth,...(rbt12Schedule?{rbt12Cents:scheduled?.status==='CONFIRMED'?scheduled.rbt12Cents:null}:missingRbt12?{rbt12Cents:null}:{})};
     }),
-    rounding:`Valores completos preservados. Exibição com duas casas; somas de células exibidas podem diferir por centavos do ${analysisPeriod?'consolidado de janeiro a setembro':'total anual'}.`,
+    rounding:`${result.incomeTaxAssessment?.version==='INCOME_TAX_ASSESSMENT_V2'?'IRPJ e CSLL são arredondados por componente trimestral; as células mensais mostram os movimentos da provisão. Demais valores':'Valores'} completos preservados. Exibição com duas casas; somas de células exibidas podem diferir por centavos do ${analysisPeriod?'consolidado de janeiro a setembro':'total anual'}.`,
     regimes:regimes.map(regime=>({id:regime.id,name:regime.name,available:regime.available,
       rows:rows.map(([key,label])=>{
         const annual=regime.available?regime.dre[key]:null;
         if(annual!==null&&(!Number.isFinite(annual)))throw new Error('A DRE possui um valor não confirmado.');
         return {key,label,annual,months:months.map(month=>{
-          if(result.method!=='REPORT_MONTHS_V1')return annual===null?null:annual/12;
+          if(result.method!=='REPORT_MONTHS_V1'){
+            if(annual===null)return null;
+            if(quarterlyProjection&&['presumed','actual'].includes(regime.id)&&['irpj','csll','netProfit'].includes(key)){
+              const frame=result.incomeTaxAssessment.monthlyAssessments?.[month.period]?.regimes?.[regime.id];
+              if(!frame?.available||!frame.movement)return null;
+              const irpj=frame.movement.irpjTotalCents===0?0:-frame.movement.irpjTotalCents/100,csll=frame.movement.csllCents===0?0:-frame.movement.csllCents/100;
+              return key==='irpj'?irpj:key==='csll'?csll:regime.dre.preTax/12+irpj+csll;
+            }
+            return annual/12;
+          }
           const entry=result.monthlyResults.find(row=>row.month===month.number)?.result.regimes.find(row=>row.id===regime.id);
           return entry?.available?entry.dre[key]:null;
         })};

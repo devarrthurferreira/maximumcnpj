@@ -1,3 +1,5 @@
+import {reconcileQuarterlyIrpj,usesQuarterlyIncomeTax} from './irpj-quarter-reconciliation.js';
+export {QUARTERLY_IRPJ_RECONCILIATION_VERSION,QUARTERLY_IRPJ_RECONCILIATION_KEYS,usesQuarterlyIncomeTax} from './irpj-quarter-reconciliation.js';
 /** Explain captured IRPJ amounts only; this module never changes a saved tax. */
 export const IRPJ_RECONCILIATION_VERSION = 'IRPJ_RECONCILIATION_V1';
 export const IRPJ_RECONCILIATION_KEYS = Object.freeze([
@@ -70,6 +72,7 @@ function monthlyEntries(result,expectedSourceMonths,expectedCount){
  * 12-month limit. Selecting a projected month is handled by the caller's scale.
  */
 export function reconcileIrpj(result,id,{sourceMonth=null,expectedSourceMonths=null,expectedCount=null}={}){
+  if(usesQuarterlyIncomeTax(result))return reconcileQuarterlyIrpj(result,id,{sourceMonth,expectedSourceMonths,expectedCount});
   if(result?.method!=='REPORT_MONTHS_V1')return sourceMonth===null?period(result,id,12):unavailable(PERIOD_REASON);
   const rows=monthlyEntries(result,expectedSourceMonths,expectedCount);
   if(!rows)return unavailable(PERIOD_REASON);
