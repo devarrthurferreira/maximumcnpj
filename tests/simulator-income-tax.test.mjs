@@ -66,7 +66,7 @@ test('comparativo Jan–Set negativo zera IRPJ e CSLL no Lucro Real, preservando
 });
 
 test('regressão gerencial: resultado pré-IRPJ -29.522,86 não permite tributo positivo',()=>{
-  const components=[12000,8000,-18000,-30522.86,0,0,0,0,0];
+  const components=[12000,8000,-18000,-31522.86,0,0,0,0,0];
   const rows=components.map((value,index)=>month(index+1,100000,0,value));
   const assessment=assessQuarterlyIncomeTaxes({year:2027,months:rows,annualLossZeroForReal:true});
   const actual=assessment.incomeTaxAssessment.regimes.actual;

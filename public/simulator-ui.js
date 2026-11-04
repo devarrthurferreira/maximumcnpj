@@ -1064,7 +1064,7 @@ function snapshotNotice(snapshot,{historical=false,updated=false,originalId=null
   const lossHelp=legacyLoss?' Nesta versão histórica, a coluna Lucro Real contém IRPJ/CSLL de períodos anteriores apesar do resultado gerencial acumulado negativo. Abra a DRE atual para ver a comparação recalculada, sem alterar o registro original.':'';
   const notice=document.createElement('section');notice.className='card sim-version-notice';notice.dataset.simulationRevision=updated?'updated':'historical';
   notice.innerHTML=updated?`<p role="status"><strong>DRE atualizada com os relatórios conferidos.</strong> O DIFAL de saída, os impostos e o resultado correspondem à regra atual. A versão anterior continua no histórico.</p><a class="sim-back" href="${esc(snapshotUrl(originalId,true))}">Consultar versão anterior →</a>`:
-    `<p><strong>${historical?'Versão histórica.':'Esta DRE foi salva com uma regra anterior.'}</strong> Os valores abaixo correspondem à data em que esta versão foi gerada.${'${esc(lossHelp)}'}</p><a class="sim-back" data-current-simulation href="${esc(snapshotUrl(snapshot._id))}">Conferir DRE com a regra atual →</a>`;
+    `<p><strong>${historical?'Versão histórica.':'Esta DRE foi salva com uma regra anterior.'}</strong> Os valores abaixo correspondem à data em que esta versão foi gerada.${esc(lossHelp)}</p><a class="sim-back" data-current-simulation href="${esc(snapshotUrl(snapshot._id))}">Conferir DRE com a regra atual →</a>`;
   $('#simulator-intro').after(notice);
 }
 function refreshFailure(snapshot,error) {
