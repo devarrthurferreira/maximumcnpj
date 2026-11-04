@@ -6,6 +6,7 @@
 - Identifica falhas de plataforma e respostas sem JSON com mensagens acionáveis e referência segura da requisição.
 - Recupera uma leitura confirmada após perda de resposta, conferindo empresa, documento e tentativa; preserva o estado de processamento e evita iniciar OCR duplicado.
 - Mantém o motivo registrado pelo servidor ao verificar uma leitura pendente ou com erro.
+- Restringe a nova recuperação automática às rotas de PDF, preservando o comportamento de retomada das importações de compras e vendas.
 - Protege o uso nativo do PDF contra execução concorrente dentro do mesmo processo, contabilizando a espera no orçamento de conversão e preservando o original e a conferência da seção 2.2.
 
 ## [0.56.0] - 2026-11-04

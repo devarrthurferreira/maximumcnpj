@@ -6,6 +6,8 @@ A leitura do extrato na análise Fiscal passa a respeitar o tempo de processamen
 
 Falhas temporárias de rede ou respostas de plataforma sem JSON recebem uma orientação específica e um identificador seguro para conferência. Quando o PDF já foi enviado, a recuperação consulta o documento e só aproveita uma extração confirmada da mesma empresa, documento e tentativa. Uma leitura ainda em andamento permanece pendente; autenticação, validação e erros fiscais não são repetidos como falhas transitórias. A opção **Verificar leitura** conserva o motivo registrado pelo servidor.
 
+A identificação automática de falhas transitórias fica restrita às rotas do PDF. As importações de compras e vendas conservam o contrato de retomada informado pelo servidor, sem ganhar novas repetições por respostas incompletas ou falhas HTTP genéricas. A regressão cobre também a leitura ativa além de 55 segundos, com o indicador de processamento no formulário Fiscal.
+
 O leitor nativo de PDF protege sua execução contra chamadas simultâneas no mesmo processo, incluindo a conferência inicial da seção 2.2. A espera por essa proteção integra o orçamento da conversão. Os documentos originais, as receitas mensais, a identidade da empresa e os valores do RBT12 continuam sujeitos às mesmas validações.
 
 O erro de invocação intermitente da função foi observado em produção sem acesso a documentos; sua causa de infraestrutura não foi atribuída sem logs. As correções cobrem o limite incorreto de espera, a recuperação de respostas perdidas e a concorrência documentadamente insegura do leitor nativo.
