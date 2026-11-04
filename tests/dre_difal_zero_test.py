@@ -77,21 +77,25 @@ def assert_statement(test, content, snapshot):
                snapshot['result'].get('analysisPeriod', {}).get('version') == 'JAN_SEP_V1')
     with pymupdf.open(stream=content, filetype='pdf') as document:
         statement = section_text(document, 'DRE comparativa detalhada', 'Como o resultado se forma')
+        taxes = section_text(document, 'Impostos', 'Conferência dos créditos') if compact else statement
         for key, label in (('difal', 'DIFAL' if compact else 'DIFAL sobre vendas'),
-                           ('icmsAnticipation', 'Antecipação de ICMS'),
+                           ('icmsAnticipation', 'Antecipação' if compact else 'Antecipação de ICMS'),
                            ('netProfit', 'Resultado' if compact else 'Resultado líquido')):
-            expected = label + ' ' + ' '.join(amount(row['dre'][key]) for row in snapshot['result']['regimes'])
-            test.assertTrue(expected in statement, f'PDF does not preserve the saved {key} row: {expected}')
-        # The compact statement puts every assessed tax in one block. The
-        # captured net-revenue subtotal remains in the regime comparison; keep
-        # checking its amounts there instead of dropping this reconciliation.
+            sign = -1 if compact and key != 'netProfit' else 1
+            expected = label + ' ' + ' '.join(amount(sign * row['dre'][key]) for row in snapshot['result']['regimes'])
+            section = taxes if compact and key != 'netProfit' else statement
+            test.assertTrue(expected in section, f'PDF does not preserve the saved {key} row: {expected}')
+        # The separate tax statement reverses deduction signs only for display.
+        # The captured net-revenue subtotal remains in the regime comparison.
         revenue_section = section_text(document, 'Comparação entre regimes', 'DRE comparativa detalhada') if compact else statement
         revenue_label = 'Receita após tributos' if compact else 'Receita após deduções tributárias'
         expected = revenue_label + ' ' + ' '.join(amount(row['dre']['netRevenue']) for row in snapshot['result']['regimes'])
         test.assertTrue(expected in revenue_section, f'PDF does not preserve the saved netRevenue row: {expected}')
         if compact:
-            expected = 'Total de tributos ' + ' '.join(amount(row['totalTaxes']) for row in snapshot['result']['regimes'])
-            test.assertTrue(expected in statement, f'PDF does not preserve the saved totalTaxes row: {expected}')
+            expected = 'Total ' + ' '.join(amount(row['totalTaxes']) for row in snapshot['result']['regimes'])
+            test.assertTrue(expected in taxes, f'PDF does not preserve the saved totalTaxes row: {expected}')
+            deduction = '(-) Total de impostos ' + ' '.join(amount(-row['totalTaxes']) for row in snapshot['result']['regimes'])
+            test.assertTrue(deduction in statement, f'PDF does not deduct the captured total exactly once: {deduction}')
         return section_text(document, 'DRE mensal por regime', 'Premissas, cobertura e conferências')
 
 
@@ -176,18 +180,18 @@ class DreDifalZeroTests(unittest.TestCase):
             full_text = ' '.join(' '.join(page.get_text().split()) for page in document)
         self.assertTrue('Não possui DIFAL de saída' in full_text)
         self.assertFalse('DIFAL sobre vendas (10%)' in full_text)
-        rows = re.findall(r'\bDIFAL ([\d.,\s-]+)(?=INSS / encargos da folha)', annex)
+        rows = re.findall(r'\bDIFAL ([\d.,\s-]+)(?=INSS)', annex)
         self.assertEqual(len(rows), 12, 'All four regimes and three monthly table pages retain the zero row.')
         self.assertTrue(all(set(row.split()) == {'0,00'} for row in rows))
-        self.assertIn('Antecipação de ICMS -43,92 -87,84 -131,76 -1.976,40', annex)
+        self.assertIn('Antecipação 43,92 87,84 131,76 1.976,40', annex)
         self.assertEqual(corrected, frozen)
         csv_rows = list(csv.reader(io.StringIO(snapshots()['csv']['corrected']), delimiter=';'))
-        exit_rows = [row for row in csv_rows if len(row) > 5 and row[0] == 'DRE' and row[2] == 'DIFAL']
-        entry_rows = [row for row in csv_rows if len(row) > 5 and row[0] == 'DRE' and row[2] == 'Antecipação de ICMS']
+        exit_rows = [row for row in csv_rows if len(row) > 5 and row[0] == 'Impostos' and row[2] == 'DIFAL']
+        entry_rows = [row for row in csv_rows if len(row) > 5 and row[0] == 'Impostos' and row[2] == 'Antecipação']
         self.assertEqual(len(exit_rows), 1)
         self.assertEqual(exit_rows[0][5:9], ['0,00'] * 4)
-        self.assertEqual(entry_rows[0][5:9], ['-1976,40', '-1976,40', '0,00', '0,00'])
-        monthly_exit = [row for row in csv_rows if len(row) > 6 and row[1] == 'DRE' and row[3] == 'DIFAL']
+        self.assertEqual(entry_rows[0][5:9], ['1976,40', '1976,40', '0,00', '0,00'])
+        monthly_exit = [row for row in csv_rows if len(row) > 6 and row[1] == 'Impostos' and row[3] == 'DIFAL']
         self.assertEqual(len(monthly_exit), 4)
         self.assertTrue(all(row[6:16] == ['0,00'] * 10 for row in monthly_exit))
         profit = next(row for row in csv_rows if len(row) > 5 and row[0] == 'DRE' and row[2] == 'Resultado')
@@ -199,15 +203,15 @@ class DreDifalZeroTests(unittest.TestCase):
         assert_statement(self, render(previous), previous)
         self.assertEqual(previous, old_frozen)
         old_csv = list(csv.reader(io.StringIO(snapshots()['csv']['previous']), delimiter=';'))
-        old_exit = next(row for row in old_csv if len(row) > 5 and row[0] == 'DRE' and row[2] == 'DIFAL')
-        self.assertEqual(old_exit[5:9], ['-3780,00', '-3780,00', '0,00', '0,00'])
-        old_monthly_exit = [row for row in old_csv if len(row) > 6 and row[1] == 'DRE' and row[3] == 'DIFAL']
+        old_exit = next(row for row in old_csv if len(row) > 5 and row[0] == 'Impostos' and row[2] == 'DIFAL')
+        self.assertEqual(old_exit[5:9], ['3780,00', '3780,00', '0,00', '0,00'])
+        old_monthly_exit = [row for row in old_csv if len(row) > 6 and row[1] == 'Impostos' and row[3] == 'DIFAL']
         self.assertEqual(len(old_monthly_exit), 4)
         for row in old_monthly_exit:
             regime = next(item for item in previous['result']['regimes'] if item['name'] == row[0])
             values = [next(item for item in month['result']['regimes'] if item['id'] == regime['id'])['dre']['difal']
                       for month in previous['result']['monthlyResults']]
-            expected = [f'{value:.2f}'.replace('.', ',') for value in [*values, regime['dre']['difal']]]
+            expected = [f'{-value:.2f}'.replace('.', ',') if value != 0 else '0,00' for value in [*values, regime['dre']['difal']]]
             self.assertEqual(row[6:16], expected)
 
     def test_changing_only_the_displayed_tax_without_fixing_totals_is_rejected(self):

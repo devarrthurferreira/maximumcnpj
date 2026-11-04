@@ -69,6 +69,10 @@ export function withIrpjBreakdown(presentation,captured) {
   }
   for(const row of presentation.revenueReconciliation?.rows||[])append(row);
   for(const row of presentation.icmsReconciliation?.rows||[])append(row);
+  // When the assessed taxes live outside the DRE, retain their captured
+  // components only as informative memory. They are not new DRE deductions.
+  if(presentation.taxStatement?.version==='DRE_TAX_STATEMENT_V1')
+    for(const component of components)append({...component,kind:'detail',informative:true});
   for(const row of presentation.irpjReconciliation?.rows||[])append(row);
   return rows;
 }

@@ -61,10 +61,14 @@ const savedUrl=(id:string,mode:'current'|'historical')=>'/simulator.html?'+new U
 const writes=(requests:{method:string;path:string}[])=>requests.filter(request=>!['GET','HEAD'].includes(request.method));
 async function expectStatement(page:Page,snapshot:any){
   await expect(page.locator('#dre-demonstrativo')).toBeVisible();
-  for(const key of ['difal','icmsAnticipation','netProfit']){
-    await expect(page.locator(`.dre-complete > .dre-table-wrap [data-dre-row="${key}"] td .dre-amount`))
-      .toHaveText(snapshot.result.regimes.map((regime:any)=>money(regime.dre[key])));
+  await expect(page.locator('#tax-demonstrativo')).toBeVisible();
+  for(const key of ['difal','icmsAnticipation']){
+    await expect(page.locator(`#tax-demonstrativo > .dre-tax-table [data-dre-row="${key}"] td .dre-amount`))
+      .toHaveText(snapshot.result.regimes.map((regime:any)=>money(regime.dre[key]===0?0:-regime.dre[key])));
+    await expect(page.locator(`#dre-demonstrativo > .dre-table-wrap [data-dre-row="${key}"]`)).toHaveCount(0);
   }
+  await expect(page.locator('#dre-demonstrativo > .dre-table-wrap [data-dre-row="netProfit"] td .dre-amount'))
+    .toHaveText(snapshot.result.regimes.map((regime:any)=>money(regime.dre.netProfit)));
 }
 function currentAnalysis(pair:ReturnType<typeof snapshots>){
   return {id:analysisId,clientId:pair.original.clientId,revision:4,
@@ -80,11 +84,11 @@ test('DRE atual oculta resultado antigo durante falha 503 e nova tentativa abre 
   }});
   await page.goto(savedUrl(pair.original._id,'current'));
   await expect(page.locator('[data-simulation-refresh="loading"]')).toBeVisible();
-  await expect(page.locator('#dre-demonstrativo,[data-dre-row]')).toHaveCount(0);
+  await expect(page.locator('#dre-demonstrativo,#tax-demonstrativo,[data-dre-row]')).toHaveCount(0);
   releaseFailure();
   await expect(page.locator('[data-simulation-refresh="failed"]')).toBeVisible();
   await expect(page.getByRole('alert')).toContainText('Origem fiscal temporariamente indisponível.');
-  await expect(page.locator('#dre-demonstrativo,[data-dre-row]')).toHaveCount(0);
+  await expect(page.locator('#dre-demonstrativo,#tax-demonstrativo,[data-dre-row]')).toHaveCount(0);
   await expect(page.getByRole('link',{name:'Consultar versão histórica'})).toHaveAttribute('href',savedUrl(pair.original._id,'historical'));
   await page.locator('#retry-current-simulation').click();
   await expect(page).toHaveURL(new RegExp(`${pair.corrected._id}&current=1$`));
@@ -110,7 +114,7 @@ for(const mismatch of ['client','model'] as const)test(`resposta de atualizaçã
   await page.goto(savedUrl(pair.original._id,'current'));
   await expect(page.locator('[data-simulation-refresh="failed"]')).toBeVisible();
   await expect(page.getByRole('alert')).toContainText('O servidor não confirmou uma versão atualizada desta empresa.');
-  await expect(page.locator('#dre-demonstrativo,[data-dre-row]')).toHaveCount(0);
+  await expect(page.locator('#dre-demonstrativo,#tax-demonstrativo,[data-dre-row]')).toHaveCount(0);
   await expect(page.locator('#retry-current-simulation')).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`${pair.original._id}&current=1$`));
   expect(writes(api.requests)).toHaveLength(1);expect(api.errors).toEqual([]);

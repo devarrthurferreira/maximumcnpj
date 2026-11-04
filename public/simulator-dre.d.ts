@@ -5,6 +5,7 @@ export type DrePresentationRow = {
   percentValues:Record<string,number|null>;monthlyPercentValues:Record<string,(number|null)[]>;calendarAnnualPercentValues:Record<string,number|null>;
   reasonByRegime:Record<string,string>;calendarReasonByRegime:Record<string,string>;monthlyReasonByRegime?:Record<string,string[]>;notes:string[];informative:boolean;parentKey?:string;sourceRefs:string[];
 };
+export type DreTaxRates = {cbs:number|null;ibs:number|null;combined:number|null;monthly:Array<{sourceMonth:string;cbs:number|null;ibs:number|null;combined:number|null}>};
 export type DrePresentation = {
   version:'DRE_PRESENTATION_V1';method?:string|null;regimes:Array<{id:string;name:string;available:boolean;status?:string;monthlyAvailability?:boolean[];monthlyStatuses?:string[];difalApplication?:import('./simulator-engine.js').SimulationRegime['difalApplication']}>;
   report?:{modelVersion:string|null;sourceMonths:string[];warnings:Array<{code:string;severity:string;title:string;detail:string}>;memory:Array<{id:string;section:string;label:string;formula:string;value:number|string;unit:string}>;sources:Array<{label:string;url:string}>;reportPeriod:any};
@@ -18,7 +19,8 @@ export type DrePresentation = {
   simplesDiagnostic?:any;
   sections:Array<{key:string;label:string;rows:DrePresentationRow[]}>;
   statement?:{version:'DRE_STATEMENT_V1';sections:Array<{key:string;label:string;rows:DrePresentationRow[]}>;note:string;
-    taxRates:{cbs:number|null;ibs:number|null;combined:number|null;monthly:Array<{sourceMonth:string;cbs:number|null;ibs:number|null;combined:number|null}>}};
+    taxRates:DreTaxRates};
+  taxStatement?:{version:'DRE_TAX_STATEMENT_V1';label:'Impostos';rows:DrePresentationRow[];taxRates:DreTaxRates;note:string};
   details:Array<{key:string;label:string;parentKey:string;rows:DrePresentationRow[]}>;indicators:DrePresentationRow[];
   revenueReconciliation?:{key:'revenueReconciliation';label:string;note:string;rows:DrePresentationRow[]};
   icmsReconciliation?:{key:'icmsReconciliation';label:string;note:string;rows:DrePresentationRow[]};

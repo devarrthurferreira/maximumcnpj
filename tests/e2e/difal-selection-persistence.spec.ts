@@ -1,4 +1,4 @@
-import {showDreRegimes,showDreMonth,showDreConsolidated} from './dre-controls.ts';
+import {showDreRegimes} from './dre-controls.ts';
 import {test,expect} from '@playwright/test';
 import {randomUUID} from 'node:crypto';
 import {MongoClient} from 'mongodb';
@@ -110,8 +110,8 @@ test('saída desmarcada na empresa permanece excluída após importação, CSV, 
     const complete=reopened.locator('#dre-demonstrativo');
     await expect(complete.locator('[data-dre-row="netProfit"]')).toBeVisible();
     await showDreRegimes(reopened,['pure']);
-    await expect(complete.locator('[data-dre-row="difal"] td').first()).toContainText('0,00');
-    await expect(complete.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('36,60');
+    await expect(reopened.locator('#tax-demonstrativo [data-dre-row="difal"] td').first()).toContainText('0,00');
+    await expect(reopened.locator('#tax-demonstrativo [data-dre-row="icmsAnticipation"] td').first()).toContainText('36,60');
     expect(await (await fresh.request.get(`/api/v4/simulations/${saved._id}`)).json()).toEqual(saved);
     await reopened.goto(`/purchases.html?type=SALES&client=${clientId}&job=${jobId}`);
     await expect(reopened.locator('[data-difal-amount]')).toContainText('0,00');

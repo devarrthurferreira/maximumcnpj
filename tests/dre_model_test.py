@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 
 from dre_data_test import fixture, ROOT
-from reporting.dre_model import DreModel
+from reporting.dre_model import DreModel, TAX_COMPONENT_KEYS
 
 
 def model(snapshot, **options):
@@ -24,7 +24,8 @@ const s=JSON.parse(input);
 const presentation=buildDrePresentation({result:s.result,calendar:s.monthlyDre||buildMonthlyDre(s.result,s.year||s.draft.year),
   source:s.source,monthlyGroups:s.monthlyGroups,projection:s.projection,reportMonths:s.reportMonths,
   engineInput:s.engineInput,taxSources:s.taxSources});
-process.stdout.write(JSON.stringify({months:presentation.months,rows:unifiedDreRows(presentation),taxRates:presentation.statement?.taxRates,
+process.stdout.write(JSON.stringify({months:presentation.months,rows:unifiedDreRows(presentation),
+  taxRows:presentation.taxStatement?.rows||[],taxRates:presentation.taxStatement?.taxRates||presentation.statement?.taxRates,
   memory:dreReportMemory(presentation,{includeDre:true}),warnings:presentation.report.warnings}));
 """
     result = subprocess.run(['node', '--input-type=module', '-e', script], input=json.dumps(snapshot),
@@ -64,7 +65,7 @@ class DreModelTests(unittest.TestCase):
             saved = fixture(variant)
             before = copy.deepcopy(saved)
             view, reference = model(saved), screen(saved)
-            rows = {row['key']: row for row in reference['rows']}
+            rows = {row['key']: row for row in [*reference['rows'], *reference['taxRows']]}
             keys = [key for _, section in view.sections() for key, _ in section] + ['totalTaxes']
             for regime in view.regimes:
                 for key in keys:
@@ -91,22 +92,26 @@ class DreModelTests(unittest.TestCase):
             self.assertIsNone(view.ratio(regime, 'netProfit'))
             self.assertIsNone(view.ratio(regime, 'totalTaxes'))
 
-    def test_assessed_taxes_and_expenses_reconcile_once_in_current_statements(self):
+    def test_separate_taxes_and_one_dre_deduction_reconcile_every_month(self):
         for variant in ('complete', 'partial', 'loss', 'zero', 'negative-revenue', 'unavailable'):
             saved = fixture(variant)
             before = copy.deepcopy(saved)
             view = model(saved)
             keys = [key for _, rows in view.sections() for key, _ in rows]
-            self.assertEqual(keys.count('icmsAnticipation'), 1)
-            self.assertEqual(keys.count('payroll'), 1)
-            self.assertEqual(keys.count('cbsIbsNet'), 1)
-            self.assertFalse(set(keys) & {'cbsDebit', 'ibsDebit', 'cbsUsed', 'ibsUsed'})
+            self.assertEqual(keys.count('taxesDeduction'), 1)
+            self.assertFalse(set(keys) & (TAX_COMPONENT_KEYS | {'totalTaxes', 'cbsDebit', 'ibsDebit', 'cbsUsed', 'ibsUsed'}))
+            tax_keys = [key for key, _ in view.tax_rows()]
+            self.assertEqual(len(tax_keys), len(set(tax_keys)))
+            self.assertEqual(tax_keys[:8], ['das', 'icmsNet', 'cbsIbsNet', 'irpj', 'csll', 'icmsAnticipation', 'difal', 'payroll'])
+            self.assertEqual(tax_keys[-4:], ['totalTaxes', 'taxBurden', 'netProfit', 'netMargin'])
             for regime in view.regimes:
                 for index in (None, *range(len(view.months))):
                     frame = view.frame(regime, index)
                     if not frame['available']:
-                        for key in ('cbsIbsNet', 'totalTaxes', 'operatingExpensesBeforePayroll', 'taxBurden', 'netMargin'):
+                        for key in ('cbsIbsNet', 'totalTaxes', 'taxesDeduction', 'operatingExpensesBeforePayroll', 'taxBurden', 'netMargin'):
                             self.assertIsNone(view.value(regime, key, index))
+                        for key in tax_keys:
+                            self.assertIsNone(view.tax_value(regime, key, index))
                         continue
                     dre = frame['dre']
                     combined = sum(dre[key] for key in ('cbsDebit', 'ibsDebit', 'cbsUsed', 'ibsUsed'))
@@ -116,10 +121,89 @@ class DreModelTests(unittest.TestCase):
                         self.same(view.value(regime, 'cbsIbsNet', index), combined)
                         self.same(view.value(regime, 'operatingExpensesBeforePayroll', index), expenses)
                         self.same(view.value(regime, 'totalTaxes', index), taxes)
+                        self.same(view.value(regime, 'taxesDeduction', index), -taxes)
+                        self.same(view.tax_value(regime, 'cbsIbsNet', index), -combined)
+                        self.same(sum(view.tax_value(regime, key, index) for key in tax_keys if key in TAX_COMPONENT_KEYS), taxes)
                         self.same(dre['revenue'] + dre['cmv'] + expenses - taxes, dre['netProfit'])
                         self.same(view.value(regime, 'taxBurden', index), taxes / dre['revenue'] if dre['revenue'] > 0 else None)
                         self.same(view.value(regime, 'netMargin', index), dre['netProfit'] / dre['revenue'] if dre['revenue'] > 0 else None)
             self.assertEqual(saved, before)
+
+    def test_tax_statement_signs_ratios_and_pending_states_match_screen(self):
+        for variant in ('complete', 'partial', 'zero', 'unavailable', 'negative-revenue'):
+            saved = fixture(variant)
+            view, reference = model(saved), screen(saved)
+            tax_rows = {row['key']: row for row in reference['taxRows']}
+            self.assertEqual(set(tax_rows), {key for key, _ in view.tax_rows()})
+            for regime in view.regimes:
+                for key, row in tax_rows.items():
+                    self.same(view.tax_value(regime, key), row['values'][regime['id']])
+                    self.same(view.tax_ratio(regime, key), row['percentValues'][regime['id']])
+                    for index, month in enumerate(view.months):
+                        reference_index = next(i for i, entry in enumerate(reference['months']) if entry.get('sourceMonth') == month)
+                        self.same(view.tax_value(regime, key, index), row['monthlyValues'][regime['id']][reference_index])
+                        self.same(view.tax_ratio(regime, key, index), row['monthlyPercentValues'][regime['id']][reference_index])
+
+    def test_separate_tax_statement_preserves_negative_provision_reversal(self):
+        from dre_irpj_quarter_test import quarter_fixture
+        saved = quarter_fixture()
+        view = model(saved)
+        regime = next(row for row in view.regimes if row['id'] == 'actual')
+        self.assertEqual(view.value(regime, 'irpj', 1), 16000)
+        self.assertEqual(view.tax_value(regime, 'irpj', 1), -16000)
+        self.assertEqual(view.tax_value(regime, 'csll', 1), -7200)
+        self.assertEqual(view.tax_value(regime, 'totalTaxes', 1), view.value(regime, 'totalTaxes', 1))
+        self.assertEqual(view.value(regime, 'taxesDeduction', 1), -view.tax_value(regime, 'totalTaxes', 1))
+        reversal = model(quarter_fixture(sales=[400000, 0, 100000], rents=[182400, 80000, 70600]))
+        actual = next(row for row in reversal.regimes if row['id'] == 'actual')
+        self.assertEqual(reversal.tax_value(actual, 'totalTaxes', 1), -23200)
+        self.assertEqual(reversal.value(actual, 'taxesDeduction', 1), 23200)
+        self.assertEqual(reversal.value(actual, 'netProfit', 1), -56800)
+        self.assertIsNone(reversal.tax_ratio(actual, 'totalTaxes', 1))
+
+    def test_legacy_projection_keeps_detailed_statement_order(self):
+        view = model(fixture('legacy'))
+        keys = [key for _, definitions in view.sections() for key, _ in definitions]
+        self.assertFalse(view.compact_statement)
+        self.assertNotIn('taxesDeduction', keys)
+        self.assertLess(keys.index('cbsDebit'), keys.index('netRevenue'))
+        self.assertLess(keys.index('payroll'), keys.index('personnel'))
+        self.assertLess(keys.index('irpj'), keys.index('netProfit'))
+
+    def test_iss_pending_only_in_calendar_total_remains_in_the_tax_statement(self):
+        from dre_irpj_quarter_test import quarter_fixture
+        saved = quarter_fixture()
+        self.assertNotIn('iss', dict(model(saved).tax_rows()))
+        calendar = next(row for row in saved['monthlyDre']['regimes'] if row['id'] == 'actual')
+        next(row for row in calendar['rows'] if row['key'] == 'iss')['annual'] = None
+        view, reference = model(saved), screen(saved)
+        self.assertIn('iss', dict(view.tax_rows()))
+        row = next(row for row in reference['taxRows'] if row['key'] == 'iss')
+        self.assertIsNone(row['calendarAnnualValues']['actual'])
+        actual = next(regime for regime in view.regimes if regime['id'] == 'actual')
+        self.assertEqual(view.tax_value(actual, 'iss'), row['values']['actual'])
+        self.assertEqual(row['values']['actual'], 0)
+        self.assertEqual(row['monthlyValues']['actual'], [0, 0, 0])
+
+    def test_missing_optional_tax_fields_keep_all_eight_rows_without_inventing_zero(self):
+        from dre_irpj_quarter_test import quarter_fixture
+        saved = quarter_fixture()
+        for result in [saved['result'], *(entry['result'] for entry in saved['result']['monthlyResults'])]:
+            for regime in result['regimes']:
+                regime['dre'].pop('difal', None)
+                regime['dre'].pop('icmsAnticipation', None)
+        for regime in saved['monthlyDre']['regimes']:
+            regime['rows'] = [row for row in regime['rows'] if row['key'] not in ('difal', 'icmsAnticipation')]
+        before = copy.deepcopy(saved)
+        view = model(saved)
+        self.assertEqual([key for key, _ in view.tax_rows()][:8],
+                         ['das', 'icmsNet', 'cbsIbsNet', 'irpj', 'csll', 'icmsAnticipation', 'difal', 'payroll'])
+        for regime in view.regimes:
+            for index in (None, *range(len(view.months))):
+                self.assertIsNone(view.tax_value(regime, 'difal', index))
+                self.assertIsNone(view.tax_value(regime, 'icmsAnticipation', index))
+            self.assertEqual(view.tax_value(regime, 'totalTaxes'), regime['totalTaxes'])
+        self.assertEqual(saved, before)
 
     def test_visible_pdf_regimes_filter_comparison_and_memory_without_recalculating(self):
         saved = fixture()

@@ -1,4 +1,16 @@
 .dre-complete{min-width:0}
+.simulator-clean .dre-statement-controls{grid-template-columns:minmax(0,1fr)}
+.dre-tax-statement{min-width:0;max-width:100%;margin-top:28px}
+.dre-tax-heading h2{margin:3px 0 8px;color:#481825;font-size:24px;line-height:1.3}
+.dre-tax-heading p{margin:0;color:#667085;font-size:12px;line-height:1.6}
+.dre-tax-heading .eyebrow{color:#7c5363}
+.dre-tax-legend,.dre-tax-note{margin:12px 0;color:#61505a;font-size:12px;line-height:1.65}
+.dre-tax-legend strong{color:#481825}
+.simulator-clean .dre-tax-statement>.dre-tax-table{max-height:none}
+.dre-tax-statement .dre-tax-table [data-tax-row=taxBurden] th,.dre-tax-statement .dre-tax-table [data-tax-row=netMargin] th{padding-left:24px}
+.dre-irpj-components{margin-top:18px}
+.dre-irpj-components h4{margin:0 0 6px;color:#481825;font-size:13px;line-height:1.5}
+.dre-irpj-components>p{margin:0;color:#61505a;font-size:11px;line-height:1.65}
 .dre-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;margin-top:20px}
 .dre-percent-control{display:flex;align-items:center;gap:9px;font-size:12px;font-weight:600;color:#5a444e}
 .dre-percent-control input{width:17px;height:17px;margin:0;accent-color:#750207}
@@ -94,6 +106,10 @@ tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
 .sim-calendar.dre-single-month .dre-calendar-screen table{min-width:500px}
 .dre-print-calendar,.dre-print-document{display:none}
 @media(max-width:640px){
+  .dre-tax-heading h2{font-size:21px}
+  .dre-tax-legend,.dre-tax-note{font-size:11px}
+  .simulator-clean .dre-tax-statement[data-dre-visible-count="1"] .dre-tax-table thead th{white-space:normal;overflow-wrap:anywhere}
+  .dre-tax-statement .dre-tax-table [data-tax-row=taxBurden] th,.dre-tax-statement .dre-tax-table [data-tax-row=netMargin] th{padding-left:12px}
   .dre-irpj-reconciliation{padding:16px 12px}
   .dre-irpj-reconciliation h3{font-size:16px}
   .dre-irpj-method{padding:10px 12px}
@@ -124,6 +140,10 @@ tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
   .simulator-clean .sim-calendar.dre-single-month .dre-calendar-screen td{font-size:10px;white-space:normal;overflow-wrap:anywhere}
 }
 @media print{
+  .dre-tax-statement{margin-top:18px}
+  .dre-tax-heading{break-after:avoid;page-break-after:avoid}
+  .dre-tax-heading h2{font-size:17px}
+  .dre-tax-legend,.dre-tax-note,.dre-tax-heading p,.dre-irpj-components>p{font-size:9px}
   .dre-irpj-reconciliation{break-inside:avoid;page-break-inside:avoid;padding:10px;background:#fff;border-color:#cdb7c1}
   .dre-irpj-reconciliation h3{font-size:12px}
   .dre-irpj-reconciliation header p,.dre-irpj-method,.dre-irpj-note,.dre-irpj-unavailable,.dre-irpj-das-note{font-size:9px}

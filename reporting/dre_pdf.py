@@ -248,14 +248,26 @@ class Report:
                            ratio=m.ratio(regime, key, index) if m.show_percent else None,
                            bold=key in SUBTOTALS, compact=compact, result=key == 'netProfit')
 
+    def tax_statement_cell(self, regime, key, index=None, *, compact=False):
+        m = self.model
+        value = m.tax_value(regime, key, index)
+        if (key == 'irpj' and regime['id'] in ('pure', 'hybrid') and value == 0
+                and m.irpj(regime, index)['status'] == 'INCLUDED_IN_DAS'):
+            return self.p('Incluído no DAS', 'tiny')
+        if key in PERCENT_ROWS:
+            return self.p(percentage(value, 2), 'monthly_number' if compact else 'number')
+        return self.number(value, ratio=m.tax_ratio(regime, key, index) if m.show_percent else None,
+                           bold=key in ('totalTaxes', 'netProfit'), compact=compact, result=key == 'netProfit')
+
     def tax_rate_note(self):
         rates = self.model.tax_rates()
         if all(finite(rates[key]) for key in ('cbs', 'ibs', 'combined')):
             return ('Alíquotas capturadas no cenário: CBS ' + percentage(rates['cbs'], 2) +
                     ' + IBS ' + percentage(rates['ibs'], 2) + ' = CBS/IBS ' + percentage(rates['combined'], 2) +
-                    '. D - C significa débito menos crédito utilizado; o valor apurado já considera esses créditos.')
+                    '. D = Débito; C = Crédito utilizado. D - C é o valor apurado, já líquido desses créditos.')
         return ('CBS/IBS reúne os valores apurados de CBS e IBS. As alíquotas variam por competência ou não estão '
-                'integralmente confirmadas nesta versão. O relatório preserva os valores capturados, sem aplicar uma taxa atual.')
+                'integralmente confirmadas nesta versão. D = Débito; C = Crédito utilizado. '
+                'O relatório preserva os valores capturados, sem aplicar uma taxa atual.')
 
     def kpis(self, items):
         gap = 10
@@ -306,7 +318,8 @@ class Report:
                          ('Como o resultado se forma', 'Da receita ao resultado, com a composição das despesas.')]
         if self.model.period != 'annual':
             sections += [('Evolução mês a mês', 'Série por competência, variação e margens.')]
-        sections += [('Tributos, encargos e créditos', 'Valores capturados e detalhamento do IRPJ.'),
+        sections += [('Impostos' if self.model.compact_statement else 'Tributos, encargos e créditos',
+                      'Valores capturados e detalhamento do IRPJ.'),
                      ('Conferência dos créditos', 'Débitos, créditos utilizados e saldos potenciais.'),
                      ('Receitas e compras na origem', 'Composição documental e conciliação com a DRE.')]
         if self.model.period != 'annual':
@@ -423,15 +436,12 @@ class Report:
 
     def statement(self):
         m = self.model
-        self.title('DRE comparativa detalhada', 'Demonstrativo consolidado de ' + m.period_label + '. Sinais negativos representam deduções. Valores em R$.')
+        self.title('DRE comparativa detalhada', 'Demonstrativo consolidado de ' + m.period_label + '. Sinais negativos representam deduções. ' +
+                   ('Estornos e reversões de impostos aparecem como valores positivos na DRE. ' if m.compact_statement else '') + 'Valores em R$.')
         self.add(self.p('As linhas de total e subtotal explicam a formação do resultado. Não some novamente os subtotais às contas que os compõem. ' +
                         ('A análise vertical (AV) usa a receita utilizada do respectivo regime como denominador.' if m.show_percent else ''), 'small'))
-        if m.compact_statement:
-            self.add(self.p(self.tax_rate_note(), 'small'))
-        rows, highlights, groups, tax_start = [], [], [], None
+        rows, highlights, groups = [], [], []
         for section, definitions in m.sections():
-            if m.compact_statement and section == 'Tributos apurados':
-                tax_start = len(rows)
             groups.append(len(rows))
             rows.append([self.p('<b>' + text(section) + '</b>', 'cell', True)] + [''] * len(m.regimes))
             for key, label in definitions:
@@ -442,11 +452,11 @@ class Report:
                     for regime in m.regimes])
         self.add(self.table(['Conta / subtotal'] + [row['name'] for row in m.regimes], rows,
                             [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes), highlights=highlights, groups=groups,
-                            compact='statement' if m.compact_statement else False,
-                            blocks=[(tax_start, len(rows) - 1)] if tax_start is not None else []))
+                            compact='statement' if m.compact_statement else False))
         self.add(self.note('n/d significa valor indisponível ou não aplicável nesta versão. Zero é apresentado como 0,00. ' +
-                          ('CBS/IBS e ICMS já estão líquidos dos créditos utilizados. INSS e antecipação entram uma única vez no total de tributos. '
-                           'Os percentuais de tributos e resultado usam a Receita Total utilizada do mesmo período e regime; receita não positiva não recebe percentual. '
+                          ('A linha (-) Total de impostos deduz uma única vez o total apresentado no bloco Impostos. '
+                           'Esse total já considera os créditos utilizados, os encargos e a antecipação. '
+                           'O percentual do resultado usa a Receita Total utilizada do mesmo período e regime; receita não positiva não recebe percentual. '
                            if m.compact_statement else
                            'Créditos de CBS e IBS são adicionados uma vez; o crédito de ICMS já está refletido no ICMS líquido. ') +
                           'Os valores são exibidos com duas casas, preservando a precisão do cálculo salvo.'))
@@ -509,13 +519,17 @@ class Report:
 
     def taxes(self):
         m = self.model
-        self.title('Tributos, encargos e créditos', 'Valores do período. Os quadros de crédito explicam os valores já considerados na DRE.')
+        self.title('Impostos' if m.compact_statement else 'Tributos, encargos e créditos',
+                   'Detalhamento do total deduzido na DRE. Valores do período e regime selecionados.' if m.compact_statement else
+                   'Valores do período. Os quadros de crédito explicam os valores já considerados na DRE.')
         if m.compact_statement:
             self.add(self.p(self.tax_rate_note(), 'small'))
-            tax_rows = next(definitions for section, definitions in m.sections() if section == 'Tributos apurados')
-            keys = [('Receita Total utilizada', 'revenue', 1)] + [
-                (label, key, 1 if key in PERCENT_ROWS or key == 'totalTaxes' else -1) for key, label in tax_rows]
-            keys += [('Resultado', 'netProfit', 1), ('% sobre a receita - resultado', 'netMargin', 1)]
+            definitions = m.tax_rows()
+            rows = [[label] + [self.tax_statement_cell(regime, key) for regime in m.regimes] for key, label in definitions]
+            self.add(self.table(['Imposto / indicador'] + [row['name'] for row in m.regimes], rows,
+                                [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes),
+                                highlights=[index for index, (key, _) in enumerate(definitions) if key in ('totalTaxes', 'netProfit')],
+                                small=True, compact='statement', blocks=[(0, len(rows) - 1)]))
         else:
             keys = [('DAS', 'das', -1), ('CBS - débito', 'cbsDebit', -1), ('IBS - débito', 'ibsDebit', -1),
                     ('ICMS líquido', 'icmsNet', -1), ('ISS', 'iss', -1), ('DIFAL sobre vendas', 'difal', -1),
@@ -523,19 +537,22 @@ class Report:
                     ('IRPJ do período (provisão/ajuste)' if m.quarterly_income_tax else 'IRPJ total (normal + adicional)', 'irpj', -1), ('CSLL', 'csll', -1),
                     ('(-) Crédito CBS utilizado', 'cbsUsed', -1), ('(-) Crédito IBS utilizado', 'ibsUsed', -1),
                     ('Tributos e encargos líquidos', 'totalTaxes', 1)]
-        keys = [row for row in keys if row[1] not in ('difal', 'icmsAnticipation') or any(row[1] in regime['dre'] for regime in m.regimes)]
-        rows = [[label] + [self.p('Incluído no DAS', 'tiny') if key == 'irpj' and regime['id'] in ('pure', 'hybrid') and value == 0
-                          and m.irpj(regime)['status'] == 'INCLUDED_IN_DAS' else
-                          self.p(percentage(value, 2), 'number') if key in PERCENT_ROWS else
-                          self.number(value * sign if finite(value) else None, bold=key in ('totalTaxes', 'netProfit'), result=key == 'netProfit')
-                          for regime in m.regimes for value in [m.value(regime, key)]] for label, key, sign in keys]
-        self.add(self.table(['Tributo / encargo'] + [row['name'] for row in m.regimes], rows,
-                            [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes),
-                            highlights=[index for index, (_, key, _) in enumerate(keys) if key in ('totalTaxes', 'netProfit')]))
+            keys = [row for row in keys if row[1] not in ('difal', 'icmsAnticipation') or any(row[1] in regime['dre'] for regime in m.regimes)]
+            rows = [[label] + [self.p('Incluído no DAS', 'tiny') if key == 'irpj' and regime['id'] in ('pure', 'hybrid') and value == 0
+                              and m.irpj(regime)['status'] == 'INCLUDED_IN_DAS' else
+                              self.p(percentage(value, 2), 'number') if key in PERCENT_ROWS else
+                              self.number(value * sign if finite(value) else None, bold=key in ('totalTaxes', 'netProfit'), result=key == 'netProfit')
+                              for regime in m.regimes for value in [m.value(regime, key)]] for label, key, sign in keys]
+            self.add(self.table(['Tributo / encargo'] + [row['name'] for row in m.regimes], rows,
+                                [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes),
+                                highlights=[index for index, (_, key, _) in enumerate(keys) if key in ('totalTaxes', 'netProfit')]))
         self.add(self.note('O total é o mesmo indicador de tributos e encargos capturado no cenário. '
                           'No Simples, tributos incluídos no DAS não são somados separadamente. ' +
                           ('ICMS e CBS/IBS são apresentados pelo valor apurado, líquido dos créditos utilizados. Os tributos a recolher são positivos neste quadro. '
-                           'Percentuais usam a Receita Total utilizada do mesmo regime e período.' if m.compact_statement else
+                           'Estornos e reversões mantêm sinal negativo neste bloco e aparecem positivos na dedução correspondente da DRE. '
+                           'INSS/encargos e antecipação de ICMS entram uma única vez no total. '
+                           'Após Total, o percentual é Total / Receita Total utilizada; após Resultado, é Resultado / Receita Total utilizada. '
+                           'A receita é sempre a do mesmo regime e período.' if m.compact_statement else
                            'O ICMS desta tabela já é líquido do crédito utilizado.')))
         self.irpj_reconciliation()
         self.title('Conferência dos créditos', 'Débito - crédito utilizado = valor a recolher. Crédito potencial - utilizado = saldo potencial.')
@@ -757,6 +774,16 @@ class Report:
                 self.add(self.table(['Conta'] + [month_label(m.months[index], True) for index in indices] + ['Total do período'], rows,
                                     [165] + [(WIDTH - 165) / columns] * columns, highlights=highlights,
                                     small=True, compact='monthly', repeat_context=context))
+                if m.compact_statement:
+                    definitions = m.tax_rows()
+                    tax_rows = [[self.p(label, 'tiny')] +
+                                [self.tax_statement_cell(regime, key, index, compact=True) for index in indices] +
+                                [self.tax_statement_cell(regime, key, compact=True)] for key, label in definitions]
+                    self.add(self.table(['Impostos'] + [month_label(m.months[index], True) for index in indices] + ['Total do período'], tax_rows,
+                                        [165] + [(WIDTH - 165) / columns] * columns,
+                                        highlights=[index for index, (key, _) in enumerate(definitions) if key in ('totalTaxes', 'netProfit')],
+                                        small=True, compact='monthly',
+                                        blocks=[(0, len(tax_rows) - 1)]))
                 if not regime['available']:
                     self.add(self.p('Consolidado indisponível: ' + str(regime.get('status') or 'Há competências pendentes.') +
                                     ' Meses individualmente disponíveis permanecem apresentados.', 'small'))

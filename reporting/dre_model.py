@@ -42,16 +42,19 @@ STATEMENT_SECTIONS = (
     ('Despesas operacionais', (('salaries', 'Salários e pró-labore'), ('benefits', 'Benefícios'),
                                ('administrative', 'Outras despesas'), ('rent', 'Aluguéis'), ('cards', 'Taxas de cartão'),
                                ('operatingExpensesBeforePayroll', 'Total de despesas operacionais'))),
-    ('Tributos apurados', (('das', 'Simples (DAS)'), ('icmsNet', 'ICMS (D - C) apurado'),
-                           ('cbsIbsNet', 'CBS/IBS (D - C) apurado'), ('irpj', 'IRPJ total (normal + adicional)'), ('csll', 'CSLL'),
-                           ('icmsAnticipation', 'Antecipação de ICMS'), ('difal', 'DIFAL'),
-                           ('payroll', 'INSS / encargos da folha'), ('iss', 'ISS fora do DAS'),
-                           ('totalTaxes', 'Total de tributos'), ('taxBurden', '% sobre a receita - tributos'))),
-    ('Resultado', (('netProfit', 'Resultado'), ('netMargin', '% sobre a receita - resultado'))),
+    ('Resultado', (('taxesDeduction', '(-) Total de impostos'), ('netProfit', 'Resultado'),
+                   ('netMargin', '% sobre a receita - resultado'))),
 )
+TAX_STATEMENT_ROWS = (
+    ('das', 'Simples'), ('icmsNet', 'ICMS (D - C)'), ('cbsIbsNet', 'CBS/IBS (D - C)'),
+    ('irpj', 'IRPJ'), ('csll', 'CSLL'), ('icmsAnticipation', 'Antecipação'), ('difal', 'DIFAL'),
+    ('payroll', 'INSS'), ('iss', 'ISS fora do DAS'), ('totalTaxes', 'Total'),
+    ('taxBurden', '% sobre a receita'), ('netProfit', 'Resultado'), ('netMargin', '% sobre a receita'),
+)
+TAX_COMPONENT_KEYS = frozenset(key for key, _ in TAX_STATEMENT_ROWS if key not in ('totalTaxes', 'taxBurden', 'netProfit', 'netMargin'))
 PERCENT_ROWS = {'taxBurden', 'netMargin'}
 SUBTOTALS = {'revenue', 'netRevenue', 'cmv', 'grossProfit', 'personnel', 'preTax', 'netProfit',
-            'operatingExpensesBeforePayroll', 'totalTaxes'}
+            'operatingExpensesBeforePayroll', 'totalTaxes', 'taxesDeduction'}
 DERIVED = {'revenueDeductions', 'netCosts', 'operatingExpenses', 'incomeTaxes'}
 GROUP_LABELS = {'OPTANTE': 'Simples Nacional', 'NAO_OPTANTE': 'Não optante', 'CPF': 'Pessoa física (CPF)',
                 'NAO_CONFIRMADO': 'Não confirmado', 'OUTROS': 'Outros documentos',
@@ -663,6 +666,9 @@ class DreModel:
         return {'id': regime['id'], 'available': saved.get('available') is True, 'dre': values}
 
     def value(self, regime, key, index=None):
+        if key == 'taxesDeduction':
+            value = self.value(regime, 'totalTaxes', index)
+            return -value if finite(value) else None
         if key in IRPJ_V2_KEYS or key in ('irpjBasic', 'irpjAdditional'):
             assessed = self.irpj(regime, index)
             if key in ('irpjBasic', 'irpjAdditional') and assessed.get('version') == IRPJ_RECONCILIATION_VERSION_V2:
@@ -705,10 +711,40 @@ class DreModel:
     def sections(self):
         for title, rows in STATEMENT_SECTIONS if self.compact_statement else SECTIONS:
             yield title, [(key, 'IRPJ do período (provisão/ajuste)' if key == 'irpj' and self.quarterly_income_tax else label) for key, label in rows if
-                          (key not in ('difal', 'icmsAnticipation') or any(key in regime.get('dre', {}) for regime in self.result['regimes'])) and
-                          (not self.compact_statement or key != 'iss' or
-                           any(self.value(regime, key, index) is None or self.value(regime, key, index) != 0
-                               for regime in self.result['regimes'] for index in (None, *range(len(self.months)))))]
+                          (key not in ('difal', 'icmsAnticipation') or any(key in regime.get('dre', {}) for regime in self.result['regimes']))]
+
+    def tax_rows(self):
+        """Separate tax statement; retaining a pending ISS prevents a false total."""
+        def needs_iss(regime):
+            if any(self.value(regime, 'iss', index) is None or self.value(regime, 'iss', index) != 0
+                   for index in (None, *range(len(self.months)))):
+                return True
+            if self.snapshot.get('monthlyDre') is None:
+                return False
+            months = self.calendar.get('months')
+            included = self.analysis_period.get('includedMonths')
+            valid = (self.calendar.get('version') == 'DRE_CALENDAR_V4'
+                     and (self.calendar.get('analysisPeriod') or {}).get('version') == 'JAN_SEP_V1'
+                     and isinstance(months, list) and isinstance(included, list) and len(months) == len(included)
+                     and all(isinstance(row, dict) and row.get('sourceMonth') == month
+                             and row.get('number') == int(month[5:]) for row, month in zip(months, included)))
+            saved = _unique(self.calendar.get('regimes'), 'id', regime['id']) if valid else None
+            line = _unique(saved.get('rows'), 'key', 'iss') if saved and saved.get('available') is True else None
+            annual = line.get('annual') if line else None
+            return not finite(annual) or annual != 0
+
+        return [(key, label) for key, label in TAX_STATEMENT_ROWS
+                if key != 'iss' or any(needs_iss(regime) for regime in self.result['regimes'])]
+
+    def tax_value(self, regime, key, index=None):
+        value = self.value(regime, key, index)
+        return -value if key in TAX_COMPONENT_KEYS and finite(value) else value
+
+    def tax_ratio(self, regime, key, index=None):
+        value, revenue = self.tax_value(regime, key, index), self.value(regime, 'revenue', index)
+        if key in PERCENT_ROWS:
+            return value
+        return value / revenue if finite(value) and finite(revenue) and revenue > 0 else None
 
     def irpj(self, regime, index=None):
         """Reconcile the displayed period from captured evidence, without new tax amounts."""

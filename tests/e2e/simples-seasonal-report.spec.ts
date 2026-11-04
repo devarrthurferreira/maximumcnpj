@@ -1,4 +1,4 @@
-import {showDreRegimes,showDreMonth,showDreConsolidated} from './dre-controls.ts';
+import {showDreRegimes,expectConsolidatedDre,readDreMonthlyCsv,dreMonthlyValues} from './dre-controls.ts';
 import {expect,type Page} from '@playwright/test';
 import {test} from './isolated-auth-test.ts';
 import {randomUUID} from 'node:crypto';
@@ -84,7 +84,7 @@ test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório compl
   }
   expect(saved.result.regimes.find((row:any)=>row.id==='pure').dre.das).toBeCloseTo(-384_600,6);
   expect(saved.result.regimes.find((row:any)=>row.id==='pure').dre.netProfit).toBeCloseTo(2_906_400,6);
-  await expect(page.locator('#dre-display-period')).toHaveValue('annual');
+  await expectConsolidatedDre(page);
   await expect(page.locator('#dre-report-period')).toHaveValue('complete');
   await expect(page.locator('[data-dre-row="revenue"]')).toContainText('3.300.000,00');
   await openCompleteDre(page);
@@ -110,12 +110,12 @@ test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório compl
     await page.pdf({path:info.outputPath(`dre-sazonal-${mode}.pdf`),printBackground:true,preferCSSPageSize:true});
     await page.evaluate(()=>window.dispatchEvent(new Event('afterprint')));
   }
-  await showDreMonth(page,0);
-  await showDreRegimes(page,['pure']);await showDreMonth(page,0);
-  await expect(page.locator('[data-dre-row="revenue"]')).toContainText('550.000,00');
-  await showDreMonth(page,1);
-  await expect(page.locator('[data-dre-row="revenue"]')).toContainText('343.750,00');
-  await showDreConsolidated(page);
+  await showDreRegimes(page,['pure']);
+  const monthlyCsv=await readDreMonthlyCsv(page);
+  const monthlyRevenue=dreMonthlyValues(monthlyCsv,'Simples Puro','Receita Total utilizada');
+  expect(monthlyRevenue[0]).toBe('550000,00');expect(monthlyRevenue[1]).toBe('343750,00');
+  await expect(page.locator('#dre-demonstrativo [data-dre-row="revenue"]')).toContainText('3.300.000,00');
+  await expectConsolidatedDre(page);
   await page.setViewportSize({width:320,height:900});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   await page.locator('[data-simples-diagnostic]').screenshot({path:info.outputPath('simples-sazonal-320.png')});
@@ -125,7 +125,7 @@ test('R$ 3,3 milhões sazonais preservam Simples, devoluções, relatório compl
     const login=await fresh.request.post('/api/auth/login',{data:credentials,headers:{Origin:origin}});expect(login.ok()).toBe(true);
     const reopened=await fresh.newPage();reopened.on('pageerror',error=>errors.push(error.message));
     await reopened.goto(`/simulator.html?simulation=${saved._id}`);
-    await expect(reopened.locator('#dre-display-period')).toHaveValue('annual');
+    await expectConsolidatedDre(reopened);
     await openCompleteDre(reopened);
     await expect(reopened.locator('[data-simples-diagnostic="READY"]')).toBeVisible();
     expect(await(await fresh.request.get(`/api/v4/simulations/${saved._id}`)).json()).toEqual(saved);

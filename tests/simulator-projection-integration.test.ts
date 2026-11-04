@@ -97,11 +97,25 @@ test('MongoDB: serviços9000 e mercadorias com devolução alimentam DRE/DIFAL s
    close(regime.totalTaxes,prior.totalTaxes);close(regime.annualProfit,prior.annualProfit);
   }
   const actual=saved.result.regimes.find(item=>item.id==='actual')!;
-  close(actual.dre.csll,-Math.max(0,actual.dre.preTax)*.09);
+  // June and July/August belong to different quarters. Provision each known
+  // quarterly base in cents, then sum movements; the aggregate is not a new base.
+  const preTaxByQuarter=new Map<number,number>();
+  for(const month of saved.result.monthlyResults){
+   const quarter=Math.ceil(month.month/3),captured=month.result.regimes.find(item=>item.id==='actual')!;
+   preTaxByQuarter.set(quarter,(preTaxByQuarter.get(quarter)||0)+captured.dre.preTax);
+  }
+  assert.deepEqual([...preTaxByQuarter.keys()],[2,3]);
+  const expectedCsllCents=[...preTaxByQuarter.values()].reduce((total,base)=>total+Math.round(Math.max(0,base)*9),0);
+  const assessment=saved.result.incomeTaxAssessment!.regimes.actual;
+  assert.equal(assessment.provision!.csllCents,expectedCsllCents);
+  for(const period of assessment.periods)assert.equal(period.provision!.csllCents,Math.round(Math.max(0,preTaxByQuarter.get(period.quarter)!)*9));
+  close(actual.dre.csll,-expectedCsllCents/100);
+  close(saved.result.monthlyResults.reduce((total,month)=>total+month.result.regimes.find(item=>item.id==='actual')!.dre.csll,0),actual.dre.csll);
   close(saved.result.memory.find(item=>item.id==='actual.preTax')!.value as number,actual.dre.preTax);
   assert.deepEqual(saved.result.credits,baseline.credits);
-  assert.equal(saved.monthlyDre.version,'DRE_CALENDAR_V3');
-  assert(saved.monthlyDre.regimes.every((regime:any)=>regime.rows.find((row:any)=>row.key==='difal').months.slice(5,8).every((value:number)=>value===0)));
+  assert.equal(saved.monthlyDre.version,'DRE_CALENDAR_V4');
+  assert.deepEqual(saved.monthlyDre.months.map(month=>month.sourceMonth),dates.map(date=>date.slice(0,7)));
+  for(const regime of saved.monthlyDre.regimes)assert.deepEqual(regime.rows.find(row=>row.key==='difal')!.months,[0,0,0]);
   for(const addition of[{difalProjection:{monthlyCents:0}},{difalMonthly:0},{source:{sales:{difal:{amountCents:0}}}}]){
    await assert.rejects(createSimulation(actor,{...request,...addition,simulationId:randomUUID()}),(error:any)=>error.code==='VALIDATION');
   }

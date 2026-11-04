@@ -17,6 +17,7 @@ import {summarizeDifal} from '../src/difal.ts';
 const near=(actual,expected)=>assert(Math.abs(actual-expected)<1e-7,`${actual} != ${expected}`);
 const sum=values=>values.reduce((total,value)=>total+value,0);
 const row=(presentation,key)=>unifiedDreRows(presentation).find(item=>item.key===key);
+const tax=(presentation,key)=>presentation.taxStatement.rows.find(item=>item.key===key);
 const freeze=value=>{if(value&&typeof value==='object'){Object.freeze(value);for(const child of Object.values(value))freeze(child);}return value;};
 
 function commercial(reports){
@@ -103,7 +104,7 @@ test('resumo concilia lucro e tributos; créditos informativos não criam segund
   }
   assert(buildDreExecutiveSummary(input.presentation,{id:'actual',mode:'annual'}).creditsApplied>0);
   for(const key of ['cbs.potential','cbs.used','ibs.potential','ibs.used'])assert.equal(row(input.presentation,key),undefined);
-  assert.equal(row(input.presentation,'difal').values.pure,0);assert.equal(row(input.presentation,'icmsAnticipation').values.hybrid,0);
+  assert.equal(tax(input.presentation,'difal').values.pure,0);assert.equal(tax(input.presentation,'icmsAnticipation').values.hybrid,0);
 });
 
 test('CNPJ interestadual e CPF no mesmo estado mantêm saída zero de janeiro a setembro, sem apagar entrada ou reintroduzir DIFAL por ajuste manual',()=>{
@@ -129,7 +130,7 @@ test('CNPJ interestadual e CPF no mesmo estado mantêm saída zero de janeiro a 
       near(regime.totalTaxes-noEntry.totalTaxes,expectedEntry);near(noEntry.dre.netProfit-regime.dre.netProfit,expectedEntry);
       for(let index=0;index<9;index++){
         const captured=input.result.monthlyResults[index].result.regimes.find(item=>item.id===regime.id);
-        near(captured.dre.difal,0);near(row(input.presentation,'difal').monthlyValues[regime.id][index],0);
+        near(captured.dre.difal,0);near(tax(input.presentation,'difal').monthlyValues[regime.id][index],0);
         const summary=buildDreExecutiveSummary(input.presentation,{id:regime.id,mode:'month',month:index});
         assert.equal(summary.reconciled,true);near(summary.taxes,captured.totalTaxes);near(summary.result,captured.dre.netProfit);
       }
@@ -144,7 +145,7 @@ test('CNPJ interestadual e CPF no mesmo estado mantêm saída zero de janeiro a 
     for(const cells of monthly)for(const value of cells.slice(6,16))near(Number(value.replace(',','.')),0);
     for(const value of consolidated[0].slice(5,9))near(Number(value.replace(',','.')),0);
     const html=renderDrePrintDocument({...input,period:'complete'});
-    const rows=[...html.matchAll(/data-dre-row="difal">([\s\S]*?)<\/tr>/g)];
+    const rows=[...html.matchAll(/data-tax-row="difal"[^>]*>([\s\S]*?)<\/tr>/g)];
     assert.equal(rows.length,5,'Consolidado e os quatro demonstrativos mensais mantêm a linha de saída.');
     const values=rows.flatMap(match=>[...match[1].matchAll(/R\$\s([\d.,]+)/g)].map(value=>Number(value[1].replace(/\./g,'').replace(',','.'))));
     assert.equal(values.length,44);assert(values.every(value=>value===0));
@@ -162,13 +163,13 @@ test('CPF de outra UF e estimativas V5 positivas permanecem com saída zero em t
     const affected=['pure','hybrid'].includes(regime.id),baseline=zero.result.regimes.find(item=>item.id===regime.id),expected=affected?expectedTotal:0;
     near(regime.dre.difal,-expected);near(regime.dre.icmsAnticipation,baseline.dre.icmsAnticipation);
     near(regime.totalTaxes-baseline.totalTaxes,expected);near(baseline.dre.netProfit-regime.dre.netProfit,expected);
-    near(row(input.presentation,'difal').values[regime.id],-expected);
+    near(tax(input.presentation,'difal').values[regime.id],expected);
     for(let index=0;index<9;index++){
       const actual=input.result.monthlyResults[index].result.regimes.find(item=>item.id===regime.id),previous=zero.result.monthlyResults[index].result.regimes.find(item=>item.id===regime.id);
       const monthAmount=affected?expectedMonths[index]:0;
       near(actual.dre.difal,-monthAmount);near(actual.totalTaxes-previous.totalTaxes,monthAmount);
       near(previous.dre.netProfit-actual.dre.netProfit,monthAmount);near(actual.dre.icmsAnticipation,previous.dre.icmsAnticipation);
-      near(row(input.presentation,'difal').monthlyValues[regime.id][index],-monthAmount);
+      near(tax(input.presentation,'difal').monthlyValues[regime.id][index],monthAmount);
     }
   }
  }
@@ -183,15 +184,17 @@ test('DRE completa aparece imediatamente e preserva todas as contas de janeiro a
   assert.match(html,/Créditos tributários utilizados/);assert.match(html,/B2B · CNPJ/);assert.match(html,/B2C · CPF/);
   const monthly=renderCompleteMonthlyDre({...input,month:8,regimeId:'pure'});
   assert.match(monthly,/data-dre-row="salaries"/);assert.doesNotMatch(monthly,/data-simulation-lazy="dre"/);
+  assert.equal(monthly,html,'A tela permanece consolidada mesmo com uma seleção mensal antiga.');
   const selectedRegimes=renderCompleteMonthlyDre({...input,month:8,visibleRegimeIds:['pure','actual']});
   const salaryCells=selectedRegimes.match(/data-dre-row="salaries">([\s\S]*?)<\/tr>/)?.[1];
-  assert.equal((salaryCells.match(/<td /g)||[]).length,2);assert.match(salaryCells,/300,00/);
-  const options=monthly.match(/<select id="dre-display-period"[^>]*>([\s\S]*?)<\/select>/)?.[1];
-  assert.equal((options.match(/<option /g)||[]).length,10);assert.match(options,/Setembro \/ 2026/);assert.doesNotMatch(options,/Outubro|Novembro|Dezembro/);
+  assert.equal((salaryCells.match(/<td /g)||[]).length,2);assert.match(salaryCells,/-R\$ 2\.700,00/);
+  assert.doesNotMatch(monthly,/id="dre-display-period"/);assert.match(monthly,/data-dre-period="annual"/);
+  assert.match(monthly,/id="dre-report-period"/);
   const detail=renderDreCompleteDetails({...input,monthly:true,month:8,monthView:false,regimeId:'pure'});
   assert.match(detail,/Créditos tributários utilizados/);assert.match(detail,/não somar novamente/);
   const revenue=detail.match(/data-dre-row="revenue">([\s\S]*?)<\/tr>/)?.[1];
   assert.equal((revenue.match(/<td /g)||[]).length,4);assert.doesNotMatch(detail,/data-dre-month-view/);
+  assert.match(detail.match(/data-dre-row="salaries">([\s\S]*?)<\/tr>/)?.[1],/-R\$ 300,00/,'O relatório mensal conserva somente a despesa da competência.');
   assert.match(detail,/data-dre-row="icmsAnticipation"/);
   const evolution=buildDreEvolution(input.presentation,input.calendar,'actual',8);assert.equal(evolution.months.length,9);assert.equal(evolution.current.sourceMonth,'2026-09');
 });
@@ -247,9 +250,13 @@ test('competências parciais e não consecutivas preservam número, valor, DIFAL
     }
   }
   const html=renderCompleteMonthlyDre({...input,month:1,regimeId:'pure'});
-  const options=html.match(/<select id="dre-display-period"[^>]*>([\s\S]*?)<\/select>/)?.[1];
-  assert.equal((options.match(/<option /g)||[]).length,4);assert.match(options,/Maio \/ 2026/);assert.doesNotMatch(options,/Janeiro|Fevereiro|Abril/);
+  assert.doesNotMatch(html,/id="dre-display-period"/);assert.match(html,/data-dre-period="annual"/);
   const annual=renderAnnualDre(input);assert.match(annual,/Janeiro a setembro · 3 de 9 competências/);assert.match(annual,/Fora do cálculo por falta de dados/);
+  assert.equal(html,annual);
+  const monthly=renderDreCompleteDetails({...input,monthly:true,month:1});
+  const revenue=monthly.match(/data-dre-row="revenue">([\s\S]*?)<\/tr>/)?.[1];
+  const capturedMay=input.result.monthlyResults[1].result.regimes.find(regime=>regime.id==='pure').dre.revenue;
+  assert.equal((revenue.match(/<td /g)||[]).length,4);assert(revenue.includes(capturedMay.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})));
   const csv=buildDreCsv({...input,period:'complete'});
   const header=csv.split('\r\n').find(line=>line.startsWith('"Regime";"Escopo";'));
   assert.equal(header.split(';').length,12);assert.match(header,/Março.*Maio.*Setembro/);assert.doesNotMatch(header,/Janeiro|Fevereiro|Abril|Outubro/);

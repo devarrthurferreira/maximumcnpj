@@ -1,4 +1,12 @@
-# Maximum CNPJ · v0.57.0
+# Maximum CNPJ · v0.57.1
+
+## v0.57.1 — Bloco de impostos separado da DRE (2026-11-04)
+
+A comparação de janeiro a setembro passa a apresentar **Impostos em um bloco próprio, fora da DRE**, com os mesmos regimes visíveis. A tabela reúne Simples, ICMS (D − C), CBS/IBS (D − C), IRPJ, CSLL, Antecipação, DIFAL, INSS, Total, percentual sobre a receita, Resultado e seu percentual sobre a receita. D significa débito e C significa crédito. Um ISS fora do DAS aplicável ou ainda não confirmado permanece identificado antes do total, para não omitir parte da carga tributária.
+
+Os impostos devidos aparecem positivos; estornos conservam o sinal negativo. O total é a soma dos impostos líquidos dos créditos utilizados, incluindo encargos da folha e antecipação uma única vez. A DRE contém uma única linha de dedução desse total. O resultado reproduzido no bloco é o mesmo da DRE, e ambos os percentuais usam a receita total do mesmo regime e período. Ausências e pendências continuam indisponíveis.
+
+O seletor **Período da DRE** foi retirado. A tela permanece no consolidado de janeiro a setembro, e a seleção dos quatro regimes continua dentro da própria DRE. Os relatórios conservam a escolha de conteúdo consolidado, mensal ou completo; CSV, impressão e PDF também distinguem DRE e Impostos. As memórias de IRPJ, ICMS e créditos permanecem disponíveis para conferência. Esta entrega altera a apresentação, preservando os cálculos, as alíquotas capturadas, o motor 1.20 e a revisão V15.
 
 ## v0.57.0 — IRPJ e CSLL por trimestre, com provisões mensais (2026-11-04)
 

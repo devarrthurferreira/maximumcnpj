@@ -1,5 +1,15 @@
 # Histórico de alterações
 
+## [0.57.1] - 2026-11-04
+
+- Separa Impostos em um bloco próprio fora da DRE, sincronizado com a seleção dos regimes visíveis.
+- Organiza Simples, ICMS (D − C), CBS/IBS (D − C), IRPJ, CSLL, Antecipação, DIFAL, INSS, Total, carga sobre receita, Resultado e margem; mantém ISS fora do DAS quando aplicável ou pendente.
+- Apresenta impostos devidos positivos e estornos negativos, com legenda de débito e crédito e percentuais sobre a receita total do mesmo período e regime.
+- Mantém uma única dedução do total de impostos na DRE, sem duplicar créditos, antecipação ou encargos da folha.
+- Retira o seletor Período da DRE e fixa a tela no consolidado Jan–Set; conserva conteúdo mensal e completo nas exportações.
+- Alinha CSV, impressão e PDF à separação dos blocos, preservando a memória do IRPJ e a conferência de ICMS/créditos.
+- Preserva a apuração trimestral, os valores históricos, o motor 1.20 e a revisão de reprocessamento V15.
+
 ## [0.57.0] - 2026-11-04
 
 - Corrige IRPJ e CSLL do comparativo para apuração por trimestre civil, substituindo a soma de adicionais mensais. O adicional considera o limite trimestral de R$ 60.000.

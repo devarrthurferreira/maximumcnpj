@@ -59,9 +59,10 @@ class DrePdfTests(unittest.TestCase):
             self.assertFalse(document.needs_pass)
             self.assertIn('DRE', document.metadata['title'])
             labels = {label for _, label, _ in document.get_toc()}
-            self.assertTrue({'Visão geral', 'Comparação entre regimes', 'Tributos, encargos e créditos',
+            self.assertTrue({'Visão geral', 'Comparação entre regimes',
                              'Conferência dos créditos', 'Receitas e compras na origem',
                              'Premissas, cobertura e conferências', 'Memória de cálculo'} <= labels)
+            self.assertTrue({'Impostos', 'Tributos, encargos e créditos'} & labels)
             self.assertEqual('DRE mensal por regime' in labels, monthly)
             for level, label, page in document.get_toc():
                 with self.subTest(bookmark=label):
@@ -96,11 +97,11 @@ class DrePdfTests(unittest.TestCase):
         with pymupdf.open(stream=content, filetype='pdf') as document:
             statement = section_text(document, 'DRE comparativa detalhada', 'Como o resultado se forma')
             for regime in saved['result']['regimes']:
-                for key in ('revenue', 'cmv', 'salaries', 'benefits', 'administrative', 'rent', 'cards', 'icmsNet', 'irpj', 'csll', 'netProfit'):
+                for key in ('revenue', 'cmv', 'salaries', 'benefits', 'administrative', 'rent', 'cards', 'netProfit'):
                     with self.subTest(regime=regime['id'], subtotal=key):
                         self.assertIn(amount(regime['dre'][key]), statement)
-                self.assertIn(amount(regime['totalTaxes']), statement)
-                self.assertIn(amount(sum(regime['dre'][key] for key in ('cbsDebit', 'ibsDebit', 'cbsUsed', 'ibsUsed'))), statement)
+                self.assertIn(amount(-regime['totalTaxes']), statement)
+            self.assertIn('(-) Total de impostos ' + ' '.join(amount(-regime['totalTaxes']) for regime in saved['result']['regimes']), statement)
             self.assertIn('Não some novamente os subtotais', statement)
             full = normalized(' '.join(page.get_text() for page in document))
             self.assertIn(saved['_id'], full)
@@ -108,20 +109,23 @@ class DrePdfTests(unittest.TestCase):
             self.assertIn('CBS 11,30% + IBS 0,10% = CBS/IBS 11,40%', full)
         self.assertEqual(saved, before, 'The generator must leave the snapshot unchanged.')
 
-    def test_current_pdf_combines_assessed_taxes_and_keeps_percentages_when_av_is_off(self):
+    def test_current_pdf_separates_taxes_and_keeps_percentages_when_av_is_off(self):
         saved = fixture()
         with pymupdf.open(stream=rendered('complete', 'complete', False), filetype='pdf') as document:
             statement = section_text(document, 'DRE comparativa detalhada', 'Como o resultado se forma')
-            taxes = section_text(document, 'Tributos, encargos e créditos', 'Conferência dos créditos')
+            taxes = section_text(document, 'Impostos', 'Conferência dos créditos')
             credits = section_text(document, 'Conferência dos créditos', 'Receitas e compras na origem')
-            for content in (statement, taxes):
-                self.assertIn('CBS/IBS (D - C) apurado', content)
-                self.assertIn('ICMS (D - C) apurado', content)
-                self.assertIn('Total de tributos', content)
-                self.assertIn('% sobre a receita - tributos', content)
-                self.assertIn('% sobre a receita - resultado', content)
-                self.assertNotIn('Débito de CBS', content)
-                self.assertNotIn('Débito de IBS', content)
+            for label in ('CBS/IBS (D - C)', 'ICMS (D - C)', 'IRPJ', 'CSLL', 'Antecipação', 'DIFAL', 'INSS'):
+                self.assertIn(label, taxes)
+                self.assertNotIn(label, statement)
+            self.assertIn('D = Débito; C = Crédito utilizado', taxes)
+            self.assertIn('(-) Total de impostos', statement)
+            self.assertIn('% sobre a receita - resultado', statement)
+            self.assertIn('% sobre a receita', taxes)
+            self.assertIn('Total / Receita Total utilizada', taxes)
+            self.assertIn('Resultado / Receita Total utilizada', taxes)
+            self.assertNotIn('Débito de CBS', taxes)
+            self.assertNotIn('Débito de IBS', taxes)
             self.assertIn('Apuração de CBS/IBS', credits)
             self.assertNotIn('Apuração de CBS ', credits)
             self.assertNotIn('Apuração de IBS ', credits)
@@ -129,21 +133,42 @@ class DrePdfTests(unittest.TestCase):
             self.assertIn('não um crédito', credits)
             for regime in saved['result']['regimes']:
                 ratio = regime['totalTaxes'] / regime['dre']['revenue']
-                self.assertIn(f'{ratio * 100:.2f}'.replace('.', ',') + '%', statement)
+                self.assertIn(f'{ratio * 100:.2f}'.replace('.', ',') + '%', taxes)
 
-    def test_current_statement_fits_one_page_and_preserves_whole_tax_block_with_extra_av(self):
+    def test_current_statement_and_separate_tax_block_stay_complete_with_extra_av(self):
         for av in (False, True):
             with self.subTest(av=av), pymupdf.open(stream=rendered('complete', 'complete', av), filetype='pdf') as document:
                 sections = {title: page - 1 for _, title, page in document.get_toc()}
                 pages = [normalized(document[index].get_text()) for index in
                          range(sections['DRE comparativa detalhada'], sections['Como o resultado se forma'])]
-                self.assertEqual(len(pages), 2 if av else 1)
-                tax_page = next(page for page in pages if 'Tributos apurados' in page)
-                for label in ('Simples (DAS)', 'CBS/IBS (D - C) apurado', 'IRPJ', 'CSLL', 'Antecipação de ICMS',
-                              'DIFAL', 'INSS / encargos da folha', 'ISS fora do DAS', 'Total de tributos',
-                              '% sobre a receita - tributos', 'Resultado', '% sobre a receita - resultado'):
+                self.assertEqual(len(pages), 1)
+                tax_page = normalized(document[sections['Impostos']].get_text())
+                for label in ('Simples', 'CBS/IBS (D - C)', 'IRPJ', 'CSLL', 'Antecipação',
+                              'DIFAL', 'INSS', 'ISS fora do DAS', 'Total', '% sobre a receita', 'Resultado'):
                     self.assertIn(label, tax_page)
+                self.assertNotIn('CBS/IBS (D - C)', pages[0])
                 self.assertIn('Receita Total utilizada', pages[0])
+                self.assertIn('(-) Total de impostos', pages[0])
+
+    def test_tax_block_keeps_missing_anticipation_and_difal_as_unavailable(self):
+        from dre_irpj_quarter_test import quarter_fixture
+        saved = quarter_fixture()
+        for result in [saved['result'], *(entry['result'] for entry in saved['result']['monthlyResults'])]:
+            for regime in result['regimes']:
+                regime['dre'].pop('difal', None)
+                regime['dre'].pop('icmsAnticipation', None)
+        for regime in saved['monthlyDre']['regimes']:
+            regime['rows'] = [row for row in regime['rows'] if row['key'] not in ('difal', 'icmsAnticipation')]
+        before = copy.deepcopy(saved)
+        with pymupdf.open(stream=render(saved, period='annual'), filetype='pdf') as document:
+            sections = {title: page - 1 for _, title, page in document.get_toc()}
+            taxes = normalized(document[sections['Impostos']].get_text())
+            for label in ('Antecipação', 'DIFAL'):
+                self.assertIn(label + ' n/d n/d n/d n/d', taxes)
+            self.assertIn('Total ' + ' '.join(amount(regime['totalTaxes']) for regime in saved['result']['regimes']), taxes)
+            statement = section_text(document, 'DRE comparativa detalhada', 'Como o resultado se forma')
+            self.assertIn('(-) Total de impostos ' + ' '.join(amount(-regime['totalTaxes']) for regime in saved['result']['regimes']), statement)
+        self.assertEqual(saved, before)
 
     def test_visible_regime_subset_applies_to_tables_months_memory_and_comparisons(self):
         saved = fixture()
@@ -165,7 +190,7 @@ class DrePdfTests(unittest.TestCase):
                 self.assertNotIn(hidden, displayed)
             statement = section_text(document, 'DRE comparativa detalhada', 'Como o resultado se forma')
             selected = next(regime for regime in saved['result']['regimes'] if regime['id'] == 'actual')
-            self.assertIn(amount(selected['totalTaxes']), statement)
+            self.assertIn(amount(-selected['totalTaxes']), statement)
             self.assertIn(amount(selected['dre']['netProfit']), statement)
             memory = normalized(' '.join(document[index].get_text() for index in
                 range(sections['Memória de cálculo'], document.page_count)))
@@ -281,6 +306,9 @@ class DrePdfTests(unittest.TestCase):
                 self.assertIn('Receita de serviços', extracted)
                 self.assertIn('Resultado', extracted)
                 self.assertIn('Total do período', extracted)
+                self.assertIn('Impostos', extracted)
+                self.assertIn('CBS/IBS (D - C)', extracted)
+                self.assertIn('(-) Total de impostos', extracted)
                 content.append(extracted)
             annex = ' '.join(content)
             for month in saved['result']['monthlyResults']:

@@ -257,7 +257,7 @@ class DreIrpjTests(unittest.TestCase):
                 self.assertEqual(view.irpj(regime, 0)['status'] == 'INCLUDED_IN_DAS', screen['das']['pure']['months'][0])
         saved = snapshots[0][1]
         with pymupdf.open(stream=render(saved, period='annual', regime_id='pure', regime_ids=['pure']), filetype='pdf') as document:
-            content = section_text(document, 'Tributos, encargos e créditos', 'Conferência dos créditos')
+            content = section_text(document, 'Impostos', 'Conferência dos créditos')
             self.assertNotIn('Incluído no DAS', content)
             self.assertIn(IRPJ_V2_INVALID_REASON, content)
             self.assertIn('n/d', content)
@@ -295,7 +295,7 @@ class DreIrpjTests(unittest.TestCase):
         view = model(saved, regimeIds=['presumed'])
         regime = view.regimes[0]
         with pymupdf.open(stream=render(saved, regime_id='presumed', regime_ids=['presumed']), filetype='pdf') as document:
-            content = section_text(document, 'Tributos, encargos e créditos', 'Conferência dos créditos')
+            content = section_text(document, 'Impostos', 'Conferência dos créditos')
             self.assertIn('IRPJ trimestral e movimentos da DRE', content)
             self.assertIn('IRPJ acumulado menos provisão anterior', content)
             self.assertIn('R$ 60.000,00 por trimestre', content)
@@ -315,7 +315,7 @@ class DreIrpjTests(unittest.TestCase):
         saved['result']['incomeTaxAssessment'] = None
         regime = next(row for row in saved['result']['regimes'] if row['id'] == 'presumed')
         with pymupdf.open(stream=render(saved, period='annual', regime_id='presumed', regime_ids=['presumed']), filetype='pdf') as document:
-            content = section_text(document, 'Tributos, encargos e créditos', 'Conferência dos créditos')
+            content = section_text(document, 'Impostos', 'Conferência dos créditos')
             self.assertIn(IRPJ_V2_EMPTY_REASON, content)
             self.assertIn('n/d', content)
             self.assertIn(amount(-regime['dre']['irpj']), content)

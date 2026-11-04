@@ -8,7 +8,7 @@ import {reconcileIrpj} from '../public/irpj-reconciliation.js';
 import {QUARTERLY_IRPJ_RECONCILIATION_KEYS,usesQuarterlyIncomeTax} from '../public/irpj-quarter-reconciliation.js';
 import {buildDrePresentation,capturedDreRows,unifiedDreRows} from '../public/simulator-dre.js';
 import {buildDreCsv} from '../public/simulator-dre-export.js';
-import {renderAnnualDre,renderCompleteMonthlyDre,renderDrePrintDocument} from '../public/simulator-dre-view.js';
+import {renderAnnualDre,renderCompleteMonthlyDre,renderDreCompleteDetails,renderDrePrintDocument} from '../public/simulator-dre-view.js';
 
 const record=(result,id)=>result.regimes.find(row=>row.id===id);
 const row=(presentation,key)=>capturedDreRows(presentation).find(row=>row.key===key);
@@ -40,7 +40,11 @@ test('quarterly normal, additional and movement reconcile without summing monthl
   assert.deepEqual(row(p,'irpj').monthlyValues.presumed,[-4800,-3600,-1600]);
   assert.match(p.irpjReconciliation.note,/Não some os acumulados mensais/);
   const keys=unifiedDreRows(p).map(item=>item.key);
-  for(const key of ['irpj','irpjBasic','irpjAdditional',...QUARTERLY_IRPJ_RECONCILIATION_KEYS])assert.equal(keys.filter(value=>value===key).length,1);
+  assert(!keys.includes('irpj'),'O imposto fica no quadro próprio; a DRE contém somente a dedução total.');
+  const taxes=p.taxStatement.rows.filter(item=>item.key==='irpj');assert.equal(taxes.length,1);
+  assert.deepEqual(taxes[0].monthlyValues.presumed,[4800,3600,1600]);assert.equal(taxes[0].values.presumed,10000);
+  for(const key of ['irpjBasic','irpjAdditional',...QUARTERLY_IRPJ_RECONCILIATION_KEYS])assert.equal(keys.filter(value=>value===key).length,1);
+  assert.equal(keys.filter(value=>value==='taxesDeduction').length,1);
   assert.deepEqual(saved,before);
 });
 
@@ -189,7 +193,11 @@ test('CSV, display and print label provision and movement, preserving signs, sel
     assert(!panel.slice(0,panel.indexOf('</section>')).includes('class="dre-percent"'));
     assert.match(html,/provisão anterior/i);assert.match(html,/não é restituição automática/);
   }
-  const monthly=renderCompleteMonthlyDre({...options,month:1});
+  const screen=renderCompleteMonthlyDre({...options,month:1});
+  assert.equal(screen,renderAnnualDre(options));assert.doesNotMatch(screen,/id="dre-display-period"/);
+  const monthly=renderDreCompleteDetails({...options,monthly:true,month:1});
   assert.match(monthly,/data-irpj-provisional/);assert.match(monthly,/Movimento de IRPJ no mês/);assert.match(monthly,/-R\$ 16\.000,00/);
+  const monthlyIrpj=monthly.match(/data-tax-row="irpj"[^>]*>([\s\S]*?)<\/tr>/)?.[1];
+  assert.match(monthlyIrpj,/-R\$ 16\.000,00/,'O quadro de impostos mantém o estorno negativo no relatório mensal.');
   assert.deepEqual(p,before);
 });
