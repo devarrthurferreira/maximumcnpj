@@ -41,7 +41,7 @@ test('CSV conserva a categoria das parcelas clonadas do IRPJ e identifica sua me
   const data=readCsv(buildDreCsv({presentation,period:'complete',visibleRegimeIds:['presumed','actual']}));
   const total=data.find(row=>row[0]==='Impostos'&&row[2]==='IRPJ');
   assert.deepEqual(total.slice(0,5),['Impostos','Impostos','IRPJ','line','BRL']);
-  assert(!data.some(row=>row[0]==='DRE'&&row[2].startsWith('IRPJ')));
+  assert(data.some(row=>row[0]==='DRE'&&row[1]==='IRPJ, CSLL e resultado'&&row[2].startsWith('IRPJ')));
   for(const label of ['IRPJ normal · movimento do período','Adicional de IRPJ · movimento do período']){
     const part=data.find(row=>row[2]===label);
     assert.deepEqual(part.slice(0,2),['Detalhamento informativo','Composição do IRPJ']);
@@ -82,7 +82,7 @@ test('CSV separa Impostos da DRE, com dedução única, resultado igual e os doi
         assert(!dre.some(row=>row[2]===label),`${period}: ${label} não pertence à DRE`);
       const deduction=dre.find(row=>row[2]==='(−) Total de impostos');
       const total=taxAnnual.find(row=>row[2]==='Total');
-      const profit=dre.find(row=>row[2]==='Resultado');
+      const profit=dre.find(row=>row[2]==='Resultado líquido');
       for(const [index,id] of visibleRegimeIds.entries()){
         const captured=snapshot.result.regimes.find(regime=>regime.id===id);
         assert.equal(deduction[index+5],currency(-captured.totalTaxes));
@@ -118,14 +118,14 @@ test('tela e impressão exibem o mesmo quadro do IRPJ, com parcelas legíveis e 
   for(const html of [renderAnnualDre(options),renderDrePrintDocument({...options,period:'annual'})]){
     assert.equal((html.match(/data-irpj-reconciliation="dre"/g)||[]).length,1);
     assert.match(html,/Memória de cálculo do IRPJ/);assert.match(html,/Base dentro do limite/);
-    assert.match(html,/IRPJ normal · movimento do período/);assert.match(html,/Adicional de IRPJ · movimento do período/);
+    assert.match(html,/IRPJ normal · 15% por trimestre/);assert.match(html,/Adicional de IRPJ · 10% por trimestre/);
     const memoryStart=html.indexOf('data-irpj-reconciliation="dre"');
     assert(!html.slice(memoryStart,html.indexOf('</section>',memoryStart)).includes('class="dre-percent"'));
     assert(html.includes('class="dre-percent"'),'A análise vertical permanece na DRE principal.');
     const main=html.slice(html.indexOf('data-dre-row="irpj"'),html.indexOf('data-dre-row="csll"'));
     assert(!main.includes('dre-composition-label'));assert(!main.includes('− IRPJ'));
-    for(const key of ['irpj','irpjBasic','irpjAdditional',...presentation.irpjReconciliation.rows.map(row=>row.key)]){
-      assert.equal((html.match(new RegExp(`data-dre-row="${key}"`,'g'))||[]).length,1,key);
+    for(const key of ['irpj',...presentation.irpjReconciliation.rows.map(row=>row.key)]){
+      assert.equal((html.match(new RegExp(`data-dre-row="${key}"`,'g'))||[]).length,key==='irpj'?2:1,key);
     }
   }
   assert.deepEqual(presentation,before);

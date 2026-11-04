@@ -1,5 +1,14 @@
 # Maximum CNPJ · v0.57.1
 
+## DRE por natureza dos impostos e regra do prejuízo no Lucro Real (04/11/2026)
+
+A DRE Jan–Set discrimina os tributos **junto às receitas (DAS, ICMS líquido, CBS/IBS líquido, ISS e DIFAL), às compras (antecipação de ICMS), às despesas (INSS/encargos) e ao resultado (IRPJ normal e adicional e CSLL)**. Créditos utilizados de CBS e IBS aparecem nas compras somente para conferência: esses valores já reduzem o CBS/IBS líquido. A linha **(−) Total de impostos** permanece como conferência informativa, sem dedução extra. Subtotais de receita líquida, custos com antecipação, despesas com encargos e resultado antes dos tributos sobre o lucro vêm dos valores capturados.
+
+Os testes de PDF e CSV também verificam a dupla visualização: valores negativos na DRE e devidos positivos no quadro tributário, sem nova dedução. O relatório pode ocupar mais páginas para mostrar as contas completas.
+
+O bloco **APURAÇÃO DOS TRIBUTOS** segue separado, com os mesmos regimes, impostos, totais e percentuais; CSV, impressão e PDF mantêm a DRE organizada por natureza e o quadro completo. No Lucro Real gerencial trimestral, a base tributável negativa ou nula é limitada a zero para o IRPJ e CSLL; um mês negativo pode estornar provisão positiva anterior do mesmo trimestre, sem criar imposto devido novo. A apuração fiscal efetiva depende dos ajustes legais do lucro real e não é inferida de um prejuízo contábil isolado. Os históricos, parâmetros, alíquotas e cálculos salvos permanecem preservados.
+
+
 ## Ajuste de apresentação da DRE — 04/11/2026
 
 No período de janeiro a setembro, o quadro **APURAÇÃO DOS TRIBUTOS** aparece imediatamente após os controles de relatório da DRE, com os mesmos regimes selecionados. A linha **IRPJ** reúne a parcela normal e o adicional (10% sobre o excedente trimestral), conforme os valores já registrados na memória e no resultado salvo; o IRPJ aparece como imposto devido no quadro, sem gerar dedução adicional na DRE. Simples Puro e Híbrido identificam o IRPJ como integrante do DAS quando a memória confirma essa condição.

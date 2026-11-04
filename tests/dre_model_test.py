@@ -65,7 +65,7 @@ class DreModelTests(unittest.TestCase):
             saved = fixture(variant)
             before = copy.deepcopy(saved)
             view, reference = model(saved), screen(saved)
-            rows = {row['key']: row for row in [*reference['rows'], *reference['taxRows']]}
+            rows = {row['key']: row for row in [*reference['taxRows'], *reference['rows']]}
             keys = [key for _, section in view.sections() for key, _ in section] + ['totalTaxes']
             for regime in view.regimes:
                 for key in keys:
@@ -99,7 +99,9 @@ class DreModelTests(unittest.TestCase):
             view = model(saved)
             keys = [key for _, rows in view.sections() for key, _ in rows]
             self.assertEqual(keys.count('taxesDeduction'), 1)
-            self.assertFalse(set(keys) & (TAX_COMPONENT_KEYS | {'totalTaxes', 'cbsDebit', 'ibsDebit', 'cbsUsed', 'ibsUsed'}))
+            self.assertEqual(keys.count('totalTaxes'), 0)
+            self.assertTrue({'das', 'icmsNet', 'cbsIbsNet', 'irpj', 'csll', 'icmsAnticipation',
+                             'difal', 'payroll', 'cbsUsed', 'ibsUsed'} <= set(keys))
             tax_keys = [key for key, _ in view.tax_rows()]
             self.assertEqual(len(tax_keys), len(set(tax_keys)))
             self.assertEqual(tax_keys[:8], ['das', 'icmsNet', 'cbsIbsNet', 'irpj', 'csll', 'icmsAnticipation', 'difal', 'payroll'])

@@ -80,7 +80,7 @@ def assert_statement(test, content, snapshot):
         taxes = section_text(document, 'Impostos', 'Conferência dos créditos') if compact else statement
         for key, label in (('difal', 'DIFAL' if compact else 'DIFAL sobre vendas'),
                            ('icmsAnticipation', 'Antecipação' if compact else 'Antecipação de ICMS'),
-                           ('netProfit', 'Resultado' if compact else 'Resultado líquido')):
+                           ('netProfit', 'Resultado líquido')):
             sign = -1 if compact and key != 'netProfit' else 1
             expected = label + ' ' + ' '.join(amount(sign * row['dre'][key]) for row in snapshot['result']['regimes'])
             section = taxes if compact and key != 'netProfit' else statement
@@ -194,7 +194,7 @@ class DreDifalZeroTests(unittest.TestCase):
         monthly_exit = [row for row in csv_rows if len(row) > 6 and row[1] == 'Impostos' and row[3] == 'DIFAL']
         self.assertEqual(len(monthly_exit), 4)
         self.assertTrue(all(row[6:16] == ['0,00'] * 10 for row in monthly_exit))
-        profit = next(row for row in csv_rows if len(row) > 5 and row[0] == 'DRE' and row[2] == 'Resultado')
+        profit = next(row for row in csv_rows if len(row) > 5 and row[0] == 'DRE' and row[2] == 'Resultado líquido')
         self.assertEqual(profit[5:9], [f"{regime['dre']['netProfit']:.2f}".replace('.', ',')
                                      for regime in corrected['result']['regimes']])
         # Export the preceding version after the correction as well. Its original

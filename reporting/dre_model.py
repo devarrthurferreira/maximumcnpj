@@ -35,15 +35,29 @@ SECTIONS = (
                    ('incomeTaxes', 'Total de IRPJ e CSLL'), ('netProfit', 'Resultado líquido'))),
 )
 STATEMENT_SECTIONS = (
-    ('Receitas', (('services', 'Receita de serviços'), ('sales', 'Receita de vendas utilizada'),
-                  ('revenue', 'Receita Total utilizada'))),
-    ('Compras e custos', (('cmvSimple', 'Compras do Simples'), ('cmvRegular', 'Compras fora do Simples'),
-                         ('cmv', 'Total de compras / CMV'))),
-    ('Despesas operacionais', (('salaries', 'Salários e pró-labore'), ('benefits', 'Benefícios'),
-                               ('administrative', 'Outras despesas'), ('rent', 'Aluguéis'), ('cards', 'Taxas de cartão'),
-                               ('operatingExpensesBeforePayroll', 'Total de despesas operacionais'))),
-    ('Resultado', (('taxesDeduction', '(-) Total de impostos'), ('netProfit', 'Resultado'),
-                   ('netMargin', '% sobre a receita - resultado'))),
+    ('Receitas e tributos sobre receitas', (
+        ('services', 'Receita de serviços'), ('sales', 'Receita de vendas utilizada'),
+        ('revenue', 'Receita Total utilizada'), ('das', '(-) Simples Nacional (DAS)'),
+        ('icmsNet', '(-) ICMS líquido (D - C)'), ('cbsIbsNet', '(-) CBS/IBS líquido (D - C)'),
+        ('iss', '(-) ISS fora do DAS'), ('difal', '(-) DIFAL sobre vendas'),
+        ('revenueTaxes', '(=) Tributos sobre receitas'), ('netRevenueAfterTaxes', '= Receita líquida após tributos'))),
+    ('Compras e custos', (
+        ('cmvSimple', 'Compras do Simples'), ('cmvRegular', 'Compras fora do Simples'),
+        ('cmv', 'Total de compras / CMV'), ('icmsAnticipation', '(-) Antecipação de ICMS nas compras'),
+        ('cbsUsed', 'Crédito CBS utilizado - informativo'), ('ibsUsed', 'Crédito IBS utilizado - informativo'),
+        ('costsWithAnticipation', '= Compras / CMV e antecipação de ICMS'),
+        ('grossAfterCosts', '= Resultado após receitas, custos e tributos'))),
+    ('Despesas e encargos', (
+        ('salaries', 'Salários e pró-labore'), ('benefits', 'Benefícios'),
+        ('administrative', 'Outras despesas'), ('rent', 'Aluguéis'), ('cards', 'Taxas de cartão'),
+        ('operatingExpensesBeforePayroll', 'Subtotal de despesas operacionais (sem INSS)'),
+        ('payroll', '(-) INSS / encargos da folha'),
+        ('operatingExpensesWithPayroll', '= Despesas e encargos da folha'))),
+    ('IRPJ, CSLL e resultado', (
+        ('resultBeforeIncomeTaxes', '= Resultado antes de IRPJ / CSLL'),
+        ('irpj', '(-) IRPJ normal e adicional'), ('csll', '(-) CSLL'),
+        ('taxesDeduction', '(-) Total de impostos'), ('netProfit', 'Resultado líquido'),
+        ('netMargin', '% sobre a receita - resultado'))),
 )
 TAX_STATEMENT_ROWS = (
     ('das', 'Simples'), ('icmsNet', 'ICMS (D - C)'), ('cbsIbsNet', 'CBS/IBS (D - C)'),
@@ -54,7 +68,9 @@ TAX_STATEMENT_ROWS = (
 TAX_COMPONENT_KEYS = frozenset(key for key, _ in TAX_STATEMENT_ROWS if key not in ('totalTaxes', 'taxBurden', 'netProfit', 'netMargin'))
 PERCENT_ROWS = {'taxBurden', 'netMargin'}
 SUBTOTALS = {'revenue', 'netRevenue', 'cmv', 'grossProfit', 'personnel', 'preTax', 'netProfit',
-            'operatingExpensesBeforePayroll', 'totalTaxes', 'taxesDeduction'}
+            'revenueTaxes', 'netRevenueAfterTaxes', 'costsWithAnticipation', 'grossAfterCosts',
+            'operatingExpensesBeforePayroll', 'operatingExpensesWithPayroll', 'resultBeforeIncomeTaxes',
+            'totalTaxes', 'taxesDeduction'}
 DERIVED = {'revenueDeductions', 'netCosts', 'operatingExpenses', 'incomeTaxes'}
 GROUP_LABELS = {'OPTANTE': 'Simples Nacional', 'NAO_OPTANTE': 'Não optante', 'CPF': 'Pessoa física (CPF)',
                 'NAO_CONFIRMADO': 'Não confirmado', 'OUTROS': 'Outros documentos',
@@ -669,6 +685,26 @@ class DreModel:
         if key == 'taxesDeduction':
             value = self.value(regime, 'totalTaxes', index)
             return -value if finite(value) else None
+        # Captured taxes are redistributed, not recalculated or deducted again.
+        # Missing inputs remain unavailable instead of becoming zero.
+        revenue_taxes = ('das', 'icmsNet', 'cbsIbsNet', 'iss', 'difal')
+        if key == 'revenueTaxes':
+            return total(self.value(regime, part, index) for part in revenue_taxes)
+        if key == 'netRevenueAfterTaxes':
+            return total([self.value(regime, 'revenue', index), self.value(regime, 'revenueTaxes', index)])
+        if key == 'costsWithAnticipation':
+            return total([self.value(regime, 'cmv', index), self.value(regime, 'icmsAnticipation', index)])
+        if key == 'grossAfterCosts':
+            return total([self.value(regime, 'netRevenueAfterTaxes', index),
+                          self.value(regime, 'costsWithAnticipation', index)])
+        if key == 'operatingExpensesWithPayroll':
+            return total([self.value(regime, 'operatingExpensesBeforePayroll', index),
+                          self.value(regime, 'payroll', index)])
+        if key == 'resultBeforeIncomeTaxes':
+            value = total([self.value(regime, 'grossAfterCosts', index),
+                           self.value(regime, 'operatingExpensesWithPayroll', index)])
+            expected = self.value(regime, 'preTax', index)
+            return expected if finite(value) and finite(expected) and close(value, expected) else None
         if key in IRPJ_V2_KEYS or key in ('irpjBasic', 'irpjAdditional'):
             assessed = self.irpj(regime, index)
             if key in ('irpjBasic', 'irpjAdditional') and assessed.get('version') == IRPJ_RECONCILIATION_VERSION_V2:
@@ -710,7 +746,7 @@ class DreModel:
 
     def sections(self):
         for title, rows in STATEMENT_SECTIONS if self.compact_statement else SECTIONS:
-            yield title, [(key, 'IRPJ do período (provisão/ajuste)' if key == 'irpj' and self.quarterly_income_tax else label) for key, label in rows if
+            yield title, [(key, 'IRPJ do período (provisão/ajuste)' if key == 'irpj' and self.quarterly_income_tax and not self.compact_statement else label) for key, label in rows if
                           (key not in ('difal', 'icmsAnticipation') or any(key in regime.get('dre', {}) for regime in self.result['regimes']))]
 
     def tax_rows(self):

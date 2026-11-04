@@ -43,7 +43,8 @@ test('DRE e Impostos separados compartilham regimes e permanecem no consolidado 
     const [dre,taxes]=html.split('id="tax-demonstrativo"');
     assert(taxes,'Impostos é um card separado.');
     for(const key of ['das','icmsNet','cbsIbsNet','irpj','csll','icmsAnticipation','difal','payroll','totalTaxes','taxBurden']){
-      assert.equal(row(dre,key),undefined,key+' não aparece na tabela da DRE.');
+      if(['totalTaxes','taxBurden'].includes(key))assert.equal(row(dre,key),undefined,key+' fica somente no quadro de Impostos.');
+      else assert.equal((row(dre,key).match(/<td /g)||[]).length,2,key+' também integra o grupo da DRE.');
       assert.equal((row(taxes,key).match(/<td /g)||[]).length,2);
     }
     assert(row(dre,'taxesDeduction'));assert.equal((row(taxes,'irpj').match(/<td /g)||[]).length,2);
