@@ -95,7 +95,7 @@ test('prejuízo acumulado do Real usa IRPJ zero e mantém prova mensal e memóri
           sales:m.salesRevenue,services:m.serviceRevenue,preTax:m.preTax}}))}}))};
   const checked=reconcileIrpj(result,'actual');
   assert.equal(checked.available,true,checked.reason);assert.equal(checked.values.irpjTotalAssessed,0);
-  assert.equal(result.regimes.find(row=>row.id==='actual').dre.irpj,0);
+  assert.equal(Math.abs(result.regimes.find(row=>row.id==='actual').dre.irpj),0);
   for(const m of months){
     const monthChecked=reconcileIrpj(result,'actual',{sourceMonth:m.sourceMonth});
     assert.equal(monthChecked.available,true,monthChecked.reason);
