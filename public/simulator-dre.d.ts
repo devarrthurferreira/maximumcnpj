@@ -22,11 +22,13 @@ export type DrePresentation = {
   details:Array<{key:string;label:string;parentKey:string;rows:DrePresentationRow[]}>;indicators:DrePresentationRow[];
   revenueReconciliation?:{key:'revenueReconciliation';label:string;note:string;rows:DrePresentationRow[]};
   icmsReconciliation?:{key:'icmsReconciliation';label:string;note:string;rows:DrePresentationRow[]};
-  irpjReconciliation?:{key:'irpjReconciliation';version:'IRPJ_RECONCILIATION_V1';label:string;note:string;rows:DrePresentationRow[]};
+  irpjReconciliation?:{key:'irpjReconciliation';version:'IRPJ_RECONCILIATION_V1'|'IRPJ_RECONCILIATION_V2';label:string;note:string;rows:DrePresentationRow[];
+    frames?:Record<string,{period:IrpjPresentationFrame;months:IrpjPresentationFrame[]}>};
   months:Array<{number:number;label:string;period:string|null;sourceMonth?:string|null;rbt12Cents?:number|null}>;
   rbt12Schedule?:import('./simulator-rbt12.js').Rbt12Schedule;
   calendarYear:number|null;calendarReference:any;calendarRounding:string;percentBasis:string;
 };
+export type IrpjPresentationFrame={available:boolean;status:string;reason:string;scope:string|null;closed:boolean};
 export function buildDrePresentation(input:{result:any;monthlyGroups?:any;projection?:any;source?:any;reportMonths?:number;engineInput?:any;reprocessing?:any;calendar?:any;taxSources?:any;rbt12Source?:string}):DrePresentation;
 export function unifiedDreRows(presentation:DrePresentation):DrePresentationRow[];
 export function capturedDreRows(presentation:DrePresentation):DrePresentationRow[];

@@ -3,7 +3,7 @@ import { reconciledPurchaseSummary as purchaseSummary } from './purchase-store.t
 import { PURCHASE_MODE, SALES_MODE, exactCents, exactSignedCents, type ReportPeriod } from './purchase-domain.ts';
 import { AppError, need } from './security.ts';
 import {monthlyProjection, monthlyDifal, MONTHLY_FIELDS} from '../public/simulator-monthly.js';
-import {monthlyReportSource, aggregateOperationAudit, type OperationMonthlyReport} from './simulation-monthly-source.ts';
+import {monthlyReportSource, aggregateOperationAudit, type OperationMonthlyReport, type NatureAudit} from './simulation-monthly-source.ts';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.ts';
 import { sameReportCompetences } from './report-competence.ts';
 import {JAN_SEP_POLICY,buildAnalysisPeriod,selectAnalysisPeriod} from '../public/analysis-period.js';
@@ -20,6 +20,11 @@ export function financialSourceWarnings(reports:readonly OperationMonthlyReport[
     const revenue=exactSignedCents(sales+fields.serviceRevenueCents);
     const purchases=exactCents(fields.purchasesOptantCents+fields.purchasesNonOptantCents);
     const notes:string[]=[];
+    const returnNatures: NatureAudit[]=row.operationAudit?.natures||[];
+    const purchaseReturns=exactCents(returnNatures
+      .filter(nature=>nature.side==='SALES'&&nature.operation==='DEVOLUCAO_COMPRA')
+      .reduce((sum,nature)=>sum+nature.excludedCents,0));
+    if(purchaseReturns>0)notes.push(`Devoluções de compras de ${formatCents(purchaseReturns)} não entram na receita e ainda não abatem as compras utilizadas como custo neste modelo. Concilie as notas originais, o custo e eventuais estornos de crédito; ajustes manuais de compras não criam nem estornam créditos documentais.`);
     if(sales<0)notes.push(`As devoluções superam as vendas de mercadorias; saldo de ${formatCents(sales)} preservado.`);
     else if(groups.some(value=>value<0))notes.push('Há grupo de clientes com saldo negativo após devoluções; os valores foram preservados.');
     if(revenue<0)notes.push(`A receita total após devoluções é ${formatCents(revenue)}; o saldo negativo permanece na DRE.`);

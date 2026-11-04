@@ -24,7 +24,7 @@ from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate, Paragraph,
                                PageBreak, KeepTogether, LongTable, Table, TableStyle)
 
 from .core import VERSION, display_date
-from .dre_model import (DreModel, SUBTOTALS, DERIVED, PERCENT_ROWS, GROUP_LABELS, IRPJ_ROWS, finite, close,
+from .dre_model import (DreModel, SUBTOTALS, DERIVED, PERCENT_ROWS, GROUP_LABELS, IRPJ_ROWS, IRPJ_V2_ROWS, finite, close,
                         total, money, percentage, decimal_text, month_label)
 from .dre_charts import (Bars, Trend, Waterfall, Donut, draw_text, TEAL, DEEP, CORAL,
                          MINT, INK, MUTED, LINE, PALE, COLORS, FONT, BOLD, CoverageStrip)
@@ -520,7 +520,7 @@ class Report:
             keys = [('DAS', 'das', -1), ('CBS - débito', 'cbsDebit', -1), ('IBS - débito', 'ibsDebit', -1),
                     ('ICMS líquido', 'icmsNet', -1), ('ISS', 'iss', -1), ('DIFAL sobre vendas', 'difal', -1),
                     ('Antecipação de ICMS', 'icmsAnticipation', -1), ('Encargos da folha', 'payroll', -1),
-                    ('IRPJ total (normal + adicional)', 'irpj', -1), ('CSLL', 'csll', -1),
+                    ('IRPJ do período (provisão/ajuste)' if m.quarterly_income_tax else 'IRPJ total (normal + adicional)', 'irpj', -1), ('CSLL', 'csll', -1),
                     ('(-) Crédito CBS utilizado', 'cbsUsed', -1), ('(-) Crédito IBS utilizado', 'ibsUsed', -1),
                     ('Tributos e encargos líquidos', 'totalTaxes', 1)]
         keys = [row for row in keys if row[1] not in ('difal', 'icmsAnticipation') or any(row[1] in regime['dre'] for regime in m.regimes)]
@@ -572,6 +572,8 @@ class Report:
     def irpj_reconciliation(self):
         """Positive explanatory amounts that never enter tax totals a second time."""
         m = self.model
+        if m.quarterly_income_tax:
+            return self.irpj_quarter_reconciliation()
         reconciled = [m.irpj(regime) for regime in m.regimes]
         rows = [[label] + [self.p('Incluído no DAS', 'tiny') if item['status'] == 'INCLUDED_IN_DAS' else
                           self.number(item['values'][key], bold=key == 'irpjTotalAssessed') for item in reconciled]
@@ -614,6 +616,77 @@ class Report:
                 for index, item in zip(indices, frames):
                     if not item['available']:
                         self.add(self.p(month_label(m.months[index], True) + ': ' + item['reason'], 'small'))
+
+    def irpj_quarter_reconciliation(self):
+        m = self.model
+        assessed = [m.irpj(regime) for regime in m.regimes]
+
+        def status(item, regime):
+            if item['status'] == 'INCLUDED_IN_DAS':
+                return 'Incluído no DAS'
+            if not item['available']:
+                return 'Indisponível'
+            if not item.get('closure', {}).get('available'):
+                return 'Provisão - fechamento pendente'
+            return 'Fechamento gerencial' if regime['id'] == 'actual' else 'Fechamento do cenário'
+
+        def rows_for(items):
+            return [[label] + [self.p('Incluído no DAS', 'tiny') if item['status'] == 'INCLUDED_IN_DAS' else
+                              self.number(item['values'][key], bold=key in ('irpjTotalAssessed', 'irpjCurrentMovement'))
+                              for item in items] for key, label in IRPJ_V2_ROWS]
+
+        introduction = ('As sete primeiras linhas mostram os valores acumulados dos períodos tributários. '
+                        'IRPJ acumulado menos provisão anterior = movimento reconhecido no período. '
+                        'Somente esse movimento entra na DRE; as parcelas explicativas não são somadas novamente.')
+        rows = rows_for(assessed)
+        rows.append(['Situação da conferência'] + [status(item, regime) for regime, item in zip(m.regimes, assessed)])
+        self.add(KeepTogether([self.p('IRPJ trimestral e movimentos da DRE', 'h2'), self.p(introduction, 'small'),
+                 self.table(['Composição e ponte - valores em R$'] + [regime['name'] for regime in m.regimes], rows,
+                            [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes),
+                            highlights=[6, 8], blocks=[(0, 9)], small=True, compact=True)]))
+        if m.actual:
+            origin = (f'Competências de origem: {m.period_label}. Regras do cenário tributário: {m.year}. '
+                      'Os trimestres são formados pelas competências capturadas, com as regras do ano do cenário. '
+                      'Este quadro não é a declaração fiscal histórica da empresa.')
+        else:
+            origin = (f'Projeção uniforme do cenário {m.year}. Os meses representam a base anual distribuída e os '
+                      'movimentos trimestrais preservados, incluindo ajustes de centavos; não são movimentos históricos.')
+        self.add(self.note(origin + ' O limite do adicional é R$ 60.000,00 por trimestre, inclusive na provisão parcial. '
+                          'Um mês ausente não é preenchido com zero; o fechamento permanece pendente. '
+                          'Movimento negativo indica reversão e reduz a despesa de IRPJ reconhecida. '
+                          'Normal, adicional e CSLL são arredondados a centavos por componente e período.'))
+        if any(regime['id'] == 'actual' for regime in m.regimes):
+            self.add(self.p('Lucro Real: estimativa gerencial sobre o resultado acumulado antes de IRPJ/CSLL, com prejuízos '
+                            'do próprio trimestre considerados com seu sinal. Ajustes fiscais, estoques e compensação '
+                            'de prejuízos fiscais não são apurados por este quadro.', 'small'))
+        for regime, item in zip(m.regimes, assessed):
+            if not item['available'] or item['status'] == 'PROVISIONAL':
+                self.add(self.p(regime['name'] + ': ' + item['reason'], 'small'))
+        if m.period == 'annual' or not m.months:
+            return
+        groups = {}
+        for index, source in enumerate(m.months):
+            quarter = (int(source[5:]) - 1) // 3 + 1
+            groups.setdefault((source[:4], quarter), []).append(index)
+        for regime in m.regimes:
+            if regime['id'] not in ('presumed', 'actual'):
+                continue
+            for (source_year, quarter), indices in groups.items():
+                items = [m.irpj(regime, index) for index in indices]
+                rows = rows_for(items)
+                rows.append(['Situação da conferência'] + [status(item, regime) for item in items])
+                context = (regime['name'] + f' - {quarter}º trimestre ' +
+                           (f'da origem {source_year} / cenário {m.year}' if m.actual else f'da projeção {m.year}'))
+                self.add(self.table(['Acumulado e movimento por competência'] + [month_label(m.months[index], True) for index in indices], rows,
+                                    [177] + [(WIDTH - 177) / len(indices)] * len(indices), highlights=[6, 8], blocks=[(0, 9)],
+                                    repeat_context=context, small=True, compact=True))
+                for index, item in zip(indices, items):
+                    if not item['available']:
+                        self.add(self.p(month_label(m.months[index], True) + ': ' + item['reason'], 'small'))
+                    elif item.get('scope') == 'ANNUAL_ADJUSTMENT':
+                        self.add(self.p(month_label(m.months[index], True) + ': ajuste de encerramento anual da LC 224/2025. '
+                                        'O acumulado reúne os quatro trimestres e a provisão anterior reúne os movimentos '
+                                        'já reconhecidos até novembro; a diferença é o movimento deste mês.', 'small'))
 
     def commercial(self):
         m = self.model

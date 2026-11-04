@@ -76,26 +76,26 @@ function zero()           {
   return input;
 }
 
-test('historical explicit CBS rates reproduce the four reviewed spreadsheet results without intermediate rounding', () => {
+test('explicit historical CBS rates preserve other taxes while income tax uses quarterly cent rounding', () => {
   const input = example();
   input.rates.cbs = .0911;
   input.credits.simpleRegular.cbsRate = .0911;
   input.credits.regular.cbsRate = .0911;
   const before = structuredClone(input), result = calculateTax(input);
-  [143383.96938144, 118395.342618603, 90447.081624, 93819.7790064].forEach((value, index) => close(result.regimes[index].annualProfit, value));
+  [143383.96938144, 118395.342618603, 90447.07764, 93819.75764].forEach((value, index) => close(result.regimes[index].annualProfit, value));
   close(result.credits.icms.debit, 17999.9928);
   close(result.credits.icms.potential, 22464);
   close(result.credits.icms.due, 0);
   close(result.credits.icms.balance, 4464.0072);
   assert.equal(result.bestRegimeId, 'pure');
-  close(result.difference, 143383.96938144 - 90447.081624);
+  close(result.difference, 143383.96938144 - 90447.07764);
   assert.deepEqual(input, before);
   assert.match(result.warnings.find(row => row.code === 'model-period').detail, /CBS de 9,11%/);
 });
 
 test('new CBS default applies 11.3% to debits and regular credits while preserving the inside-DAS credit', () => {
   assert.equal(DEFAULT_RATES.cbs, .113);
-  assert.equal(MODEL_VERSION, '1.19.0-entry-without-rbt12-sublimit');
+  assert.equal(MODEL_VERSION, '1.20.0-quarterly-income-tax');
   const input = zero();
   Object.assign(input, {salesRevenue:10000, rbt12:120000, simplePurchases:2000, simpleRegularPurchases:500, regularPurchases:3000});
   input.credits.simple.base = 1500;
@@ -218,7 +218,7 @@ test('purchases and operating expenses above positive revenue produce warnings a
   assert(result.regimes.every(row=>row.dre.revenue===12000&&row.dre.cmv===-24000&&row.dre.rent===-36000));
 });
 
-test('negative merchandise balance with services keeps signed finances and nonnegative activity tax bases', () => {
+test('negative merchandise balance remains signed through quarterly presumed bases', () => {
   const input=zero();Object.assign(input,{salesRevenue:-1000,serviceRevenue:2000,rbt12:120000});
   const result=calculateTax(input),positiveServices=calculateTax({...input,salesRevenue:0});
   assert.equal(result.annualRevenue,12000);
@@ -228,8 +228,8 @@ test('negative merchandise balance with services keeps signed finances and nonne
   }
   assert.equal(memory(result,'simples.salesDas'),0);
   assert.equal(memory(result,'simples.serviceDas'),memory(positiveServices,'simples.serviceDas'));
-  assert.equal(memory(result,'presumed.irBase'),memory(positiveServices,'presumed.irBase'));
-  assert.equal(memory(result,'presumed.csBase'),memory(positiveServices,'presumed.csBase'));
+  assert.equal(memory(result,'presumed.irBase'),6720); // (-1,000 × 8% + 2,000 × 32%) × 12.
+  assert.equal(memory(result,'presumed.csBase'),6240); // (-1,000 × 12% + 2,000 × 32%) × 12.
   close(result.credits.cbs.debit,12000*.113);
   assert(result.warnings.some(row=>row.code==='negative-sales'));
   assert(!result.warnings.some(row=>row.code==='negative-revenue'));
@@ -596,7 +596,7 @@ test('DIFAL de saída permanece zero com input manual positivo, sem alterar rece
   }
   close(memory(result,'actual.preTax'),result.regimes[3].dre.preTax);
   close(memory(result,'actual.base'),Math.max(0,result.regimes[3].dre.preTax));
-  close(result.regimes[3].dre.csll,-Math.max(0,result.regimes[3].dre.preTax)*.09);
+  close(result.regimes[3].dre.csll,-4*Math.round(Math.max(0,result.regimes[3].dre.preTax/4)*.09*100)/100);
   close(result.regimes[3].dre.irpj,baseline.regimes[3].dre.irpj);
   const loss=calculateTax({...input,difalMonthly:1000000});
   close(loss.regimes[3].dre.irpj,baseline.regimes[3].dre.irpj);close(loss.regimes[3].dre.csll,baseline.regimes[3].dre.csll);

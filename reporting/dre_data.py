@@ -12,6 +12,7 @@ import math
 import re
 
 from .core import require, utcnow
+from .dre_model import reconcile_irpj, uses_quarterly_income_tax
 
 UUID = re.compile(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}')
 MONTH = re.compile(r'\d{4}-(0[1-9]|1[0-2])')
@@ -186,6 +187,8 @@ def _calendar(snapshot, regimes, monthly):
             actual = next((key for key in monthly if int(key[-2:]) == month['number']), None)
             _valid(month.get('sourceMonth') == actual)
     expected_keys = set(BASE_ROWS) | {key for key in OPTIONAL_ROWS if any(key in row['dre'] for row in regimes.values())}
+    result = snapshot['result']
+    quarterly_projection = not monthly and uses_quarterly_income_tax(result)
     for item in rows:
         regime = regimes[item['id']]
         _valid(item.get('available') is regime['available'] and isinstance(item.get('rows'), list))
@@ -193,6 +196,23 @@ def _calendar(snapshot, regimes, monthly):
         _valid(all(isinstance(cell, dict) for cell in cells))
         keys = [cell.get('key') for cell in cells]
         _valid(all(isinstance(key, str) for key in keys) and len(keys) == len(set(keys)) and set(keys) == expected_keys)
+        income_tax_cells = {}
+        if quarterly_projection and item['id'] in ('presumed', 'actual') and regime['available']:
+            sources = [month.get('period') for month in months]
+            _valid(sources == [f'{calendar["year"]}-{number:02d}' for number in range(1, 13)])
+            assessment = result.get('incomeTaxAssessment')
+            _valid(isinstance(assessment, dict) and assessment.get('basis') == 'UNIFORM_PROJECTION'
+                   and assessment.get('scenarioYear') == calendar['year'])
+            # The same proof used by the PDF checks exact bases, rounded tax
+            # components, prior provisions and all captured monthly movements.
+            _valid(reconcile_irpj(result, item['id'], expected_source_months=sources, expected_count=12)['available'])
+            for source in sources:
+                proof = reconcile_irpj(result, item['id'], source_month=source)
+                _valid(proof['available'])
+                movement = assessment['monthlyAssessments'][source]['regimes'][item['id']]['movement']
+                irpj, csll = -proof['componentMovements']['total'], -movement['csllCents'] / 100
+                income_tax_cells[source] = {'irpj': irpj, 'csll': csll,
+                                            'netProfit': regime['dre']['preTax'] / 12 + irpj + csll}
         for cell in cells:
             expected = regime['dre'].get(cell['key']) if regime['available'] else None
             _valid(cell.get('annual') is None if expected is None else _close(cell.get('annual'), expected))
@@ -202,6 +222,8 @@ def _calendar(snapshot, regimes, monthly):
                 if monthly:
                     monthly_regime = monthly.get(month.get('sourceMonth'), {}).get(item['id'])
                     expected = monthly_regime['dre'].get(cell['key']) if monthly_regime and monthly_regime['available'] else None
+                elif income_tax_cells and cell['key'] in ('irpj', 'csll', 'netProfit'):
+                    expected = income_tax_cells[month['period']][cell['key']]
                 else:
                     expected = regime['dre'].get(cell['key'], 0) / 12 if regime['available'] else None
                 _valid(values[index] is None if expected is None else _close(values[index], expected))

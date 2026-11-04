@@ -35,6 +35,10 @@ import {buildDrePresentation} from './public/simulator-dre.js';
 import {buildDreCsv} from './public/simulator-dre-export.js';
 import {REPROCESS_VERSION} from './public/simulation-reprocess-contract.js';
 const previous=legacyOutgoingDreFixture(),corrected=structuredClone(previous);
+// Isolate the current zero-exit policy from the separate income-tax model
+// migration: both source shapes must produce identical current regimes.
+const currentWithOriginalExit=calculateMonthlySimulation(previous.draft,previous.source.monthlyReports,
+  previous.monthlyInputs,previous.source.sales.jobId,null,previous.analysisPeriod).result.regimes;
 corrected._id='96969696-9696-4696-8696-969696969607';
 corrected.parentSimulationId=previous._id;
 corrected.reprocessing={version:REPROCESS_VERSION,originalId:previous._id,completedAt:'2026-10-30T14:00:00Z'};
@@ -55,7 +59,7 @@ const csv=Object.fromEntries(Object.entries({previous,corrected}).map(([key,s])=
     engineInput:s.engineInput,taxSources:s.taxSources,rbt12Source:s.rbt12Source});
   return [key,buildDreCsv({presentation,period:'complete',company:s.company,year:s.year,showPercent:false})];
 }));
-process.stdout.write(JSON.stringify({previous,corrected,csv}));
+process.stdout.write(JSON.stringify({previous,corrected,csv,currentWithOriginalExit}));
 """
     result = subprocess.run(['node', '--input-type=module', '-e', script], cwd=ROOT,
                             capture_output=True, text=True, check=True, timeout=30)
@@ -95,7 +99,7 @@ class DreDifalZeroTests(unittest.TestCase):
     def test_zero_exit_updates_months_subtotals_taxes_and_profit_without_changing_entry(self):
         previous, corrected = pair()
         self.assertTrue(previous['modelVersion'].startswith('1.17.0-'))
-        self.assertTrue(corrected['modelVersion'].startswith('1.19.0-'))
+        self.assertTrue(corrected['modelVersion'].startswith('1.20.0-'))
         self.assertTrue(corrected['result']['outgoingDifalDisabled'])
         self.assertEqual(corrected['source']['sales']['difal']['amountCents'], 0)
         self.assertEqual(corrected['difalProjection']['annualCents'], 0)
@@ -105,23 +109,44 @@ class DreDifalZeroTests(unittest.TestCase):
         self.assertEqual(corrected['monthlyInputs'], previous['monthlyInputs'])
         self.assertIs(validate_dre_snapshot(previous), previous)
         self.assertIs(validate_dre_snapshot(corrected), corrected)
+        self.assertEqual(snapshots()['currentWithOriginalExit'], corrected['result']['regimes'])
+        self.assertEqual(corrected['result']['incomeTaxAssessment']['version'], 'INCOME_TAX_ASSESSMENT_V2')
+
+        def income_tax_change(old_row, new_row, capture):
+            """Separate the captured quarterly migration from removing DIFAL."""
+            if new_row['id'] in ('pure', 'hybrid'):
+                for key in ('irpj', 'csll'):
+                    self.assertEqual(new_row['dre'][key], old_row['dre'][key])
+                return 0
+            self.assertEqual(capture['rounding'], 'HALF_UP_COMPONENT_CENTS')
+            assessment = capture['regimes'][new_row['id']]
+            self.assertTrue(assessment['available'])
+            movement = assessment['movement']
+            captured = {'irpj': -movement['irpjTotalCents'] / 100,
+                        'csll': -movement['csllCents'] / 100}
+            for key, value in captured.items():
+                self.assertAlmostEqual(new_row['dre'][key], value, places=7)
+            return sum(captured.values()) - sum(old_row['dre'][key] for key in captured)
+
         before_view, after_view = model(previous), model(corrected)
         for old, new in zip(previous['result']['regimes'], corrected['result']['regimes']):
             simple = new['id'] in ('pure', 'hybrid')
             removed = 3780 if simple else 0
             with self.subTest(regime=new['id'], frame='consolidated'):
+                income_change = income_tax_change(old, new, corrected['result']['incomeTaxAssessment'])
                 self.assertTrue(new['available'])
                 self.assertEqual(old['dre']['difal'], -removed)
                 self.assertEqual(new['dre']['difal'], 0)
                 self.assertAlmostEqual(new['dre']['icmsAnticipation'], -1976.4 if simple else 0, places=7)
                 self.assertEqual(new['dre']['icmsAnticipation'], old['dre']['icmsAnticipation'])
-                for key in ('netRevenue', 'grossProfit', 'preTax', 'netProfit'):
+                for key in ('netRevenue', 'grossProfit', 'preTax'):
                     self.assertAlmostEqual(new['dre'][key] - old['dre'][key], removed, places=7)
-                self.assertAlmostEqual(new['totalTaxes'] - old['totalTaxes'], -removed, places=7)
-                self.assertAlmostEqual(new['annualProfit'] - old['annualProfit'], removed, places=7)
+                self.assertAlmostEqual(new['dre']['netProfit'] - old['dre']['netProfit'], removed + income_change, places=7)
+                self.assertAlmostEqual(new['totalTaxes'] - old['totalTaxes'], -removed - income_change, places=7)
+                self.assertAlmostEqual(new['annualProfit'] - old['annualProfit'], removed + income_change, places=7)
                 self.assertAlmostEqual(after_view.value(new, 'revenueDeductions') -
                                        before_view.value(old, 'revenueDeductions'), removed, places=7)
-                for key in ('revenue', 'cmv', 'personnel', 'administrative', 'rent', 'cards', 'irpj', 'csll'):
+                for key in ('revenue', 'cmv', 'personnel', 'administrative', 'rent', 'cards'):
                     self.assertEqual(new['dre'][key], old['dre'][key])
             for index, (old_month, new_month) in enumerate(zip(previous['result']['monthlyResults'],
                                                                corrected['result']['monthlyResults'])):
@@ -129,10 +154,13 @@ class DreDifalZeroTests(unittest.TestCase):
                 new_row = next(row for row in new_month['result']['regimes'] if row['id'] == new['id'])
                 delta = (index + 1) * 84 if simple else 0
                 with self.subTest(regime=new['id'], month=new_month['sourceMonth']):
+                    income_change = income_tax_change(old_row, new_row, new_month['result']['incomeTaxAssessment'])
                     self.assertEqual(new_row['dre']['difal'], 0)
                     self.assertEqual(new_row['dre']['icmsAnticipation'], old_row['dre']['icmsAnticipation'])
-                    self.assertAlmostEqual(new_row['dre']['netProfit'] - old_row['dre']['netProfit'], delta, places=7)
-                    self.assertAlmostEqual(new_row['totalTaxes'] - old_row['totalTaxes'], -delta, places=7)
+                    for key in ('netRevenue', 'grossProfit', 'preTax'):
+                        self.assertAlmostEqual(new_row['dre'][key] - old_row['dre'][key], delta, places=7)
+                    self.assertAlmostEqual(new_row['dre']['netProfit'] - old_row['dre']['netProfit'], delta + income_change, places=7)
+                    self.assertAlmostEqual(new_row['totalTaxes'] - old_row['totalTaxes'], -delta - income_change, places=7)
                     self.assertEqual(after_view.value(new, 'difal', index), 0)
         for regime in corrected['monthlyDre']['regimes']:
             row = next(row for row in regime['rows'] if row['key'] == 'difal')

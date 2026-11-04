@@ -115,7 +115,10 @@ test('competências sazonais mantêm receitas e tributos dos regimes escolhidos 
     assert.equal(Object.hasOwn(out.result,'simplesDiagnostic'),false);assert.equal(Object.hasOwn(out.result,'rbt12Schedule'),false);
     assert.deepEqual(out.result.regimes.map(financial),full.result.regimes.filter(row=>selected.includes(row.id)).map(financial));
     assert(out.engineInput.months.every(row=>row.input.rbt12===null));
-    assert(!out.result.warnings.some(row=>row.code==='presumption-increase'));
+    // R$3.3m is below the annual reference, but exceeds Q1's R$1.25m
+    // capacity in scenario 2027. Only a selected Presumido receives the notice.
+    assert.equal(out.result.warnings.some(row=>row.code==='presumption-increase'),selected.includes('presumed'));
+    if(selected.includes('presumed'))assert.equal(out.result.incomeTaxAssessment.regimes.presumed.periods[0].lc224.excessRevenue,2050000);
     assert(!out.result.memory.some(row=>row.id.startsWith('simples.')||row.id==='rbt12'));
     assert.equal(out.result.memory.find(row=>row.id==='revenue.reference').value,3_300_000);
     for(const [index,month] of out.result.monthlyResults.entries())assert.deepEqual(month.result.regimes.map(financial),full.result.monthlyResults[index].result.regimes.filter(row=>selected.includes(row.id)).map(financial));

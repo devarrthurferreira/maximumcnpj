@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {gunzipSync} from 'node:zlib';
 import {buildDreSummary,buildDreEvolution} from '../public/simulator-dre-summary.js';
 import {buildDrePresentation,unifiedDreRows,DRE_PRESENTATION_VERSION,dreDifalNotes,dreReportMemory} from '../public/simulator-dre.js';
 import {calculateSimulation,calculateTax,draftToInput,defaultDifalPolicy} from '../public/simulator-engine.js';
@@ -27,7 +29,11 @@ test('apresentação preserva linhas e resultados, sem mutar entradas ou recalcu
  const input=fixture(),before=structuredClone(input);freeze(input);
  const p=buildDrePresentation(input);assert.equal(p.version,DRE_PRESENTATION_VERSION);assert.equal(p.sections.length,5);
  for(const r of input.result.regimes)for(const [key] of dreRows(input.result)){
-  assert.equal(find(p,key).values[r.id],r.dre[key]);near(find(p,key).monthlyValues[r.id][0],r.dre[key]/12);
+  assert.equal(find(p,key).values[r.id],r.dre[key]);
+  const movement=input.result.incomeTaxAssessment.monthlyAssessments['2027-01'].regimes[r.id]?.movement;
+  const expected=movement&&key==='irpj'?-movement.irpjTotalCents/100:movement&&key==='csll'?-movement.csllCents/100:
+    movement&&key==='netProfit'?r.dre.preTax/12-(movement.irpjTotalCents+movement.csllCents)/100:r.dre[key]/12;
+  near(find(p,key).monthlyValues[r.id][0],expected);
  }
  for(const tax of ['cbs','ibs']){
   assert.deepEqual(p.details.find(group=>group.key===tax+'Credits').rows.map(row=>row.key),['debit','due','balance'].map(field=>tax+'.'+field));
@@ -49,7 +55,10 @@ test('DRE concilia antecipação de ICMS separada do DIFAL em anual, meses, subt
   assert(find(p,'icmsAnticipation').monthlyValues[regime.id].every(value=>value===amount/12));
   near(find(p,'revenueDeductions').values[regime.id],regime.dre.netRevenue-regime.dre.revenue);
   near(find(p,'totalTaxes').values[regime.id],regime.totalTaxes);
-  near(find(p,'totalTaxes').monthlyValues[regime.id][0],regime.totalTaxes/12);
+  const annual=input.result.incomeTaxAssessment.regimes[regime.id]?.movement;
+  const monthly=input.result.incomeTaxAssessment.monthlyAssessments['2027-01'].regimes[regime.id]?.movement;
+  const expected=annual?(regime.totalTaxes-(annual.irpjTotalCents+annual.csllCents)/100)/12+(monthly.irpjTotalCents+monthly.csllCents)/100:regime.totalTaxes/12;
+  near(find(p,'totalTaxes').monthlyValues[regime.id][0],expected);
   assert.equal(buildDreSummary(p,{id:regime.id,mode:'annual'}).reconciled,true);
  }
  assert.deepEqual(input,before);assert.equal(find(buildDrePresentation({result:baseline}),'icmsAnticipation'),undefined);
@@ -218,7 +227,7 @@ test('créditos globais só aparecem nos regimes aplicáveis e nunca aumentam o 
  assert.equal(find(buildDrePresentation(broken),'cbs.due').values.actual,null);
 });
 
-test('IRPJ normal/adicional usa somente memória anual única, válida e conciliada',()=>{
+test('IRPJ normal/adicional usa somente captura trimestral única, válida e conciliada',()=>{
  const input=fixture(),engine={...input.engineInput,salesRevenue:120000,serviceRevenue:60000,rbt12:2160000};
  const result=calculateTax(engine),p=buildDrePresentation({result,engineInput:engine});
  for(const id of ['presumed','actual']){
@@ -227,11 +236,35 @@ test('IRPJ normal/adicional usa somente memória anual única, válida e concili
  }
  assert.equal(find(p,'irpjBasic').values.pure,null);
  for(const mutate of [
-  r=>{r.memory=r.memory.filter(row=>row.id!=='actual.irBasic');},
-  r=>{r.memory.push(structuredClone(r.memory.find(row=>row.id==='actual.irBasic')));},
-  r=>{r.memory.find(row=>row.id==='actual.irBasic').unit='percent';},
-  r=>{r.memory.find(row=>row.id==='actual.irBasic').value+=1;},
+  r=>{delete r.incomeTaxAssessment;},
+  r=>{r.incomeTaxAssessment.regimes.actual.periods.push(structuredClone(r.incomeTaxAssessment.regimes.actual.periods[0]));},
+  r=>{r.incomeTaxAssessment.regimes.actual.periods[0].exactBases.irpjBase.denominator='0';},
+  r=>{r.incomeTaxAssessment.regimes.actual.provision.irpjNormalCents+=1;},
  ]){const broken=structuredClone(result);mutate(broken);const q=buildDrePresentation({result:broken});assert.equal(find(q,'irpjBasic').values.actual,null);assert.equal(find(q,'irpj').values.actual,broken.regimes[3].dre.irpj);}
+});
+
+test('captura V1 conserva parcelas e limites mensais históricos sem receber provisões V2',()=>{
+ const legacy=JSON.parse(gunzipSync(readFileSync(new URL('./fixtures/irpj-monthly-v1.json.gz',import.meta.url))).toString('utf8'));
+ const input=legacy.snapshots['[[87500],[1],[],null]'];
+ const before=structuredClone(input);freeze(input);
+ const p=buildDrePresentation(input);
+ assert.equal(p.irpjReconciliation.version,'IRPJ_RECONCILIATION_V1');assert.equal(p.irpjReconciliation.rows.length,7);
+ for(const id of ['presumed','actual']){
+  const saved=input.result.regimes.find(regime=>regime.id===id),entry=(result,suffix)=>result.memory.find(row=>row.id===`${id}.${suffix}`).value;
+  near(find(p,'irpj').values[id],saved.dre.irpj);
+  near(find(p,'irpjBasic').values[id],-entry(input.result,'irBasic'));
+  near(find(p,'irpjAdditional').values[id],-entry(input.result,'irAdditional'));
+  for(const month of input.result.monthlyResults){
+   near(find(p,'irpjBasic').monthlyValues[id][month.month-1],-entry(month.result,'irBasic'));
+   near(find(p,'irpjAdditional').monthlyValues[id][month.month-1],-entry(month.result,'irAdditional'));
+   assert.equal(find(p,'irpjAdditionalLimit').monthlyValues[id][month.month-1],20000);
+  }
+ }
+ assert.deepEqual(input,before);
+ const broken=structuredClone(input);broken.result.memory.find(row=>row.id==='actual.irBasic').value+=.01;
+ const invalid=buildDrePresentation(broken);
+ assert.equal(find(invalid,'irpjBasic').values.actual,null);
+ assert.equal(find(invalid,'irpj').values.actual,broken.result.regimes.find(regime=>regime.id==='actual').dre.irpj);
 });
 
 test('legado sem DIFAL ou detalhes conserva totais e usa indisponível, sem zeros fabricados',()=>{
@@ -290,7 +323,8 @@ test('avaliação vertical preserva sinais e percentuais já fracionários sem d
  const input=fixture(),p=buildDrePresentation(input);
  assert(find(p,'cards').percentValues.actual<0);
  near(find(p,'cards').percentValues.actual,find(p,'cards').monthlyPercentValues.actual[0]);
- near(find(p,'netMargin').values.actual,find(p,'netMargin').monthlyValues.actual[0]);
+ near(find(p,'netMargin').values.actual,find(p,'netProfit').values.actual/find(p,'revenue').values.actual);
+ near(find(p,'netMargin').monthlyValues.actual[0],find(p,'netProfit').monthlyValues.actual[0]/find(p,'revenue').monthlyValues.actual[0]);
  assert.equal(find(p,'netMargin').percentValues.actual,find(p,'netMargin').values.actual);
 });
 

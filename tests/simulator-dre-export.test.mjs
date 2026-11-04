@@ -5,6 +5,7 @@ import {buildDrePresentation, unifiedDreRows, dreReportCoverage, dreRegimeStatus
 import {renderDrePrintDocument,renderAnnualDre} from '../public/simulator-dre-view.js';
 import {buildMonthlyDre, DRE_ROWS} from '../public/simulator-calendar.js';
 import {drePdfFixture} from './fixtures/dre-pdf.mjs';
+import {irpjRowLabel} from '../public/simulator-irpj-display.js';
 
 // A small independent CSV reader checks quoted separators/newlines and exact cell counts.
 function readCsv(csv) {
@@ -37,9 +38,9 @@ test('CSV conserva a categoria das parcelas clonadas do IRPJ e identifica sua me
   const snapshot=drePdfFixture(),before=structuredClone(snapshot);
   const presentation=buildDrePresentation({...snapshot,calendar:snapshot.monthlyDre});
   const data=readCsv(buildDreCsv({presentation,period:'complete',visibleRegimeIds:['presumed','actual']}));
-  const total=data.find(row=>row[2]==='IRPJ total (normal + adicional)');
-  assert.deepEqual(total.slice(0,5),['DRE','Tributos apurados','IRPJ total (normal + adicional)','line','BRL']);
-  for(const label of ['IRPJ normal (15% da base)','Adicional de IRPJ (10% do excedente)']){
+  const total=data.find(row=>row[2]==='IRPJ do período (provisão/ajuste)');
+  assert.deepEqual(total.slice(0,5),['DRE','Tributos apurados','IRPJ do período (provisão/ajuste)','line','BRL']);
+  for(const label of ['IRPJ normal · movimento do período','Adicional de IRPJ · movimento do período']){
     const part=data.find(row=>row[2]===label);
     assert.deepEqual(part.slice(0,2),['Detalhamento informativo','Composição do IRPJ']);
     assert.equal(part[3],'detail');assert.match(part.at(-2),/não somar novamente/);
@@ -47,8 +48,8 @@ test('CSV conserva a categoria das parcelas clonadas do IRPJ e identifica sua me
   }
   const reconciliation=presentation.irpjReconciliation;
   const annual=data.filter(row=>row[0]==='Memória informativa do IRPJ');
-  assert.equal(annual.length,7);
-  assert.deepEqual(annual.map(row=>row[2]),reconciliation.rows.map(row=>row.label));
+  assert.equal(annual.length,9);
+  assert.deepEqual(annual.map(row=>row[2]),reconciliation.rows.map(row=>irpjRowLabel(row,presentation)));
   for(const [index,row] of annual.entries()){
     assert.equal(row[1],reconciliation.label);assert.match(row.at(-2),/não somar novamente/);
     const expected=reconciliation.rows[index].values;
@@ -56,7 +57,7 @@ test('CSV conserva a categoria das parcelas clonadas do IRPJ e identifica sua me
     assert.equal(row[6],expected.actual.toLocaleString('pt-BR',{useGrouping:false,minimumFractionDigits:2,maximumFractionDigits:2}));
   }
   const monthly=data.filter(row=>row[1]==='Memória informativa do IRPJ');
-  assert.equal(monthly.length,14);
+  assert.equal(monthly.length,18);
   assert.deepEqual([...new Set(monthly.map(row=>row[0]))],['Lucro Presumido','Lucro Real']);
   assert(data.some(row=>row[0]==='Critério do IRPJ'&&row[1]===reconciliation.note));
   assert.deepEqual(snapshot,before);
@@ -69,7 +70,7 @@ test('tela e impressão exibem o mesmo quadro do IRPJ, com parcelas legíveis e 
   for(const html of [renderAnnualDre(options),renderDrePrintDocument({...options,period:'annual'})]){
     assert.equal((html.match(/data-irpj-reconciliation="dre"/g)||[]).length,1);
     assert.match(html,/Memória de cálculo do IRPJ/);assert.match(html,/Base dentro do limite/);
-    assert.match(html,/IRPJ normal \(15% da base\)/);assert.match(html,/Adicional de IRPJ \(10% do excedente\)/);
+    assert.match(html,/IRPJ normal · movimento do período/);assert.match(html,/Adicional de IRPJ · movimento do período/);
     const memoryStart=html.indexOf('data-irpj-reconciliation="dre"');
     assert(!html.slice(memoryStart,html.indexOf('</section>',memoryStart)).includes('class="dre-percent"'));
     assert(html.includes('class="dre-percent"'),'A análise vertical permanece na DRE principal.');

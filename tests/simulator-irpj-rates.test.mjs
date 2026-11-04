@@ -12,30 +12,41 @@ function zero(){
 test('IRPJ normal stays at 15% and additional stays at 10%',()=>{
   assert.equal(IRPJ_RATE,.15);assert.equal(IRPJ_ADDITIONAL_RATE,.10);
 });
-test('presumed monthly base 28000 produces additional 800, not 1200',()=>{
+test('presumed base of 28000 per month closes 2400 of additional tax in each quarter',()=>{
   const input=zero();input.serviceRevenue=87500;
   const result=calculateTax(input);
-  close(memory(result,'presumed.irTotalBase')/12,28000);
-  close(memory(result,'presumed.irBasic')/12,4200);
-  close(memory(result,'presumed.irAdditional')/12,800);
-  close(memory(result,'presumed.irTotal')/12,5000);
+  const months=[1,2,3].map(month=>result.incomeTaxAssessment.monthlyAssessments[`2027-0${month}`].regimes.presumed);
+  assert.deepEqual(months.map(row=>row.bases.irpjBase),[28000,56000,84000]);
+  assert.deepEqual(months.map(row=>row.movement.irpjNormalCents),[420000,420000,420000]);
+  assert.deepEqual(months.map(row=>row.movement.irpjAdditionalCents),[0,0,240000]);
+  assert.equal(months[2].provision.irpjTotalCents,1500000);
+  close(memory(result,'presumed.irAdditional'),9600);close(memory(result,'presumed.irTotal'),60000);
 });
-test('actual monthly estimated base 28000 produces additional 800',()=>{
+test('actual estimated base of 28000 per month uses captured quarterly additional movements',()=>{
   const input=zero();input.salesRevenue=28000;
   for(const rate of ['cbs','ibs','icms','iss','payroll'])input.rates[rate]=0;
   const result=calculateTax(input);
-  close(memory(result,'actual.base')/12,28000);
-  close(memory(result,'actual.irBasic')/12,4200);
-  close(memory(result,'actual.irAdditional')/12,800);
+  const months=[1,2,3].map(month=>result.incomeTaxAssessment.monthlyAssessments[`2027-0${month}`].regimes.actual);
+  assert.deepEqual(months.map(row=>row.bases.irpjBase),[28000,56000,84000]);
+  assert.deepEqual(months.map(row=>row.movement.irpjAdditionalCents),[0,0,240000]);
+  assert.equal(months[2].provision.irpjNormalCents,1260000);assert.equal(months[2].provision.irpjAdditionalCents,240000);
+  close(memory(result,'actual.irAdditional'),9600);
 });
-test('additional is zero at the monthly equivalent threshold',()=>{
+test('additional remains zero when three monthly bases total exactly 60000',()=>{
   const input=zero();input.serviceRevenue=62500;
-  close(memory(calculateTax(input),'presumed.irAdditional'),0);
+  const result=calculateTax(input);
+  close(memory(result,'presumed.irAdditional'),0);
+  assert(result.incomeTaxAssessment.regimes.presumed.periods.every(period=>period.bases.irpjBase===60000&&period.provision.irpjAdditionalCents===0));
+  assert(Object.values(result.incomeTaxAssessment.monthlyAssessments).every(month=>month.regimes.presumed.movement.irpjAdditionalCents===0));
 });
-test('1263 can be correct at 10% when the monthly base is 32630',()=>{
+test('quarterly additional tax keeps a projected average distinct from the recognised monthly movements',()=>{
   const input=zero();input.serviceRevenue=101968.75;
   const result=calculateTax(input);
-  close(memory(result,'presumed.irTotalBase')/12,32630);
+  const months=[1,2,3].map(month=>result.incomeTaxAssessment.monthlyAssessments[`2027-0${month}`].regimes.presumed);
+  assert.deepEqual(months.map(row=>row.bases.irpjBase),[32630,65260,97890]);
+  assert.deepEqual(months.map(row=>row.movement.irpjAdditionalCents),[0,52600,326300]);
+  assert.equal(months[2].provision.irpjAdditionalCents,378900);
+  // R$1,263 is the annual projection's monthly average, not a captured month.
   close(memory(result,'presumed.irAdditional')/12,1263);
 });
 
@@ -63,13 +74,15 @@ test('public DRE exposes reconciled components without changing monthly or saved
   }
 });
 
-test('CSV includes the two IRPJ components with explicit rates and no duplicate rows',()=>{
+test('CSV distinguishes monthly movements from the accumulated IRPJ components and their rates',()=>{
   const snapshot=drePdfFixture();
   const presentation=buildDrePresentation({...snapshot,calendar:snapshot.monthlyDre});
   const csv=buildDreCsv({presentation,period:'complete',visibleRegimeIds:['presumed','actual'],showPercent:false});
-  assert.match(csv,/IRPJ total \(normal \+ adicional\)/);
-  assert.match(csv,/IRPJ normal \(15% da base\)/);
-  assert.match(csv,/Adicional de IRPJ \(10% do excedente\)/);
+  assert.match(csv,/IRPJ do período \(provisão\/ajuste\)/);
+  assert.match(csv,/IRPJ normal · movimento do período/);
+  assert.match(csv,/Adicional de IRPJ · movimento do período/);
+  assert.match(csv,/IRPJ normal · 15% por trimestre/);
+  assert.match(csv,/Adicional de IRPJ · 10% por trimestre/);
   const rows=unifiedDreRows(presentation);
   for(const key of ['irpj','irpjBasic','irpjAdditional'])assert.equal(rows.filter(row=>row.key===key).length,1);
 });

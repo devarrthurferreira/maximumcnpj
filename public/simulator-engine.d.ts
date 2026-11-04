@@ -75,6 +75,7 @@ export type SimulationResult = {
   rbt12Source?: 'NOT_PROVIDED';
   /** Omitted only in snapshots created before regime selection. */
   regimeSelection?: RegimeSelection;
+  incomeTaxAssessment?:import('./simulator-income-tax.js').IncomeTaxAssessmentContainer;
 };
 export function draftToInput(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null, revenueContext?: SimplesRevenueContext|null,icmsOperations?:import('./simulator-icms.js').IcmsOperations|null): Record<string, unknown> | null;
 export function calculateSimulation(draft: SimulationDraft, difalProjection?: import('./simulator-projection.js').DifalProjection | null, anticipationProjection?: IcmsAnticipationProjection | null, revenueContext?: SimplesRevenueContext|null,icmsOperations?:import('./simulator-icms.js').IcmsOperations|null): SimulationResult;

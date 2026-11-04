@@ -1,3 +1,4 @@
+import {assessQuarterlyIncomeTaxes,incomeTaxPreTaxExact,INCOME_TAX_MODEL_VERSION} from './simulator-income-tax.js';
 import {parseIcmsOperations,projectIcmsOperations} from './simulator-icms.js';
 import {REGIME_IDS,REGIME_LABELS,parseRegimeSelection,resolveRegimeSelection,requiresSimplesReference,regimeMemoryApplies,regimeWarningApplies} from './regime-selection.js';
 
@@ -22,7 +23,7 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
-export const MODEL_VERSION = '1.19.0-entry-without-rbt12-sublimit';
+export const MODEL_VERSION = INCOME_TAX_MODEL_VERSION;
 export const OUTGOING_DIFAL_MESSAGE = 'Não possui DIFAL de saída. Cálculo de saída desativado nesta análise.';
 export const SIMPLES_DIAGNOSTIC_VERSION = 'SIMPLES_DIAGNOSTIC_V1';
 export const REVENUE_CONTEXT_VERSION = 'SIMPLES_REVENUE_CONTEXT_V1';
@@ -627,7 +628,7 @@ export function calculateTax(rawInput) {
     const cmv = annual.cmvSimple + annual.cmvRegular;
     const operational = revenue - cmv - annual.salaries - annual.benefits - annual.administrative - annual.rent - annual.cards;
     add('year', 'Premissas', 'Ano do cenário', hasSimples?'Partilhas do Simples válidas para 2027 e 2028.':'Ano das premissas do cenário gerencial.', input.year, 'number');
-    add('months', 'Premissas', 'Horizonte da projeção', 'Um mês informado repetido em 12 meses; valores anuais não são uma apuração trimestral.', MONTHS, 'number');
+    add('months', 'Premissas', 'Horizonte da projeção', 'Um mês informado repetido em 12 meses, com quatro estimativas trimestrais de IRPJ/CSLL; não substitui os valores efetivos por competência.', MONTHS, 'number');
     add('rbt12', 'Premissas', 'RBT12', missingRbt12?'Referência opcional não informada; não equivale a zero nem à receita mensal multiplicada por doze.':'Receita total efetiva dos últimos 12 meses informada pelo usuário; separada da projeção.', missingRbt12?'Não informada':input.rbt12,missingRbt12?'text':'currency');
     add('sublimit', 'Premissas', 'Sublimite de referência', 'Referência preventiva para ICMS/ISS fora do DAS.', SUBLIMIT);
     add('simplesLimit', 'Premissas', 'Limite do Simples', 'Limite de referência do modelo.', SIMPLES_LIMIT);
@@ -875,38 +876,33 @@ export function calculateTax(rawInput) {
             ipiIncluded
         ]
     ])add(`simples.${id}`, 'Simples Nacional', label, formula, value);
-    // In the monthly adapter, distribute the model's excess exactly once across
-    // positive months. The signed period total determines the excess; negative
-    // months neither generate refunds nor inflate the shares of positive months.
-    const positiveRevenueReference=input.revenueContext?
-      (input.revenueContext.positiveRevenueCents??positive(input.revenueContext.revenueCents))/100:taxableRevenue;
-    const excessRevenue = input.revenueContext
-      ? (positiveRevenueReference>0?positive(revenueReference-PRESUMPTION_LIMIT)*taxableRevenue/positiveRevenueReference:0)
-      : positive(revenue - PRESUMPTION_LIMIT);
-    const irBase = taxableSales * input.rates.irSales + annual.services * input.rates.irServices;
-    const csBase = taxableSales * input.rates.csSales + annual.services * input.rates.csServices;
-    const taxableActivities = taxableSales + annual.services;
-    const irCoefficient = taxableActivities > 0 ? irBase / taxableActivities : 0;
-    const csCoefficient = taxableActivities > 0 ? csBase / taxableActivities : 0;
-    const irIncrease = excessRevenue * irCoefficient * PRESUMPTION_INCREASE;
-    const csIncrease = excessRevenue * csCoefficient * PRESUMPTION_INCREASE;
-    const irTotalBase = irBase + irIncrease;
-    const csTotalBase = csBase + csIncrease;
-    const presumedBasicIr = irTotalBase * IRPJ_RATE;
-    const presumedAdditionalIr = positive(irTotalBase - IRPJ_ADDITIONAL_BASE) * IRPJ_ADDITIONAL_RATE;
-    const presumedIr = presumedBasicIr + presumedAdditionalIr;
-    const presumedCs = csTotalBase * CSLL_RATE;
-    const actualPreTax = operational - credits.cbs.due - credits.ibs.due - credits.icms.due - iss - regularPayroll;
-    const actualBase = positive(actualPreTax);
-    const actualBasicIr = actualBase * IRPJ_RATE;
-    const actualAdditionalIr = positive(actualBase - IRPJ_ADDITIONAL_BASE) * IRPJ_ADDITIONAL_RATE;
-    const actualIr = actualBasicIr + actualAdditionalIr;
-    const actualCs = actualBase * CSLL_RATE;
+    // Follow the captured DRE's grouping for the displayed float. The separate
+    // rational below supplies the exact decimal base, including half-cent ties.
+    const regularGrossProfit=(revenue-credits.cbs.debit-credits.ibs.debit-credits.icms.due-iss)-cmv+credits.cbs.used+credits.ibs.used;
+    const actualPreTax=regularGrossProfit+(-annual.salaries-annual.benefits-regularPayroll)-annual.administrative-annual.rent-annual.cards;
+    const preTaxExact=incomeTaxPreTaxExact(input,icmsProjection?.dueCents??null);
+    const incomeTaxes=assessQuarterlyIncomeTaxes({year:input.year,rates:input.rates,basis:'UNIFORM_PROJECTION',
+      regimeIds:regimeSelection.selected.filter(id=>['presumed','actual'].includes(id)),
+      months:Array.from({length:12},(_,index)=>({sourceMonth:`${input.year}-${String(index+1).padStart(2,'0')}`,month:index+1,
+        salesRevenue:input.salesRevenue,serviceRevenue:input.serviceRevenue,
+        preTax:icmsProjection&&!icmsProjection.available?null:actualPreTax/12,
+        ...(icmsProjection&&!icmsProjection.available?{}:{preTaxExact}),actualAvailable:!icmsProjection||icmsProjection.available}))});
+    const incomeTaxAssessment={...incomeTaxes.incomeTaxAssessment,monthlyAssessments:incomeTaxes.monthlyAssessments};
+    const presumedAssessment=incomeTaxAssessment.regimes.presumed,actualAssessment=incomeTaxAssessment.regimes.actual;
+    const irBase=presumedAssessment?.bases?.irpjBaseWithoutIncrease??0,csBase=presumedAssessment?.bases?.csllBaseWithoutIncrease??0;
+    const irIncrease=presumedAssessment?.bases?.irpjIncrease??0,csIncrease=presumedAssessment?.bases?.csllIncrease??0;
+    const irTotalBase=presumedAssessment?.bases?.irpjBase??0,csTotalBase=presumedAssessment?.bases?.csllBase??0;
+    const excessRevenue=presumedAssessment?.periods.reduce((sum,period)=>sum+(period.lc224?.excessRevenue??0),0)??0;
+    const taxableActivities=positive(revenue),irCoefficient=taxableActivities>0?irBase/taxableActivities:0,csCoefficient=taxableActivities>0?csBase/taxableActivities:0;
+    const presumedBasicIr=(presumedAssessment?.provision?.irpjNormalCents??0)/100,presumedAdditionalIr=(presumedAssessment?.provision?.irpjAdditionalCents??0)/100;
+    const presumedIr=(presumedAssessment?.provision?.irpjTotalCents??0)/100,presumedCs=(presumedAssessment?.provision?.csllCents??0)/100;
+    const actualBase=actualAssessment?.bases?.irpjBase??0,actualBasicIr=(actualAssessment?.provision?.irpjNormalCents??0)/100;
+    const actualAdditionalIr=(actualAssessment?.provision?.irpjAdditionalCents??0)/100,actualIr=(actualAssessment?.provision?.irpjTotalCents??0)/100,actualCs=(actualAssessment?.provision?.csllCents??0)/100;
     for (const [id, label, formula, value] of [
         [
             'excessRevenue',
-            'Receita excedente a R$ 5 milhões',
-            input.revenueContext?'Excedente da receita líquida do período a R$ 5.000.000, rateado pela proporção da receita positiva da competência na soma das receitas positivas. Contribuição anualizada para conversão mensal; não representa apuração trimestral.':'Máximo(0; receita anual − R$ 5.000.000)',
+            'Receita excedente aos limites da LC 224/2025',
+            'Soma dos excedentes trimestrais após o limite de R$ 1.250.000, saldo anterior conhecido e ajuste anual da LC 224/2025; ano do cenário.',
             excessRevenue
         ],
         [
@@ -918,7 +914,7 @@ export function calculateTax(rawInput) {
         [
             'irIncrease',
             'Acréscimo da base IRPJ',
-            'Excedente a R$ 5 milhões × coeficiente médio ponderado IRPJ × 10%',
+            'Soma dos acréscimos trimestrais: excedente da LC 224/2025 × coeficiente ponderado das atividades do trimestre × 10%.',
             irIncrease
         ],
         [
@@ -930,13 +926,13 @@ export function calculateTax(rawInput) {
         [
             'irBasic',
             'IRPJ básico presumido',
-            'Base presumida total × 15%',
+            'Soma do IRPJ normal de cada trimestre: base trimestral × 15%, arredondado a centavos (half-up).',
             presumedBasicIr
         ],
         [
             'irAdditional',
             'Adicional IRPJ presumido',
-            'Máximo(0; base presumida total − R$ 240.000) × 10%',
+            'Soma do adicional de cada trimestre: máximo(0; base trimestral − R$ 60.000) × 10%, arredondado a centavos (half-up).',
             presumedAdditionalIr
         ],
         [
@@ -954,7 +950,7 @@ export function calculateTax(rawInput) {
         [
             'csIncrease',
             'Acréscimo da base CSLL',
-            'Excedente a R$ 5 milhões × coeficiente médio ponderado CSLL × 10%',
+            'Soma dos acréscimos trimestrais: excedente da LC 224/2025 × coeficiente ponderado das atividades do trimestre × 10%.',
             csIncrease
         ],
         [
@@ -966,12 +962,12 @@ export function calculateTax(rawInput) {
         [
             'csTotal',
             'CSLL presumida',
-            'Base presumida total CSLL × 9%',
+            'Soma da CSLL de cada trimestre: base trimestral × 9%, arredondada a centavos (half-up).',
             presumedCs
         ]
     ])add(`presumed.${id}`, 'Lucro Presumido', label, formula, value);
-    add('presumed.irCoefficient', 'Lucro Presumido', 'Coeficiente médio IRPJ', 'Base IRPJ sem acréscimo ÷ soma das bases não negativas de vendas e serviços; zero se não houver base.', irCoefficient, 'percent');
-    add('presumed.csCoefficient', 'Lucro Presumido', 'Coeficiente médio CSLL', 'Base CSLL sem acréscimo ÷ soma das bases não negativas de vendas e serviços; zero se não houver base.', csCoefficient, 'percent');
+    add('presumed.irCoefficient', 'Lucro Presumido', 'Coeficiente médio IRPJ', 'Base IRPJ sem acréscimo ÷ receita líquida; projeção uniforme, zero se não houver receita positiva.', irCoefficient, 'percent');
+    add('presumed.csCoefficient', 'Lucro Presumido', 'Coeficiente médio CSLL', 'Base CSLL sem acréscimo ÷ receita líquida; projeção uniforme, zero se não houver receita positiva.', csCoefficient, 'percent');
     for (const [id, label, formula, value] of [
         [
             'preTax',
@@ -982,19 +978,19 @@ export function calculateTax(rawInput) {
         [
             'base',
             'Base positiva estimada',
-            'Máximo(0; resultado antes de IRPJ/CSLL); sem ajustes fiscais ou compensações.',
+            'Soma das bases positivas trimestrais; cada trimestre acumula o resultado com sinal antes do mínimo zero. Estimativa gerencial sem ajustes fiscais ou compensações.',
             actualBase
         ],
         [
             'irBasic',
             'IRPJ básico do Real',
-            'Base positiva × 15%',
+            'Soma do IRPJ normal trimestral: base positiva do trimestre × 15%, arredondada a centavos (half-up).',
             actualBasicIr
         ],
         [
             'irAdditional',
             'Adicional IRPJ do Real',
-            'Máximo(0; base positiva − R$ 240.000) × 10%',
+            'Soma do adicional de cada trimestre: máximo(0; base trimestral − R$ 60.000) × 10%, arredondado a centavos (half-up).',
             actualAdditionalIr
         ],
         [
@@ -1006,7 +1002,7 @@ export function calculateTax(rawInput) {
         [
             'csTotal',
             'CSLL do Real',
-            'Base positiva × 9%',
+            'Soma da CSLL trimestral: base positiva do trimestre × 9%, arredondada a centavos (half-up).',
             actualCs
         ]
     ])add(`actual.${id}`, 'Lucro Real', label, formula, value);
@@ -1017,8 +1013,9 @@ export function calculateTax(rawInput) {
         const isPure = id === 'pure';
         const outside = !isSimple || input.icmsOutside;
         const icmsPending=outside&&icmsProjection&&!icmsProjection.available;
-        const available = (!isSimple || simpleAvailable)&&!icmsPending;
-        const status=isSimple?simpleStatus:icmsPending?icmsProjection.status:revenue===0?'Calculado com receita zero':revenue<0?'Calculado com receita negativa; confira os alertas':id==='presumed'?'Simulação sujeita ao enquadramento':'Disponível';
+        const incomeTaxPending=!isSimple&&!input.revenueContext&&!incomeTaxAssessment.regimes[id]?.available;
+        const available = (!isSimple || simpleAvailable)&&!icmsPending&&!incomeTaxPending;
+        const status=isSimple?simpleStatus:icmsPending?icmsProjection.status:incomeTaxPending?incomeTaxAssessment.regimes[id]?.reason:revenue===0?'Calculado com receita zero':revenue<0?'Calculado com receita negativa; confira os alertas':id==='presumed'?'Simulação sujeita ao enquadramento':'Disponível';
         const application=difalApplications[id];
         const dre = {
             services: annual.services,
@@ -1128,7 +1125,7 @@ export function calculateTax(rawInput) {
     if(icmsProjection?.grossSalesFloorApplied)warn('icms-sales-base-floor','warning','Base de ICMS limitada a zero','O ajuste manual deixou a base bruta reconstruída de ICMS abaixo de zero. O débito usa base zero, com receita e ajuste integralmente preservados na DRE. Créditos dos documentos permanecem separados, sem restituição automática. A análise continua disponível para conferência.');
     if(icmsProjection?.purchaseAdjustmentCents)warn('icms-purchase-adjustment','info','Crédito de ICMS vinculado aos documentos','O ajuste manual de compras modifica o custo, mas não cria ou exclui crédito fiscal das operações importadas. Para alterar naturezas, UFs ou crédito de origem, revise e reimporte os documentos.');
     if(icmsProjection&&!icmsProjection.available)warn('icms-operations-pending','warning','Apuração de ICMS exige conferência',icmsProjection.status+' Regimes com ICMS fora do DAS ficam pendentes; o Simples com ICMS no DAS mantém seu cálculo.');
-    if(!input.revenueContext)warn('projection', 'info', 'Projeção gerencial de 12 meses', 'Um mês é repetido 12 vezes. Compras/CMV são uma simplificação de custo; não há controle de estoque, ajustes fiscais do Lucro Real, compensação de prejuízos nem apuração trimestral. O maior resultado é apenas o maior deste cenário, sujeito a enquadramento e premissas.');
+    if(!input.revenueContext)warn('projection', 'info', 'Projeção gerencial de 12 meses', 'Um mês é repetido 12 vezes, com quatro estimativas trimestrais de IRPJ/CSLL e movimentos mensais de provisão. Compras/CMV simplificam o custo; não há controle de estoque, ajustes fiscais do Lucro Real ou compensação de prejuízos entre trimestres. A comparação permanece sujeita a enquadramento e premissas.');
     warn('credits-eligibility', 'info', 'Bases e percentuais creditáveis', 'Bases de CBS/IBS são informadas separadamente do CMV. Fornecedor Simples com tributos no DAS não transfere automaticamente a taxa regular integral. Créditos excedentes ficam separados e não aumentam o lucro.');
     warn('presumed-eligibility', 'info', 'Lucro Presumido sujeito ao enquadramento', 'A opção exige verificar a receita bruta total do ano-calendário anterior, limitada a R$ 78 milhões ou ao limite proporcional quando aplicável, além das situações que obrigam o Lucro Real (Lei 9.718/1998, arts. 13 e 14). A receita do ano anterior não é coletada; RBT12 e projeção não a substituem. A apresentação dos cálculos não confirma elegibilidade.');
     if (input.rbt12 > PRESUMED_ELIGIBILITY_REFERENCE || revenueReference > PRESUMED_ELIGIBILITY_REFERENCE) {
@@ -1145,9 +1142,9 @@ export function calculateTax(rawInput) {
     if (input.salesAnnex === 2 && input.salesRevenue > 0) warn('industry-ipi', 'warning', 'Indústria: revise o IPI antes de comparar', 'O IPI do Anexo II permanece no DAS do Puro e do Híbrido. Este modelo não inclui IPI fora do DAS nos regimes de Lucro Presumido e Real. A comparação industrial está incompleta sem essa avaliação.');
     if (input.serviceRevenue > 0) warn('service-annex', 'info', 'Anexo de serviços informado', 'A classificação III/IV/V depende da atividade e, quando aplicável, do fator R. O sistema usa a seleção informada e não determina CNAE ou enquadramento automaticamente.');
     if (input.serviceAnnex === 4 && input.serviceRevenue > 0 && input.extraPayroll === 0) warn('annex-iv-payroll', 'warning', 'Anexo IV com encargos fora do DAS zerados', 'O Anexo IV exige revisar a CPP fora do DAS. Informe os encargos efetivos, considerando eventual atividade mista; o modelo mantém o zero que foi explicitamente informado.');
-    if (excessRevenue > 0) warn('presumption-increase', 'warning', 'Acréscimo dos coeficientes de presunção', input.revenueContext?'O excedente do período a R$ 5 milhões é rateado proporcionalmente entre as competências, com acréscimo relativo de 10% nos coeficientes. Essa alocação gerencial anual não substitui a apuração e os limites proporcionais de cada trimestre.':'A parcela projetada acima de R$ 5 milhões recebe acréscimo relativo de 10% nos coeficientes, ponderado pela receita das atividades. A projeção pressupõe composição uniforme e não substitui a verificação por período.');
+    if (excessRevenue > 0) warn('presumption-increase', 'warning', 'Acréscimo dos coeficientes de presunção', 'A LC 224/2025 é aplicada por trimestre no ano do cenário: limite de R$ 1.250.000 com saldo anterior conhecido e ajuste anual de encerramento. O acréscimo relativo de 10% usa a composição das atividades do trimestre.');
     if (revenue === 0) warn('zero-revenue', 'info', 'Receita zero aceita', 'A DRE continua calculando custos e despesas. Margem, carga sobre receita e ranking não são apresentados, pois não há receita para comparação.');
-    if (annual.sales < 0) warn('negative-sales', 'warning', 'Devoluções ou ajustes superiores às vendas', 'O saldo de vendas de mercadorias após devoluções e ajustes está negativo. O valor foi preservado na DRE e a análise pode continuar. Bases de tributos sobre vendas usam mínimo zero; o excesso não cria imposto negativo, restituição ou compensação automática entre competências.');
+    if (annual.sales < 0) warn('negative-sales', 'warning', 'Devoluções ou ajustes superiores às vendas', 'O saldo de vendas de mercadorias após devoluções e ajustes está negativo e foi preservado na DRE. Tributos sobre faturamento usam suas bases não negativas. IRPJ/CSLL acumulam os valores com sinal dentro do trimestre e podem reverter provisões; isso não confirma restituição fiscal ou compensação entre trimestres.');
     if (revenue < 0) warn('negative-revenue', 'warning', 'Receita negativa aceita', 'A receita após devoluções e ajustes ficou negativa e foi preservada integralmente. A DRE continua calculando compras, custos e despesas. Margem, carga sobre receita e ranking ficam sem percentual ou classificação quando a receita não é positiva.');
     if (cmv > 0 && cmv > revenue) warn('purchases-above-revenue', 'warning', 'Compras superiores à receita', 'As compras/CMV superam a receita após devoluções e ajustes. Os valores permanecem na DRE e não impedem concluir a análise. Confira formação de estoque, período dos documentos e a classificação das operações.');
     const operatingCosts = cmv + annual.salaries + annual.benefits + annual.administrative + annual.rent + annual.cards;
@@ -1173,8 +1170,12 @@ export function calculateTax(rawInput) {
         if(item.unit==='currency'&&(item.id.startsWith('icms.')||item.id.startsWith('actual.')||pending.has(id)))Object.assign(item,{unit:'text',value:'Conferência necessária',availability:'UNAVAILABLE',formula:icmsProjection.status});
       }
     }
+    for(const id of ['presumed','actual'])if(!input.revenueContext&&incomeTaxAssessment.regimes[id]?.available===false){
+      for(const item of memory)if(item.id.startsWith(`${id}.`)||item.id.startsWith(`dre.${id}.`)||item.id.startsWith(`summary.${id}.`))Object.assign(item,{unit:'text',value:'Conferência necessária',availability:'UNAVAILABLE',formula:incomeTaxAssessment.regimes[id].reason});
+    }
     return {
         version: MODEL_VERSION,
+        incomeTaxAssessment,
         outgoingDifalDisabled: true,
         regimeSelection,
         ...(missingRbt12?{rbt12Source:'NOT_PROVIDED'}:{}),

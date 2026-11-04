@@ -36,7 +36,8 @@ for (const role of ['admin','operator']) test(`Histórico ${role} retoma lote au
   await page.goto('/simulations.html?search=936&year=2027');
   const panel=page.locator('#history-reprocess');
   await expect(panel.getByRole('heading',{name:'Atualização encerrada com pendências'})).toBeVisible();
-  await expect(panel).toContainText('Esta revisão adota CBS de 11,3% como premissa.');
+  await expect(panel).toContainText('apuração trimestral de IRPJ/CSLL das provisões mensais');
+  await expect(panel).toContainText('CBS/IBS de 11,40% continua sendo uma premissa do cenário');
   await expect(panel).toContainText('Os originais conservam os valores e as alíquotas capturados.');
   expect(methods).toEqual(['GET','POST','POST']);expect(bodies).toEqual([{},{}]);
   await expect(panel.locator('[data-reprocess-count="ok"] dd')).toHaveText('2');
@@ -103,7 +104,7 @@ test('Pendência antiga de serviços em lote encerrado é atualizada automaticam
   try {
     await expect.poll(()=>posts).toBe(1);
     await expect(panel.locator('[data-reprocess-count="pending"] dd')).toHaveText('1');
-    await expect(panel.locator('.history-reprocess-status')).toContainText('naturezas e créditos de ICMS');
+    await expect(panel.locator('.history-reprocess-status')).toContainText('IRPJ e CSLL por trimestre');
     await expect(page.locator('#simulations-app details[open]')).toHaveCount(0);
     expect(methods).toEqual(['GET','POST']);expect(bodies).toEqual([{}]);
   } finally {release();}

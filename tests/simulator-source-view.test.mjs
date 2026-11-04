@@ -9,6 +9,19 @@ import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
 import {section22Year2025} from './fixtures/section22.ts';
 import {renderFinancialAlerts} from '../public/financial-alerts-view.js';
 
+test('conferência distingue devoluções de compras não abatidas de devoluções de venda já consideradas',()=>{
+  const audit={grossSalesCents:100000,serviceSalesCents:0,salesReturnsCents:7000,purchaseGoodsCents:40000,purchaseServicesCents:0,
+    excludedSalesCents:4900,excludedPurchaseCents:7000,natures:[
+      {side:'SALES',natureCode:'6202',operation:'DEVOLUCAO_COMPRA',lines:1,sourceCents:4900,salesCents:0,purchasesCents:0,salesReturnsCents:0,excludedCents:4900},
+      {side:'PURCHASES',natureCode:'1202',operation:'DEVOLUCAO_VENDA',lines:1,sourceCents:7000,salesCents:0,purchasesCents:0,salesReturnsCents:7000,excludedCents:0}
+    ]};
+  const before=structuredClone(audit),html=renderOperationAudit(audit);
+  assert.match(html,/data-purchase-returns-review>Devoluções de compras: R\$\s49,00/);
+  assert.match(html,/ainda não abatem as compras utilizadas como custo/);
+  assert.deepEqual(audit,before);
+  assert.doesNotMatch(renderOperationAudit({...audit,natures:audit.natures.slice(1)}),/data-purchase-returns-review/);
+});
+
 test('alertas financeiros dos documentos ficam visíveis sem confirmação ou trava',()=>{
   const source={warnings:['Uma premissa geral','Conferência financeira · 2025-01: Devoluções superam vendas <sintéticas>.']},before=structuredClone(source);
   const html=renderFinancialAlerts({source});
