@@ -122,7 +122,7 @@ function periodProof(period,id,context){
     }
   }
   if(id==='actual'){
-    const positiveBase=signedPreTax.numerator<0n?{numerator:0n,denominator:1n}:signedPreTax;
+    const positiveBase=context.realAnnualLossZero||signedPreTax.numerator<0n?{numerator:0n,denominator:1n}:signedPreTax;
     if(!equalRational(signedPreTax,rational(period.exactBases.preTax))||
        !equalRational(positiveBase,rational(period.exactBases.irpjBase))||
        !equalRational(positiveBase,rational(period.exactBases.csllBase))||
@@ -202,7 +202,18 @@ export function reconcileQuarterlyIrpj(result,id,{sourceMonth:selected=null,expe
   if(['pure','hybrid'].includes(id))return regime.dre?.irpj===0?
     unavailable('IRPJ incluído no DAS; sem parcela externa neste regime.','INCLUDED_IN_DAS'):unavailable(INVALID);
   if(!['presumed','actual'].includes(id))return unavailable();
-  const context={year,basis,months,rates,financial:(key,regimeId)=>{
+  const realAnnualLossZero=root.realAnnualLossZero==='JAN_SEP_MANAGERIAL_V1';
+  if(root.realAnnualLossZero!==undefined&&!realAnnualLossZero)return unavailable(INVALID);
+  if(realAnnualLossZero){
+    if(basis!=='ACTUAL_REPORT_MONTHS'||result.analysisPeriod?.version!=='JAN_SEP_V1')return unavailable(INVALID);
+    const signed=entries.map(entry=>unique(entry.result?.regimes,'id','actual')?.dre?.preTax);
+    if(!signed.every(finite)||signed.reduce((total,value)=>total+value,0)>1e-7)return unavailable(INVALID);
+  }
+  for(const entry of entries){
+    const monthly=entry.assessment??entry.result?.incomeTaxAssessment;
+    if((monthly?.realAnnualLossZero??null)!==(root.realAnnualLossZero??null))return unavailable(PERIOD);
+  }
+  const context={year,basis,months,rates,realAnnualLossZero,financial:(key,regimeId)=>{
     const saved=entryByMonth.get(key)?.result?.regimes;
     if(basis==='ACTUAL_REPORT_MONTHS'){
       const regime=unique(saved,'id',regimeId);return regime?.available===true?regime.dre??null:null;
