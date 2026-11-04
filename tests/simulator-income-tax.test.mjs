@@ -65,6 +65,23 @@ test('comparativo Jan–Set negativo zera IRPJ e CSLL no Lucro Real, preservando
   assert(positive.incomeTaxAssessment.regimes.actual.provision.irpjTotalCents>0);
 });
 
+test('regressão gerencial: resultado pré-IRPJ -29.522,86 não permite tributo positivo',()=>{
+  const components=[12000,8000,-18000,-30522.86,0,0,0,0,0];
+  const rows=components.map((value,index)=>month(index+1,100000,0,value));
+  const assessment=assessQuarterlyIncomeTaxes({year:2027,months:rows,annualLossZeroForReal:true});
+  const actual=assessment.incomeTaxAssessment.regimes.actual;
+  assert.equal(actual.available,true);
+  assert.equal(Math.round(actual.bases.preTax*100),-2952286);
+  assert.equal(actual.provision.irpjNormalCents,0);
+  assert.equal(actual.provision.irpjAdditionalCents,0);
+  assert.equal(actual.provision.irpjTotalCents,0);
+  assert.equal(actual.provision.csllCents,0);
+  for(const item of Object.values(assessment.monthlyAssessments)){
+    assert.equal(item.regimes.actual.movement.irpjTotalCents,0);
+    assert.equal(item.regimes.actual.movement.csllCents,0);
+  }
+});
+
 test('missing quarter months preserve a provision but never a confirmed closing or a smaller limit',()=>{
   const out=assess([month(1,1000000),month(3,100000)]),a=taxes(out);
   assert.equal(a.available,true);assert.equal(a.status,'PROVISIONAL');assert.equal(a.closure.available,false);assert.equal(a.closure.taxes,null);

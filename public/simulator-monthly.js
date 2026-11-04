@@ -46,6 +46,15 @@ function applyIncomeTaxAssessment(result,container,monthly){
     const available=regime.available&&assessment.available;
     const reason=!assessment.available?assessment.reason:!regime.available?regime.status:'';
     const b=assessment.bases,t=assessment.movement;
+    // Guard the annual managerial result: a negative/zero Lucro Real before tax
+    // must not carry a positive IRPJ/CSLL in the refreshed Jan–Set DRE.
+    if(available && !monthly && id==='actual' && result.analysisPeriod?.version==='JAN_SEP_V1' &&
+       Number.isFinite(regime.dre.preTax) && regime.dre.preTax<=0){
+      check(container.realAnnualLossZero==='JAN_SEP_MANAGERIAL_V1' &&
+        t.irpjNormalCents===0 && t.irpjAdditionalCents===0 &&
+        t.irpjTotalCents===0 && t.csllCents===0,
+        'DRE do Lucro Real negativo não concilia: IRPJ e CSLL devem ser zero neste cenário gerencial.');
+    }
     if(available){
       regime.dre.irpj=t.irpjTotalCents===0?0:-t.irpjTotalCents/100;regime.dre.csll=t.csllCents===0?0:-t.csllCents/100;
       regime.dre.netProfit=regime.dre.preTax+regime.dre.irpj+regime.dre.csll;

@@ -78,6 +78,31 @@ test('cartões da DRE mantêm prejuízo e valores sem destacar regime quando a r
  }
 });
 
+test('prejuízo consolidado do Lucro Real zera IRPJ/CSLL na DRE, impostos e exportação sem perder os campos',()=>{
+  const input=fixture({rent:45000}),before=structuredClone(input),actual=input.result.regimes.find(item=>item.id==='actual');
+  assert.equal(actual.available,true);assert(actual.dre.preTax<0,'A fixture deve apresentar prejuízo antes dos tributos.');
+  assert.equal(actual.dre.irpj,0);assert.equal(actual.dre.csll,0);
+  near(actual.dre.netProfit,actual.dre.preTax);
+  assert.equal(input.result.incomeTaxAssessment.realAnnualLossZero,'JAN_SEP_MANAGERIAL_V1');
+  assert.equal(tax(input.presentation,'irpj').values.actual,0);
+  assert.equal(tax(input.presentation,'csll').values.actual,0);
+  near(row(input.presentation,'resultBeforeIncomeTaxes').values.actual,actual.dre.preTax);
+  near(tax(input.presentation,'totalTaxes').values.actual,actual.totalTaxes);
+  near(tax(input.presentation,'netProfit').values.actual,actual.dre.netProfit);
+  const oldComponents=['das','icmsNet','cbsIbsNet','icmsAnticipation','difal','payroll','iss'];
+  near(actual.totalTaxes,sum(oldComponents.map(key=>tax(input.presentation,key).values.actual)));
+  for(const month of input.result.monthlyResults){
+    const period=month.result.regimes.find(item=>item.id==='actual');
+    assert.equal(period.dre.irpj,0);assert.equal(period.dre.csll,0);
+  }
+  const html=renderAnnualDre(input),csv=buildDreCsv({presentation:input.presentation,period:'annual',visibleRegimeIds:['actual']});
+  assert.match(html,/data-dre-row="resultBeforeIncomeTaxes"/);
+  assert.match(html,/data-dre-row="taxesDeduction"/);
+  assert.match(html,/data-tax-row="irpj"/);
+  assert.match(csv,/"IRPJ";"line";"BRL";0,00/);
+  assert.deepEqual(input,before);
+});
+
 test('DRE V4 contém nove competências e conserva RBT12 própria, resultados e devoluções capturados',()=>{
   const input=fixture(),before=structuredClone(input);freeze(input);
   assert.equal(input.calendar.version,'DRE_CALENDAR_V4');assert.equal(input.calendar.months.length,9);
