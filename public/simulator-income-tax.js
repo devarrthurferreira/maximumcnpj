@@ -57,7 +57,7 @@ function sums(inputs){
     preTax:inputs.every(row=>row.actualAvailable!==false&&row.preTax!==null)?total(inputs.map(row=>decimal(row.preTaxExact??row.preTax))):null
   };
 }
-function periodFor(regimeId,quarter,inputs,year,rates,previousPeriods,overrideExcess=null){
+function periodFor(regimeId,quarter,inputs,year,rates,previousPeriods,overrideExcess=null,managerialRealLossZero=false){
   const expectedMonths=[quarter*3-2,quarter*3-1,quarter*3],observedMonths=inputs.map(row=>row.month),missingMonths=expectedMonths.filter(month=>!observedMonths.includes(month));
   const complete=missingMonths.length===0,throughMonth=observedMonths.at(-1),sourceMonths=inputs.map(row=>row.sourceMonth);
   const sourceYears=[...new Set(sourceMonths.map(value=>value.slice(0,4)))];
@@ -70,7 +70,7 @@ function periodFor(regimeId,quarter,inputs,year,rates,previousPeriods,overrideEx
     if(values.preTax===null)return pending('Resultado antes de IRPJ/CSLL indisponível em uma ou mais competências do trimestre.');
     // Never assess IRPJ or CSLL on a non-positive taxable quarter.
     // A negative monthly tax movement is only a reversal of a prior provision.
-    const taxableResult=positive(values.preTax);
+    const taxableResult=managerialRealLossZero?zero():positive(values.preTax);
     irBase=taxableResult;csBase=taxableResult;
   }else{
     // Signed monthly activity values are accumulated before the non-negative
@@ -102,7 +102,7 @@ function periodFor(regimeId,quarter,inputs,year,rates,previousPeriods,overrideEx
   const bases={salesRevenue:amount(values.sales),serviceRevenue:amount(values.services),revenue:amount(revenue),preTax:values.preTax===null?null:amount(values.preTax),
     irpjBaseWithoutIncrease:amount(irBase),csllBaseWithoutIncrease:amount(csBase),irpjIncrease:amount(irIncrease),csllIncrease:amount(csIncrease),
     irpjBase:amount(irTotal),csllBase:amount(csTotal),irpjAdditionalLimit:LIMIT,irpjBaseWithinLimit:amount(sub(irTotal,excessBase)),irpjExcessBase:amount(excessBase)};
-  const reason=complete?(regimeId==='actual'?(values.preTax.n<=0n?'Sem base tributável positiva no trimestre: IRPJ e CSLL devidos são zero. Uma provisão mensal anterior pode ser estornada.':'Estimativa gerencial trimestral; não inclui ajustes fiscais, estoques ou compensação de prejuízos.'):'Trimestre completo calculado com os dados e as premissas capturados.'):
+  const reason=complete?(regimeId==='actual'?(managerialRealLossZero?'Comparação gerencial Jan–Set com prejuízo acumulado: IRPJ e CSLL projetados em zero, sem cancelar tributos trimestrais legalmente devidos.':values.preTax.n<=0n?'Sem base tributável positiva no trimestre: IRPJ e CSLL devidos são zero. Uma provisão mensal anterior pode ser estornada.':'Estimativa gerencial trimestral; não inclui ajustes fiscais, estoques ou compensação de prejuízos.'):'Trimestre completo calculado com os dados e as premissas capturados.'):
     `Provisão cumulativa somente das competências conhecidas; faltam ${missingMonths.map(value=>String(value).padStart(2,'0')).join(', ')} para concluir o trimestre. O limite do adicional permanece R$ 60.000.`;
   // In Q4 a missing earlier quarter also prevents the statutory annual review.
   const closeAvailable=complete&&!(regimeId==='presumed'&&quarter===4&&!lc224.priorHistoryComplete);
@@ -146,10 +146,11 @@ function annualReview(periods,year,rates){
  * Monthly DRE tax = cumulative liability of this quarter - the provision
  * already recognised. On December's LC224 review the bridge spans the year.
  */
-export function assessQuarterlyIncomeTaxes({year,months,rates=DEFAULT_PRESUMPTIONS,regimeIds=['presumed','actual'],basis='ACTUAL_REPORT_MONTHS'}){
+export function assessQuarterlyIncomeTaxes({year,months,rates=DEFAULT_PRESUMPTIONS,regimeIds=['presumed','actual'],basis='ACTUAL_REPORT_MONTHS',annualLossZeroForReal=false}){
   check([2027,2028].includes(year),'Ano do cenário inválido para a apuração trimestral.');
   check(Array.isArray(months)&&months.length>=1&&months.length<=12,'Competências inválidas para a apuração trimestral.');
   check(['ACTUAL_REPORT_MONTHS','UNIFORM_PROJECTION'].includes(basis),'Origem da apuração trimestral inválida.');
+  check(typeof annualLossZeroForReal==='boolean'&&(!annualLossZeroForReal||basis==='ACTUAL_REPORT_MONTHS'),'Regra de prejuízo do Lucro Real inválida para este período.');
   check(Array.isArray(regimeIds)&&new Set(regimeIds).size===regimeIds.length&&regimeIds.every(id=>['presumed','actual'].includes(id)),'Regimes de IRPJ/CSLL inválidos.');
   for(const key of Object.keys(DEFAULT_PRESUMPTIONS))check(typeof rates[key]==='number'&&Number.isFinite(rates[key])&&rates[key]>=0&&rates[key]<=1,'Coeficiente de presunção inválido.');
   const seen=new Set(),sourceSeen=new Set(),sourceYears=new Set();
@@ -167,7 +168,12 @@ export function assessQuarterlyIncomeTaxes({year,months,rates=DEFAULT_PRESUMPTIO
     return {...row,...(row.preTaxExact?{preTaxExact:{...row.preTaxExact}}:{}),actualAvailable:row.actualAvailable!==false};
   }).sort((a,b)=>a.month-b.month);
   check(sourceYears.size===1,'As competências de IRPJ/CSLL precisam pertencer ao mesmo ano de origem.');
+  // Only for an evidenced Jan–Set managerial loss, never for legal quarterly debts.
+  const signedYear=annualLossZeroForReal&&regimeIds.includes('actual')&&ordered.every(row=>row.actualAvailable!==false&&row.preTax!==null)?
+    total(ordered.map(row=>decimal(row.preTaxExact??row.preTax))):null;
+  const realAnnualLossZero=signedYear!==null&&signedYear.n<=0n;
   const baseContainer={version:INCOME_TAX_ASSESSMENT_VERSION,method:INCOME_TAX_METHOD,scenarioYear:year,rounding:'HALF_UP_COMPONENT_CENTS',basis,
+    ...(realAnnualLossZero?{realAnnualLossZero:'JAN_SEP_MANAGERIAL_V1'}:{}),
     presumptionRates:Object.fromEntries(Object.keys(DEFAULT_PRESUMPTIONS).map(key=>[key,rates[key]]))};
   const monthlyAssessments=Object.fromEntries(ordered.map(row=>[row.sourceMonth,{...baseContainer,frame:'MONTH',sourceMonths:[row.sourceMonth],regimes:{}}]));
   const consolidated={...baseContainer,frame:'CONSOLIDATED',sourceMonths:ordered.map(row=>row.sourceMonth),regimes:{}};
@@ -176,7 +182,7 @@ export function assessQuarterlyIncomeTaxes({year,months,rates=DEFAULT_PRESUMPTIO
     let annualPeriods=null;
     for(const row of ordered){
       const quarter=Math.ceil(row.month/3),inputs=groups.get(quarter)||[];inputs.push(row);groups.set(quarter,inputs);
-      const period=periodFor(regimeId,quarter,inputs,year,rates,periods);
+      const period=periodFor(regimeId,quarter,inputs,year,rates,periods,null,realAnnualLossZero&&regimeId==='actual');
       periods.set(quarter,period);
       let assessment;
       const review=regimeId==='presumed'&&row.month===12?annualReview(periods,year,rates):null;
