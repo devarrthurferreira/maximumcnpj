@@ -1,5 +1,14 @@
 # Maximum CNPJ · v0.57.1
 
+## Corrigir a HIT — versão nova da DRE com IRPJ zero quando o Lucro Real está negativo (04/11/2026)
+
+A regra gerencial Jan–Set de IRPJ e CSLL zero quando **resultado antes dos tributos do Lucro Real é não positivo** já existe no motor, mas a versão salva anteriormente podia conservar a soma dos impostos de trimestres anteriores. Esta revisão corrige o **versionamento** da janela Jan–Set (`1.20.1-quarterly-income-tax-available-months-loss-zero`) e do lote de reprocessamento (`QUARTERLY_INCOME_TAX_2026_11_V16`), para não reutilizar um snapshot anterior como se fosse atual. Um operador pode abrir a DRE corrente pelo histórico; a rota segura `POST /api/v4/simulations/:id/refresh` recalcula a simulação com as fontes preservadas, cria uma **nova versão vinculada** e atualiza a análise corrente quando a origem e os dados ainda coincidem. O histórico `historical=1` continua mostrando a versão original, sem alterações.
+
+Regressão de referência: com resultado antes de IRPJ/CSLL **−R$ 29.522,86**, o Lucro Real da comparação gerencial deve apresentar **IRPJ R$ 0,00, CSLL R$ 0,00 e resultado líquido −R$ 29.522,86**; demais impostos, créditos e despesas permanecem calculados. Para os valores exibidos na imagem de conferência, se os demais componentes não mudarem, o total de tributos seria R$ 556.788,59 (R$ 561.120,17 − R$ 2.707,24 − R$ 1.624,34). O valor final precisa ser apurado na nova versão da empresa, não inserido como constante.
+
+A DRE continua com todos os campos e o quadro separado **APURAÇÃO DOS TRIBUTOS**. O CSV, o PDF e a impressão devem usar exclusivamente o mesmo resultado versionado. A regra é **gerencial** e não equivale a cancelar tributos legalmente devidos nos trimestres positivos. Não se força zero quando houver dados indisponíveis; não se altera o Lucro Presumido nem os snapshots históricos.
+
+
 ## Lucro Real negativo: IRPJ zero na comparação gerencial Jan–Set (04/11/2026)
 
 No comparativo fixo de janeiro a setembro, quando a soma **validada** do resultado antes do IRPJ/CSLL do Lucro Real é zero ou negativa, o sistema projeta IRPJ normal, adicional e CSLL em **R$ 0,00**, mesmo que um trimestre isolado tenha lucro. A exceção é marcada por `realAnnualLossZero: JAN_SEP_MANAGERIAL_V1` e verificada, competência por competência, por validadores independentes em JavaScript e Python; bases incompletas nunca são tratadas como zero. Os cálculos do Lucro Presumido e dos demais tributos permanecem inalterados.

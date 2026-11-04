@@ -352,7 +352,7 @@ async function reprocessItem(actor: LookupActor, originalId: string, loadedOrigi
   const child = await createReprocessedSimulation(actor, plan.input, plan.context);
   await promoteReprocessedAnalysis(actor,original._id,child);
   const migration = plan.context.serviceRevenueMigration;
-  return {childId:child._id,status:'OK',code:'UPDATED',message:'Nova versão com DIFAL de saída zerado, inclusive nas vendas interestaduais para CPF. A antecipação de compras e o histórico original foram preservados.' +
+  return {childId:child._id,status:'OK',code:'UPDATED',message:'Nova versão com as regras atuais de DIFAL e a comparação gerencial de IRPJ/CSLL no Lucro Real conferidas. Impostos, resultado, PDF e CSV usam o mesmo cálculo; o histórico original foi preservado.' +
     (migration && migration.priorMonthlyServiceCents > 0 ? ' ' + migration.warning : '')};
 }
 

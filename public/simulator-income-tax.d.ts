@@ -32,7 +32,7 @@ export type IncomeTaxAssessmentContainer = {
   version:'INCOME_TAX_ASSESSMENT_V2';method:'QUARTERLY_CUMULATIVE_PROVISION';frame:'CONSOLIDATED'|'MONTH';
   scenarioYear:2027|2028;sourceMonths:string[];rounding:'HALF_UP_COMPONENT_CENTS';
   presumptionRates:{irSales:number;irServices:number;csSales:number;csServices:number};
-  basis:'ACTUAL_REPORT_MONTHS'|'UNIFORM_PROJECTION';regimes:Partial<Record<'presumed'|'actual',IncomeTaxAssessment>>;
+  basis:'ACTUAL_REPORT_MONTHS'|'UNIFORM_PROJECTION';realAnnualLossZero?:'JAN_SEP_MANAGERIAL_V1';regimes:Partial<Record<'presumed'|'actual',IncomeTaxAssessment>>;
   /** Only uniform projections capture their monthly movements here. */
   monthlyAssessments?:Record<string,IncomeTaxAssessmentContainer>;
 };
@@ -40,7 +40,7 @@ export type IncomeTaxAssessmentContainer = {
 export function incomeTaxRoundCents(value:number|string|ExactAmount):number;
 /** Decimal operands captured by the existing model; no income-tax computation. */
 export function incomeTaxPreTaxExact(input:any,icmsDueCents?:number|null):ExactAmount;
-export function assessQuarterlyIncomeTaxes(input:{year:2027|2028;months:IncomeTaxMonthInput[];rates?:{irSales:number;irServices:number;csSales:number;csServices:number};regimeIds?:Array<'presumed'|'actual'>;basis?:'ACTUAL_REPORT_MONTHS'|'UNIFORM_PROJECTION'}):{
+export function assessQuarterlyIncomeTaxes(input:{year:2027|2028;months:IncomeTaxMonthInput[];rates?:{irSales:number;irServices:number;csSales:number;csServices:number};regimeIds?:Array<'presumed'|'actual'>;basis?:'ACTUAL_REPORT_MONTHS'|'UNIFORM_PROJECTION';annualLossZeroForReal?:boolean}):{
   incomeTaxAssessment:IncomeTaxAssessmentContainer;
   monthlyAssessments:Record<string,IncomeTaxAssessmentContainer>;
 };
