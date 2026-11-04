@@ -63,7 +63,8 @@ test('public DRE exposes reconciled components without changing monthly or saved
     const rows=unifiedDreRows(presentation),index=rows.findIndex(row=>row.key==='irpjBasic');
     assert(index>=0);
     assert.deepEqual(rows.slice(index,index+2).map(row=>row.key),['irpjBasic','irpjAdditional']);
-    assert(!rows.some(row=>['irpj','totalTaxes'].includes(row.key)),'O detalhamento tributário pertence ao bloco Impostos.');
+    assert.equal(rows.filter(row=>row.key==='irpj').length,1,'O IRPJ está incluído no resultado da DRE.');
+    assert(!rows.some(row=>row.key==='totalTaxes'),'O total de imposto é conferência fora da DRE.');
     assert.equal(rows.filter(row=>row.key==='taxesDeduction').length,1);
     for(const key of ['irpjBasic','irpjAdditional']){
       const saved=captured.find(row=>row.key===key),shown=rows.find(row=>row.key===key);
@@ -97,7 +98,7 @@ test('CSV distinguishes monthly movements from the accumulated IRPJ components a
   assert.match(csv,/IRPJ normal · 15% por trimestre/);
   assert.match(csv,/Adicional de IRPJ · 10% por trimestre/);
   const rows=unifiedDreRows(presentation);
-  assert.equal(rows.filter(row=>row.key==='irpj').length,0);
+  assert.equal(rows.filter(row=>row.key==='irpj').length,1);
   for(const key of ['irpjBasic','irpjAdditional'])assert.equal(rows.filter(row=>row.key===key).length,1);
   assert.equal(presentation.taxStatement.rows.filter(row=>row.key==='irpj').length,1);
 });

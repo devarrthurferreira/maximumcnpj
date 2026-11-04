@@ -230,7 +230,7 @@ test('CSV exporta os regimes visíveis e mantém os percentuais essenciais sem A
   assert.equal(monthly.length,3,'Uma linha consolidada e uma para cada regime nos meses.');
   assert(monthly[0].startsWith('"Impostos";'));assert(monthly[1].startsWith('"Simples Puro";'));assert(monthly[2].startsWith('"Lucro Real";'));
   assert(!csv.split('\r\n').some(line=>line.startsWith('"DRE";')&&line.includes('"CBS/IBS (D − C)";')));
-  assert.equal(csv.split('\r\n').filter(line=>line.startsWith('"DRE";"Resultado";"(−) Total de impostos";')).length,1);
+  assert.equal(csv.split('\r\n').filter(line=>line.startsWith('"DRE";"IRPJ, CSLL e resultado";"(−) Total de impostos";"detail";')).length,1);
   assert.match(csv,/CBS 11,30% \+ IBS 0,10% = CBS\/IBS 11,40%/);
   assert.equal(csv.split('\r\n').filter(line=>line.startsWith('"Impostos";"Impostos";"% sobre a receita";"indicator";"%";')).length,2);
   assert.match(csv,/"% sobre a receita · resultado";"indicator";"%"/);

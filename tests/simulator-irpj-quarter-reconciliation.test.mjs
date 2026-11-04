@@ -72,7 +72,7 @@ test('Lucro Real com base trimestral negativa ou nula não calcula IRPJ e CSLL n
     assert.equal(quarter.provision.irpjTotalCents,0);assert.equal(quarter.provision.csllCents,0);
     for(const entry of result.monthlyResults){
       const taxes=record(entry.result,'actual').dre;
-      assert.equal(taxes.irpj,0);assert.equal(taxes.csll,0);
+      assert.equal(Math.abs(taxes.irpj),0);assert.equal(Math.abs(taxes.csll),0);
     }
     assert.match(quarter.reason,/Sem base tributável positiva/);
   }

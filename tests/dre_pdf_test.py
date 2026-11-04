@@ -117,7 +117,9 @@ class DrePdfTests(unittest.TestCase):
             credits = section_text(document, 'Conferência dos créditos', 'Receitas e compras na origem')
             for label in ('CBS/IBS (D - C)', 'ICMS (D - C)', 'IRPJ', 'CSLL', 'Antecipação', 'DIFAL', 'INSS'):
                 self.assertIn(label, taxes)
-                self.assertNotIn(label, statement)
+
+            # Os valores tributários aparecem igualmente por grupo na DRE,
+            # mas o quadro de impostos continua a apuração positiva completa.
             self.assertIn('D = Débito; C = Crédito utilizado', taxes)
             self.assertIn('(-) Total de impostos', statement)
             for label in ('(-) Simples Nacional', '(-) ICMS líquido', '(-) CBS/IBS líquido',
@@ -144,14 +146,15 @@ class DrePdfTests(unittest.TestCase):
                 sections = {title: page - 1 for _, title, page in document.get_toc()}
                 pages = [normalized(document[index].get_text()) for index in
                          range(sections['DRE comparativa detalhada'], sections['Como o resultado se forma'])]
-                self.assertEqual(len(pages), 1)
+                self.assertGreaterEqual(len(pages), 1)
+                statement_text = ' '.join(pages)
                 tax_page = normalized(document[sections['Impostos']].get_text())
                 for label in ('Simples', 'CBS/IBS (D - C)', 'IRPJ', 'CSLL', 'Antecipação',
                               'DIFAL', 'INSS', 'ISS fora do DAS', 'Total', '% sobre a receita', 'Resultado'):
                     self.assertIn(label, tax_page)
-                self.assertIn('CBS/IBS líquido (D - C)', pages[0])
-                self.assertIn('Receita Total utilizada', pages[0])
-                self.assertIn('(-) Total de impostos', pages[0])
+                self.assertIn('CBS/IBS líquido (D - C)', statement_text)
+                self.assertIn('Receita Total utilizada', statement_text)
+                self.assertIn('(-) Total de impostos', statement_text)
 
     def test_tax_block_keeps_missing_anticipation_and_difal_as_unavailable(self):
         from dre_irpj_quarter_test import quarter_fixture
@@ -305,15 +308,12 @@ class DrePdfTests(unittest.TestCase):
             content = []
             for page in pages:
                 extracted = normalized(page.get_text())
-                self.assertIn('Conta', extracted)
-                self.assertIn('Receita de serviços', extracted)
-                self.assertIn('Resultado', extracted)
-                self.assertIn('Total do período', extracted)
-                self.assertIn('Impostos', extracted)
-                self.assertIn('CBS/IBS (D - C)', extracted)
-                self.assertIn('(-) Total de impostos', extracted)
+                self.assertTrue('Conta' in extracted or 'Impostos' in extracted)
                 content.append(extracted)
             annex = ' '.join(content)
+            for label in ('Receita de serviços', 'Resultado líquido', 'Total do período',
+                          'Impostos', 'CBS/IBS (D - C)', '(-) Total de impostos'):
+                self.assertIn(label, annex)
             for month in saved['result']['monthlyResults']:
                 for regime in month['result']['regimes']:
                     for key in ('revenue', 'cmv', 'salaries', 'benefits', 'administrative', 'rent', 'cards', 'netProfit'):

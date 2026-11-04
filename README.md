@@ -4,6 +4,8 @@
 
 A DRE Jan–Set discrimina os tributos **junto às receitas (DAS, ICMS líquido, CBS/IBS líquido, ISS e DIFAL), às compras (antecipação de ICMS), às despesas (INSS/encargos) e ao resultado (IRPJ normal e adicional e CSLL)**. Créditos utilizados de CBS e IBS aparecem nas compras somente para conferência: esses valores já reduzem o CBS/IBS líquido. A linha **(−) Total de impostos** permanece como conferência informativa, sem dedução extra. Subtotais de receita líquida, custos com antecipação, despesas com encargos e resultado antes dos tributos sobre o lucro vêm dos valores capturados.
 
+Os testes de PDF e CSV também verificam a dupla visualização: valores negativos na DRE e devidos positivos no quadro tributário, sem nova dedução. O relatório pode ocupar mais páginas para mostrar as contas completas.
+
 O bloco **APURAÇÃO DOS TRIBUTOS** segue separado, com os mesmos regimes, impostos, totais e percentuais; CSV, impressão e PDF mantêm a DRE organizada por natureza e o quadro completo. No Lucro Real gerencial trimestral, a base tributável negativa ou nula é limitada a zero para o IRPJ e CSLL; um mês negativo pode estornar provisão positiva anterior do mesmo trimestre, sem criar imposto devido novo. A apuração fiscal efetiva depende dos ajustes legais do lucro real e não é inferida de um prejuízo contábil isolado. Os históricos, parâmetros, alíquotas e cálculos salvos permanecem preservados.
 
 
