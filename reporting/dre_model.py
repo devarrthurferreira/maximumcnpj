@@ -205,7 +205,7 @@ def _income_closure(closure, provision, *, complete):
         _income_require(closure.get('status') == 'UNAVAILABLE' and closure.get('taxes') is None)
 
 
-def _income_period(period, regime_id, scenario_year, inputs_by_month, rates, basis):
+def _income_period(period, regime_id, scenario_year, inputs_by_month, rates, basis, real_annual_loss_zero=False):
     _income_require(isinstance(period, dict) and period.get('regimeId') == regime_id)
     quarter = period.get('quarter')
     _income_require(type(quarter) is int and 1 <= quarter <= 4 and period.get('periodId') == f'{scenario_year}-Q{quarter}')
@@ -268,7 +268,7 @@ def _income_period(period, regime_id, scenario_year, inputs_by_month, rates, bas
                             for exact_input, item in zip(signed_inputs, inputs))
                         and signed == sum(signed_inputs, Fraction(0))
                         and irpj_close(bases['preTax'], float(signed))
-                        and tax_base == csll_base == max(Fraction(0), signed))
+                        and tax_base == csll_base == (Fraction(0) if real_annual_loss_zero else max(Fraction(0), signed)))
     else:
         # Prove the saved LP bases from the captured coefficients and inputs.
         # A missing coefficient is unavailable; no current default rewrites history.
@@ -296,7 +296,7 @@ def _income_period(period, regime_id, scenario_year, inputs_by_month, rates, bas
     return bases, amounts
 
 
-def _income_assessment(assessment, regime_id, scenario_year, inputs_by_month, rates, basis):
+def _income_assessment(assessment, regime_id, scenario_year, inputs_by_month, rates, basis, real_annual_loss_zero=False):
     _income_require(isinstance(assessment, dict))
     if assessment.get('available') is not True:
         _income_require(assessment.get('status') == 'UNAVAILABLE')
@@ -307,7 +307,8 @@ def _income_assessment(assessment, regime_id, scenario_year, inputs_by_month, ra
                     and len({period.get('quarter') for period in periods if isinstance(period, dict)}) == len(periods)
                     and assessment.get('scope') in ('QUARTER', 'PERIOD', 'ANNUAL_ADJUSTMENT')
                     and type(assessment.get('complete')) is bool)
-    verified = [_income_period(period, regime_id, scenario_year, inputs_by_month, rates, basis) for period in periods]
+    verified = [_income_period(period, regime_id, scenario_year, inputs_by_month, rates, basis,
+                               real_annual_loss_zero and regime_id == 'actual') for period in periods]
     complete = all(period['complete'] for period in periods)
     _income_require(assessment['complete'] == complete)
     bases = assessment.get('bases')
@@ -399,6 +400,20 @@ def _reconcile_irpj_v2(result, regime_id, *, source_month=None, expected_source_
             _income_container(month_container, 'MONTH', [source], rates)
             _income_require(month_container['scenarioYear'] == container['scenarioYear']
                             and month_container['basis'] == container['basis'])
+        loss_rule = container.get('realAnnualLossZero')
+        _income_require(loss_rule in (None, 'JAN_SEP_MANAGERIAL_V1'))
+        loss_zero = loss_rule == 'JAN_SEP_MANAGERIAL_V1'
+        if loss_zero:
+            _income_require(actual and (result.get('analysisPeriod') or {}).get('version') == 'JAN_SEP_V1')
+            signed = []
+            for source in sources:
+                real_regime = _unique(entries[source].get('regimes'), 'id', 'actual')
+                pre_tax = (real_regime or {}).get('dre', {}).get('preTax')
+                _income_require(real_regime and real_regime.get('available') is True and finite(pre_tax))
+                signed.append(pre_tax)
+            _income_require(sum(signed) <= 1e-7)
+        for month_container in containers.values():
+            _income_require(month_container.get('realAnnualLossZero') == loss_rule, IRPJ_V2_PERIOD_REASON)
         if source_month is not None:
             _income_require(source_month in containers, IRPJ_V2_PERIOD_REASON)
         regime = _unique(result.get('regimes'), 'id', regime_id) if source_month is None or not actual else regimes_by_month.get(source_month)
@@ -421,7 +436,8 @@ def _reconcile_irpj_v2(result, regime_id, *, source_month=None, expected_source_
                 return checked[source]
             month_container = containers[source]
             assessed = _income_assessment(month_container['regimes'].get(regime_id), regime_id,
-                                           container['scenarioYear'], inputs_by_month, rates, container['basis'])
+                                           container['scenarioYear'], inputs_by_month, rates, container['basis'],
+                                            real_annual_loss_zero=loss_zero)
             assessment = assessed['assessment']
             month_number, quarter = int(source[5:]), (int(source[5:]) - 1) // 3 + 1
             if assessment['scope'] == 'ANNUAL_ADJUSTMENT':
@@ -450,7 +466,8 @@ def _reconcile_irpj_v2(result, regime_id, *, source_month=None, expected_source_
 
         if source_month is None:
             assessed = _income_assessment(container['regimes'].get(regime_id), regime_id,
-                                           container['scenarioYear'], inputs_by_month, rates, container['basis'])
+                                           container['scenarioYear'], inputs_by_month, rates, container['basis'],
+                                            real_annual_loss_zero=loss_zero)
             assessment = assessed['assessment']
             _income_require(assessment['scope'] == 'PERIOD'
                             and assessed['previous'] == dict.fromkeys(INCOME_TAX_AMOUNT_KEYS, 0)

@@ -1,5 +1,14 @@
 # Maximum CNPJ · v0.57.1
 
+## Lucro Real negativo: IRPJ zero na comparação gerencial Jan–Set (04/11/2026)
+
+No comparativo fixo de janeiro a setembro, quando a soma **validada** do resultado antes do IRPJ/CSLL do Lucro Real é zero ou negativa, o sistema projeta IRPJ normal, adicional e CSLL em **R$ 0,00**, mesmo que um trimestre isolado tenha lucro. A exceção é marcada por `realAnnualLossZero: JAN_SEP_MANAGERIAL_V1` e verificada, competência por competência, por validadores independentes em JavaScript e Python; bases incompletas nunca são tratadas como zero. Os cálculos do Lucro Presumido e dos demais tributos permanecem inalterados.
+
+**Escopo fiscal:** trata-se de cenário comparativo gerencial para o resultado acumulado, não da anulação de impostos trimestrais juridicamente devidos. Lucro Real anual com suspensão/redução de estimativas depende de balanços/balancetes e dos ajustes fiscais exigidos (IN RFB nº 1.700/2017, arts. 47, 49 e 61). Versões já salvas preservam suas evidências; para comparar uma empresa existente com a nova regra, gere uma nova versão da análise.
+
+A memória de cálculo também identifica quando a regra gerencial de prejuízo acumulado foi aplicada, sem mascarar as obrigações trimestrais. A leitura da DRE foi melhorada com hierarquia de cabeçalhos, subtotais, linhas alternadas e alinhamento dos valores. **Nenhum campo, regime, crédito, opção de relatório ou quadro de APURAÇÃO DOS TRIBUTOS foi removido ou renomeado.**
+
+
 ## DRE por natureza dos impostos e regra do prejuízo no Lucro Real (04/11/2026)
 
 A DRE Jan–Set discrimina os tributos **junto às receitas (DAS, ICMS líquido, CBS/IBS líquido, ISS e DIFAL), às compras (antecipação de ICMS), às despesas (INSS/encargos) e ao resultado (IRPJ normal e adicional e CSLL)**. Créditos utilizados de CBS e IBS aparecem nas compras somente para conferência: esses valores já reduzem o CBS/IBS líquido. A linha **(−) Total de impostos** permanece como conferência informativa, sem dedução extra. Subtotais de receita líquida, custos com antecipação, despesas com encargos e resultado antes dos tributos sobre o lucro vêm dos valores capturados.

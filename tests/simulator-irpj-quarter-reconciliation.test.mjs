@@ -78,6 +78,33 @@ test('Lucro Real com base trimestral negativa ou nula não calcula IRPJ e CSLL n
   }
 });
 
+test('prejuízo acumulado do Real usa IRPJ zero e mantém prova mensal e memória',()=>{
+  const values=[50000,20000,10000,-180000,-10000,-5000,-5000,-5000,-5000];
+  const months=values.map((v,index)=>month(index+1,100000,0,v));
+  const resultTax=assessQuarterlyIncomeTaxes({year:2027,months,annualLossZeroForReal:true});
+  const regimeRows=container=>['presumed','actual'].map(id=>{
+    const assessed=container.regimes[id],movement=assessed.movement;
+    return {id,available:assessed.available,dre:{irpj:movement?-movement.irpjTotalCents/100:null,
+      csll:movement?-movement.csllCents/100:null}};
+  });
+  const result={version:'1.20.0-quarterly-income-tax',analysisPeriod:{version:'JAN_SEP_V1'},
+    incomeTaxAssessment:resultTax.incomeTaxAssessment,regimes:regimeRows(resultTax.incomeTaxAssessment),
+    monthlyResults:months.map(m=>({sourceMonth:m.sourceMonth,month:m.month,
+      result:{incomeTaxAssessment:resultTax.monthlyAssessments[m.sourceMonth],
+        regimes:regimeRows(resultTax.monthlyAssessments[m.sourceMonth]).map(r=>({...r,dre:{...r.dre,
+          sales:m.salesRevenue,services:m.serviceRevenue,preTax:m.preTax}}))}}))};
+  const checked=reconcileIrpj(result,'actual');
+  assert.equal(checked.available,true,checked.reason);assert.equal(checked.values.irpjTotalAssessed,0);
+  assert.equal(Math.abs(result.regimes.find(row=>row.id==='actual').dre.irpj),0);
+  for(const m of months){
+    const monthChecked=reconcileIrpj(result,'actual',{sourceMonth:m.sourceMonth});
+    assert.equal(monthChecked.available,true,monthChecked.reason);
+    assert.equal(monthChecked.values.irpjCurrentMovement,0);
+  }
+  const tampered=structuredClone(result);delete tampered.incomeTaxAssessment.realAnnualLossZero;
+  assert.equal(reconcileIrpj(tampered,'actual').available,false);
+});
+
 test('partial quarter uses the full quarterly limit and missing months stay missing',()=>{
   const saved=irpjQuarterlyFixture({sales:[1000000,100000],rents:[],months:[1,3]}),p=presentation(saved);
   const checked=reconcileIrpj(saved.result,'presumed');

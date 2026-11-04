@@ -46,6 +46,25 @@ test('Lucro Real sums signed preTax before flooring and preserves normal/additio
   assert.equal(sumMovements(out,'actual','irpjTotalCents'),0);
 });
 
+test('comparativo Jan–Set negativo zera IRPJ e CSLL no Lucro Real, preservando Presumido',()=>{
+  const values=[50000,20000,10000,-180000,-10000,-5000,-5000,-5000,-5000];
+  const months=values.map((signed,index)=>month(index+1,100000,0,signed));
+  const baseline=assess(months);
+  assert(baseline.incomeTaxAssessment.regimes.actual.provision.irpjTotalCents>0);
+  const adjusted=assessQuarterlyIncomeTaxes({year:2027,months,annualLossZeroForReal:true});
+  assert.equal(adjusted.incomeTaxAssessment.realAnnualLossZero,'JAN_SEP_MANAGERIAL_V1');
+  assert.equal(adjusted.incomeTaxAssessment.regimes.actual.bases.preTax,-130000);
+  for(const field of ['irpjTotalCents','irpjNormalCents','irpjAdditionalCents','csllCents']){
+    assert.equal(adjusted.incomeTaxAssessment.regimes.actual.provision[field],0);
+    for(const entry of Object.values(adjusted.monthlyAssessments))assert.equal(entry.regimes.actual.movement[field],0);
+    assert.equal(adjusted.incomeTaxAssessment.regimes.presumed.provision[field],
+      baseline.incomeTaxAssessment.regimes.presumed.provision[field]);
+  }
+  const positive=assessQuarterlyIncomeTaxes({year:2027,months:[month(1,100000,0,10000)],annualLossZeroForReal:true});
+  assert.equal(positive.incomeTaxAssessment.realAnnualLossZero,undefined);
+  assert(positive.incomeTaxAssessment.regimes.actual.provision.irpjTotalCents>0);
+});
+
 test('missing quarter months preserve a provision but never a confirmed closing or a smaller limit',()=>{
   const out=assess([month(1,1000000),month(3,100000)]),a=taxes(out);
   assert.equal(a.available,true);assert.equal(a.status,'PROVISIONAL');assert.equal(a.closure.available,false);assert.equal(a.closure.taxes,null);

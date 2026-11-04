@@ -205,3 +205,32 @@ tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
   .dre-print-identification p{font-size:11px;line-height:1.5;margin:3px 0}
   .dre-print-document .dre-legend,.dre-print-document .dre-method-note,.dre-print-document .dre-denominator,.dre-print-document .dre-footnotes{font-size:9px;margin:9px 0}
 }
+
+/* Leitura da DRE Jan–Set: hierarquia visual sem ocultar ou alterar campos. */
+@media screen {
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap {margin-top:10px;border:1px solid #e4dce1;border-radius:12px}
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap tbody tr.dre-section-row th {
+    background:#f5edf0;color:#591d2c;border-left:4px solid #750207;border-top:11px solid #fff;
+    padding:10px 14px;font-size:11px;line-height:1.5;font-weight:750;letter-spacing:.025em;text-transform:none
+  }
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap tbody tr.dre-row th,
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap tbody tr.dre-row td {
+    padding-top:9px;padding-bottom:9px;vertical-align:middle
+  }
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap tbody tr.dre-row:nth-child(even):not(.dre-subtotal):not([data-dre-row=netProfit]) th,
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap tbody tr.dre-row:nth-child(even):not(.dre-subtotal):not([data-dre-row=netProfit]) td {background:#fbfafb}
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap tr:is([data-dre-row=revenue],[data-dre-row=netRevenueAfterTaxes],[data-dre-row=costsWithAnticipation],[data-dre-row=operatingExpensesWithPayroll],[data-dre-row=resultBeforeIncomeTaxes]) th,
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap tr:is([data-dre-row=revenue],[data-dre-row=netRevenueAfterTaxes],[data-dre-row=costsWithAnticipation],[data-dre-row=operatingExpensesWithPayroll],[data-dre-row=resultBeforeIncomeTaxes]) td {
+    background:#f3f7f5;color:#254a3b;font-weight:700;border-top:1px solid #d9e6de
+  }
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap [data-dre-row=taxesDeduction] th,
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap [data-dre-row=taxesDeduction] td {background:#f7f7f9;color:#667085;font-size:11px;font-weight:500}
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap [data-dre-row=irpj] th,
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap [data-dre-row=irpj] td {font-weight:650;border-top:1px solid #e6d7de}
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap .dre-amount {font-variant-numeric:tabular-nums;white-space:nowrap}
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap tr[data-dre-row=netProfit] th,
+  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap tr[data-dre-row=netProfit] td {padding-top:15px;padding-bottom:15px}
+}
+@media screen and (max-width:640px) {
+  .simulator-clean .dre-executive.dre-fixed-complete[data-dre-visible-count="1"] > .dre-table-wrap .dre-amount {white-space:normal}
+}

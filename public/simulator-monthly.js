@@ -54,7 +54,7 @@ function applyIncomeTaxAssessment(result,container,monthly){
       regime.annualProfit=d.netProfit;regime.monthlyProfit=monthly?d.netProfit:null;
       regime.margin=result.annualRevenue>0?d.netProfit/result.annualRevenue:null;
       regime.taxBurden=result.annualRevenue>0?regime.totalTaxes/result.annualRevenue:null;
-      regime.status=assessment.status==='PROVISIONAL'?'Provisão trimestral disponível; fechamento incompleto.':id==='actual'?'Estimativa gerencial dos trimestres capturados; sujeita aos ajustes fiscais.':'Trimestres capturados conciliados; simulação sujeita ao enquadramento.';
+      regime.status=container.realAnnualLossZero&&id==='actual'?'Prejuízo acumulado Jan–Set: IRPJ e CSLL zerados no cenário gerencial; isso não cancela imposto trimestral devido.':assessment.status==='PROVISIONAL'?'Provisão trimestral disponível; fechamento incompleto.':id==='actual'?'Estimativa gerencial dos trimestres capturados; sujeita aos ajustes fiscais.':'Trimestres capturados conciliados; simulação sujeita ao enquadramento.';
     }else{
       // Numeric legacy-shaped fields remain unconfirmed behind available=false.
       // Metadata and memory carry null/unavailable rather than certifying a zero.
@@ -186,6 +186,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
   });
   const incomeTaxes=assessQuarterlyIncomeTaxes({year:draft.year,basis:'ACTUAL_REPORT_MONTHS',
     regimeIds:regimeSelection.selected.filter(id=>['presumed','actual'].includes(id)),
+    annualLossZeroForReal:analysisPeriod?.version==='JAN_SEP_V1',
     months:monthlyResults.map(row=>{
       const actual=row.result.regimes.find(regime=>regime.id==='actual');
       const projectedExact=row.result.incomeTaxAssessment.monthlyAssessments?.[`${draft.year}-01`]?.regimes.actual?.periods[0]?.inputs[0]?.preTaxExact;
