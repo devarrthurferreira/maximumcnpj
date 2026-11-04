@@ -154,11 +154,20 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   const originalDre = await page.locator('.sim-dre tbody tr > *').allTextContents();
   await expect(page.locator('#dre-display-period')).toHaveValue('annual');
   // Each selected competence compares the four captured regimes side by side.
-  // Covered months without movement remain zero; August retains its own values.
+  // The source has no confirmed issuer UF: August's Presumido/Real calculations
+  // are explicitly pending in the saved result, not zero or an inferred revenue.
+  expect(first.result.monthlyResults[7]).toMatchObject({sourceMonth:'2026-08',result:{regimes:[
+    {id:'pure',available:true,dre:{revenue:13_250.50}},
+    {id:'hybrid',available:true,dre:{revenue:13_250.50}},
+    {id:'presumed',available:false,status:expect.stringMatching(/ICMS pendente:.*sem UF confirmada/)},
+    {id:'actual',available:false,status:expect.stringMatching(/ICMS pendente:.*sem UF confirmada/)},
+  ]}});
+  // Covered months without movement remain zero; August preserves availability
+  // and the exact positive values captured for both Simples regimes.
   for(let month=0;month<9;month++){
     await showDreMonth(page,month);
     await expect(page.locator('.sim-dre [data-dre-row="revenue"]').locator('td')).toHaveText(
-      Array(4).fill(month===7?'R$ 13.250,50':'R$ 0,00')
+      month===7?['R$ 13.250,50','R$ 13.250,50','—','—']:Array(4).fill('R$ 0,00')
     );
   }
 
