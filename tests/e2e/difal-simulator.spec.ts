@@ -1,5 +1,5 @@
 import {legacyOutgoingDreFixture,legacyWithoutOutgoingDreFixture} from '../fixtures/dre-outgoing-legacy.mjs';
-import {showDreRegimes,showDreMonth} from './dre-controls.ts';
+import {showDreRegimes,expectConsolidatedDre,readDreMonthlyCsv,dreMonthlyValues} from './dre-controls.ts';
 import {test,expect,type Page} from '@playwright/test';
 import {annualizeReports,projectDifal} from '../../public/simulator-projection.js';
 import {calculateSimulation,createEmptyDraft,draftToInput,MODEL_VERSION,OUTGOING_DIFAL_MESSAGE,TAX_SOURCES,CALCULATOR_SOURCE_COMMIT} from '../../public/simulator-engine.js';
@@ -129,10 +129,9 @@ test('histórico 1.17 mantém valores positivos da saída e células mensais cap
   await expect(page.locator('#simulator-difal [data-difal-disabled]')).toHaveCount(0);
   await expect(page.locator('[data-difal-option="pure"] .sim-difal-scope')).toHaveText('entrada e saída');
   await showDreRegimes(page,['pure']);
-  await showDreMonth(page,0);
-  await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('84,00');
-  await showDreMonth(page,1);
-  await expect(page.locator('[data-difal-applied-regime="pure"] [data-difal-applied-month]')).toContainText('168,00');
-  await expect(page.locator('[data-dre-row="difal"] td').first()).toContainText('168,00');
+  const monthly=await readDreMonthlyCsv(page);
+  expect(dreMonthlyValues(monthly,'Simples Puro','DIFAL','Impostos').slice(0,2)).toEqual(['84,00','168,00']);
+  await expectConsolidatedDre(page);
+  await expect(page.locator('#tax-demonstrativo [data-dre-row="difal"] td').first()).toHaveText('R$ 3.780,00');
   expect(sourceReads).toBe(0);expect(saved).toEqual(captured);
 });

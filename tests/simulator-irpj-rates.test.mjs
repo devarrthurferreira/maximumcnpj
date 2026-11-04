@@ -60,14 +60,25 @@ test('public DRE exposes reconciled components without changing monthly or saved
     const snapshot=drePdfFixture({variant}),before=structuredClone(snapshot);
     const presentation=buildDrePresentation({...snapshot,calendar:snapshot.monthlyDre});
     const savedPresentation=structuredClone(presentation),captured=capturedDreRows(presentation);
-    const rows=unifiedDreRows(presentation),index=rows.findIndex(row=>row.key==='irpj');
+    const rows=unifiedDreRows(presentation),index=rows.findIndex(row=>row.key==='irpjBasic');
     assert(index>=0);
-    assert.deepEqual(rows.slice(index,index+3).map(row=>row.key),['irpj','irpjBasic','irpjAdditional']);
-    for(const key of ['irpj','irpjBasic','irpjAdditional','totalTaxes']){
+    assert.deepEqual(rows.slice(index,index+2).map(row=>row.key),['irpjBasic','irpjAdditional']);
+    assert(!rows.some(row=>['irpj','totalTaxes'].includes(row.key)),'O detalhamento tributário pertence ao bloco Impostos.');
+    assert.equal(rows.filter(row=>row.key==='taxesDeduction').length,1);
+    for(const key of ['irpjBasic','irpjAdditional']){
       const saved=captured.find(row=>row.key===key),shown=rows.find(row=>row.key===key);
       assert.deepEqual(shown.values,saved.values);
       assert.deepEqual(shown.monthlyValues,saved.monthlyValues);
       assert.deepEqual(shown.reasonByRegime,saved.reasonByRegime);
+      assert.equal(shown.informative,true);
+    }
+    for(const key of ['irpj','totalTaxes']){
+      const saved=captured.find(row=>row.key===key),shown=presentation.taxStatement.rows.filter(row=>row.key===key);
+      assert.equal(shown.length,1);
+      const display=value=>key==='irpj'&&value!==null&&value!==0?-value:value;
+      for(const field of ['values','calendarAnnualValues'])assert.deepEqual(shown[0][field],Object.fromEntries(Object.entries(saved[field]).map(([id,value])=>[id,display(value)])));
+      assert.deepEqual(shown[0].monthlyValues,Object.fromEntries(Object.entries(saved.monthlyValues).map(([id,values])=>[id,values.map(display)])));
+      for(const field of ['reasonByRegime','calendarReasonByRegime','monthlyReasonByRegime'])assert.deepEqual(shown[0][field],saved[field]);
     }
     assert.deepEqual(presentation,savedPresentation);
     assert.deepEqual(snapshot,before);
@@ -78,11 +89,15 @@ test('CSV distinguishes monthly movements from the accumulated IRPJ components a
   const snapshot=drePdfFixture();
   const presentation=buildDrePresentation({...snapshot,calendar:snapshot.monthlyDre});
   const csv=buildDreCsv({presentation,period:'complete',visibleRegimeIds:['presumed','actual'],showPercent:false});
-  assert.match(csv,/IRPJ do período \(provisão\/ajuste\)/);
+  const taxRows=csv.split('\r\n').filter(line=>line.includes('"Impostos";"Impostos";"IRPJ";"line";"BRL";'));
+  assert.equal(taxRows.length,3,'Um IRPJ consolidado e os movimentos mensais dos dois regimes visíveis.');
+  assert(taxRows[0].startsWith('"Impostos";'));assert(taxRows[1].startsWith('"Lucro Presumido";'));assert(taxRows[2].startsWith('"Lucro Real";'));
   assert.match(csv,/IRPJ normal · movimento do período/);
   assert.match(csv,/Adicional de IRPJ · movimento do período/);
   assert.match(csv,/IRPJ normal · 15% por trimestre/);
   assert.match(csv,/Adicional de IRPJ · 10% por trimestre/);
   const rows=unifiedDreRows(presentation);
-  for(const key of ['irpj','irpjBasic','irpjAdditional'])assert.equal(rows.filter(row=>row.key===key).length,1);
+  assert.equal(rows.filter(row=>row.key==='irpj').length,0);
+  for(const key of ['irpjBasic','irpjAdditional'])assert.equal(rows.filter(row=>row.key===key).length,1);
+  assert.equal(presentation.taxStatement.rows.filter(row=>row.key==='irpj').length,1);
 });

@@ -926,6 +926,7 @@ function renderResult() {
   if(!S.result)return;
   document.querySelectorAll('#simulation-result details').forEach(el=>S.detailStates.set(el.dataset.stateKey||el.className,el.open));
   S.dreContext=dreContext();
+  if(S.dreContext.presentation.analysisPeriod?.version===JAN_SEP_POLICY)S.viewPeriod='annual';
   const visibilityOptions=dreVisibilityOptions();
   if(visibilityOptions.visibleRegimeIds)S.dreVisibleRegimeIds=visibilityOptions.visibleRegimeIds;
   const {input}=S.result,actual=S.result.result.method==='REPORT_MONTHS_V1',fixed=S.result.result.analysisPeriod?.version===JAN_SEP_POLICY,monthly=S.viewPeriod==='monthly',divisor=monthly&&!actual?12:1;
@@ -953,18 +954,6 @@ function renderResult() {
   const monthSelect=$('#dre-month');if(monthSelect)monthSelect.onchange=()=>{S.dreMonth=Number(monthSelect.value);renderResult();if(S.readonly){updateDifalSource();updateAnticipationSource();updateDifalOptions();}$('#dre-month').focus({preventScroll:true});};
   document.querySelectorAll('[data-period]').forEach(button=>button.onclick=()=>{S.viewPeriod=button.dataset.period;renderResult();document.querySelector(`[data-period="${S.viewPeriod}"]`)?.focus({preventScroll:true});});
   const regimeSelect=$('#dre-regime');if(regimeSelect)regimeSelect.onchange=()=>{S.calendarRegime=regimeSelect.value;renderResult();$('#dre-regime').focus({preventScroll:true});};
-  const displayPeriod=$('#dre-display-period');if(displayPeriod)displayPeriod.onchange=()=>{
-    const selection=displayPeriod.value;
-    if(selection==='annual')S.viewPeriod='annual';
-    else if(/^month:\d+$/.test(selection)){
-      const month=Number(selection.slice(6));
-      if(!S.dreContext.presentation.months?.[month])return;
-      S.viewPeriod='monthly';S.dreMonth=month;
-    }else return;
-    renderResult();
-    if(S.readonly){updateDifalSource();updateAnticipationSource();updateDifalOptions();}
-    $('#dre-display-period')?.focus({preventScroll:true});
-  };
   document.querySelectorAll('[data-dre-visible-regime]').forEach(control=>control.onchange=()=>{
     const id=control.dataset.dreVisibleRegime,generated=S.dreContext.presentation.regimes.some(regime=>regime.id===id);
     if(!generated)return;
@@ -1017,7 +1006,7 @@ function bindResultDetails() {
 function bindDreDetailControls(root=document){
   root.querySelectorAll('[data-dre-month-view]').forEach(button=>button.onclick=()=>{S.dreMonthView=button.dataset.dreMonthView==='single';renderResult();document.querySelector(`[data-dre-month-view="${S.dreMonthView?'single':'all'}"]`)?.focus({preventScroll:true});});
   root.querySelectorAll('[data-dre-jump]').forEach(button=>button.onclick=()=>{
-    const row=$('#dre-demonstrativo')?.querySelector(`[data-dre-row="${button.dataset.dreJump}"]`);
+    const row=$('#dre-demonstrativo')?.querySelector(`[data-dre-row="${button.dataset.dreJump}"]`)||$('#tax-demonstrativo')?.querySelector(`[data-dre-row="${button.dataset.dreJump}"]`);
     if(row){row.tabIndex=-1;row.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});row.focus({preventScroll:true});}
   });
 }

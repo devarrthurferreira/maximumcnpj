@@ -6,6 +6,7 @@ import {renderDrePrintDocument,renderAnnualDre} from '../public/simulator-dre-vi
 import {buildMonthlyDre, DRE_ROWS} from '../public/simulator-calendar.js';
 import {drePdfFixture} from './fixtures/dre-pdf.mjs';
 import {irpjRowLabel} from '../public/simulator-irpj-display.js';
+import {irpjQuarterlyFixture} from './fixtures/irpj-quarterly.mjs';
 
 // A small independent CSV reader checks quoted separators/newlines and exact cell counts.
 function readCsv(csv) {
@@ -38,8 +39,9 @@ test('CSV conserva a categoria das parcelas clonadas do IRPJ e identifica sua me
   const snapshot=drePdfFixture(),before=structuredClone(snapshot);
   const presentation=buildDrePresentation({...snapshot,calendar:snapshot.monthlyDre});
   const data=readCsv(buildDreCsv({presentation,period:'complete',visibleRegimeIds:['presumed','actual']}));
-  const total=data.find(row=>row[2]==='IRPJ do período (provisão/ajuste)');
-  assert.deepEqual(total.slice(0,5),['DRE','Tributos apurados','IRPJ do período (provisão/ajuste)','line','BRL']);
+  const total=data.find(row=>row[0]==='Impostos'&&row[2]==='IRPJ');
+  assert.deepEqual(total.slice(0,5),['Impostos','Impostos','IRPJ','line','BRL']);
+  assert(!data.some(row=>row[0]==='DRE'&&row[2].startsWith('IRPJ')));
   for(const label of ['IRPJ normal · movimento do período','Adicional de IRPJ · movimento do período']){
     const part=data.find(row=>row[2]===label);
     assert.deepEqual(part.slice(0,2),['Detalhamento informativo','Composição do IRPJ']);
@@ -61,6 +63,52 @@ test('CSV conserva a categoria das parcelas clonadas do IRPJ e identifica sua me
   assert.deepEqual([...new Set(monthly.map(row=>row[0]))],['Lucro Presumido','Lucro Real']);
   assert(data.some(row=>row[0]==='Critério do IRPJ'&&row[1]===reconciliation.note));
   assert.deepEqual(snapshot,before);
+});
+
+test('CSV separa Impostos da DRE, com dedução única, resultado igual e os dois percentuais essenciais',()=>{
+  const snapshot=drePdfFixture(),presentation=buildDrePresentation({...snapshot,calendar:snapshot.monthlyDre});
+  const before=structuredClone(presentation),visibleRegimeIds=['pure','actual'];
+  const currency=value=>value.toLocaleString('pt-BR',{useGrouping:false,minimumFractionDigits:2,maximumFractionDigits:2});
+  const number=(value,unit)=>unit==='percent'?(value*100).toLocaleString('pt-BR',{useGrouping:false,minimumFractionDigits:2,maximumFractionDigits:6}):currency(value);
+  for(const period of ['annual','monthly','complete']){
+    const data=readCsv(buildDreCsv({presentation,period,visibleRegimeIds,showPercent:false}));
+    const taxAnnual=data.filter(row=>row[0]==='Impostos'&&row[1]==='Impostos');
+    if(period!=='monthly'){
+      assert.equal(taxAnnual.length,presentation.taxStatement.rows.length);
+      assert.deepEqual(taxAnnual.map(row=>row[2]),presentation.taxStatement.rows.map(row=>row.label));
+      assert.equal(taxAnnual.filter(row=>row[2]==='% sobre a receita').length,2);
+      const dre=data.filter(row=>row[0]==='DRE');
+      for(const label of ['Simples','ICMS (D − C)','CBS/IBS (D − C)','IRPJ','CSLL','Antecipação','DIFAL','INSS','Total'])
+        assert(!dre.some(row=>row[2]===label),`${period}: ${label} não pertence à DRE`);
+      const deduction=dre.find(row=>row[2]==='(−) Total de impostos');
+      const total=taxAnnual.find(row=>row[2]==='Total');
+      const profit=dre.find(row=>row[2]==='Resultado');
+      for(const [index,id] of visibleRegimeIds.entries()){
+        const captured=snapshot.result.regimes.find(regime=>regime.id===id);
+        assert.equal(deduction[index+5],currency(-captured.totalTaxes));
+        assert.equal(total[index+5],currency(captured.totalTaxes));
+        assert.equal(profit[index+5],taxAnnual.find(row=>row[2]==='Resultado')[index+5]);
+        for(const [rowIndex,row] of presentation.taxStatement.rows.entries())assert.equal(taxAnnual[rowIndex][index+5],number(row.values[id],row.unit),row.key);
+      }
+    }else assert.equal(taxAnnual.length,0);
+    const taxMonthly=data.filter(row=>row[1]==='Impostos'&&row[2]==='Impostos');
+    assert.equal(taxMonthly.length,period==='annual'?0:presentation.taxStatement.rows.length*visibleRegimeIds.length);
+    assert(data.some(row=>row[0]==='Critério do bloco Impostos'&&row[1].includes('D = Débito; C = Crédito')));
+  }
+  assert.deepEqual(presentation,before);
+});
+
+test('CSV de Impostos mantém estorno trimestral negativo e valor pendente indisponível',()=>{
+  const snapshot=irpjQuarterlyFixture(),presentation=buildDrePresentation({...snapshot,calendar:snapshot.monthlyDre});
+  const data=readCsv(buildDreCsv({presentation,period:'monthly',visibleRegimeIds:['actual']}));
+  const irpj=data.find(row=>row[0]==='Lucro Real'&&row[1]==='Impostos'&&row[3]==='IRPJ');
+  const movements=snapshot.result.monthlyResults.map(entry=>entry.result.regimes.find(regime=>regime.id==='actual').dre.irpj);
+  assert(movements.some(value=>value>0),'A captura contém um estorno reconhecido na DRE.');
+  for(const [month,value] of movements.entries())assert.equal(irpj[month+6],(value===0?0:-value).toLocaleString('pt-BR',{useGrouping:false,minimumFractionDigits:2,maximumFractionDigits:2}));
+  const pending=drePdfFixture({variant:'without-rbt12'}),unavailable=buildDrePresentation({...pending,calendar:pending.monthlyDre});
+  const missing=readCsv(buildDreCsv({presentation:unavailable,period:'annual',visibleRegimeIds:['pure']}));
+  const taxes=missing.filter(row=>row[0]==='Impostos'&&row[1]==='Impostos');
+  assert(taxes.length>0);assert(taxes.every(row=>row[5]==='Não disponível'));
 });
 
 test('tela e impressão exibem o mesmo quadro do IRPJ, com parcelas legíveis e sem uma segunda dedução',()=>{

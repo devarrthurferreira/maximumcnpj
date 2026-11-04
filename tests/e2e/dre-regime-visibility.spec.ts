@@ -1,11 +1,12 @@
 import {test,expect,type Page} from '@playwright/test';
 import {drePdfFixture} from '../fixtures/dre-pdf.mjs';
+import {expectConsolidatedDre,readDreMonthlyCsv,dreMonthlyValues} from './dre-controls.ts';
 
 async function open(page:Page,saved:any){
   await page.route('**/api/auth/session',route=>route.fulfill({json:{user:{_id:'synthetic',role:'viewer',name:'Conferência sintética DRE'}}}));
   await page.route('**/api/v4/simulations/'+saved._id,route=>route.fulfill({json:saved}));
   await page.goto('/simulator.html?simulation='+saved._id);
-  await expect(page.locator('#dre-display-period')).toHaveValue('annual');
+  await expectConsolidatedDre(page);
 }
 async function downloadText(page:Page,selector:string){
   const pending=page.waitForEvent('download');await page.locator(selector).click();
@@ -21,29 +22,33 @@ test('DRE mostra e oculta regimes na própria tabela, preserva competências e e
   page.on('request',request=>{if(request.url().includes('/api/')&&!['GET','HEAD'].includes(request.method()))writes.push(request.method()+' '+new URL(request.url()).pathname);});
   await open(page,saved);
   const dre=page.locator('#dre-demonstrativo'),table=dre.locator(':scope > .dre-table-wrap'),choices=dre.locator('[data-dre-visible-regime]');
+  const taxes=page.locator('#tax-demonstrativo'),taxTable=taxes.locator(':scope > .dre-tax-table');
   await expect(choices).toHaveCount(4);await expect(table.locator('thead th')).toHaveCount(5);
+  await expect(taxTable.locator('thead th')).toHaveCount(5);
   await expect(dre.locator('[data-dre-regime-result]')).toHaveCount(4);
   await expect(dre.locator('#dre-regime,#dre-show-percent,.sim-period-toggle,.dre-quick-nav')).toHaveCount(0);
-  await expect(dre.locator('[data-dre-combined-rate]')).toContainText('11,40%');
-  await expect(dre.locator('[data-dre-combined-rate]')).toContainText('CBS 11,30% + IBS 0,10%');
+  await expect(taxes.locator('[data-dre-combined-rate]')).toContainText('11,40%');
+  await expect(taxes.locator('[data-dre-combined-rate]')).toContainText('CBS 11,30% + IBS 0,10%');
   await expect(table.locator('[data-dre-row="cbsDebit"],[data-dre-row="ibsDebit"]')).toHaveCount(0);
-  await expect(table.locator('[data-dre-row="cbsIbsNet"]')).toHaveCount(1);
-  for(const key of ['taxBurden','netMargin'])await expect(table.locator(`[data-dre-row="${key}"] td`).first()).toContainText('%');
+  await expect(table.locator('[data-dre-row="cbsIbsNet"]')).toHaveCount(0);
+  await expect(taxTable.locator('[data-dre-row="cbsIbsNet"]')).toHaveCount(1);
+  for(const key of ['taxBurden','netMargin'])await expect(taxTable.locator(`[data-dre-row="${key}"] td`).first()).toContainText('%');
+  await expect(table.locator('[data-dre-row="netMargin"] td').first()).toContainText('%');
   for(const id of ['pure','hybrid']){
     await dre.locator(`[data-dre-visible-regime="${id}"]`).uncheck();
     await expect(dre.locator(`[data-dre-visible-regime="${id}"]`)).toBeFocused();
   }
   await expect(table.locator('thead th')).toHaveText(['DRE · consolidado Jan–Set','Lucro Presumido','Lucro Real']);
+  await expect(taxTable.locator('thead th')).toHaveText(['Impostos','Lucro Presumido','Lucro Real']);
   await expect(dre.locator('[data-dre-regime-result]')).toHaveCount(2);
   const actual=saved.result.regimes.find((regime:any)=>regime.id==='actual');
   await expect(table.locator('[data-dre-row="netProfit"] td').last()).toHaveText(money(actual.dre.netProfit));
-  await dre.locator('#dre-display-period').selectOption('month:8');
-  await expect(dre.locator('#dre-display-period')).toBeFocused();
-  await expect(dre.locator('#dre-display-status')).toContainText('Setembro / 2025');
   const monthActual=saved.result.monthlyResults[8].result.regimes.find((regime:any)=>regime.id==='actual');
-  await expect(table.locator('[data-dre-row="revenue"] td').last()).toHaveText(money(monthActual.dre.revenue));
-  await expect(table.locator('thead th')).toHaveText(['DRE · Setembro','Lucro Presumido','Lucro Real']);
-  await dre.locator('#dre-display-period').selectOption('annual');
+  const monthly=await readDreMonthlyCsv(page),revenues=dreMonthlyValues(monthly,'Lucro Real','Receita Total utilizada');
+  expect(revenues).toHaveLength(10);
+  expect(revenues[8]).toBe(monthActual.dre.revenue.toFixed(2).replace('.',','));
+  expect(revenues[9]).toBe(actual.dre.revenue.toFixed(2).replace('.',','));
+  await expectConsolidatedDre(page);
   await expect(table.locator('[data-dre-row="revenue"] td').last()).toHaveText(money(actual.dre.revenue));
   await dre.locator('#dre-report-period').selectOption('annual');
   const csv=await downloadText(page,'#export-dre-csv');
@@ -52,9 +57,10 @@ test('DRE mostra e oculta regimes na própria tabela, preserva competências e e
   const raw=JSON.parse(await downloadText(page,'#export-simulation'));
   expect(raw.result).toEqual(saved.result);expect(raw.monthlyDre).toEqual(saved.monthlyDre);
   await page.evaluate(()=>{window.print=()=>{};});await page.locator('#print-dre').click();
-  const printTable=page.locator('#dre-print-document > .dre-table-wrap').filter({has:page.locator('[data-dre-row="cbsIbsNet"]')});
+  const printTable=page.locator('#dre-print-document [data-tax-statement] > .dre-tax-table');
   await expect(printTable).toHaveCount(1);
-  await expect(printTable.locator('thead th')).toHaveText(['Indicador','Lucro Presumido','Lucro Real']);
+  await expect(printTable.locator('thead th')).toHaveText(['Impostos','Lucro Presumido','Lucro Real']);
+  await expect(page.locator('#dre-print-document > .dre-table-wrap [data-dre-row="cbsIbsNet"]')).toHaveCount(0);
   await page.evaluate(()=>window.dispatchEvent(new Event('afterprint')));
   await expect(page.locator('#dre-print-document')).toHaveCount(0);
   for(const width of [1440,390,320]){
@@ -66,10 +72,13 @@ test('DRE mostra e oculta regimes na própria tabela, preserva competências e e
   await dre.locator('[data-dre-visible-regime="presumed"]').uncheck();
   await expect(dre.locator('[data-dre-visible-regime="actual"]')).toBeDisabled();
   await expect(table.locator('thead th')).toHaveCount(2);
+  await expect(taxTable.locator('thead th')).toHaveCount(2);
   expect(await table.evaluate(element=>element.scrollWidth-element.clientWidth)).toBeLessThanOrEqual(1);
+  expect(await taxTable.evaluate(element=>element.scrollWidth-element.clientWidth)).toBeLessThanOrEqual(1);
   await dre.locator('[data-dre-visible-regime="pure"]').check();
   await expect(dre.locator('[data-dre-visible-regime="actual"]')).toBeEnabled();
   await expect(table.locator('thead th')).toHaveText(['DRE · consolidado Jan–Set','Simples Puro','Lucro Real']);
+  await expect(taxTable.locator('thead th')).toHaveText(['Impostos','Simples Puro','Lucro Real']);
   expect(writes).toEqual([]);expect(errors).toEqual([]);expect(JSON.stringify(saved)).toBe(before);
 });
 
@@ -86,8 +95,9 @@ test('regimes não gerados ficam identificados e cálculo pendente não vira zer
   await dre.locator('[data-dre-visible-regime="pure"]').uncheck();
   await expect(dre.locator('[data-dre-visible-regime="hybrid"]')).toBeDisabled();
   await expect(table.locator('[data-dre-row="netProfit"] td')).toHaveText(['—']);
-  await dre.locator('#dre-display-period').selectOption('month:8');
+  await expectConsolidatedDre(page);
   await expect(table.locator('[data-dre-row="netProfit"] td')).toHaveText(['—']);
+  await expect(page.locator('#tax-demonstrativo > .dre-tax-table [data-dre-row="totalTaxes"] td')).toHaveText(['—']);
   expect(JSON.stringify(saved)).toBe(before);
 });
 

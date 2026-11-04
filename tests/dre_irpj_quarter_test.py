@@ -232,7 +232,7 @@ class DreQuarterlyIrpjTests(unittest.TestCase):
     def test_pdf_separates_quarter_accumulation_reversal_source_year_and_scenario(self):
         saved = quarter_fixture()
         with pymupdf.open(stream=render(saved, regime_id='actual', regime_ids=['actual']), filetype='pdf') as document:
-            content = section_text(document, 'Tributos, encargos e créditos', 'Conferência dos créditos')
+            content = section_text(document, 'Impostos', 'Conferência dos créditos')
             for text in ['IRPJ trimestral e movimentos da DRE', 'origem 2025 / cenário 2027',
                          'Provisão - fechamento pendente', 'Movimento negativo indica reversão', amount(-16000),
                          *[label for _, label in IRPJ_V2_ROWS]]:

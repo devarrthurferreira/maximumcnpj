@@ -7,7 +7,7 @@ import {hashPassword} from '../../src/security.ts';
 import {csvParse} from '../../src/domain.ts';
 import {processLookup} from '../../src/lookup-jobs.ts';
 import {closeDatabase} from '../../src/store.ts';
-import {showDreMonth} from './dre-controls.ts';
+import {expectConsolidatedDre,readDreMonthlyCsv,dreMonthlyValues} from './dre-controls.ts';
 
 
 type Account={id:string;email:string;password:string;role:'admin'|'operator'|'viewer'};
@@ -182,9 +182,9 @@ test('Abrir DRE atual zera saída mesmo para CPF interestadual e mantém a vers�
   const currentId=new URL(page.url()).searchParams.get('simulation');expect(currentId).not.toBe(legacy._id);
   const corrected=await api(page.request,baseURL!,'GET','/api/v4/simulations/'+currentId);
   expect(corrected.parentSimulationId).toBe(legacy._id);
-  const dre=await fullDre(page),zero=dre.locator('[data-dre-row="difal"] td');
+  await fullDre(page);const zero=page.locator('#tax-demonstrativo [data-dre-row="difal"] td');
   await expect(zero).toHaveCount(2);for(const cell of await zero.all())await expect(cell).toHaveText('R$ 0,00');
-  await expect(dre.locator('[data-dre-row="icmsAnticipation"] td').first()).toHaveText('R$ 0,00');
+  await expect(page.locator('#tax-demonstrativo [data-dre-row="icmsAnticipation"] td').first()).toHaveText('R$ 0,00');
   await expect(page.locator('#simulator-difal')).toContainText('Não possui DIFAL de saída');
   expect(corrected.result.outgoingDifalDisabled).toBe(true);
   expect(corrected.source.monthlyReports.every((row:any)=>row.difal.version==='DIFAL_ESTIMATE_V6'&&row.difal.amountCents===0)).toBe(true);
@@ -208,7 +208,7 @@ test('Abrir DRE atual zera saída mesmo para CPF interestadual e mantém a vers�
   expect(await db.collection('simulations').countDocuments({workspaceId,analysisId:analysis.id})).toBe(2);
   await page.goto('/simulator.html?simulation='+legacy._id+'&historical=1');
   await expect(page.locator('[data-simulation-revision="historical"]')).toContainText('Versão histórica');
-  await expect(page.locator('#dre-demonstrativo [data-dre-row="difal"] td').first()).toContainText('300,00');
+  await expect(page.locator('#tax-demonstrativo [data-dre-row="difal"] td').first()).toHaveText('R$ 300,00');
   expect(requests).toEqual(['POST','POST']);
   expect(await api(page.request,baseURL!,'GET','/api/v4/simulations/'+legacy._id)).toEqual(original);
   expect(await freezeSources(analysisWorkspace,analysis,legacy)).toEqual(sources);
@@ -256,20 +256,16 @@ async function fullDre(page:Page){
   await expect(host.locator('[data-dre-row="netProfit"]')).toBeVisible();return host;
 }
 async function expectZeroDre(page:Page){
-  await expect(page.locator('#dre-display-period')).toHaveValue('annual');
-  let complete=await fullDre(page);
+  await expectConsolidatedDre(page);await fullDre(page);
+  const taxes=page.locator('#tax-demonstrativo');
   for(const key of ['difal','icmsAnticipation']){
-    const cells=complete.locator('[data-dre-row="'+key+'"] td');
+    const cells=taxes.locator('[data-dre-row="'+key+'"] td');
     await expect(cells).toHaveCount(2);for(const cell of await cells.all())await expect(cell).toHaveText('R$ 0,00');
   }
-  for(let month=0;month<9;month++){
-    await showDreMonth(page,month);
-    complete=await fullDre(page);
-    for(const key of ['difal','icmsAnticipation']){
-      const cells=complete.locator('[data-dre-row="'+key+'"] td');
-      await expect(cells).toHaveCount(2);for(const cell of await cells.all())await expect(cell).toHaveText('R$ 0,00');
-    }
-  }
+  const monthly=await readDreMonthlyCsv(page);
+  for(const regime of ['Simples Puro','Simples Híbrido'])for(const label of ['DIFAL','Antecipação'])
+    expect(dreMonthlyValues(monthly,regime,label,'Impostos')).toEqual(Array(10).fill('0,00'));
+  await expectConsolidatedDre(page);
 }
 
 test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão sem modificar a origem',async({page,browser,baseURL,analysisWorkspace},info)=>{
@@ -336,7 +332,7 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   const download=await downloading;await download.saveAs(info.outputPath('analysis-difal-excluded-dre.csv'));
   const stream=await download.createReadStream();let csv='';for await(const chunk of stream!)csv+=chunk;
   const rows=csvParse(csv,';');
-  for(const label of ['DIFAL','Antecipação de ICMS']){
+  for(const label of ['DIFAL','Antecipação']){
     const annual=rows.filter(row=>row[2]===label);expect(annual).toHaveLength(1);expect(annual[0].slice(5,7)).toEqual(['0,00','0,00']);
     const monthly=rows.filter(row=>row[3]===label);expect(monthly).toHaveLength(2);
     for(const row of monthly){expect(row.slice(6,15)).toEqual(Array(9).fill('0,00'));expect(row[15]).toBe('0,00');}

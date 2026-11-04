@@ -121,7 +121,7 @@ export function capturedDreRows(presentation) {
   return rows;
 }
 
-/** Current statements group taxes already assessed, without changing their captured components. */
+/** The DRE keeps one tax deduction; the assessed taxes have their own statement. */
 export function unifiedDreRows(presentation) {
   if(presentation?.statement?.version!=='DRE_STATEMENT_V1')return capturedDreRows(presentation);
   return [...presentation.statement.sections.flatMap(section=>section.rows||[]),
@@ -433,14 +433,24 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   },{informative:true,notes:['Créditos de CBS, IBS e ICMS já considerados nos impostos ou nas compras. Não acrescentar novamente ao resultado; não representam restituição em dinheiro.'],sourceRefs:['result.regimes[].dre.cbsUsed','result.regimes[].dre.ibsUsed','result.regimes[].dre.icmsUsed']}):null;
   const commercialComposition=analysisPeriod&&source?.commercialComposition?.version==='COMMERCIAL_COMPOSITION_V1'?structuredClone(source.commercialComposition):null;
   const monthlyCommercialComposition=analysisPeriod?Object.fromEntries((source?.monthlyReports||[]).filter(entry=>entry.commercialComposition?.version==='COMMERCIAL_COMPOSITION_V1'&&analysisPeriod.includedMonths.includes(entry.sourceMonth)).map(entry=>[entry.sourceMonth,structuredClone(entry.commercialComposition)])):null;
-  let statement;
+  let statement,taxStatement;
   if(analysisPeriod){
     const captured=new Map([...sections.flatMap(section=>section.rows),...indicators].map(item=>[item.key,item]));
     const display=(key,label,options={})=>{const original=captured.get(key);return original?{...original,...options,label:label||original.label}:null;};
-    const combinedTaxes=row('cbsIbsNet','CBS/IBS (D − C) apurado','line',f=>{
+    // Change only the presentation sign. Preserve nulls, captured reasons and
+    // reversals; Math.abs would incorrectly turn a reversal into another charge.
+    const opposite=(original,options={})=>{
+      if(!original)return null;
+      const negate=value=>finite(value)?value===0?0:-value:null;
+      const maps=Object.fromEntries(['values','calendarAnnualValues','percentValues','calendarAnnualPercentValues']
+        .map(key=>[key,Object.fromEntries(Object.entries(original[key]||{}).map(([id,value])=>[id,negate(value)]))]));
+      for(const key of ['monthlyValues','monthlyPercentValues'])maps[key]=Object.fromEntries(Object.entries(original[key]||{}).map(([id,values])=>[id,values.map(negate)]));
+      return {...original,...maps,...options};
+    };
+    const combinedTaxes=row('cbsIbsNet','CBS/IBS (D − C)','line',f=>{
       const value=sum(['cbsDebit','ibsDebit','cbsUsed','ibsUsed'].map(key=>f.get(key)));
       return finite(value)?good(value):missing('Os débitos e créditos utilizados de CBS/IBS não estão completos nesta versão.');
-    },{notes:['CBS/IBS apurado = débitos de CBS e IBS menos os créditos efetivamente utilizados de cada tributo. A linha mostra a dedução líquida no resultado, sem compensar saldos entre tributos ou competências.'],
+    },{notes:['CBS/IBS apurado = débitos de CBS e IBS menos os créditos efetivamente utilizados de cada tributo, sem compensar saldos entre tributos ou competências. O valor devido já integra o total de impostos.'],
       sourceRefs:['result.regimes[].dre.cbsDebit','result.regimes[].dre.ibsDebit','result.regimes[].dre.cbsUsed','result.regimes[].dre.ibsUsed']});
     const expensesWithoutPayroll=row('operatingExpensesBeforePayroll','Total de despesas operacionais','subtotal',f=>{
       const value=sum(['salaries','benefits','administrative','rent','cards'].map(key=>f.get(key)));
@@ -466,25 +476,35 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     });
     const commonRate=key=>rateMonths.length&&rateMonths.every(entry=>finite(entry[key])&&close(entry[key],rateMonths[0][key]))?rateMonths[0][key]:null;
     const cbs=commonRate('cbs'),ibs=commonRate('ibs');
-    const assessedRows=[display('das','Simples (DAS)'),display('icmsNet','ICMS (D − C) apurado'),combinedTaxes,
-      display('irpj','IRPJ'),display('csll','CSLL'),display('icmsAnticipation','Antecipação de ICMS'),display('difal','DIFAL'),
-      display('payroll','INSS / encargos da folha',{notes:['Encargos patronais capturados no cenário. No Simples, somente a parcela fora do DAS; não somar novamente às despesas operacionais.']})].filter(Boolean);
+    const optionalTax=(key,label,notes)=>display(key,label,{notes})||row(key,label,'line',f=>currency(f.get(key)),{
+      notes:[...notes,'Informação não capturada nesta versão permanece indisponível; não representa zero confirmado.'],
+      sourceRefs:[`result.regimes[].dre.${key}`]});
+    const assessedRows=[display('das','Simples'),display('icmsNet','ICMS (D − C)'),combinedTaxes,
+      display('irpj','IRPJ'),display('csll','CSLL'),optionalTax('icmsAnticipation','Antecipação',['Antecipação de ICMS capturada no cenário, incluída uma única vez no total de impostos.']),optionalTax('difal','DIFAL',['DIFAL capturado no cenário, incluído uma única vez no total de impostos.']),
+      display('payroll','INSS',{notes:['Encargos patronais da folha capturados no cenário. No Simples, somente a parcela fora do DAS; não somar novamente às despesas operacionais.']})].filter(Boolean);
     const iss=captured.get('iss');
     // Retain tax components whenever they are applied or their absence is not confirmed.
-    if(iss&&originals.some(regime=>[iss.values[regime.id],...(iss.monthlyValues[regime.id]||[])].some(value=>value===null||value!==0)))assessedRows.push(display('iss','ISS fora do DAS'));
-    assessedRows.push(display('totalTaxes','Total de tributos',{kind:'subtotal',notes:['Soma dos tributos e encargos apurados, expressa como valor positivo. Créditos utilizados já foram abatidos; antecipação e INSS/encargos entram uma única vez.']}),
-      display('taxBurden','% sobre a receita · tributos'));
-    statement={version:'DRE_STATEMENT_V1',taxRates:{cbs,ibs,combined:sum([cbs,ibs]),monthly:rateMonths},
+    if(iss&&originals.some(regime=>[iss.values[regime.id],iss.calendarAnnualValues[regime.id],...(iss.monthlyValues[regime.id]||[])].some(value=>value===null||value!==0)))assessedRows.push(display('iss','ISS fora do DAS'));
+    const taxRates={cbs,ibs,combined:sum([cbs,ibs]),monthly:rateMonths};
+    const taxTotal=display('totalTaxes','Total',{kind:'subtotal',notes:['Soma dos tributos e encargos apurados. Valores devidos são positivos e estornos são negativos. Créditos utilizados já foram abatidos; antecipação e INSS entram uma única vez.']});
+    const taxesDeduction=opposite(taxTotal,{key:'taxesDeduction',label:'(−) Total de impostos',kind:'line',informative:false,
+      notes:['Dedução única do total apresentado no bloco Impostos. Inclui os encargos da folha e a antecipação de ICMS; os créditos utilizados já foram abatidos.']});
+    taxStatement={version:'DRE_TAX_STATEMENT_V1',label:'Impostos',taxRates,
+      rows:[...assessedRows.map(item=>opposite(item)),taxTotal,
+        display('taxBurden','% sobre a receita',{notes:['Total de impostos ÷ Receita Total utilizada no mesmo período e regime × 100.']}),
+        display('netProfit','Resultado',{kind:'subtotal',notes:['Resultado final da DRE, reproduzido para comparação. Não é uma parcela do total de impostos.']}),
+        display('netMargin','% sobre a receita',{notes:['Resultado ÷ Receita Total utilizada no mesmo período e regime × 100.']})],
+      note:'D = Débito; C = Crédito. Valores devidos são positivos; estornos são negativos. ICMS e CBS/IBS já estão líquidos dos créditos utilizados. Percentuais sobre a Receita Total utilizada no mesmo período e regime. O resultado é o mesmo da DRE.'};
+    statement={version:'DRE_STATEMENT_V1',taxRates,
       sections:[
         {key:'revenue',label:'Receitas',rows:[display('services','Receita de serviços'),display('sales','Receita de vendas utilizada'),display('revenue','Receita Total utilizada')]},
         {key:'costs',label:'Compras e custos',rows:[display('cmvSimple'),display('cmvRegular'),display('cmv','Total de compras / CMV')]},
         {key:'expenses',label:'Despesas operacionais',rows:[display('salaries'),display('benefits'),display('administrative'),display('rent'),display('cards'),expensesWithoutPayroll]},
-        {key:'taxes',label:'Tributos apurados',rows:assessedRows},
-        {key:'profit',label:'Resultado',rows:[display('netProfit','Resultado'),display('netMargin','% sobre a receita · resultado')]}
-      ],note:'Receita Total utilizada + compras/CMV + despesas operacionais − total de tributos = resultado. Custos e despesas mantêm o sinal negativo da DRE; os tributos são apresentados líquidos dos créditos já utilizados.'};
+        {key:'profit',label:'Resultado',rows:[taxesDeduction,display('netProfit','Resultado'),display('netMargin','% sobre a receita · resultado')]}
+      ],note:'Receita Total utilizada + compras/CMV + despesas operacionais + dedução do total de impostos = resultado. Deduções são negativas; estornos conservam o sinal positivo na DRE. A composição dos impostos aparece no bloco próprio, sem nova dedução.'};
   }
   return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,revenueReconciliation,icmsReconciliation,irpjReconciliation,months,calendarYear,
-    ...(statement?{statement}:{}),
+    ...(statement?{statement,taxStatement}:{}),
     ...(analysisPeriod?{analysisPeriod,appliedCredits,commercialComposition,monthlyCommercialComposition}:{}),
     ...(regimeSelection?{regimeSelection}:{}),
     ...(['NOT_PROVIDED','NOT_REQUIRED','MANUAL','SIMPLES_SECTION_22','SIMPLES_PDF'].includes(capturedRbt12Source)?{rbt12Source:capturedRbt12Source}:{}),

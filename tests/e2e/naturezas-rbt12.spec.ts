@@ -1,4 +1,4 @@
-import {showDreRegimes,showDreMonth,showDreConsolidated} from './dre-controls.ts';
+import {showDreRegimes,expectConsolidatedDre,readDreMonthlyCsv,dreMonthlyValues} from './dre-controls.ts';
 import {expect,type Page} from '@playwright/test';
 import {test} from './isolated-auth-test.ts';
 import {MongoClient} from 'mongodb';
@@ -142,23 +142,24 @@ test('compras CNPJ preservam antecipação e CPF é excluído e vendas CPF/CNPJ 
   expect(saved.result.monthlyResults.map((row:any)=>row.engineInput.rbt12)).toEqual(Array.from({length:9},(_,index)=>78_000+index*12_000));
   expect(saved.result.regimes.filter((regime:any)=>['pure','hybrid'].includes(regime.id)).map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([-219.6,-219.6]);
   expect(saved.result.regimes.filter((regime:any)=>['presumed','actual'].includes(regime.id)).map((regime:any)=>regime.dre.icmsAnticipation)).toEqual([0,0]);
-  await expect(page.locator('#dre-display-period')).toHaveValue('annual');await expect(page.locator('#dre-report-period')).toHaveValue('complete');
+  await expectConsolidatedDre(page);await expect(page.locator('#dre-report-period')).toHaveValue('complete');
   await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
   await expect(page.locator('#dre-demonstrativo [data-dre-row="salaries"]')).toBeVisible();
-  await showDreMonth(page,0);
-  await showDreRegimes(page,['pure']);await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('219,60');
-  await showDreMonth(page,1);await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('0,00');
-  await showDreRegimes(page,['actual']);await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('0,00');
-  await showDreRegimes(page,['pure','hybrid','presumed','actual']);await showDreConsolidated(page);await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('219,60');
+  await showDreRegimes(page,['pure']);await expect(page.locator('#tax-demonstrativo [data-dre-row="icmsAnticipation"] td').first()).toHaveText('R$ 219,60');
+  const monthlyCsv=await readDreMonthlyCsv(page),anticipation=dreMonthlyValues(monthlyCsv,'Simples Puro','Antecipação','Impostos');
+  expect(anticipation[0]).toBe('219,60');expect(anticipation[1]).toBe('0,00');
+  await expectConsolidatedDre(page);
+  await showDreRegimes(page,['actual']);await expect(page.locator('#tax-demonstrativo [data-dre-row="icmsAnticipation"] td').first()).toHaveText('R$ 0,00');
+  await showDreRegimes(page,['pure','hybrid','presumed','actual']);await expectConsolidatedDre(page);await expect(page.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('219,60');
   const fresh=await browser.newContext({baseURL});
   try{
     const login=await fresh.request.post('/api/auth/login',{data:{email:process.env.ADMIN_EMAIL,password:process.env.ADMIN_PASSWORD},headers:{Origin:origin}});expect(login.ok()).toBe(true);
     const reopened=await fresh.newPage();reopened.on('pageerror',error=>errors.push(error.message));await reopened.goto(`/simulator.html?simulation=${saved._id}`);
     await expect(reopened.locator('#simulation-snapshot')).toBeVisible();await expect(reopened.locator('#simulator-form')).toHaveCount(0);await expect(reopened.locator('#rbt12-schedule')).toContainText('78.000,00');
-    await expect(reopened.locator('#dre-display-period')).toHaveValue('annual');await expect(reopened.locator('#dre-report-period')).toHaveValue('complete');
+    await expectConsolidatedDre(reopened);await expect(reopened.locator('#dre-report-period')).toHaveValue('complete');
     await expect(reopened.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
-    await showDreMonth(reopened,0);
     await showDreRegimes(reopened,['hybrid']);await expect(reopened.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('219,60');
+    const reopenedMonths=await readDreMonthlyCsv(reopened);expect(dreMonthlyValues(reopenedMonths,'Simples Híbrido','Antecipação','Impostos')[0]).toBe('219,60');
     const stored=await fresh.request.get(`/api/v4/simulations/${saved._id}`);expect(await stored.json()).toEqual(saved);
     for(const width of [1440,390]){await reopened.setViewportSize({width,height:1000});expect(await reopened.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await reopened.locator('#simulator-anticipation').screenshot({path:info.outputPath(`antecipacao-${width}.png`)});}
     await expect(reopened.locator('#sim-difal-options [data-difal-option="pure"]')).toContainText('Incluído por escolha');

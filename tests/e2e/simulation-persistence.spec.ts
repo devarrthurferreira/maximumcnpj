@@ -1,4 +1,4 @@
-import {showDreRegimes,showDreMonth,showDreConsolidated} from './dre-controls.ts';
+import {showDreRegimes,expectConsolidatedDre,readDreMonthlyCsv,dreMonthlyValues} from './dre-controls.ts';
 import {MongoClient} from 'mongodb';
 import {mockStatement,statementHistory,documentId} from './extrato-helper.ts';
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
@@ -152,7 +152,7 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   // Compare cells consistently: innerText adds table separators and CSS uppercase,
   // while Playwright's default toHaveText reads the underlying textContent.
   const originalDre = await page.locator('.sim-dre tbody tr > *').allTextContents();
-  await expect(page.locator('#dre-display-period')).toHaveValue('annual');
+  await expectConsolidatedDre(page);
   // Each selected competence compares the four captured regimes side by side.
   // The source has no confirmed issuer UF: August's Presumido/Real calculations
   // are explicitly pending in the saved result, not zero or an inferred revenue.
@@ -164,12 +164,13 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   ]}});
   // Covered months without movement remain zero; August preserves availability
   // and the exact positive values captured for both Simples regimes.
-  for(let month=0;month<9;month++){
-    await showDreMonth(page,month);
-    await expect(page.locator('.sim-dre [data-dre-row="revenue"]').locator('td')).toHaveText(
-      month===7?['R$ 13.250,50','R$ 13.250,50','—','—']:Array(4).fill('R$ 0,00')
-    );
+  const monthlyCsv=await readDreMonthlyCsv(page);
+  for(const regime of ['Simples Puro','Simples Híbrido','Lucro Presumido','Lucro Real']){
+    const values=dreMonthlyValues(monthlyCsv,regime,'Receita Total utilizada');
+    for(let month=0;month<9;month++)expect(values[month]).toBe(month===7?
+      regime.startsWith('Simples')?'13250,50':'Não disponível':'0,00');
   }
+  await expectConsolidatedDre(page);
 
 
   // A new context has no cookies or sessionStorage from the original tab.
