@@ -6,7 +6,7 @@ No comparativo fixo de janeiro a setembro, quando a soma **validada** do resulta
 
 **Escopo fiscal:** trata-se de cenário comparativo gerencial para o resultado acumulado, não da anulação de impostos trimestrais juridicamente devidos. Lucro Real anual com suspensão/redução de estimativas depende de balanços/balancetes e dos ajustes fiscais exigidos (IN RFB nº 1.700/2017, arts. 47, 49 e 61). Versões já salvas preservam suas evidências; para comparar uma empresa existente com a nova regra, gere uma nova versão da análise.
 
-A leitura da DRE foi melhorada com hierarquia de cabeçalhos, subtotais, linhas alternadas e alinhamento dos valores. **Nenhum campo, regime, crédito, opção de relatório ou quadro de APURAÇÃO DOS TRIBUTOS foi removido ou renomeado.**
+A memória de cálculo também identifica quando a regra gerencial de prejuízo acumulado foi aplicada, sem mascarar as obrigações trimestrais. A leitura da DRE foi melhorada com hierarquia de cabeçalhos, subtotais, linhas alternadas e alinhamento dos valores. **Nenhum campo, regime, crédito, opção de relatório ou quadro de APURAÇÃO DOS TRIBUTOS foi removido ou renomeado.**
 
 
 ## DRE por natureza dos impostos e regra do prejuízo no Lucro Real (04/11/2026)
