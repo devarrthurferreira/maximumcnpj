@@ -3,6 +3,7 @@ import {readDreValue,buildDreSummary,buildDreExecutiveSummary,buildDreEvolution}
 import {requiresSimplesReference} from './regime-selection.js';
 import {renderCommercialComposition} from './simulator-commercial-view.js';
 import {DRE_REGIME_OPTIONS,resolveDreVisibleRegimeIds,filterDreVisibleRegimes} from './simulator-dre-visibility.js';
+import {irpjIncludedInDas} from './simulator-irpj-display.js';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const moneyFormatter=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
 const percentFormatter=new Intl.NumberFormat('pt-BR',{maximumFractionDigits:2});
@@ -16,17 +17,28 @@ const fixedPeriod=(presentation,calendar=null)=>presentation?.analysisPeriod?.ve
 const totalLabel=(presentation,calendar=null)=>fixedPeriod(presentation,calendar)?'Consolidado Jan–Set':'Total anual';
 const actualCalendar=calendar=>['DRE_CALENDAR_V3','DRE_CALENDAR_V4'].includes(calendar?.version);
 const reportIcon=kind=>`<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${kind==='download'?'<path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4"/>':'<path d="M7 8V3h10v5M7 17H4V8h16v9h-3M7 14h10v7H7z"/><path d="M16 11h1"/>'}</svg>`;
-function cell(row,column,{showPercent,highlightId}){
+const IRPJ_MEMORY_ROWS=new Set(['irpjTaxBase','irpjAdditionalLimit','irpjBaseWithinLimit','irpjExcessBase',
+  'irpjNormalAssessed','irpjAdditionalAssessed','irpjTotalAssessed']);
+const irpjReason=(row,column)=>column.mode==='month'?row.monthlyReasonByRegime?.[column.id]?.[column.month]??row.calendarReasonByRegime?.[column.id]:
+  (column.mode==='annual'?row.reasonByRegime:row.calendarReasonByRegime)?.[column.id];
+function cell(row,column,{presentation,showPercent,highlightId}){
   const value=readDreValue(row,column),reason=column.mode==='month'?row.monthlyReasonByRegime?.[column.id]?.[column.month]??row.calendarReasonByRegime?.[column.id]:(column.mode==='annual'?row.reasonByRegime:row.calendarReasonByRegime)?.[column.id];
   const ratio=column.mode==='month'?row.monthlyPercentValues?.[column.id]?.[column.month]:column.mode==='calendarAnnual'?row.calendarAnnualPercentValues?.[column.id]:row.percentValues?.[column.id];
-  return `<td class="${column.mode==='calendarAnnual'?'sim-year-total ':''}${column.id===highlightId&&column.mode==='annual'?'dre-active-column ':''}${row.key==='netProfit'?(value===null?'dre-unavailable-cell':value<0?'dre-loss-cell':''):''}"><span class="dre-amount${value<0?' dre-negative':''}"${value===null&&reason?` title="${esc(reason)}" aria-label="${esc(reason)}"`:''}>${row.unit==='percent'?percent(value):money(value)}</span>${showPercent&&row.unit!=='percent'?`<small class="dre-percent" aria-label="Percentual da receita utilizada">${percent(ratio)}</small>`:''}</td>`;
+  const inDas=irpjIncludedInDas(presentation,row,column);
+  const amount=inDas?'<span class="dre-irpj-in-das" title="IRPJ incluído no DAS; sem parcela externa neste regime." aria-label="IRPJ incluído no DAS; sem parcela externa neste regime.">No DAS</span>':
+    `<span class="dre-amount${value<0?' dre-negative':''}"${value===null&&reason?` title="${esc(reason)}" aria-label="${esc(reason)}"`:''}>${row.unit==='percent'?percent(value):money(value)}</span>`;
+  return `<td class="${column.mode==='calendarAnnual'?'sim-year-total ':''}${column.id===highlightId&&column.mode==='annual'?'dre-active-column ':''}${row.key==='netProfit'?(value===null?'dre-unavailable-cell':value<0?'dre-loss-cell':''):''}">${amount}${!inDas&&showPercent&&row.unit!=='percent'?`<small class="dre-percent" aria-label="Percentual da receita utilizada">${percent(ratio)}</small>`:''}</td>`;
 }
 function tableRow(row,columns,options){
   const total=TOTALS.has(row.key),kind=row.kind||'line';
-  return `<tr class="dre-row dre-${esc(kind)}${total?' total':''}${row.informative?' dre-informative':''}" data-dre-row="${esc(row.key)}"><th scope="row"><span>${esc(row.label)}</span>${row.kind==='detail'?'<small class="dre-composition-label">Composição</small>':''}</th>${columns.map(column=>cell(row,column,options)).join('')}</tr>`;
+  const irpjComponent=['irpjBasic','irpjAdditional'].includes(row.key),irpjMemory=IRPJ_MEMORY_ROWS.has(row.key);
+  const note=row.key==='irpj'?'<small class="dre-irpj-total-note">Normal e adicional já incluídos neste valor.</small>':
+    irpjMemory&&row.notes?.length?`<small class="dre-irpj-formula">${esc(row.notes.join(' '))}</small>`:
+    row.kind==='detail'&&!irpjComponent?'<small class="dre-composition-label">Composição</small>':'';
+  return `<tr class="dre-row dre-${esc(kind)}${total?' total':''}${row.informative?' dre-informative':''}${row.key==='irpj'?' dre-irpj-total':''}${irpjComponent?' dre-irpj-component':''}${row.key==='irpjTotalAssessed'?' dre-irpj-assessed-total':''}" data-dre-row="${esc(row.key)}"><th scope="row"><span>${esc(row.label)}</span>${note}</th>${columns.map(column=>cell(row,column,options)).join('')}</tr>`;
 }
 function table({presentation,columns,showPercent,label='DRE comparativa com rolagem horizontal',className='',highlightId=null,rows=null,indicatorLabel='Indicador',indicatorNote=''}){
-  const reconciliationKeys=new Set([...(presentation.revenueReconciliation?.rows||[]),...(presentation.icmsReconciliation?.rows||[])].map(row=>row.key));
+  const reconciliationKeys=new Set([...(presentation.revenueReconciliation?.rows||[]),...(presentation.icmsReconciliation?.rows||[]),...(presentation.irpjReconciliation?.rows||[])].map(row=>row.key));
   const displayed=rows||unifiedDreRows(presentation).filter(row=>!reconciliationKeys.has(row.key));
   const sections=new Map(!rows?(presentation.statement?.sections||[]).filter(section=>section.rows?.length).map(section=>[section.rows[0].key,section]):[]);
   return `<div class="sim-table-wrap dre-table-wrap ${className}" tabindex="0" role="region" aria-label="${esc(label)}"><table><thead><tr><th scope="col">${esc(indicatorLabel)}${indicatorNote?`<small>${esc(indicatorNote)}</small>`:''}</th>${columns.map(column=>`<th scope="col"${column.id===highlightId&&column.mode==='annual'?' class="dre-active-column"':''}>${esc(column.label)}${column.year?`<small>${esc(column.year)}</small>`:''}</th>`).join('')}</tr></thead><tbody>${displayed.map(row=>{
@@ -76,7 +88,23 @@ function icmsReconciliation({presentation,columns,showPercent,summaryColumn=null
   }).join('')}</dl>${mobileReasons.length?`<p class="dre-icms-unavailable" data-icms-unavailable="mobile">${mobileReasons.map(esc).join(' ')}</p>`:''}</div>`:'';
   return `<section class="dre-icms-reconciliation${summaryColumn?' has-mobile-summary':''}" data-icms-reconciliation="dre" aria-label="${esc(reconciliation.label)}"><header><span class="eyebrow">CONFERÊNCIA DO ICMS · INFORMATIVO</span><h3>${esc(reconciliation.label)}</h3><p>Débito, créditos e saldo do mesmo regime e período da DRE.</p></header>${mobile}${table({presentation,columns,showPercent,rows:reconciliation.rows,label:'Apuração do crédito de ICMS por cenário e período',className:'dre-icms-table'})}${reasons.length?`<p class="dre-icms-unavailable dre-icms-table-unavailable" data-icms-unavailable="table">${reasons.map(esc).join(' ')}</p>`:''}<p class="dre-icms-note">${esc(reconciliation.note)}</p></section>`;
 }
-function finalReconciliations(options){return revenueReconciliation(options)+icmsReconciliation(options);}
+function irpjReconciliation({presentation,columns,showPercent}){
+  const reconciliation=presentation.irpjReconciliation;
+  if(reconciliation?.version!=='IRPJ_RECONCILIATION_V1'||!reconciliation.rows?.length)return '';
+  const reasons=new Set();
+  for(const row of reconciliation.rows)for(const column of columns){
+    if(readDreValue(row,column)!==null||irpjIncludedInDas(presentation,row,column))continue;
+    const reason=irpjReason(row,column);
+    if(reason){
+      const regime=presentation.regimes.find(item=>item.id===column.id)?.name||column.label||column.id;
+      reasons.add(`${regime}: ${reason}`);
+    }
+  }
+  const includesDas=columns.some(column=>irpjIncludedInDas(presentation,{key:'irpj'},column));
+  const monthly=columns.some(column=>column.mode==='month');
+  return `<section class="dre-irpj-reconciliation" data-irpj-reconciliation="dre" data-irpj-period="${monthly?'monthly':'annual'}" aria-label="${esc(reconciliation.label)}"><header><span class="eyebrow">CONFERÊNCIA DO IRPJ</span><h3>${esc(reconciliation.label)}</h3><p>Da base tributável ao imposto: normal de 15% e adicional de 10% sobre o excedente. Valores informativos já incluídos no total da DRE.</p></header><p class="dre-irpj-method" data-irpj-method>${esc(reconciliation.note)}</p>${table({presentation,columns,showPercent:false,rows:reconciliation.rows,label:'Base, limite e cálculo do IRPJ por regime e período',className:'dre-irpj-table',indicatorLabel:'Conferência do IRPJ'})}${includesDas?'<p class="dre-irpj-das-note">No DAS: o IRPJ já integra o Simples. Não há outra parcela a somar nesta DRE.</p>':''}${reasons.size?`<p class="dre-irpj-unavailable" data-irpj-unavailable>${[...reasons].map(esc).join(' ')}</p>`:''}<p class="dre-irpj-note">A base dentro do limite e a base excedente explicam a base do IRPJ. Somente o excedente recebe o adicional. Normal + adicional = IRPJ total apurado.</p></section>`;
+}
+function finalReconciliations(options){return irpjReconciliation(options)+revenueReconciliation(options)+icmsReconciliation(options);}
 const percentControl=showPercent=>`<label class="dre-percent-control"><input id="dre-show-percent" type="checkbox" ${showPercent?'checked':''}>Mostrar % da receita</label>`;
 function reportOptions(reportPeriod='complete',fixed=false){
   return `<div class="dre-export-options"><label class="dre-report-control" for="dre-report-period">${fixed?'Relatório':'Conteúdo do relatório'}<select id="dre-report-period">${[['complete',fixed?'Completo · Jan–Set + mensal':'Completo · anual + mensal'],['annual',fixed?'Consolidado Jan–Set':'Somente anual'],['monthly','Somente mensal']].map(([value,label])=>`<option value="${value}"${value===reportPeriod?' selected':''}>${label}</option>`).join('')}</select>${fixed?'':'<small>PDF e CSV incluem a DRE completa dos regimes escolhidos.</small>'}</label><div class="dre-export-actions"><button type="button" id="download-dre-pdf" class="dre-export-primary" aria-describedby="dre-pdf-status">${reportIcon('download')}<span data-dre-pdf-label>Baixar PDF completo</span></button><button type="button" id="export-dre-csv">${reportIcon('download')}Baixar DRE CSV</button><button type="button" id="print-dre">${reportIcon('print')}Imprimir</button></div><p id="dre-pdf-status" class="dre-pdf-status" role="status" aria-live="polite" aria-atomic="true">PDF único com gráficos, comparativos e memória de cálculo da versão salva.</p></div>`;
@@ -238,7 +266,7 @@ function renderJanSepDre({presentation,calendar,year,showPercent=false,reportPer
     <p class="dre-table-scroll-note">Deslize a tabela para comparar os regimes <span aria-hidden="true">→</span></p>
     ${table({presentation:shown,columns,showPercent,label:monthly?'DRE mensal por regime':'DRE completa por regime',indicatorLabel:monthly?`DRE · ${months[selectedMonth]?.label||'Competência'}`:'DRE · consolidado Jan–Set'})}
     ${presentation.statement?.note?`<p class="dre-calculation-note">${esc(presentation.statement.note)}</p>`:''}
-    ${icmsReconciliation({presentation:shown,columns,showPercent})}${appliedCredits(shown,columns)}
+    ${irpjReconciliation({presentation:shown,columns,showPercent})}${icmsReconciliation({presentation:shown,columns,showPercent})}${appliedCredits(shown,columns)}
     <div class="dre-toolbar dre-report-toolbar">${reportOptions(reportPeriod,true)}</div>
     ${revenueReconciliation({presentation:shown,columns,showPercent})}
     ${compactDifal(shown)}${shown.regimes.some(regime=>['pure','hybrid'].includes(regime.id))?simplesDiagnostic(shown,sourceMonth):''}

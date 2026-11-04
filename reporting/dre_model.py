@@ -30,7 +30,7 @@ SECTIONS = (
                                ('payroll', 'Encargos adicionais'), ('personnel', 'Pessoal e encargos'),
                                ('administrative', 'Outras despesas'), ('rent', 'Aluguéis'), ('cards', 'Taxas de cartão'),
                                ('operatingExpenses', 'Total de despesas operacionais'), ('preTax', 'Resultado antes de IRPJ / CSLL'))),
-    ('Resultado', (('irpj', 'IRPJ e adicional'), ('csll', 'CSLL'),
+    ('Resultado', (('irpj', 'IRPJ total (normal + adicional)'), ('csll', 'CSLL'),
                    ('incomeTaxes', 'Total de IRPJ e CSLL'), ('netProfit', 'Resultado líquido'))),
 )
 STATEMENT_SECTIONS = (
@@ -42,7 +42,7 @@ STATEMENT_SECTIONS = (
                                ('administrative', 'Outras despesas'), ('rent', 'Aluguéis'), ('cards', 'Taxas de cartão'),
                                ('operatingExpensesBeforePayroll', 'Total de despesas operacionais'))),
     ('Tributos apurados', (('das', 'Simples (DAS)'), ('icmsNet', 'ICMS (D - C) apurado'),
-                           ('cbsIbsNet', 'CBS/IBS (D - C) apurado'), ('irpj', 'IRPJ'), ('csll', 'CSLL'),
+                           ('cbsIbsNet', 'CBS/IBS (D - C) apurado'), ('irpj', 'IRPJ total (normal + adicional)'), ('csll', 'CSLL'),
                            ('icmsAnticipation', 'Antecipação de ICMS'), ('difal', 'DIFAL'),
                            ('payroll', 'INSS / encargos da folha'), ('iss', 'ISS fora do DAS'),
                            ('totalTaxes', 'Total de tributos'), ('taxBurden', '% sobre a receita - tributos'))),
@@ -55,6 +55,22 @@ DERIVED = {'revenueDeductions', 'netCosts', 'operatingExpenses', 'incomeTaxes'}
 GROUP_LABELS = {'OPTANTE': 'Simples Nacional', 'NAO_OPTANTE': 'Não optante', 'CPF': 'Pessoa física (CPF)',
                 'NAO_CONFIRMADO': 'Não confirmado', 'OUTROS': 'Outros documentos',
                 'B2B': 'Empresas (B2B)', 'B2C': 'Consumidor final (B2C)', 'UNIDENTIFIED': 'Não identificado'}
+IRPJ_ROWS = (
+    ('irpjTaxBase', 'Base tributável do IRPJ'),
+    ('irpjAdditionalLimit', 'Limite do adicional'),
+    ('irpjBaseWithinLimit', 'Base dentro do limite'),
+    ('irpjExcessBase', 'Base excedente ao limite'),
+    ('irpjNormalAssessed', 'IRPJ normal (15% da base)'),
+    ('irpjAdditionalAssessed', 'Adicional de IRPJ (10% do excedente)'),
+    ('irpjTotalAssessed', 'IRPJ total (normal + adicional)'),
+)
+IRPJ_KEYS = tuple(key for key, _ in IRPJ_ROWS)
+IRPJ_EMPTY_REASON = 'A memória do IRPJ está ausente ou incompleta nesta versão.'
+IRPJ_INVALID_REASON = 'A memória do IRPJ não concilia com a base, as alíquotas ou o total salvo.'
+IRPJ_PERIOD_REASON = 'As competências do IRPJ estão ausentes, duplicadas ou divergem do período salvo.'
+IRPJ_CALENDAR_REASON = 'A memória do IRPJ não concilia com o total do calendário salvo.'
+IRPJ_CALENDAR_MISSING_REASON = 'Calendário salvo não disponível para este regime.'
+IRPJ_DAS_REASON = 'IRPJ incluído no DAS; sem parcela externa neste regime.'
 
 
 def finite(value):
@@ -68,6 +84,112 @@ def close(a, b):
 def total(values):
     values = list(values)
     return sum(values) if values and all(finite(value) for value in values) else None
+
+
+def irpj_close(a, b):
+    """Match the browser's strict reconciliation, not display-cent rounding."""
+    return finite(a) and finite(b) and abs(a - b) <= max(1e-7, 8 * 2.220446049250313e-16 * max(abs(a), abs(b)))
+
+
+def _unique(rows, key, value):
+    matches = [row for row in rows if isinstance(row, dict) and row.get(key) == value] if isinstance(rows, list) else []
+    return matches[0] if len(matches) == 1 else None
+
+
+def _irpj_unavailable(reason=IRPJ_EMPTY_REASON, status='UNAVAILABLE'):
+    return {'available': False, 'status': status, 'reason': reason, 'values': dict.fromkeys(IRPJ_KEYS)}
+
+
+def _irpj_confirmed(values):
+    return {'available': True, 'status': 'CONFIRMED', 'reason': '', 'values': values}
+
+
+def _irpj_captured(result, regime_id):
+    regime = _unique(result.get('regimes'), 'id', regime_id)
+    if not regime:
+        return _irpj_unavailable()
+    if regime.get('available') is not True:
+        status = regime.get('status')
+        return _irpj_unavailable(status if isinstance(status, str) and status else IRPJ_EMPTY_REASON)
+    if regime_id in ('pure', 'hybrid'):
+        return _irpj_unavailable(IRPJ_DAS_REASON, 'INCLUDED_IN_DAS')
+    if regime_id not in ('presumed', 'actual'):
+        return _irpj_unavailable()
+    ids = {'base': 'presumed.irTotalBase' if regime_id == 'presumed' else 'actual.base',
+           'normal': regime_id + '.irBasic', 'additional': regime_id + '.irAdditional', 'total': regime_id + '.irTotal'}
+    amounts = {}
+    for key, identifier in ids.items():
+        entry = _unique(result.get('memory'), 'id', identifier)
+        if (not entry or entry.get('unit') != 'currency' or entry.get('availability') == 'UNAVAILABLE'
+                or not finite(entry.get('value')) or entry['value'] < 0):
+            return _irpj_unavailable()
+        amounts[key] = entry['value']
+    if (not irpj_close(amounts['normal'] + amounts['additional'], amounts['total'])
+            or not irpj_close(-amounts['total'], (regime.get('dre') or {}).get('irpj'))):
+        return _irpj_unavailable(IRPJ_INVALID_REASON)
+    return {'available': True, 'amounts': amounts}
+
+
+def _irpj_period(result, regime_id, months):
+    saved = _irpj_captured(result, regime_id)
+    if not saved['available']:
+        return saved
+    values = saved['amounts']
+    base, limit = values['base'], 20000 * months
+    within, excess = min(base, limit), max(0, base - limit)
+    if not irpj_close(values['normal'], base * .15) or not irpj_close(values['additional'], excess * .10):
+        return _irpj_unavailable(IRPJ_INVALID_REASON)
+    return _irpj_confirmed({'irpjTaxBase': base, 'irpjAdditionalLimit': limit,
+                           'irpjBaseWithinLimit': within, 'irpjExcessBase': excess,
+                           'irpjNormalAssessed': values['normal'], 'irpjAdditionalAssessed': values['additional'],
+                           'irpjTotalAssessed': values['total']})
+
+
+def reconcile_irpj(result, regime_id, *, source_month=None, expected_source_months=None, expected_count=None):
+    """Explain immutable captured taxes with the same proof as irpj-reconciliation.js.
+
+    A consolidated managerial report sums independently checked monthly excesses;
+    an unused limit in another month cannot reduce a captured monthly additional.
+    """
+    if result.get('method') != 'REPORT_MONTHS_V1':
+        return _irpj_period(result, regime_id, 12) if source_month is None else _irpj_unavailable(IRPJ_PERIOD_REASON)
+    rows = result.get('monthlyResults')
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 12:
+        return _irpj_unavailable(IRPJ_PERIOD_REASON)
+    source_months, numbers = set(), set()
+    for row in rows:
+        month = row.get('sourceMonth') if isinstance(row, dict) else None
+        if (not isinstance(month, str) or not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', month)
+                or type(row.get('month')) not in (int, float) or row['month'] != int(month[5:])
+                or month in source_months or row['month'] in numbers or not isinstance(row.get('result'), dict)):
+            return _irpj_unavailable(IRPJ_PERIOD_REASON)
+        source_months.add(month)
+        numbers.add(row['month'])
+    if expected_count is not None and (not finite(expected_count) or expected_count != int(expected_count) or expected_count != len(rows)):
+        return _irpj_unavailable(IRPJ_PERIOD_REASON)
+    if expected_source_months is not None and (
+            not isinstance(expected_source_months, list) or len(expected_source_months) != len(rows)
+            or any(not isinstance(month, str) for month in expected_source_months)
+            or len(set(expected_source_months)) != len(expected_source_months) or set(expected_source_months) != source_months):
+        return _irpj_unavailable(IRPJ_PERIOD_REASON)
+    if source_month is not None:
+        selected = next((row for row in rows if row['sourceMonth'] == source_month), None)
+        return _irpj_period(selected['result'], regime_id, 1) if selected else _irpj_unavailable(IRPJ_PERIOD_REASON)
+    saved = _irpj_captured(result, regime_id)
+    if not saved['available']:
+        return saved
+    months = [_irpj_period(row['result'], regime_id, 1) for row in rows]
+    failed = next((row for row in months if not row['available']), None)
+    if failed:
+        return _irpj_unavailable(failed['reason'])
+    values = {key: sum(row['values'][key] for row in months) for key in IRPJ_KEYS}
+    if (not all(finite(value) for value in values.values())
+            or not irpj_close(values['irpjTaxBase'], values['irpjBaseWithinLimit'] + values['irpjExcessBase'])
+            or not all(irpj_close(values[key], saved['amounts'][field]) for key, field in (
+                ('irpjTaxBase', 'base'), ('irpjNormalAssessed', 'normal'),
+                ('irpjAdditionalAssessed', 'additional'), ('irpjTotalAssessed', 'total')))):
+        return _irpj_unavailable(IRPJ_INVALID_REASON)
+    return _irpj_confirmed(values)
 
 
 def decimal_text(value, places=2):
@@ -175,6 +297,10 @@ class DreModel:
         return {'id': regime['id'], 'available': saved.get('available') is True, 'dre': values}
 
     def value(self, regime, key, index=None):
+        if key in IRPJ_KEYS or key in ('irpjBasic', 'irpjAdditional'):
+            target = {'irpjBasic': 'irpjNormalAssessed', 'irpjAdditional': 'irpjAdditionalAssessed'}.get(key, key)
+            value = self.irpj(regime, index)['values'][target]
+            return -value if key in ('irpjBasic', 'irpjAdditional') and finite(value) else value
         frame = self.frame(regime, index)
         if frame.get('available') is not True:
             return None
@@ -213,6 +339,76 @@ class DreModel:
                           (not self.compact_statement or key != 'iss' or
                            any(self.value(regime, key, index) is None or self.value(regime, key, index) != 0
                                for regime in self.result['regimes'] for index in (None, *range(len(self.months)))))]
+
+    def irpj(self, regime, index=None):
+        """Reconcile the displayed period from captured evidence, without new tax amounts."""
+        period = self.result.get('analysisPeriod') or {}
+        period = period if self.actual and period.get('version') == 'JAN_SEP_V1' else {}
+        calendar_months = self.calendar.get('months')
+        valid_calendar = False
+        if isinstance(calendar_months, list):
+            included = period.get('includedMonths')
+            if period:
+                valid_calendar = (self.calendar.get('version') == 'DRE_CALENDAR_V4'
+                    and (self.calendar.get('analysisPeriod') or {}).get('version') == 'JAN_SEP_V1'
+                    and isinstance(included, list) and len(calendar_months) == len(included)
+                    and all(isinstance(row, dict) and isinstance(month, str)
+                            and re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', month)
+                            and row.get('sourceMonth') == month and row.get('number') == int(month[5:])
+                            for row, month in zip(calendar_months, included)))
+            else:
+                valid_calendar = (self.calendar.get('version') in ('DRE_CALENDAR_V1', 'DRE_CALENDAR_V2', 'DRE_CALENDAR_V3')
+                                  and len(calendar_months) == 12)
+        if self.actual:
+            source = self.snapshot.get('source') or {}
+            included = period.get('includedMonths')
+            reports = source.get('monthlyReports')
+            expected = included if included is not None else (
+                [row.get('sourceMonth') if isinstance(row, dict) else None for row in reports] if isinstance(reports, list) else None)
+            if expected is None and valid_calendar:
+                expected = [row['sourceMonth'] for row in calendar_months if row.get('sourceMonth')]
+            count = period.get('months')
+            if count is None:
+                count = self.snapshot.get('reportMonths')
+            if count is None:
+                count = source.get('reportMonths')
+            if index is not None and (type(index) is not int or not 0 <= index < len(self.months)):
+                return _irpj_unavailable(IRPJ_PERIOD_REASON)
+            assessed = reconcile_irpj(self.result, regime['id'], source_month=self.months[index] if index is not None else None,
+                                      expected_source_months=expected, expected_count=count)
+        else:
+            assessed = reconcile_irpj(self.result, regime['id'])
+        # The browser's DAS label additionally requires a captured zero. The
+        # shared fiscal helper alone only identifies this regime's tax scope.
+        if assessed['status'] == 'INCLUDED_IN_DAS':
+            captured_value = (self.frame(regime, index if self.actual else None).get('dre') or {}).get('irpj')
+            if not finite(captured_value) or captured_value != 0:
+                return _irpj_unavailable(IRPJ_INVALID_REASON)
+        if index is None or (not assessed['available'] and assessed['status'] != 'INCLUDED_IN_DAS'):
+            return assessed
+        if type(index) is not int or not 0 <= index < len(self.months):
+            return _irpj_unavailable(IRPJ_PERIOD_REASON)
+        scale = 1 if self.actual else 1 / 12
+        if self.snapshot.get('monthlyDre') is not None:
+            saved = _unique(self.calendar.get('regimes'), 'id', regime['id']) if valid_calendar else None
+            calendar_index = next((i for i, row in enumerate(calendar_months or [])
+                                   if row.get('sourceMonth') == self.months[index]), None) if self.actual else index
+            if (not saved or calendar_index is None or (not self.actual and saved.get('available') is not True)
+                    or (self.actual and (self.calendar.get('version') not in ('DRE_CALENDAR_V3', 'DRE_CALENDAR_V4')
+                                         or calendar_months[calendar_index].get('number') != int(self.months[index][5:])))):
+                return _irpj_unavailable(IRPJ_CALENDAR_MISSING_REASON)
+            line = _unique(saved.get('rows'), 'key', 'irpj') if saved else None
+            values = line.get('months') if line else None
+            value = values[calendar_index] if isinstance(values, list) and calendar_index is not None and calendar_index < len(values) else None
+            # Match irpjIncludedInDas: a missing/nonzero displayed calendar cell
+            # must not be described as an IRPJ included in the DAS.
+            if assessed['status'] == 'INCLUDED_IN_DAS':
+                return assessed if finite(value) and value == 0 else _irpj_unavailable(IRPJ_CALENDAR_REASON)
+            if not finite(value) or not irpj_close(-value, assessed['values']['irpjTotalAssessed'] * scale):
+                return _irpj_unavailable(IRPJ_CALENDAR_REASON)
+        if assessed['status'] == 'INCLUDED_IN_DAS':
+            return assessed
+        return _irpj_confirmed({key: value * scale for key, value in assessed['values'].items()})
 
     def tax_rates(self):
         """Expose captured CBS/IBS assumptions, never today's default rates."""

@@ -33,6 +33,55 @@ function fixture() {
     indicators:[row('netMargin','Margem líquida',0.3,{kind:'indicator',unit:'percent',monthlyValues:{a:Array(12).fill(0.3)},calendarAnnualValues:{a:0.3}})]};
 }
 
+test('CSV conserva a categoria das parcelas clonadas do IRPJ e identifica sua memória informativa',()=>{
+  const snapshot=drePdfFixture(),before=structuredClone(snapshot);
+  const presentation=buildDrePresentation({...snapshot,calendar:snapshot.monthlyDre});
+  const data=readCsv(buildDreCsv({presentation,period:'complete',visibleRegimeIds:['presumed','actual']}));
+  const total=data.find(row=>row[2]==='IRPJ total (normal + adicional)');
+  assert.deepEqual(total.slice(0,5),['DRE','Tributos apurados','IRPJ total (normal + adicional)','line','BRL']);
+  for(const label of ['IRPJ normal (15% da base)','Adicional de IRPJ (10% do excedente)']){
+    const part=data.find(row=>row[2]===label);
+    assert.deepEqual(part.slice(0,2),['Detalhamento informativo','Composição do IRPJ']);
+    assert.equal(part[3],'detail');assert.match(part.at(-2),/não somar novamente/);
+    assert.equal(data.filter(row=>row[2]===label).length,1);
+  }
+  const reconciliation=presentation.irpjReconciliation;
+  const annual=data.filter(row=>row[0]==='Memória informativa do IRPJ');
+  assert.equal(annual.length,7);
+  assert.deepEqual(annual.map(row=>row[2]),reconciliation.rows.map(row=>row.label));
+  for(const [index,row] of annual.entries()){
+    assert.equal(row[1],reconciliation.label);assert.match(row.at(-2),/não somar novamente/);
+    const expected=reconciliation.rows[index].values;
+    assert.equal(row[5],expected.presumed.toLocaleString('pt-BR',{useGrouping:false,minimumFractionDigits:2,maximumFractionDigits:2}));
+    assert.equal(row[6],expected.actual.toLocaleString('pt-BR',{useGrouping:false,minimumFractionDigits:2,maximumFractionDigits:2}));
+  }
+  const monthly=data.filter(row=>row[1]==='Memória informativa do IRPJ');
+  assert.equal(monthly.length,14);
+  assert.deepEqual([...new Set(monthly.map(row=>row[0]))],['Lucro Presumido','Lucro Real']);
+  assert(data.some(row=>row[0]==='Critério do IRPJ'&&row[1]===reconciliation.note));
+  assert.deepEqual(snapshot,before);
+});
+
+test('tela e impressão exibem o mesmo quadro do IRPJ, com parcelas legíveis e sem uma segunda dedução',()=>{
+  const snapshot=drePdfFixture(),presentation=buildDrePresentation({...snapshot,calendar:snapshot.monthlyDre});
+  const before=structuredClone(presentation);
+  const options={presentation,calendar:snapshot.monthlyDre,company:snapshot.company,year:2027,visibleRegimeIds:['presumed','actual'],showPercent:true};
+  for(const html of [renderAnnualDre(options),renderDrePrintDocument({...options,period:'annual'})]){
+    assert.equal((html.match(/data-irpj-reconciliation="dre"/g)||[]).length,1);
+    assert.match(html,/Memória de cálculo do IRPJ/);assert.match(html,/Base dentro do limite/);
+    assert.match(html,/IRPJ normal \(15% da base\)/);assert.match(html,/Adicional de IRPJ \(10% do excedente\)/);
+    const memoryStart=html.indexOf('data-irpj-reconciliation="dre"');
+    assert(!html.slice(memoryStart,html.indexOf('</section>',memoryStart)).includes('class="dre-percent"'));
+    assert(html.includes('class="dre-percent"'),'A análise vertical permanece na DRE principal.');
+    const main=html.slice(html.indexOf('data-dre-row="irpj"'),html.indexOf('data-dre-row="csll"'));
+    assert(!main.includes('dre-composition-label'));assert(!main.includes('− IRPJ'));
+    for(const key of ['irpj','irpjBasic','irpjAdditional',...presentation.irpjReconciliation.rows.map(row=>row.key)]){
+      assert.equal((html.match(new RegExp(`data-dre-row="${key}"`,'g'))||[]).length,1,key);
+    }
+  }
+  assert.deepEqual(presentation,before);
+});
+
 test('CSV anual inclui DRE, detalhes e indicadores, BOM e números com sinais sem converter percentuais em moeda', () => {
   const data = fixture(), before = structuredClone(data);
   const csv = buildDreCsv({presentation:data,company:{name:'Empresa sintética',code:'001',cnpj:'00000000000000'},year:2027,showPercent:true});
@@ -92,7 +141,7 @@ test('CSV mensal mantém uma tabela e um cabeçalho com doze meses, total e todo
   assert.match(taxes[1][19], /Calendário não disponível/);
   const indicators = rows.filter(row => row[3] === 'Margem líquida');
   assert(indicators[0].slice(6,19).every(value => value === '30,00'));
-  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores','Conferência da receita','Apuração do crédito de ICMS'].includes(row[1]));
+  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores','Conferência da receita','Apuração do crédito de ICMS','Memória informativa do IRPJ'].includes(row[1]));
   assert.equal(dataRows.length, 8);
   assert.deepEqual([...new Set(dataRows.map(row => row[0]))], ['Regime A','Regime B']);
   for (const name of ['Regime A','Regime B']) assert.deepEqual(dataRows.filter(row => row[0] === name).map(row => row[3]), ['Receita bruta total','Vendas; "CPFs"\nClientes','DAS','Margem líquida']);
@@ -137,7 +186,7 @@ test('Integração com a apresentação compartilhada preserva calendário diver
   assert.equal(revenue[6],'300,00');assert.equal(revenue[7],'100,00');assert.equal(revenue[30],'2400,00');assert.equal(revenue[31],'100,00');
   const sales = rows.find(row => row[3] === 'Receita de vendas utilizada');
   assert.equal(sales[6],'83,33');assert.equal(sales[7],'27,777778');
-  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores','Conferência da receita','Apuração do crédito de ICMS'].includes(row[1]));
+  const dataRows = rows.filter(row => ['DRE','Detalhamento informativo','Indicadores','Conferência da receita','Apuração do crédito de ICMS','Memória informativa do IRPJ'].includes(row[1]));
   // Spreadsheet text escaping changes only the protective prefix, never row order.
   assert.deepEqual(dataRows.map(row => row[3].replace(/^'/,'')), unifiedDreRows(presentation).map(row => row.label));
   assert.deepEqual({result,calendar},before);

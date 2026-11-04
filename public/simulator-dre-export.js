@@ -24,12 +24,15 @@ function numberCell(value, percent = false) {
 
 function rowContexts(presentation) {
   const contexts = new Map();
-  for (const section of presentation.sections || []) for (const row of section.rows || []) contexts.set(row, ['DRE',section.label]);
-  for (const detail of presentation.details || []) for (const row of detail.rows || []) contexts.set(row, ['Detalhamento informativo',detail.label]);
-  for (const row of presentation.indicators || []) contexts.set(row, ['Indicadores','Indicadores']);
-  for (const row of presentation.revenueReconciliation?.rows || []) contexts.set(row, ['Conferência da receita',presentation.revenueReconciliation.label]);
-  for (const row of presentation.icmsReconciliation?.rows || []) contexts.set(row, ['Apuração do crédito de ICMS',presentation.icmsReconciliation.label]);
-  for (const section of presentation.statement?.sections || []) for (const row of section.rows || []) contexts.set(row, ['DRE',section.label]);
+  // Display layers may clone rows to clarify their labels. Their stable keys,
+  // rather than object identity, preserve each amount's accounting context.
+  for (const section of presentation.sections || []) for (const row of section.rows || []) contexts.set(row.key, ['DRE',section.label]);
+  for (const detail of presentation.details || []) for (const row of detail.rows || []) contexts.set(row.key, ['Detalhamento informativo',detail.label]);
+  for (const row of presentation.indicators || []) contexts.set(row.key, ['Indicadores','Indicadores']);
+  for (const row of presentation.revenueReconciliation?.rows || []) contexts.set(row.key, ['Conferência da receita',presentation.revenueReconciliation.label]);
+  for (const row of presentation.icmsReconciliation?.rows || []) contexts.set(row.key, ['Apuração do crédito de ICMS',presentation.icmsReconciliation.label]);
+  for (const section of presentation.statement?.sections || []) for (const row of section.rows || []) contexts.set(row.key, ['DRE',section.label]);
+  for (const row of presentation.irpjReconciliation?.rows || []) contexts.set(row.key, ['Memória informativa do IRPJ',presentation.irpjReconciliation.label]);
   return contexts;
 }
 
@@ -128,6 +131,7 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
   if (showPercent) textLine(['Análise vertical', presentation.percentBasis || 'Receita utilizada na simulação, no mesmo período e regime']);
   if (presentation.revenueReconciliation?.note) textLine(['Fechamento da receita',presentation.revenueReconciliation.note]);
   if (presentation.icmsReconciliation?.note) textLine(['Critério do crédito de ICMS',presentation.icmsReconciliation.note]);
+  if (presentation.irpjReconciliation?.note) textLine(['Critério do IRPJ',presentation.irpjReconciliation.note]);
   lines.push('');
 
   if(fixed&&!monthly){
@@ -155,7 +159,7 @@ export function buildDreCsv({presentation, period = 'annual', company = {}, year
     lines.push('');
   }
 
-  const prefix = row => [...(contexts.get(row) || ['DRE','']), row.label, row.kind || 'line', row.unit === 'percent' ? '%' : 'BRL'];
+  const prefix = row => [...(contexts.get(row.key) || ['DRE','']), row.label, row.kind || 'line', row.unit === 'percent' ? '%' : 'BRL'];
   const annualTable=()=>{
     if(complete)textLine([fixed?'Demonstrativo consolidado · janeiro a setembro':'Demonstrativo anual consolidado']);
     textLine(['Escopo','Seção','Indicador','Tipo','Unidade', ...regimes.flatMap(regime => showPercent ? [regime.name, `${regime.name} · % da receita`] : [regime.name]), 'Observações','Referências']);

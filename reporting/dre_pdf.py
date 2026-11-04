@@ -24,7 +24,7 @@ from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate, Paragraph,
                                PageBreak, KeepTogether, LongTable, Table, TableStyle)
 
 from .core import VERSION, display_date
-from .dre_model import (DreModel, SUBTOTALS, DERIVED, PERCENT_ROWS, GROUP_LABELS, finite, close,
+from .dre_model import (DreModel, SUBTOTALS, DERIVED, PERCENT_ROWS, GROUP_LABELS, IRPJ_ROWS, finite, close,
                         total, money, percentage, decimal_text, month_label)
 from .dre_charts import (Bars, Trend, Waterfall, Donut, draw_text, TEAL, DEEP, CORAL,
                          MINT, INK, MUTED, LINE, PALE, COLORS, FONT, BOLD, CoverageStrip)
@@ -239,6 +239,9 @@ class Report:
 
     def statement_cell(self, regime, key, index=None, *, compact=False):
         m = self.model
+        if (key == 'irpj' and regime['id'] in ('pure', 'hybrid') and m.value(regime, key, index) == 0
+                and m.irpj(regime, index)['status'] == 'INCLUDED_IN_DAS'):
+            return self.p('Incluído no DAS', 'tiny')
         if key in PERCENT_ROWS:
             return self.p(percentage(m.value(regime, key, index), 2), 'monthly_number' if compact else 'number')
         return self.number(m.value(regime, key, index),
@@ -517,11 +520,13 @@ class Report:
             keys = [('DAS', 'das', -1), ('CBS - débito', 'cbsDebit', -1), ('IBS - débito', 'ibsDebit', -1),
                     ('ICMS líquido', 'icmsNet', -1), ('ISS', 'iss', -1), ('DIFAL sobre vendas', 'difal', -1),
                     ('Antecipação de ICMS', 'icmsAnticipation', -1), ('Encargos da folha', 'payroll', -1),
-                    ('IRPJ e adicional', 'irpj', -1), ('CSLL', 'csll', -1),
+                    ('IRPJ total (normal + adicional)', 'irpj', -1), ('CSLL', 'csll', -1),
                     ('(-) Crédito CBS utilizado', 'cbsUsed', -1), ('(-) Crédito IBS utilizado', 'ibsUsed', -1),
                     ('Tributos e encargos líquidos', 'totalTaxes', 1)]
         keys = [row for row in keys if row[1] not in ('difal', 'icmsAnticipation') or any(row[1] in regime['dre'] for regime in m.regimes)]
-        rows = [[label] + [self.p(percentage(value, 2), 'number') if key in PERCENT_ROWS else
+        rows = [[label] + [self.p('Incluído no DAS', 'tiny') if key == 'irpj' and regime['id'] in ('pure', 'hybrid') and value == 0
+                          and m.irpj(regime)['status'] == 'INCLUDED_IN_DAS' else
+                          self.p(percentage(value, 2), 'number') if key in PERCENT_ROWS else
                           self.number(value * sign if finite(value) else None, bold=key in ('totalTaxes', 'netProfit'), result=key == 'netProfit')
                           for regime in m.regimes for value in [m.value(regime, key)]] for label, key, sign in keys]
         self.add(self.table(['Tributo / encargo'] + [row['name'] for row in m.regimes], rows,
@@ -532,16 +537,7 @@ class Report:
                           ('ICMS e CBS/IBS são apresentados pelo valor apurado, líquido dos créditos utilizados. Os tributos a recolher são positivos neste quadro. '
                            'Percentuais usam a Receita Total utilizada do mesmo regime e período.' if m.compact_statement else
                            'O ICMS desta tabela já é líquido do crédito utilizado.')))
-        self.add(self.p('IRPJ normal e adicional', 'h2'))
-        memory = {item.get('id'): item for item in m.result.get('memory', [])}
-        rows = []
-        for regime in m.regimes:
-            basic = memory.get(regime['id'] + '.irBasic', {}).get('value')
-            additional = memory.get(regime['id'] + '.irAdditional', {}).get('value')
-            valid = regime['available'] and regime['id'] in ('presumed', 'actual') and close(total([basic, additional]), -m.value(regime, 'irpj'))
-            rows.append([regime['name'], self.number(basic if valid else None), self.number(additional if valid else None)])
-        self.add(self.table(['Regime', 'IRPJ normal', 'Adicional'], rows, [WIDTH * .44, WIDTH * .28, WIDTH * .28]),
-                 self.p('Quando o IRPJ está incluído no DAS ou a memória da versão não permite conferir as parcelas, o detalhamento é indicado como n/d.', 'small'))
+        self.irpj_reconciliation()
         self.title('Conferência dos créditos', 'Débito - crédito utilizado = valor a recolher. Crédito potencial - utilizado = saldo potencial.')
         for tax in ('cbsIbs', 'icms') if m.compact_statement else ('cbs', 'ibs', 'icms'):
             tax_label = 'CBS/IBS' if tax == 'cbsIbs' else tax.upper()
@@ -563,11 +559,61 @@ class Report:
                           'Saldo credor potencial é informativo: não aumenta o lucro nem representa restituição automática. '
                           'Créditos de ICMS de compras e devoluções são componentes do potencial, e não deduções adicionais.'))
         icms = m.result.get('credits', {}).get('icms', {})
-        purchase = memory.get('icms.purchaseCredit', {}).get('value')
-        returns = memory.get('icms.returnCredit', {}).get('value')
+        # Duplicate memory identifiers cannot silently override one another.
+        origins = {}
+        for key in ('icms.purchaseCredit', 'icms.returnCredit'):
+            found = [item for item in m.result.get('memory', []) if isinstance(item, dict) and item.get('id') == key]
+            origins[key] = found[0].get('value') if len(found) == 1 else None
+        purchase, returns = origins['icms.purchaseCredit'], origins['icms.returnCredit']
         if close(total([purchase, returns]), icms.get('potential')) and any(m.credit('icms', regime, 'potential') is not None for regime in m.regimes):
             self.add(self.p(f'Origem do crédito potencial de ICMS: compras elegíveis {money(purchase)}; '
                             f'devoluções de venda {money(returns)}. Total potencial {money(icms.get("potential"))}.', 'small'))
+
+    def irpj_reconciliation(self):
+        """Positive explanatory amounts that never enter tax totals a second time."""
+        m = self.model
+        reconciled = [m.irpj(regime) for regime in m.regimes]
+        rows = [[label] + [self.p('Incluído no DAS', 'tiny') if item['status'] == 'INCLUDED_IN_DAS' else
+                          self.number(item['values'][key], bold=key == 'irpjTotalAssessed') for item in reconciled]
+                for key, label in IRPJ_ROWS]
+        self.add(KeepTogether([self.p('Memória de cálculo do IRPJ', 'h2'),
+                 self.p('Valores em R$. O IRPJ normal é 15% da base tributável. O adicional é 10% somente do excedente '
+                        'ao limite. As parcelas abaixo já estão incluídas no IRPJ total da DRE.', 'small'),
+                 self.table(['Composição - ' + ('total do período' if m.actual else 'projeção anual')] +
+                            [regime['name'] for regime in m.regimes], rows,
+                            [177] + [(WIDTH - 177) / len(m.regimes)] * len(m.regimes),
+                            highlights=[6], blocks=[(0, 6)], small=True, compact=True)]))
+        for regime, item in zip(m.regimes, reconciled):
+            if not item['available']:
+                self.add(self.p(regime['name'] + ': ' + item['reason'], 'small'))
+        if m.actual:
+            scope = ('Estimativa gerencial mensal. O limite do modelo é R$ 20.000,00 por competência. No consolidado, base, limite, parcela dentro '
+                     'do limite e excedente são somas das competências confirmadas. O adicional é a soma dos adicionais mensais: '
+                     'não se reaplica 10% sobre a base consolidada menos o limite consolidado. Esta memória gerencial não representa fechamento trimestral.')
+        else:
+            scope = ('Esta versão preserva uma projeção anual, com limite de R$ 240.000,00. Cada mês corresponde a 1/12 '
+                     'dos valores anuais salvos e usa o limite de R$ 20.000,00. As parcelas mensais não representam movimentos históricos.')
+        self.add(self.note(scope + ' Base tributável é a grandeza sobre a qual incide o imposto; ela não é o valor do IRPJ normal. '
+                          'Valores n/d indicam memória indisponível ou inconsistente; os tributos capturados permanecem preservados.'))
+        if m.period == 'annual' or not m.months:
+            return
+        # Each short block retains all seven lines and an explicit month label.
+        # This makes the PDF auditable under the same period/regime filters as the screen.
+        for regime in m.regimes:
+            if regime['id'] not in ('presumed', 'actual'):
+                continue
+            for start in range(0, len(m.months), 4):
+                indices = list(range(start, min(start + 4, len(m.months))))
+                frames = [m.irpj(regime, index) for index in indices]
+                rows = [[label] + [self.number(item['values'][key], bold=key == 'irpjTotalAssessed') for item in frames]
+                        for key, label in IRPJ_ROWS]
+                self.add(self.table(['Composição do IRPJ'] + [month_label(m.months[index], True) for index in indices], rows,
+                                    [177] + [(WIDTH - 177) / len(indices)] * len(indices), highlights=[6], blocks=[(0, 6)],
+                                    repeat_context=regime['name'] + ' - ' + ('por competência' if m.actual else 'parcelas da projeção anual'),
+                                    small=True, compact=True))
+                for index, item in zip(indices, frames):
+                    if not item['available']:
+                        self.add(self.p(month_label(m.months[index], True) + ': ' + item['reason'], 'small'))
 
     def commercial(self):
         m = self.model

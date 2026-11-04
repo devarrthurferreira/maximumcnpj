@@ -9,10 +9,23 @@ export const MONTHLY_VERSION='REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS=Object.freeze([...REPORT_GROUPS,'serviceRevenueCents']);
 const sum=values=>values.reduce((a,b)=>a+b,0);
 const fixedMemory=id=>['rbt12','sublimit','simplesLimit','simples.revenueReference','revenue.reference'].includes(id)||/^simples\..+\.deduction$/.test(id);
+const IRPJ_MONTHLY_FORMULAS={
+  'presumed.irIncrease':'Parcela da receita excedente atribuída à competência × coeficiente médio ponderado IRPJ × 10%.',
+  'presumed.irTotalBase':'Base de IRPJ da competência sem acréscimo + acréscimo da base da competência.',
+  'presumed.irBasic':'Base presumida total da competência × 15%.',
+  'presumed.irAdditional':'Máximo(0; base presumida total da competência − R$ 20.000) × 10%.',
+  'presumed.irTotal':'IRPJ normal da competência + adicional da competência.',
+  'actual.preTax':'Resultado operacional da competência − CBS líquido − IBS líquido − ICMS líquido − ISS − encargos LP/LR. DIFAL não se aplica ao Lucro Real.',
+  'actual.base':'Máximo(0; resultado antes de IRPJ/CSLL da competência); sem ajustes fiscais ou compensações.',
+  'actual.irBasic':'Base positiva da competência × 15%.',
+  'actual.irAdditional':'Máximo(0; base positiva da competência − R$ 20.000) × 10%.',
+  'actual.irTotal':'IRPJ normal da competência + adicional da competência.'
+};
 const monthlyMemory=item=>{
   if(item.id==='months')return {...item,value:1,formula:'Uma competência dos relatórios, calculada separadamente com as premissas do modelo.'};
   if(item.unit!=='currency'||fixedMemory(item.id)||['difal.source','difal.monthly','icmsAnticipation.source','icmsAnticipation.base','icmsAnticipation.monthly'].includes(item.id)||/^group\..+\.(purchases|base)$/.test(item.id))return item;
-  return {...item,value:item.value/12,label:item.label.replace(/anual/g,'da competência'),formula:`Contribuição da competência: (${item.formula}) ÷ 12, no modelo aplicado somente aos valores deste mês.`};
+  const irpjFormula=item.id==='presumed.irBase'?item.formula.replace(/anuais/g,'da competência'):IRPJ_MONTHLY_FORMULAS[item.id];
+  return {...item,value:item.value/12,label:item.label.replace(/anual/g,'da competência'),formula:irpjFormula??`Contribuição da competência: (${item.formula}) ÷ 12, no modelo aplicado somente aos valores deste mês.`};
 };
 const check=(condition,message)=>{if(!condition)throw new TypeError(message);};
 const asCents=(value,signed=false)=>{

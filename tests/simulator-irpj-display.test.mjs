@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {withIrpjBreakdown} from '../public/simulator-irpj-display.js';
+import {withIrpjBreakdown,irpjIncludedInDas} from '../public/simulator-irpj-display.js';
 // Captured rows are inputs to this pure presentation layer, not recalculated taxes.
 const unifiedDreRows=p=>withIrpjBreakdown(p,[
   ...(p.sections||[]).flatMap(section=>section.rows||[]),
   ...(p.details||[]).flatMap(group=>group.rows||[]),
   ...(p.indicators||[]),
   ...(p.revenueReconciliation?.rows||[]),
-  ...(p.icmsReconciliation?.rows||[])
+  ...(p.icmsReconciliation?.rows||[]),
+  ...(p.irpjReconciliation?.rows||[])
 ]);
 const row=(key,value)=>({key,label:key,kind:'line',unit:'currency',values:{presumed:value,actual:value},monthlyValues:{presumed:[value],actual:[value]},notes:[]});
 function fixture(){
@@ -20,6 +21,7 @@ test('IRPJ total is followed by its normal and additional components',()=>{
   assert.deepEqual(rows.map(row=>row.key),['irpj','irpjBasic','irpjAdditional','totalTaxes']);
   assert.match(rows[1].label,/15% da base/);assert.match(rows[2].label,/10% do excedente/);
   assert.equal(rows[2].values.presumed,-800);
+  assert(!rows[1].label.startsWith('−'));assert(!rows[2].label.startsWith('−'));
 });
 test('components never change the saved tax total or snapshot',()=>{
   const presentation=fixture(),before=structuredClone(presentation),rows=unifiedDreRows(presentation);
@@ -60,4 +62,42 @@ test('revenue and ICMS reconciliations are preserved',()=>{
   const rows=unifiedDreRows(presentation);
   assert.deepEqual(rows.slice(-2).map(row=>row.key),['revenueUsed','icmsUsed']);
   assert.equal(rows.at(-1).values.presumed,456);
+});
+
+test('a conferência do IRPJ é mantida uma vez e não altera os tributos da DRE',()=>{
+  const presentation=fixture();
+  const keys=['irpjTaxBase','irpjAdditionalLimit','irpjBaseWithinLimit','irpjExcessBase',
+    'irpjNormalAssessed','irpjAdditionalAssessed','irpjTotalAssessed'];
+  presentation.irpjReconciliation={version:'IRPJ_RECONCILIATION_V1',rows:keys.map((key,index)=>row(key,[28000,20000,20000,8000,4200,800,5000][index]))};
+  const before=structuredClone(presentation),rows=unifiedDreRows(presentation);
+  assert.deepEqual(rows.slice(-7).map(item=>item.key),keys);
+  for(const key of keys)assert.equal(rows.filter(item=>item.key===key).length,1);
+  assert.equal(rows.find(item=>item.key==='irpj').values.presumed,-5000);
+  assert.equal(rows.find(item=>item.key==='totalTaxes').values.presumed,7500);
+  assert.deepEqual(presentation,before);
+});
+
+test('No DAS exige cenário disponível e IRPJ externo zero no mesmo período',()=>{
+  const total={...row('irpj',0),values:{pure:0,hybrid:0,presumed:0},calendarAnnualValues:{pure:0},monthlyValues:{pure:[0,null,120]}};
+  const reason='IRPJ incluído no DAS; sem parcela externa neste regime.';
+  const evidence={reasonByRegime:{pure:reason,hybrid:reason},calendarReasonByRegime:{pure:reason},monthlyReasonByRegime:{pure:[reason,reason,reason]}};
+  const component={key:'irpjAdditional',...evidence},base={key:'irpjTaxBase',...evidence};
+  const presentation={regimes:[{id:'pure',available:true,monthlyAvailability:[true,false,true]},
+    {id:'hybrid',available:false},{id:'presumed',available:true}],sections:[{rows:[total]}],
+    irpjReconciliation:{rows:[{key:'irpjTotalAssessed',...evidence}]}};
+  const before=structuredClone(presentation);
+  assert.equal(irpjIncludedInDas(presentation,total,{id:'pure',mode:'annual'}),true);
+  assert.equal(irpjIncludedInDas(presentation,component,{id:'pure',mode:'month',month:0}),true);
+  assert.equal(irpjIncludedInDas(presentation,base,{id:'pure',mode:'calendarAnnual'}),true);
+  assert.equal(irpjIncludedInDas(presentation,component,{id:'pure',mode:'month',month:1}),false);
+  assert.equal(irpjIncludedInDas(presentation,component,{id:'pure',mode:'month',month:2}),false);
+  assert.equal(irpjIncludedInDas(presentation,component,{id:'hybrid',mode:'annual'}),false);
+  assert.equal(irpjIncludedInDas(presentation,component,{id:'presumed',mode:'annual'}),false);
+  assert.equal(irpjIncludedInDas(presentation,{key:'csll'},{id:'pure',mode:'annual'}),false);
+  assert.deepEqual(presentation,before);
+  const pending=structuredClone(presentation);
+  pending.irpjReconciliation.rows[0].reasonByRegime.pure='As competências do IRPJ estão ausentes, duplicadas ou divergem do período salvo.';
+  assert.equal(irpjIncludedInDas(pending,total,{id:'pure',mode:'annual'}),false);
+  assert.equal(irpjIncludedInDas(presentation,{key:'irpjTaxBase',reasonByRegime:{pure:'Memória indisponível'}},{id:'pure',mode:'annual'}),false);
+  assert.equal(irpjIncludedInDas(presentation,{key:'irpjAdditional'},{id:'pure',mode:'annual'}),false);
 });

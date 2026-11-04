@@ -1,4 +1,14 @@
-# Maximum CNPJ · v0.56.1
+# Maximum CNPJ · v0.56.2
+
+## v0.56.2 — IRPJ com base, excedente e conferência por competência (2026-11-04)
+
+A DRE apresenta o **IRPJ total**, a parcela normal de **15% da base** e o adicional de **10% do excedente**, com hierarquia visual legível e sem repetir essas parcelas no total de tributos. A memória do IRPJ mostra a base tributável, o limite do modelo, a parcela dentro desse limite, o excedente, o imposto normal, o adicional e o total. O quadro acompanha os regimes e o período selecionados, na tela e nos relatórios. Em telas estreitas, os cabeçalhos se ajustam para que o quadro de um único regime caiba na largura disponível.
+
+O cálculo mensal existente usa R$ 20.000 de limite por competência. O consolidado de janeiro a setembro soma os cálculos dos meses com dados: bases abaixo do limite em um mês não reduzem o adicional de outro. A memória mostra essa distinção, inclusive a soma da parcela efetivamente dentro do limite, em vez de apresentar o adicional como uma nova conta sobre a base agregada. Projeções anuais anteriores conservam seu modelo e sua escala. A fórmula mensal agora usa a base e o limite mensais que aparecem na própria memória.
+
+As parcelas só recebem conferência quando a base, as alíquotas, o excedente e o total conciliam com os valores capturados. Memórias ausentes, duplicadas ou inconsistentes permanecem identificadas como pendentes, preservando o total histórico. Nos cenários do Simples, a apresentação identifica o IRPJ incluído no DAS. Tela, impressão, CSV e PDF usam a mesma lógica de conferência; o CSV mantém a categoria informativa mesmo quando os rótulos são ajustados.
+
+Esta entrega torna auditável a estimativa gerencial mensal já usada pelo sistema. Ela não converte a soma dos meses em fechamento fiscal trimestral ou anual. A diferença entre R$ 1.263,73 e R$ 800 exige comparar a base e as competências: no exemplo mensal de base R$ 28.000, o excedente é R$ 8.000 e o adicional é R$ 800. Uma linha de **imposto normal** de R$ 28.300,07 não representa uma base tributável de R$ 28 mil. As referências e os exemplos estão em [IRPJ: base e adicional](docs/irpj-adicional.md).
 
 ## v0.56.1 — Leitura e recuperação do RBT12 (2026-11-04)
 
