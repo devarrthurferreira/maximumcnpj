@@ -7,15 +7,41 @@ import os
 os.environ['ORT_DISABLE_TELEMETRY'] = '1'
 
 from functools import lru_cache
+from contextlib import contextmanager
 from statistics import mean, median
 import math
 import threading
 import time
 
-# RapidOCR mutates its settings during calls. Serialize inference within each instance.
-_OCR_LOCK = threading.Lock()
+# PyMuPDF and RapidOCR share native state within a worker. Protect the entire
+# native operation, including text extraction and rasterization before inference.
+# Reentrancy lets the statement reader include its preflight in the same guard.
+_PDF_READER_LOCK = threading.RLock()
 MAX_PAGES = 30
 MAX_BYTES = 8 * 1024 * 1024
+
+
+def remaining_pdf_time(deadline, *, section_only=False):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        if section_only:
+            raise ValueError('A leitura da seção 2.2 excedeu o tempo disponível. Nenhum resultado parcial foi utilizado.')
+        raise ValueError('O OCR integral excedeu o tempo disponível. Nenhum resultado parcial foi utilizado.')
+    return remaining
+
+
+@contextmanager
+def pdf_reader_guard(timeout_seconds, *, deadline=None, section_only=False):
+    requested_deadline = time.monotonic() + timeout_seconds
+    deadline = requested_deadline if deadline is None else min(deadline, requested_deadline)
+    remaining = remaining_pdf_time(deadline, section_only=section_only)
+    if not _PDF_READER_LOCK.acquire(timeout=remaining):
+        raise ValueError('O leitor de PDF está ocupado. Aguarde e tente novamente; nenhum resultado parcial foi utilizado.')
+    try:
+        remaining_pdf_time(deadline, section_only=section_only)
+        yield deadline
+    finally:
+        _PDF_READER_LOCK.release()
 
 
 @lru_cache(maxsize=1)
@@ -135,16 +161,21 @@ def _native_text_is_complete(page, words):
     return True
 
 
-def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seconds=45, stop_when=None):
+def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seconds=45, stop_when=None, _deadline=None):
     """Process pages until complete or an optional caller-defined goal is met.
 
     The callback receives the processed page rows. Unprocessed pages are copied
     from the original PDF, preserving the complete document without extra OCR.
     """
+    with pdf_reader_guard(timeout_seconds, deadline=_deadline, section_only=stop_when is not None) as deadline:
+        return _searchable_pdf(content, force_ocr=force_ocr, engine=engine, deadline=deadline, stop_when=stop_when)
+
+
+def _searchable_pdf(content, *, force_ocr, engine, deadline, stop_when):
     import fitz
     if not isinstance(content, (bytes, bytearray)) or not content.startswith(b'%PDF') or len(content) > MAX_BYTES:
         raise ValueError('Envie um PDF válido de até 8 MiB.')
-    started = time.monotonic()
+    remaining_pdf_time(deadline, section_only=stop_when is not None)
     with fitz.open(stream=content, filetype='pdf') as document, fitz.open() as output:
         if document.is_encrypted:
             raise ValueError('O PDF está protegido por senha. Envie uma cópia desbloqueada.')
@@ -152,10 +183,7 @@ def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seco
             raise ValueError(f'O extrato deve ter entre 1 e {MAX_PAGES} páginas. Nenhuma página será ignorada.')
         pages, ocr_pages, scores, preserved_pages = [], [], [], []
         for index, original in enumerate(document):
-            if time.monotonic() - started > timeout_seconds:
-                if stop_when is not None:
-                    raise ValueError('A leitura da seção 2.2 excedeu o tempo disponível. Nenhum resultado parcial foi utilizado.')
-                raise ValueError('O OCR integral excedeu o tempo disponível. Use um PDF menor ou o conversor Python local; não foi aceito resultado parcial.')
+            remaining_pdf_time(deadline, section_only=stop_when is not None)
             words = original.get_text('words', sort=True)
             readable = _native_text_is_complete(original, words)
             if readable and not force_ocr:
@@ -165,13 +193,9 @@ def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seco
                 # Blank pages are preserved, never silently removed.
                 scale = min(300 / 72, math.sqrt(12_000_000 / max(1, original.rect.width * original.rect.height)))
                 pix = original.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csRGB, alpha=False)
-                remaining = max(.1, timeout_seconds - (time.monotonic() - started))
-                if not _OCR_LOCK.acquire(timeout=remaining):
-                    raise ValueError('O leitor OCR está ocupado. Aguarde e tente novamente.')
-                try:
-                    records = _ocr_page(pix, engine)
-                finally:
-                    _OCR_LOCK.release()
+                remaining_pdf_time(deadline, section_only=stop_when is not None)
+                records = _ocr_page(pix, engine)
+                remaining_pdf_time(deadline, section_only=stop_when is not None)
                 xscale, yscale = original.rect.width / pix.width, original.rect.height / pix.height
                 items = [{**r, 'box': [r['box'][0]*xscale, r['box'][1]*yscale, r['box'][2]*xscale, r['box'][3]*yscale]} for r in records]
                 target = output.new_page(width=original.rect.width, height=original.rect.height)
@@ -196,11 +220,10 @@ def searchable_pdf(content: bytes, *, force_ocr=False, engine=None, timeout_seco
                     output.insert_pdf(document, from_page=index + 1, to_page=len(document) - 1)
                     preserved_pages = list(range(index + 2, len(document) + 1))
                 break
-        if time.monotonic() - started > timeout_seconds:
-            if stop_when is not None:
-                raise ValueError('A leitura da seção 2.2 excedeu o tempo disponível. Nenhum resultado parcial foi utilizado.')
-            raise ValueError('O OCR integral excedeu o tempo disponível. Nenhum resultado parcial foi utilizado.')
-        return {'pdf': output.tobytes(garbage=4, deflate=True),
+        remaining_pdf_time(deadline, section_only=stop_when is not None)
+        pdf = output.tobytes(garbage=4, deflate=True)
+        remaining_pdf_time(deadline, section_only=stop_when is not None)
+        return {'pdf': pdf,
                 'text': '\n\n'.join('\n'.join(row['text'] for row in page['rows']) for page in pages),
                 'pages': pages, 'pageCount': len(document), 'processedPages': len(pages),
                 'preservedPages': preserved_pages, 'ocrPages': ocr_pages,
