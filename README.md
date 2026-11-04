@@ -1,5 +1,12 @@
 # Maximum CNPJ · v0.57.1
 
+## Ajuste de apresentação da DRE — 04/11/2026
+
+No período de janeiro a setembro, o quadro **APURAÇÃO DOS TRIBUTOS** aparece imediatamente após os controles de relatório da DRE, com os mesmos regimes selecionados. A linha **IRPJ** reúne a parcela normal e o adicional (10% sobre o excedente trimestral), conforme os valores já registrados na memória e no resultado salvo; o IRPJ aparece como imposto devido no quadro, sem gerar dedução adicional na DRE. Simples Puro e Híbrido identificam o IRPJ como integrante do DAS quando a memória confirma essa condição.
+
+Foram retiradas da tela consolidada as explicações extensas de RBT12, DIFAL, fórmulas e notas de rodapé, e da impressão do período fixo os parágrafos repetidos. As memórias estruturadas de IRPJ, os parâmetros de 11,30% de CBS e 0,10% de IBS e os cálculos de cada regime continuam preservados. Nenhum valor do exemplo é fixado no código: o quadro exibe as apurações efetivas de cada análise.
+
+
 ## v0.57.1 — Bloco de impostos separado da DRE (2026-11-04)
 
 A comparação de janeiro a setembro passa a apresentar **Impostos em um bloco próprio, fora da DRE**, com os mesmos regimes visíveis. A tabela reúne Simples, ICMS (D − C), CBS/IBS (D − C), IRPJ, CSLL, Antecipação, DIFAL, INSS, Total, percentual sobre a receita, Resultado e seu percentual sobre a receita. D significa débito e C significa crédito. Um ISS fora do DAS aplicável ou ainda não confirmado permanece identificado antes do total, para não omitir parte da carga tributária.
