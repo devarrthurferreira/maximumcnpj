@@ -90,7 +90,8 @@ test('Fiscal mantém a leitura ativa após 55 s e salva somente a resposta confi
   try{
     await upload(page);await expect.poll(()=>counts.posts.length).toBe(1);
     await page.clock.fastForward(56_000);
-    await expect(page.locator('#analyses-app')).toHaveAttribute('aria-busy','true');
+    await expect(page.locator('#analysis-fiscal-form')).toHaveAttribute('aria-busy','true');
+    await expect(page.locator('#analysis-busy-screen')).toBeVisible();
     await expect(page.locator('#analysis-inline-pdf-status')).toContainText('Lendo a seção 2.2');
     await expect(page.locator('#analysis-wizard-close')).toBeDisabled();
     expect(counts.statuses).toBe(0);expect(saved.fiscal.data.rbt12ExtractionId).toBeNull();

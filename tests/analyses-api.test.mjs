@@ -100,6 +100,26 @@ test('rede interrompida ou resposta inválida não confirmam a RBT12 nem expõem
   });
 });
 
+test('finalização de compras mantém repetição controlada pelo servidor, sem inferência de falha transitória',async t=>{
+  const path='/api/v4/purchases/'+documentId+'/finalize';
+  let response=()=>Response.json({error:'FINALIZE_FAILED',message:'A finalização não foi confirmada.'},{status:503});
+  const fetch=t.mock.method(globalThis,'fetch',async()=>response());
+  for(const retryable of [undefined,false,true,'true']){
+    response=()=>Response.json({error:'FINALIZE_FAILED',message:'A finalização não foi confirmada.',retryable},{status:503});
+    await assert.rejects(()=>analysisRequest(path,{method:'POST',body:{}}),error=>{
+      assert.equal(error.retryable,retryable===true);assert.equal(error.responseUnconfirmed,false);
+      assert.equal(error.invocationNotConfirmed,false);return true;
+    });
+  }
+  response=()=>new Response('FUNCTION_INVOCATION_FAILED',{status:503});
+  await assert.rejects(()=>analysisRequest(path,{method:'POST',body:{}}),error=>error.retryable===false&&error.responseUnconfirmed===false);
+  response=()=>new Response('<html>Resposta inválida</html>',{status:200});
+  await assert.rejects(()=>analysisRequest(path,{method:'POST',body:{}}),error=>{
+    assert.equal(error.code,'RESPONSE_INVALID');assert.equal(error.retryable,false);assert.equal(error.responseUnconfirmed,false);return true;
+  });
+  assert.equal(fetch.mock.callCount(),6,'O transporte não deve repetir a finalização automaticamente.');
+});
+
 test('identificadores de diagnóstico aceitam somente UUID ou identificador restrito da plataforma',()=>{
   assert.equal(safeAnalysisRequestId(requestId),requestId);
   assert.equal(safeAnalysisRequestId('gru1::iad1::token-123'), 'gru1::iad1::token-123');

@@ -49,7 +49,10 @@ export async function analysisRequest(path, {method='GET', body, signal}={}) {
       const error=new Error(response.status===401?'Sua sessão expirou. Entre novamente para continuar.':
         message||(simples?simplesFailure(response.status,processing):documents?documentFailure(pathname):'Não foi possível concluir esta operação. Tente novamente.'));
       error.status=response.status;error.code=typeof data?.error==='string'?data.error:platform||(pdf?'SIMPLES_RESPONSE_UNAVAILABLE':undefined);
-      error.details=data;error.retryable=typeof data?.retryable==='boolean'?data.retryable:response.status>=500||response.status===408||response.status===429;
+      error.details=data;
+      // Only PDF recovery may infer a transient error. Other callers keep the
+      // existing server-controlled retry contract for writes such as finalize.
+      error.retryable=typeof data?.retryable==='boolean'?data.retryable:pdf&&(response.status>=500||response.status===408||response.status===429);
       error.requestId=requestId;error.responseUnconfirmed=pdf&&(response.status>=500||response.status===408);
       error.invocationNotConfirmed=processing&&!message&&(platform==='FUNCTION_INVOCATION_FAILED'||response.status===502);
       if(response.status>=500&&requestId)error.message+=' Código da requisição: '+requestId+'.';
@@ -57,7 +60,7 @@ export async function analysisRequest(path, {method='GET', body, signal}={}) {
     }
     if(!data||typeof data!=='object')throw Object.assign(new Error(simples?simplesFailure(response.status,processing):documents?documentFailure(pathname):
       'A resposta não foi confirmada. Atualize a análise para conferir o trabalho salvo.'),
-      {code:'RESPONSE_INVALID',retryable:true,responseUnconfirmed:pdf,requestId});
+      {code:'RESPONSE_INVALID',retryable:pdf,responseUnconfirmed:pdf,requestId});
     return data;
   } catch(error) {
     if(signal?.aborted)throw new DOMException('Operação cancelada.','AbortError');
