@@ -258,7 +258,7 @@ test('Relatórios de doze meses geram Jan–Set, nove despesas e composição co
     await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await saveSector(page,id,'fiscal');
     await page.goto(`/analyses.html?id=${id}&sector=accounting`);await saveSector(page,id,'accounting');
     const single=await generate(page,id);expect(single.result.regimes.map((row:any)=>row.id)).toEqual(['actual']);
-    await expect(page.locator('[data-dre-regime-result]')).toHaveCount(1);await expect(page.locator('#simulation-result')).toContainText('1 regime selecionado');
+    await expect(page.locator('[data-dre-regime-result]')).toHaveCount(1);await expect(page.locator('#dre-display-status')).toContainText('1 de 1 regime gerado');
     await expect(page.locator('#dre-demonstrativo [data-dre-row="revenue"] td')).toHaveCount(1);
     await page.evaluate(()=>{window.print=()=>{};});await page.locator('#print-dre').click();
     await expect(page.locator('#dre-print-document [data-report-part="monthly"]')).toHaveCount(1);

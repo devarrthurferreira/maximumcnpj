@@ -100,9 +100,9 @@ test('PDF Python único conserva snapshot, timbrado, comparativos e opções de 
   for(const period of modes){
     await page.locator('#dre-report-period').selectOption(period);
     if(period==='monthly'){
-      await page.locator('#dre-show-percent').check();
-      await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
-      await page.locator('#dre-regime').selectOption('actual');
+      for(const id of ['pure','hybrid','presumed'])await page.locator(`[data-dre-visible-regime="${id}"]`).uncheck();
+      await expect(page.locator('#dre-demonstrativo [data-dre-row="netMargin"]')).toBeVisible();
+      await expect(page.locator('[data-dre-visible-regime="actual"]')).toBeChecked();
     }
     const path=info.outputPath('dre-python-'+period+'.pdf');
     const file=await download(page,path);
@@ -115,7 +115,7 @@ test('PDF Python único conserva snapshot, timbrado, comparativos e opções de 
       await info.attach('DRE Python completa sintética',{path,contentType:'application/pdf'});
     }
     await expect(page.locator('#dre-pdf-status')).toContainText('PDF baixado:');
-    expect(requests.at(-1)).toEqual({action:'dre-pdf',simulationId:snapshot._id,period,...(period==='monthly'?{regimeId:'actual'}:{}),showPercent:period==='monthly'});
+    expect(requests.at(-1)).toEqual({action:'dre-pdf',simulationId:snapshot._id,period,regimeIds:period==='monthly'?['actual']:['pure','hybrid','presumed','actual'],showPercent:false});
     expect(await page.locator('#dre-print-document').count()).toBe(0);
   }
   expect(pageCounts.complete).toBeGreaterThan(pageCounts.annual);

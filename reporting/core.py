@@ -10,7 +10,7 @@ from http.cookies import SimpleCookie, CookieError
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-VERSION = '0.55.3'
+VERSION = '0.56.0'
 STATUSES = {'ALL': 'Todos os CNPJs', 'OPTANTE': 'Optantes pelo Simples',
             'NAO_OPTANTE': 'Não optantes', 'NAO_CONFIRMADO': 'Não confirmados'}
 REPORTING_STATUSES = {'ALL': 'Todos os CNPJs', 'OPTANTE': 'Simples', 'NAO_OPTANTE': 'Não optante'}
@@ -135,7 +135,7 @@ def validate(payload):
     if action == 'dre-pdf':
         # A download identifies a frozen server snapshot; financial values are never
         # accepted from a browser, including an apparently complete presentation.
-        require(set(payload) <= {'action', 'simulationId', 'period', 'regimeId', 'showPercent'},
+        require(set(payload) <= {'action', 'simulationId', 'period', 'regimeId', 'regimeIds', 'showPercent'},
                 message='Envie somente a versão salva e as opções do PDF da DRE.')
         simulation = payload.get('simulationId')
         require(isinstance(simulation, str) and re.fullmatch(
@@ -147,8 +147,18 @@ def validate(payload):
         require(isinstance(period, str) and period in ('complete', 'annual', 'monthly'))
         require(regime is None or isinstance(regime, str) and regime in ('pure', 'hybrid', 'presumed', 'actual'))
         require(type(show_percent) is bool)
-        return dict(action=action, simulationId=simulation, period=period,
-                    regimeId=regime, showPercent=show_percent)
+        options = dict(action=action, simulationId=simulation, period=period,
+                       regimeId=regime, showPercent=show_percent)
+        if 'regimeIds' in payload:
+            selected = payload['regimeIds']
+            require(isinstance(selected, list) and 1 <= len(selected) <= 4 and
+                    all(isinstance(identifier, str) and identifier in ('pure', 'hybrid', 'presumed', 'actual')
+                        for identifier in selected) and len(set(selected)) == len(selected),
+                    message='Selecione ao menos um regime válido para o PDF da DRE.')
+            require(regime is None or regime in selected,
+                    message='O regime em destaque deve estar entre os regimes exibidos no PDF.')
+            options['regimeIds'] = list(selected)
+        return options
     if action == 'generation-pdf':
         generation = payload.get('generationId')
         part = payload.get('part', 1)

@@ -1,4 +1,14 @@
-# Maximum CNPJ · v0.55.3
+# Maximum CNPJ · v0.56.0
+
+## v0.56.0 — Regimes na DRE e tributos apurados (2026-11-04)
+
+A DRE de janeiro a setembro reúne os controles no próprio demonstrativo. Os quatro regimes podem ser mostrados ou ocultados individualmente, mantendo pelo menos um visível. O filtro muda a apresentação, sem alterar os regimes calculados na análise. Um regime não gerado é identificado; um regime com cálculo pendente conserva o motivo e não recebe um zero fictício. O seletor interno de período permite conferir o consolidado e cada competência disponível.
+
+As receitas aparecem como **Receita de serviços**, **Receita de vendas utilizada** e **Receita total utilizada**. A apuração reúne **Simples**, **ICMS (D−C)**, **CBS/IBS (D−C)**, **IRPJ**, **CSLL**, **Antecipação de ICMS**, **DIFAL** e **INSS / encargos da folha**, preservando o ISS quando aplicável. O fechamento apresenta **Total de tributos**, **% sobre receita**, **Resultado** e **% sobre receita**. Cada percentual usa a receita total utilizada no mesmo regime e período; receita não positiva não recebe um percentual artificial.
+
+O parâmetro combinado padrão é **11,40% = CBS de 11,30% + IBS de 0,10%**. As parcelas já estavam presentes no motor e passam a ser apresentadas juntas, pelos débitos menos os créditos utilizados. As taxas históricas capturadas continuam respeitadas. Créditos e antecipação ficam identificados para conferência, sem somar novamente valores já incluídos na apuração. A linha de INSS mantém a identificação dos demais encargos que compõem o cálculo existente.
+
+CSV, impressão e PDF acompanham os regimes visíveis. O PDF valida a seleção no servidor contra a versão salva, mantém as verificações de sessão e origem e calcula a apresentação exclusivamente a partir dos dados capturados. Os relatórios originais, as escolhas fiscais e as versões históricas continuam preservados.
 
 ## v0.55.3 — Conferência automática após enviar o relatório (2026-11-03)
 

@@ -24,7 +24,7 @@ const s=JSON.parse(input);
 const presentation=buildDrePresentation({result:s.result,calendar:s.monthlyDre||buildMonthlyDre(s.result,s.year||s.draft.year),
   source:s.source,monthlyGroups:s.monthlyGroups,projection:s.projection,reportMonths:s.reportMonths,
   engineInput:s.engineInput,taxSources:s.taxSources});
-process.stdout.write(JSON.stringify({months:presentation.months,rows:unifiedDreRows(presentation),
+process.stdout.write(JSON.stringify({months:presentation.months,rows:unifiedDreRows(presentation),taxRates:presentation.statement?.taxRates,
   memory:dreReportMemory(presentation,{includeDre:true}),warnings:presentation.report.warnings}));
 """
     result = subprocess.run(['node', '--input-type=module', '-e', script], input=json.dumps(snapshot),
@@ -90,6 +90,90 @@ class DreModelTests(unittest.TestCase):
             self.assertEqual(view.value(regime, 'revenue'), 0)
             self.assertIsNone(view.ratio(regime, 'netProfit'))
             self.assertIsNone(view.ratio(regime, 'totalTaxes'))
+
+    def test_assessed_taxes_and_expenses_reconcile_once_in_current_statements(self):
+        for variant in ('complete', 'partial', 'loss', 'zero', 'negative-revenue', 'unavailable'):
+            saved = fixture(variant)
+            before = copy.deepcopy(saved)
+            view = model(saved)
+            keys = [key for _, rows in view.sections() for key, _ in rows]
+            self.assertEqual(keys.count('icmsAnticipation'), 1)
+            self.assertEqual(keys.count('payroll'), 1)
+            self.assertEqual(keys.count('cbsIbsNet'), 1)
+            self.assertFalse(set(keys) & {'cbsDebit', 'ibsDebit', 'cbsUsed', 'ibsUsed'})
+            for regime in view.regimes:
+                for index in (None, *range(len(view.months))):
+                    frame = view.frame(regime, index)
+                    if not frame['available']:
+                        for key in ('cbsIbsNet', 'totalTaxes', 'operatingExpensesBeforePayroll', 'taxBurden', 'netMargin'):
+                            self.assertIsNone(view.value(regime, key, index))
+                        continue
+                    dre = frame['dre']
+                    combined = sum(dre[key] for key in ('cbsDebit', 'ibsDebit', 'cbsUsed', 'ibsUsed'))
+                    expenses = sum(dre[key] for key in ('salaries', 'benefits', 'administrative', 'rent', 'cards'))
+                    taxes = -sum([combined, *[dre[key] for key in ('das', 'icmsNet', 'irpj', 'csll', 'icmsAnticipation', 'difal', 'payroll', 'iss')]])
+                    with self.subTest(variant=variant, regime=regime['id'], month=index):
+                        self.same(view.value(regime, 'cbsIbsNet', index), combined)
+                        self.same(view.value(regime, 'operatingExpensesBeforePayroll', index), expenses)
+                        self.same(view.value(regime, 'totalTaxes', index), taxes)
+                        self.same(dre['revenue'] + dre['cmv'] + expenses - taxes, dre['netProfit'])
+                        self.same(view.value(regime, 'taxBurden', index), taxes / dre['revenue'] if dre['revenue'] > 0 else None)
+                        self.same(view.value(regime, 'netMargin', index), dre['netProfit'] / dre['revenue'] if dre['revenue'] > 0 else None)
+            self.assertEqual(saved, before)
+
+    def test_visible_pdf_regimes_filter_comparison_and_memory_without_recalculating(self):
+        saved = fixture()
+        before = copy.deepcopy(saved)
+        view = model(saved, regimeIds=['actual'])
+        self.assertEqual([row['id'] for row in view.regimes], ['actual'])
+        self.assertEqual(view.focus['id'], 'actual')
+        self.assertIsNone(view.best)
+        self.assertEqual(view.value(view.focus, 'totalTaxes'), before['result']['regimes'][3]['totalTaxes'])
+        for entry in view.memory():
+            self.assertNotRegex(entry['id'], r'^(?:dre|summary)\.(?:pure|hybrid|presumed)\.')
+            self.assertFalse(entry['id'].startswith(('simples.', 'presumed.', 'difal.')))
+            self.assertNotIn(entry['id'], ('rbt12', 'sublimit', 'simplesLimit', 'payroll.simple'))
+        self.assertFalse(any('Simples Puro' in warning or 'Simples Híbrido' in warning for warning in view.warnings()))
+        self.assertEqual(saved, before)
+
+    def test_combined_credit_is_sum_of_reconciled_cbs_and_ibs_without_new_compensation(self):
+        view = model(fixture())
+        for regime in view.regimes:
+            for field in ('debit', 'potential', 'used', 'due', 'balance'):
+                left, right = view.credit('cbs', regime, field), view.credit('ibs', regime, field)
+                expected = left + right if left is not None and right is not None else None
+                self.same(view.credit('cbsIbs', regime, field), expected)
+            due = view.credit('cbsIbs', regime, 'due')
+            if due is not None:
+                self.same(due, -view.value(regime, 'cbsIbsNet'))
+
+    def test_rates_match_captured_screen_assumptions_and_preserve_absence_and_changes(self):
+        saved = fixture()
+        baseline = model(saved).tax_rates()
+        self.same(baseline['cbs'], .113)
+        self.same(baseline['ibs'], .001)
+        self.same(baseline['combined'], .114)
+        for variant in ('captured', 'missing', 'conflicting', 'different_month', 'duplicated_memory'):
+            candidate = copy.deepcopy(saved)
+            entry = candidate['result']['monthlyResults'][0]
+            captured = next(item for item in entry['result']['memory'] if item['id'] == 'rate.cbs')
+            if variant == 'missing':
+                entry['result']['memory'].remove(captured)
+                del entry['engineInput']['rates']['cbs']
+            elif variant == 'conflicting':
+                entry['engineInput']['rates']['cbs'] = .12
+            elif variant == 'different_month':
+                entry['engineInput']['rates']['cbs'] = captured['value'] = .12
+            elif variant == 'duplicated_memory':
+                entry['result']['memory'].append(copy.deepcopy(captured))
+            before = copy.deepcopy(candidate)
+            with self.subTest(variant=variant):
+                rates = model(candidate).tax_rates()
+                self.assertEqual(rates, screen(candidate)['taxRates'])
+                self.assertEqual(candidate, before)
+                self.assertEqual(candidate['result']['regimes'], saved['result']['regimes'])
+                if variant != 'captured':
+                    self.assertIsNone(rates['combined'])
 
     def test_captured_fiscal_warnings_keep_their_details(self):
         saved = fixture()

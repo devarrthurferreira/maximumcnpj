@@ -1,3 +1,4 @@
+import {showDreRegimes,showDreMonth,showDreConsolidated} from './dre-controls.ts';
 import {MongoClient} from 'mongodb';
 import {mockStatement,statementHistory,documentId} from './extrato-helper.ts';
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
@@ -151,16 +152,16 @@ test('Real saved simulation survives a fresh login and a new version preserves e
   // Compare cells consistently: innerText adds table separators and CSS uppercase,
   // while Playwright's default toHaveText reads the underlying textContent.
   const originalDre = await page.locator('.sim-dre tbody tr > *').allTextContents();
-  await expect(page.locator('[data-period="annual"]')).toHaveAttribute('aria-pressed','true');
-  await page.locator('[data-period="monthly"]').click();
-  await expect(page.locator('#dre-month')).toHaveValue('7');
-  await expect(page.locator('.sim-dre [data-dre-row="revenue"]').locator('td')).toHaveText(['R$ 13.250,50','R$ 13.250,50']);
-  await page.getByRole('button',{name:'9 meses',exact:true}).click();
+  await expect(page.locator('#dre-display-period')).toHaveValue('annual');
+  // Each selected competence compares the four captured regimes side by side.
   // Covered months without movement remain zero; August retains its own values.
-  await expect(page.locator('.sim-dre [data-dre-row="revenue"]').locator('td')).toHaveText([
-    ...Array(7).fill('R$ 0,00'),'R$ 13.250,50','R$ 0,00','R$ 13.250,50'
-  ]);
-  await page.getByRole('button',{name:'Um mês por vez',exact:true}).click();
+  for(let month=0;month<9;month++){
+    await showDreMonth(page,month);
+    await expect(page.locator('.sim-dre [data-dre-row="revenue"]').locator('td')).toHaveText(
+      Array(4).fill(month===7?'R$ 13.250,50':'R$ 0,00')
+    );
+  }
+
 
   // A new context has no cookies or sessionStorage from the original tab.
   // Reopening through history must therefore fetch the immutable server snapshot.

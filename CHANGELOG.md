@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.56.0] - 2026-11-04
+
+- Reúne os controles dentro da DRE de janeiro a setembro e permite mostrar ou ocultar os quatro regimes, com pelo menos uma coluna visível e identificação dos regimes não gerados ou pendentes.
+- Substitui os controles externos e os atalhos redundantes por seleção interna de regimes e período, preservando a consulta por competência e a rolagem sobre a tabela.
+- Organiza receitas de serviços, vendas utilizadas e receita total utilizada, e reúne CBS/IBS em uma linha apurada por débitos menos créditos.
+- Expõe a composição padrão de 11,40% (CBS 11,30% + IBS 0,10%), sem alterar novamente as parcelas nem reinterpretar as taxas históricas.
+- Apresenta a soma dos tributos, carga sobre a receita, resultado e margem; conserva ISS aplicável, encargos da folha e a apuração independente da antecipação de ICMS, sem duplicar créditos ou deduções.
+- Mantém CSV, impressão e PDF consistentes com os regimes visíveis; valida a seleção do PDF no servidor a partir do snapshot autorizado.
+
 ## [0.55.3] - 2026-11-03
 
 - Inicia automaticamente a conferência de DIFAL ao concluir um upload na análise, inclusive para relatórios anuais que precisam do recorte janeiro–setembro; reutiliza os metadados já recebidos.

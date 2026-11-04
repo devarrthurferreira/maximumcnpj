@@ -16,6 +16,11 @@ EXPENSES = (
     ('rent', 'Aluguéis'),
     ('cards', 'Taxas de cartão'),
 )
+STATEMENT_EXPENSES = (('salaries', 'Salários e pró-labore'), ('benefits', 'Benefícios'), *EXPENSES[1:])
+
+
+def _expense_basis(model):
+    return (STATEMENT_EXPENSES, 'operatingExpensesBeforePayroll') if model.compact_statement else (EXPENSES, 'operatingExpenses')
 
 
 def _card(identifier, label, value, detail, tone='neutral'):
@@ -30,8 +35,9 @@ def expense_breakdown(model):
     not added again. A missing component, a positive adjustment in a deduction
     or a nonpositive denominator prevents a misleading composition.
     """
-    expenses = [(key, label, model.value(model.focus, key)) for key, label in EXPENSES]
-    denominator = model.value(model.focus, 'operatingExpenses')
+    definitions, denominator_key = _expense_basis(model)
+    expenses = [(key, label, model.value(model.focus, key)) for key, label in definitions]
+    denominator = model.value(model.focus, denominator_key)
     if (not finite(denominator) or denominator >= 0 or
             any(not finite(value) or value > 0 for _, _, value in expenses)):
         return []
@@ -60,7 +66,9 @@ def _result_gap(model):
                      'warning')
     if best is None:
         return _card('result_gap', 'Comparação do resultado', 'Sem referência',
-                     'Esta versão não registra um regime vencedor. '
+                     ('A referência de maior resultado da versão não faz parte dos regimes exibidos. '
+                      if model.result.get('bestRegimeId') and model.options.get('regimeIds') is not None else
+                      'Esta versão não registra um regime vencedor. ') +
                      'Os resultados e as condições de disponibilidade permanecem no comparativo.')
     reference = model.value(best, 'netProfit')
     if not finite(reference) or (reference < selected and not close(reference, selected)):
@@ -98,8 +106,9 @@ def _tax_burden(model):
 def _main_expense(model):
     rows = expense_breakdown(model)
     if not rows:
-        total = model.value(model.focus, 'operatingExpenses')
-        components = [model.value(model.focus, key) for key, _ in EXPENSES]
+        definitions, denominator_key = _expense_basis(model)
+        total = model.value(model.focus, denominator_key)
+        components = [model.value(model.focus, key) for key, _ in definitions]
         if finite(total) and total == 0 and all(finite(value) and value == 0 for value in components):
             return _card('main_expense', 'Despesas operacionais', money(0),
                          'Não há despesas operacionais registradas neste cenário. '

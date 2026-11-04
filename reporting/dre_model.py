@@ -33,7 +33,24 @@ SECTIONS = (
     ('Resultado', (('irpj', 'IRPJ e adicional'), ('csll', 'CSLL'),
                    ('incomeTaxes', 'Total de IRPJ e CSLL'), ('netProfit', 'Resultado líquido'))),
 )
-SUBTOTALS = {'revenue', 'netRevenue', 'cmv', 'grossProfit', 'personnel', 'preTax', 'netProfit'}
+STATEMENT_SECTIONS = (
+    ('Receitas', (('services', 'Receita de serviços'), ('sales', 'Receita de vendas utilizada'),
+                  ('revenue', 'Receita Total utilizada'))),
+    ('Compras e custos', (('cmvSimple', 'Compras do Simples'), ('cmvRegular', 'Compras fora do Simples'),
+                         ('cmv', 'Total de compras / CMV'))),
+    ('Despesas operacionais', (('salaries', 'Salários e pró-labore'), ('benefits', 'Benefícios'),
+                               ('administrative', 'Outras despesas'), ('rent', 'Aluguéis'), ('cards', 'Taxas de cartão'),
+                               ('operatingExpensesBeforePayroll', 'Total de despesas operacionais'))),
+    ('Tributos apurados', (('das', 'Simples (DAS)'), ('icmsNet', 'ICMS (D - C) apurado'),
+                           ('cbsIbsNet', 'CBS/IBS (D - C) apurado'), ('irpj', 'IRPJ'), ('csll', 'CSLL'),
+                           ('icmsAnticipation', 'Antecipação de ICMS'), ('difal', 'DIFAL'),
+                           ('payroll', 'INSS / encargos da folha'), ('iss', 'ISS fora do DAS'),
+                           ('totalTaxes', 'Total de tributos'), ('taxBurden', '% sobre a receita - tributos'))),
+    ('Resultado', (('netProfit', 'Resultado'), ('netMargin', '% sobre a receita - resultado'))),
+)
+PERCENT_ROWS = {'taxBurden', 'netMargin'}
+SUBTOTALS = {'revenue', 'netRevenue', 'cmv', 'grossProfit', 'personnel', 'preTax', 'netProfit',
+            'operatingExpensesBeforePayroll', 'totalTaxes'}
 DERIVED = {'revenueDeductions', 'netCosts', 'operatingExpenses', 'incomeTaxes'}
 GROUP_LABELS = {'OPTANTE': 'Simples Nacional', 'NAO_OPTANTE': 'Não optante', 'CPF': 'Pessoa física (CPF)',
                 'NAO_CONFIRMADO': 'Não confirmado', 'OUTROS': 'Outros documentos',
@@ -95,12 +112,20 @@ class DreModel:
         self.result = self.snapshot['result']
         selection = (self.result.get('regimeSelection') or {}).get('selected')
         self.regimes = [row for row in self.result['regimes'] if not selection or row['id'] in selection]
+        visible = self.options.get('regimeIds')
+        if visible is not None:
+            # Filtering is a presentation preference only. Keep the complete
+            # validated snapshot and its fiscal regime selection untouched.
+            self.regimes = [row for row in self.regimes if row['id'] in visible]
+        if not self.regimes:
+            raise ValueError('A DRE exige ao menos um regime capturado para exibição.')
         self.actual = self.result.get('method') == 'REPORT_MONTHS_V1'
         self.monthly = self.result.get('monthlyResults', []) if self.actual else []
         self.calendar = self.snapshot.get('monthlyDre') or {}
         self.months = [row['sourceMonth'] for row in self.monthly] if self.actual else [
             row.get('period') or f"{self.snapshot.get('year')}-{row['number']:02d}" for row in self.calendar.get('months', [])]
         self.analysis_period = self.result.get('analysisPeriod') or self.snapshot.get('analysisPeriod') or {}
+        self.compact_statement = self.actual and self.result.get('analysisPeriod', {}).get('version') == 'JAN_SEP_V1'
         self.available = [row for row in self.regimes if row.get('available') is True]
         self.best = next((row for row in self.available if row['id'] == self.result.get('bestRegimeId')
                           and row['dre']['revenue'] > 0), None)
@@ -160,6 +185,8 @@ class DreModel:
             'operatingExpenses': ['personnel', 'administrative', 'rent', 'cards'],
             'incomeTaxes': ['irpj', 'csll'],
             'creditsApplied': ['cbsUsed', 'ibsUsed', 'icmsUsed'],
+            'cbsIbsNet': ['cbsDebit', 'ibsDebit', 'cbsUsed', 'ibsUsed'],
+            'operatingExpensesBeforePayroll': ['salaries', 'benefits', 'administrative', 'rent', 'cards'],
         }
         if key in combinations:
             return total(dre.get(part) for part in combinations[key])
@@ -168,21 +195,62 @@ class DreModel:
                 return frame['totalTaxes']
             taxes = total(dre.get(part) for part in combinations['revenueDeductions'] + ['payroll', 'irpj', 'csll', 'cbsUsed', 'ibsUsed'])
             return -taxes if finite(taxes) else None
+        if key in PERCENT_ROWS:
+            return self.ratio(regime, 'totalTaxes' if key == 'taxBurden' else 'netProfit', index)
         value = dre.get(key)
         return value if finite(value) else None
 
     def ratio(self, regime, key, index=None):
         value, revenue = self.value(regime, key, index), self.value(regime, 'revenue', index)
+        if key in PERCENT_ROWS:
+            return value
         return value / revenue if finite(value) and finite(revenue) and revenue > 0 else None
 
     def sections(self):
-        for title, rows in SECTIONS:
-            yield title, [(key, label) for key, label in rows if key not in ('difal', 'icmsAnticipation') or
-                          any(key in regime.get('dre', {}) for regime in self.regimes)]
+        for title, rows in STATEMENT_SECTIONS if self.compact_statement else SECTIONS:
+            yield title, [(key, label) for key, label in rows if
+                          (key not in ('difal', 'icmsAnticipation') or any(key in regime.get('dre', {}) for regime in self.result['regimes'])) and
+                          (not self.compact_statement or key != 'iss' or
+                           any(self.value(regime, key, index) is None or self.value(regime, key, index) != 0
+                               for regime in self.result['regimes'] for index in (None, *range(len(self.months)))))]
+
+    def tax_rates(self):
+        """Expose captured CBS/IBS assumptions, never today's default rates."""
+        months = []
+        captured_inputs = self.snapshot.get('engineInput', {}).get('months', [])
+        for entry in self.monthly:
+            engine = entry.get('engineInput') or next((row.get('input') or {} for row in captured_inputs
+                                                       if row.get('sourceMonth') == entry['sourceMonth']), {})
+            engine = engine if isinstance(engine, dict) else {}
+            engine_rates = engine.get('rates')
+            engine_rates = engine_rates if isinstance(engine_rates, dict) else {}
+            memory = entry['result'].get('memory', [])
+            values = {}
+            for tax in ('cbs', 'ibs'):
+                raw = engine_rates.get(tax)
+                found = [item for item in memory if item.get('id') == 'rate.' + tax]
+                stored = found[0].get('value') if len(found) == 1 and found[0].get('unit') == 'percent' else None
+                valid = lambda value: finite(value) and 0 <= value <= 1
+                if ((raw is not None and not valid(raw)) or
+                    (found and (len(found) != 1 or not valid(stored))) or
+                    (valid(raw) and valid(stored) and not math.isclose(raw, stored, rel_tol=1e-12, abs_tol=1e-12))):
+                    values[tax] = None
+                else:
+                    values[tax] = raw if valid(raw) else stored if valid(stored) else None
+            values['combined'] = total([values['cbs'], values['ibs']])
+            months.append({'sourceMonth': entry['sourceMonth'], **values})
+        rates = {}
+        for tax in ('cbs', 'ibs'):
+            values = [month[tax] for month in months]
+            rates[tax] = values[0] if values and all(finite(value) and math.isclose(value, values[0], rel_tol=1e-12, abs_tol=1e-12)
+                                                   for value in values) else None
+        return {**rates, 'combined': total([rates['cbs'], rates['ibs']]), 'monthly': months}
 
     def credit(self, tax, regime, field):
         if regime.get('available') is not True:
             return None
+        if tax == 'cbsIbs':
+            return total([self.credit('cbs', regime, field), self.credit('ibs', regime, field)])
         credit = (self.result.get('credits') or {}).get(tax) or {}
         if not all(finite(credit.get(key)) and credit[key] >= 0 for key in ('debit', 'potential', 'used', 'due', 'balance')):
             return None
@@ -278,7 +346,16 @@ class DreModel:
 
     def warnings(self):
         values = []
+        selected = {row['id'] for row in self.regimes}
+        simples = bool(selected & {'pure', 'hybrid'})
         for warning in [*self.result.get('warnings', []), *self.snapshot.get('source', {}).get('warnings', [])]:
+            code = warning.get('code') if isinstance(warning, dict) else None
+            if not simples and code in ('sublimit', 'simples-unavailable', 'service-annex', 'annex-iv-payroll',
+                                        'rbt12-source', 'estimated-rbt12', 'difal-estimate', 'difal-partial',
+                                        'icms-anticipation', 'icms-anticipation-partial'):
+                continue
+            if 'presumed' not in selected and code in ('presumed-eligibility', 'presumed-limit-reference', 'presumption-increase'):
+                continue
             value = (warning.get('message') or warning.get('text') or warning.get('label') or
                      '. '.join(str(warning.get(key) or '') for key in ('title', 'detail')).strip('. ')) if isinstance(warning, dict) else warning
             if value and str(value) not in values:

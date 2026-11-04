@@ -6,6 +6,7 @@ import {hashPassword} from '../../src/security.ts';
 import {JAN_SEP_MODEL_VERSION} from '../../public/analysis-period.js';
 import {processLookup} from '../../src/lookup-jobs.ts';
 import {closeDatabase} from '../../src/store.ts';
+import {showDreRegimes,showDreMonth,showDreConsolidated} from './dre-controls.ts';
 
 // Real browser, authenticated APIs and disposable MongoDB. The external CNPJ
 // transport is synthetic; lookup processing and immutable snapshots remain real.
@@ -62,17 +63,19 @@ async function openCompleteDre(page:Page){
   await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
 }
 async function assertAnnual(page:Page){
-  await expect(page.locator('#dre-demonstrativo [data-period="annual"]')).toHaveAttribute('aria-pressed','true');
+  await showDreConsolidated(page);
+  await showDreRegimes(page,['pure','hybrid','presumed','actual']);
   await openCompleteDre(page);
-  await page.locator('#dre-regime').selectOption('presumed');
   const main=page.locator('#dre-demonstrativo > .dre-table-wrap');
   const footer=page.locator('#dre-demonstrativo [data-icms-reconciliation="dre"]');
   await expect(footer).toHaveCount(1);
   await expect(footer.locator('[data-dre-row]')).toHaveCount(creditRows.length);
-  // Informational credits belong after the revenue closing, never in deductions.
+  // Credits explain the assessed taxes immediately below the statement; they
+  // remain informational and never become another deduction in the main table.
   await expect(main.locator('[data-dre-row^="icms."]')).toHaveCount(0);
   await expect(main.locator('[data-dre-row="icmsNet"]')).toHaveCount(1);
   await expect(main.locator('[data-dre-row="icmsNet"] td').nth(2)).toHaveText('-R$ 264,00');
+  await expect(main.locator('[data-dre-row="cbsIbsNet"] td').nth(2)).toHaveText('-R$ 148,20');
   await expect(main.locator('[data-dre-row="revenue"] td').nth(2)).toHaveText('R$ 2.700,00');
   await expect(main.locator('[data-dre-row="cmv"] td').nth(2)).toHaveText('-R$ 1.400,00');
   for(const [key,,amount] of creditRows){
@@ -84,33 +87,31 @@ async function assertAnnual(page:Page){
   }
   expect(await page.locator('#dre-demonstrativo').evaluate(element=>{
     const revenue=element.querySelector('[data-revenue-reconciliation="dre"]'),icms=element.querySelector('[data-icms-reconciliation="dre"]');
-    return !!(revenue&&icms&&(revenue.compareDocumentPosition(icms)&Node.DOCUMENT_POSITION_FOLLOWING));
+    return !!(revenue&&icms&&(icms.compareDocumentPosition(revenue)&Node.DOCUMENT_POSITION_FOLLOWING));
   })).toBe(true);
   await expect(footer).toContainText('já está abatido');
   await expect(footer).toContainText('não acrescenta uma segunda dedução');
 }
 
 async function assertMonthly(page:Page){
-  await page.getByRole('button',{name:'Mensal',exact:true}).click();
-  await openCompleteDre(page);
-  await page.getByRole('button',{name:'9 meses',exact:true}).click();
-  await page.locator('#dre-regime').selectOption('presumed');
+  await showDreRegimes(page,['presumed']);
   const footer=page.locator('#dre-demonstrativo [data-icms-reconciliation="dre"]');
-  for(const [key,,amount] of creditRows){
-    const cells=footer.locator(`[data-dre-row="${key}"] td`);
-    await expect(cells).toHaveCount(10);
-    await expect(cells.first()).toHaveText(`R$ ${amount}`);
-    await expect(cells.nth(1)).toHaveText('R$ 0,00');
-    await expect(cells.last()).toHaveText(`R$ ${amount}`);
+  for(let month=0;month<9;month++){
+    await showDreMonth(page,month);await openCompleteDre(page);
+    for(const [key,,amount] of creditRows){
+      const cells=footer.locator(`[data-dre-row="${key}"] td`);
+      await expect(cells).toHaveCount(1);
+      await expect(cells.first()).toHaveText(`R$ ${month===0?amount:'0,00'}`);
+    }
+    const revenue=page.locator('#dre-demonstrativo > .dre-table-wrap [data-dre-row="revenue"] td');
+    await expect(revenue).toHaveCount(1);
+    await expect(revenue.first()).toHaveText(month===0?'R$ 2.700,00':'R$ 0,00');
+    await expect(page.locator('#dre-demonstrativo > .dre-table-wrap [data-dre-row="icmsNet"] td')).toHaveText(month===0?'-R$ 264,00':'R$ 0,00');
   }
-  const revenue=page.locator('#dre-demonstrativo > .dre-table-wrap [data-dre-row="revenue"] td');
-  await expect(revenue.first()).toHaveText('R$ 2.700,00');
-  await expect(revenue.nth(1)).toHaveText('R$ 0,00');
-  await expect(revenue.last()).toHaveText('R$ 2.700,00');
-  await page.locator('#dre-regime').selectOption('pure');
+  await showDreMonth(page,0);await showDreRegimes(page,['pure']);
   await expect(footer.locator('[data-dre-row="icms.potential"] td').first()).toHaveText('—');
   await expect(page.locator('#dre-demonstrativo [data-dre-row="icmsAnticipation"] td').first()).toHaveText('-R$ 36,60');
-  await page.locator('#dre-regime').selectOption('presumed');
+  await showDreRegimes(page,['presumed']);
 }
 
 test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, histórico, CSV e PDF completos',async({page,browser,baseURL,icmsAccount},info)=>{
@@ -185,11 +186,12 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
   expect(saved.analysisPeriod).toMatchObject({version:'JAN_SEP_V1',months:9,complete:true});
   expect(saved.monthlyDre.version).toBe('DRE_CALENDAR_V4');
   expect(saved.result.method).toBe('REPORT_MONTHS_V1');expect(saved.result.annualRevenue).toBe(2700);
-  expect(saved.engineInput.months.every((month:any)=>month.input.rates.cbs===.113&&month.input.credits.regular.cbsRate===.113&&month.input.credits.simple.cbsRate===.015)).toBe(true);
+  expect(saved.engineInput.months.every((month:any)=>month.input.rates.cbs===.113&&month.input.rates.ibs===.001&&month.input.credits.regular.cbsRate===.113&&month.input.credits.simple.cbsRate===.015)).toBe(true);
   // CBS uses the requested scenario rate independently of the unchanged ICMS rules above.
   expect(saved.result.credits.cbs.debit).toBeCloseTo(305.1,8); // 2.700 × 11,3%
   expect(saved.result.credits.cbs.used).toBeCloseTo(158.2,8); // 1.400 × 11,3%
   expect(saved.result.credits.cbs.due).toBeCloseTo(146.9,8);
+  expect(saved.result.credits.cbs.due+saved.result.credits.ibs.due).toBeCloseTo(148.2,8); // CBS/IBS apurado: 1.300 × 11,4%
   expect(saved.source.monthlyReports).toHaveLength(9);expect(saved.result.monthlyResults).toHaveLength(9);
   expect(saved.source.fields).toMatchObject({salesCpfCents:270_000,salesOptantCents:0,salesNonOptantCents:0,purchasesOptantCents:0,purchasesNonOptantCents:140_000,serviceRevenueCents:0});
   expect(saved.source.operationAudit).toMatchObject({grossSalesCents:300_000,salesReturnsCents:30_000,purchaseGoodsCents:80_000,purchaseServicesCents:60_000});
@@ -247,10 +249,9 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
   expect(await db.collection<any>('simulations').countDocuments({_id:{$in:forgedIds},workspaceId})).toBe(0);
 
   await assertAnnual(page);await assertMonthly(page);
-  await page.getByRole('button',{name:'Um mês por vez',exact:true}).click();
   await page.setViewportSize({width:390,height:960});
-  await expect(page.locator('#dre-demonstrativo [data-icms-mobile-row="icms.potential"] [data-icms-mobile-value]')).toHaveText('R$ 156,00');
-  await expect(page.locator('#dre-demonstrativo [data-icms-mobile-row="icms.potential"] [data-icms-mobile-annual]')).toContainText('156,00');
+  await expect(page.locator('#dre-demonstrativo [data-icms-reconciliation="dre"] [data-dre-row="icms.potential"] td')).toHaveText('R$ 156,00');
+  await expect(page.locator('#dre-demonstrativo [data-icms-reconciliation="dre"] [data-dre-row="icms.due"] td')).toHaveText('R$ 264,00');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   await page.locator('#dre-demonstrativo [data-icms-reconciliation="dre"]').screenshot({path:info.outputPath('credito-icms-mobile.png')});
   await page.setViewportSize({width:1440,height:1000});
@@ -263,8 +264,9 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
     await expect(reopened.locator('#simulation-snapshot')).toBeVisible();await expect(reopened.locator('#simulator-form')).toHaveCount(0);
     const retrieved=await fresh.request.get(`/api/v4/simulations/${saved._id}`);expect(retrieved.ok()).toBe(true);expect(await retrieved.json()).toEqual(saved);
     await assertAnnual(reopened);await assertMonthly(reopened);
+    await showDreRegimes(reopened,['pure','hybrid','presumed','actual']);await showDreConsolidated(reopened);
     await reopened.locator('#dre-report-period').selectOption('complete');
-    await expect(reopened.locator('#dre-show-percent')).not.toBeChecked();
+    await expect(reopened.locator('#dre-show-percent')).toHaveCount(0);
     const downloading=reopened.waitForEvent('download');await reopened.locator('#export-dre-csv').click();
     const download=await downloading,stream=await download.createReadStream();let csv='';
     for await(const chunk of stream!)csv+=chunk;
@@ -279,7 +281,7 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
       expect(monthly,label).toBeDefined();expect(monthly[6]).toBe(amount);expect(monthly[7]).toBe('0,00');expect(monthly[15]).toBe(amount);
       expect(csvRows.filter(row=>(row[0]==='DRE'&&row[2]===label)||(row[1]==='DRE'&&row[3]===label))).toHaveLength(0);
     }
-    const netIcms=csvRows.filter(row=>row[0]==='DRE'&&row[2].includes('ICMS líquido fora do DAS'));
+    const netIcms=csvRows.filter(row=>row[0]==='DRE'&&row[2]==='ICMS (D − C) apurado');
     expect(netIcms).toHaveLength(1);expect(netIcms[0][7]).toBe('-264,00');
     await info.attach('Crédito de ICMS — CSV completo',{body:Buffer.from(csv),contentType:'text/csv'});
 
