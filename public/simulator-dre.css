@@ -98,6 +98,7 @@ tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
   .dre-irpj-reconciliation h3{font-size:16px}
   .dre-irpj-method{padding:10px 12px}
   .simulator-clean .dre-complete .dre-irpj-reconciliation .dre-table-wrap tbody th{min-width:170px;max-width:220px}
+  .simulator-clean .dre-fixed-complete[data-dre-visible-count="1"] .dre-irpj-reconciliation .dre-table-wrap thead th{white-space:normal;overflow-wrap:anywhere}
   .simulator-clean .dre-complete .dre-table-wrap .dre-irpj-component th{padding-left:12px}
   .dre-report-control{width:100%;min-width:0}
   .dre-icms-reconciliation{padding:16px 12px}

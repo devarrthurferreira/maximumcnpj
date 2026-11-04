@@ -2,7 +2,7 @@
 
 ## v0.56.2 — IRPJ com base, excedente e conferência por competência (2026-11-04)
 
-A DRE apresenta o **IRPJ total**, a parcela normal de **15% da base** e o adicional de **10% do excedente**, com hierarquia visual legível e sem repetir essas parcelas no total de tributos. A memória do IRPJ mostra a base tributável, o limite do modelo, a parcela dentro desse limite, o excedente, o imposto normal, o adicional e o total. O quadro acompanha os regimes e o período selecionados, na tela e nos relatórios.
+A DRE apresenta o **IRPJ total**, a parcela normal de **15% da base** e o adicional de **10% do excedente**, com hierarquia visual legível e sem repetir essas parcelas no total de tributos. A memória do IRPJ mostra a base tributável, o limite do modelo, a parcela dentro desse limite, o excedente, o imposto normal, o adicional e o total. O quadro acompanha os regimes e o período selecionados, na tela e nos relatórios. Em telas estreitas, os cabeçalhos se ajustam para que o quadro de um único regime caiba na largura disponível.
 
 O cálculo mensal existente usa R$ 20.000 de limite por competência. O consolidado de janeiro a setembro soma os cálculos dos meses com dados: bases abaixo do limite em um mês não reduzem o adicional de outro. A memória mostra essa distinção, inclusive a soma da parcela efetivamente dentro do limite, em vez de apresentar o adicional como uma nova conta sobre a base agregada. Projeções anuais anteriores conservam seu modelo e sua escala. A fórmula mensal agora usa a base e o limite mensais que aparecem na própria memória.
 

@@ -54,11 +54,11 @@ async function captureIrpj(page:Page,table:Locator,panel:Locator,info:TestInfo,n
   const start=(await first.boundingBox())!,end=(await last.boundingBox())!;
   const offsets=await page.evaluate(()=>({x:scrollX,y:scrollY,width:innerWidth}));
   const path=info.outputPath(name+'-parcelas.png');
-  await page.screenshot({path,clip:{x:Math.max(0,start.x+offsets.x),y:start.y+offsets.y,
+  await page.screenshot({path,fullPage:true,clip:{x:Math.max(0,start.x+offsets.x),y:start.y+offsets.y,
     width:Math.min(start.width,offsets.width-Math.max(0,start.x)),height:end.y+end.height-start.y}});
   await info.attach(name+' · IRPJ e parcelas',{path,contentType:'image/png'});
   const memoryPath=info.outputPath(name+'-memoria.png');
-  await panel.screenshot({path:memoryPath});
+  await panel.screenshot({path:memoryPath,style:'.simulator-clean .topbar, .simulator-clean > .skip{visibility:hidden!important}'});
   await info.attach(name+' · memória de cálculo',{path:memoryPath,contentType:'image/png'});
 }
 
