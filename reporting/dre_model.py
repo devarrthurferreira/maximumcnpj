@@ -746,7 +746,7 @@ class DreModel:
 
     def sections(self):
         for title, rows in STATEMENT_SECTIONS if self.compact_statement else SECTIONS:
-            yield title, [(key, 'IRPJ do período (provisão/ajuste)' if key == 'irpj' and self.quarterly_income_tax else label) for key, label in rows if
+            yield title, [(key, 'IRPJ do período (provisão/ajuste)' if key == 'irpj' and self.quarterly_income_tax and not self.compact_statement else label) for key, label in rows if
                           (key not in ('difal', 'icmsAnticipation') or any(key in regime.get('dre', {}) for regime in self.result['regimes']))]
 
     def tax_rows(self):
