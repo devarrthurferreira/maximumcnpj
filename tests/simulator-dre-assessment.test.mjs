@@ -141,21 +141,23 @@ test('Impostos inverte somente os componentes devidos e conserva percentuais, ra
   }
 });
 
-test('estorno trimestral permanece negativo em Impostos e reverte uma única dedução na DRE mensal',()=>{
+test('prejuízo acumulado Jan–Set não gera IRPJ/CSLL e mantém a DRE conciliada',()=>{
   const imported={startMonth:'2026-01',endMonth:'2026-02',months:2},analysisPeriod=buildAnalysisPeriod(imported,imported);
   const reports=[100000,1000].map((sales,index)=>({sourceMonth:`2026-0${index+1}`,month:index+1,salesLines:1,purchaseLines:0,
     fields:{salesOptantCents:0,salesNonOptantCents:sales*100,salesCpfCents:0,serviceRevenueCents:0,purchasesOptantCents:0,purchasesNonOptantCents:0}}));
   const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:180000,values:{salesRevenue:0,serviceRevenue:0,simplePurchases:0,regularPurchases:0,salaries:0,benefits:0,adminExpenses:0,rent:0,cardExpenses:0}};
-  const calculated=calculateMonthlySimulation(draft,reports,reports.map((row,index)=>baselineMonth(row,{rent:index===1?100000:0})),'synthetic-quarter-reversal',null,analysisPeriod);
+  const calculated=calculateMonthlySimulation(draft,reports,reports.map((row,index)=>baselineMonth(row,{rent:index===1?100000:0})),'synthetic-jan-sep-loss',null,analysisPeriod);
   const p=buildDrePresentation({...calculated,calendar:buildMonthlyDre(calculated.result,2027),source:{monthlyReports:reports}});
+  assert.equal(calculated.result.incomeTaxAssessment.realAnnualLossZero,'JAN_SEP_MANAGERIAL_V1');
   const column={id:'actual',mode:'month',month:1},value=key=>readDreValue(find(p,key),column),assessed=key=>readDreValue(tax(p,key),column);
-  assert.equal(assessed('irpj'),-11650);assert.equal(assessed('csll'),-6354);
-  assert.equal(assessed('totalTaxes'),-17710);assert.equal(value('taxesDeduction'),17710);
-  near(assessed('taxBurden'),-17.71);near(find(p,'taxesDeduction').monthlyPercentValues.actual[1],17.71);
+  for(const key of ['irpj','csll']){assert.equal(assessed(key),0);assert.equal(tax(p,key).values.actual,0);}
   near(sum(p.taxStatement.rows.filter(row=>taxComponentKeys.includes(row.key)).map(row=>readDreValue(row,column))),assessed('totalTaxes'));
+  near(value('taxesDeduction'),-assessed('totalTaxes'));
+  near(assessed('taxBurden'),assessed('totalTaxes')/value('revenue'));
   near(value('revenue')+value('cmv')+value('operatingExpensesBeforePayroll')+value('taxesDeduction'),value('netProfit'));
-  assert.equal(value('netProfit'),-81290);assert.equal(assessed('netProfit'),value('netProfit'));
-  near(tax(p,'totalTaxes').values.actual,29694);near(find(p,'netProfit').values.actual,-28694);
+  const original=calculated.result.monthlyResults[1].result.regimes.find(regime=>regime.id==='actual');
+  near(value('netProfit'),original.dre.netProfit);near(assessed('totalTaxes'),original.totalTaxes);
+  near(tax(p,'totalTaxes').values.actual,calculated.result.regimes.find(regime=>regime.id==='actual').totalTaxes);
   for(const key of ['irpj','csll','totalTaxes'])near(tax(p,key).values.actual,sum(tax(p,key).monthlyValues.actual));
   assert.equal(buildDreSummary(p,column).reconciled,true);
 });
