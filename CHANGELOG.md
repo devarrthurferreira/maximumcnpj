@@ -1,5 +1,14 @@
 # Histórico de alterações
 
+## [0.56.2] - 2026-11-04
+
+- Completa a apresentação do IRPJ com base tributável, limite, parcela dentro do limite, excedente, imposto normal de 15%, adicional de 10% e total, por competência e no consolidado.
+- Confere as parcelas contra a base e as alíquotas, além da soma do imposto, e sinaliza memória ausente, duplicada ou divergente sem reescrever o total histórico.
+- Corrige a fórmula textual mensal, que mantinha o limite anual junto de valores já mensais, e identifica o consolidado como soma das estimativas por competência.
+- Melhora a hierarquia das linhas de IRPJ, identifica o tratamento dentro do DAS e mantém a conferência sincronizada com os filtros da DRE.
+- Alinha tela, impressão, CSV e PDF; corrige a perda da categoria das parcelas informativas no CSV e a validação incompleta da memória no PDF.
+- Preserva alíquotas, método de cálculo, valores tributários, documentos e histórico; acrescenta regressões para a diferença entre base tributável, imposto normal e adicional.
+
 ## [0.56.1] - 2026-11-04
 
 - Corrige o limite de espera da leitura RBT12 na análise Fiscal: 285 segundos para o processamento do PDF, conservando 55 segundos nas operações comuns.

@@ -61,6 +61,21 @@
 .dre-percent{display:block;font-size:10px;color:#8b7080;margin-top:4px;font-weight:400;font-variant-numeric:tabular-nums}
 tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
 .dre-footnotes p{margin:5px 0;line-height:1.55}
+.simulator-clean .dre-complete .dre-table-wrap .dre-irpj-total th,.simulator-clean .dre-complete .dre-table-wrap .dre-irpj-total td{background:#f7f3f4;font-weight:650;border-top:1px solid #e0d3d8}
+.simulator-clean .dre-complete .dre-table-wrap .dre-irpj-component th,.simulator-clean .dre-complete .dre-table-wrap .dre-irpj-component td{font-size:12px;line-height:1.6;color:#475467;background:#fdfbfc;padding-top:10px;padding-bottom:10px}
+.simulator-clean .dre-complete .dre-table-wrap .dre-irpj-component th{border-left:3px solid #d7bcc5;padding-left:24px}
+.dre-irpj-in-das{display:inline-block;color:#667085;font-size:11px;font-weight:500;line-height:1.5;white-space:normal}
+.dre-irpj-reconciliation{min-width:0;max-width:100%;margin-top:24px;padding:20px;border:1px solid #e4d8de;border-radius:12px;background:#fdfbfc}
+.dre-irpj-reconciliation h3{margin:0 0 8px;color:#481825;font-size:18px;line-height:1.35}
+.dre-irpj-reconciliation header p{margin:0;font-size:12px;line-height:1.65;color:#61505a}
+.dre-irpj-reconciliation .eyebrow{display:block;margin-bottom:8px;color:#7c5363}
+.dre-irpj-method{margin:14px 0 0;padding:12px 14px;background:#fff;border-left:3px solid #750207;font-size:12px;line-height:1.65;color:#55444e}
+.dre-irpj-note,.dre-irpj-unavailable,.dre-irpj-das-note{margin:12px 0 0;font-size:11px;line-height:1.65;color:#61505a}
+.simulator-clean .dre-complete .dre-irpj-reconciliation .dre-table-wrap{max-height:none;background:#fff}
+.simulator-clean .dre-complete .dre-irpj-reconciliation .dre-table-wrap tbody th{white-space:normal;min-width:210px;max-width:300px;font-size:12px;line-height:1.5}
+.simulator-clean .dre-complete .dre-irpj-reconciliation .dre-irpj-formula{font-size:11px;line-height:1.5;color:#6b5963;max-width:290px}
+.simulator-clean .dre-complete .dre-irpj-reconciliation .dre-irpj-assessed-total th,.simulator-clean .dre-complete .dre-irpj-reconciliation .dre-irpj-assessed-total td{background:#f4e9ed;color:#750207;font-weight:650;border-top:1px solid #d8bdc7}
+.dre-irpj-reconciliation .dre-table-wrap:focus-visible{outline:2px solid #750207;outline-offset:2px}
 .dre-icms-reconciliation{min-width:0;margin-top:24px;padding:20px;border:1px solid #d9e4df;border-radius:12px;background:#f7faf8}
 .dre-icms-reconciliation h3{margin:0 0 8px;color:#234b3d;font-size:18px;line-height:1.35}
 .dre-icms-reconciliation header p{margin:0;font-size:12px;line-height:1.65;color:#59675f}
@@ -79,6 +94,11 @@ tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
 .sim-calendar.dre-single-month .dre-calendar-screen table{min-width:500px}
 .dre-print-calendar,.dre-print-document{display:none}
 @media(max-width:640px){
+  .dre-irpj-reconciliation{padding:16px 12px}
+  .dre-irpj-reconciliation h3{font-size:16px}
+  .dre-irpj-method{padding:10px 12px}
+  .simulator-clean .dre-complete .dre-irpj-reconciliation .dre-table-wrap tbody th{min-width:170px;max-width:220px}
+  .simulator-clean .dre-complete .dre-table-wrap .dre-irpj-component th{padding-left:12px}
   .dre-report-control{width:100%;min-width:0}
   .dre-icms-reconciliation{padding:16px 12px}
   .dre-icms-reconciliation h3{font-size:16px}
@@ -103,6 +123,12 @@ tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
   .simulator-clean .sim-calendar.dre-single-month .dre-calendar-screen td{font-size:10px;white-space:normal;overflow-wrap:anywhere}
 }
 @media print{
+  .dre-irpj-reconciliation{break-inside:avoid;page-break-inside:avoid;padding:10px;background:#fff;border-color:#cdb7c1}
+  .dre-irpj-reconciliation h3{font-size:12px}
+  .dre-irpj-reconciliation header p,.dre-irpj-method,.dre-irpj-note,.dre-irpj-unavailable,.dre-irpj-das-note{font-size:9px}
+  .dre-irpj-method{margin-top:8px;padding:7px 9px}
+  .simulator-clean .dre-complete .dre-irpj-reconciliation .dre-table-wrap tbody th{min-width:0;max-width:none}
+  .simulator-clean .dre-complete .dre-irpj-reconciliation .dre-irpj-formula{font-size:8px;max-width:none}
   @page{
     @bottom-left{content:"Maximum CNPJ · Simulação";font-family:Arial,sans-serif;font-size:8pt;color:#75606a}
     @bottom-right{content:counter(page) " / " counter(pages);font-family:Arial,sans-serif;font-size:8pt;color:#75606a}

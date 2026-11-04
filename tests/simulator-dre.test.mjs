@@ -11,7 +11,7 @@ import {buildDreCsv} from '../public/simulator-dre-export.js';
 import {legacyOutgoingDreFixture,legacyWithoutOutgoingDreFixture} from './fixtures/dre-outgoing-legacy.mjs';
 
 const near=(a,b)=>assert(Math.abs(a-b)<1e-7,`${a} != ${b}`);
-const allRows=p=>[...p.sections.flatMap(section=>section.rows),...p.details.flatMap(section=>section.rows),...p.indicators,...(p.revenueReconciliation?.rows||[]),...(p.icmsReconciliation?.rows||[])];
+const allRows=p=>[...p.sections.flatMap(section=>section.rows),...p.details.flatMap(section=>section.rows),...p.indicators,...(p.revenueReconciliation?.rows||[]),...(p.icmsReconciliation?.rows||[]),...(p.irpjReconciliation?.rows||[])];
 const find=(p,key)=>allRows(p).find(row=>row.key===key);
 function fixture(){
  const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:180000,values:{salesRevenue:12000,serviceRevenue:3000,simplePurchases:1000,regularPurchases:2000,salaries:300,benefits:10,adminExpenses:200,rent:100,cardExpenses:50}};
@@ -300,10 +300,16 @@ test('DRE única inclui cada linha uma vez, composição junto ao total e indica
  assert.equal(rows.length,allRows(p).length);assert.equal(new Set(keys).size,rows.length);
  assert.deepEqual(rows.filter(row=>row.kind!=='detail'&&row.kind!=='indicator').map(row=>row.key),[...p.sections.flatMap(section=>section.rows.map(row=>row.key)),...p.revenueReconciliation.rows.map(row=>row.key)]);
  for(const group of p.details){const parent=keys.indexOf(group.parentKey);assert(parent>=0);assert.deepEqual(keys.slice(parent+1,parent+1+group.rows.length),group.rows.map(row=>row.key));}
- const closing=[...p.indicators,...p.revenueReconciliation.rows,...p.icmsReconciliation.rows];
+ const closing=[...p.indicators,...p.revenueReconciliation.rows,...p.icmsReconciliation.rows,...p.irpjReconciliation.rows];
  assert.deepEqual(rows.slice(-closing.length),closing);
  assert.equal(keys[keys.length-closing.length-1],'netProfit');
- for(const row of rows)assert.equal(row,find(p,row.key),'A ordenação não copia nem transforma os valores anuais ou mensais.');
+ for(const row of rows){
+  const captured=find(p,row.key);
+  if(['irpj','irpjBasic','irpjAdditional'].includes(row.key)){
+   for(const key of ['values','monthlyValues','calendarAnnualValues','percentValues','monthlyPercentValues','reasonByRegime'])
+    assert.equal(row[key],captured[key],'O rótulo do IRPJ preserva os valores e motivos capturados.');
+  }else assert.equal(row,captured,'A ordenação não copia nem transforma os valores anuais ou mensais.');
+ }
  assert.deepEqual(p,before);
 });
 
@@ -317,7 +323,7 @@ test('DRE única mantém legado, detalhes indisponíveis e extensões sem repeti
  assert.equal(rows.find(row=>row.key==='serviceReport').values.actual,null);
  assert.equal(rows.find(row=>row.key==='extraDetail'),extension);
  assert.equal(new Set(keys).size,keys.length);
- const closing=[...p.indicators,...p.revenueReconciliation.rows,...p.icmsReconciliation.rows];
+ const closing=[...p.indicators,...p.revenueReconciliation.rows,...p.icmsReconciliation.rows,...p.irpjReconciliation.rows];
  assert.deepEqual(rows.slice(-closing.length),closing);
 });
 
@@ -567,7 +573,7 @@ test('memória completa mantém itens anuais e normaliza rótulos legados sem co
  assert.deepEqual(input,before);assert.deepEqual(presentation.report.memory,input.result.memory);
 });
 
-test('apuração de ICMS aparece uma vez no final e mantém o crédito apenas no imposto líquido',()=>{
+test('apuração de ICMS aparece uma vez no fechamento, antes da memória do IRPJ, sem duplicar crédito',()=>{
  const dre=Object.fromEntries(dreRows(fixture().result).map(([key])=>[key,0]));
  Object.assign(dre,{sales:2700,revenue:2700,icmsNet:-264,netRevenue:2436,cmvRegular:-1400,cmv:-1400,grossProfit:1036,preTax:1036,netProfit:1036,icmsUsed:156,icmsBalance:0});
  const result={version:'histórico sintético',annualRevenue:2700,credits:{icms:{debit:420,potential:156,used:156,due:264,balance:0}},memory:[],
@@ -577,7 +583,7 @@ test('apuração de ICMS aparece uma vez no final e mantém o crédito apenas no
  assert.equal(p.icmsReconciliation.label,'Apuração do crédito de ICMS');
  assert.deepEqual(p.icmsReconciliation.rows.map(row=>row.key),keys);
  assert(!p.details.some(group=>group.key==='icmsCredits'));
- assert.deepEqual(unifiedDreRows(p).slice(-5),p.icmsReconciliation.rows);
+ assert.deepEqual(unifiedDreRows(p).slice(-5-p.irpjReconciliation.rows.length),[...p.icmsReconciliation.rows,...p.irpjReconciliation.rows]);
  assert.equal(find(p,'icmsNet').values.actual,-264);assert.equal(find(p,'netRevenue').values.actual,2436);
  assert.equal(find(p,'netProfit').values.actual,1036);assert.equal(find(p,'totalTaxes').values.actual,264);
  const summary=buildDreSummary(p,{id:'actual',mode:'annual'});assert.equal(summary.result,1036);assert.equal(summary.reconciled,true);
