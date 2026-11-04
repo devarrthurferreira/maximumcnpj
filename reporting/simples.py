@@ -220,7 +220,14 @@ def _validate_ocr_confidence(pages):
 
 
 def convert_statement_pdf(content: bytes, *, force_ocr=False, ocr_engine=None, timeout_seconds=45, section_only=False):
-    from reporting.pdf_ocr import searchable_pdf, native_page_text, MAX_BYTES, MAX_PAGES
+    from reporting.pdf_ocr import pdf_reader_guard
+    with pdf_reader_guard(timeout_seconds, section_only=section_only) as deadline:
+        return _convert_statement_pdf(content, force_ocr=force_ocr, ocr_engine=ocr_engine,
+                                      deadline=deadline, section_only=section_only)
+
+
+def _convert_statement_pdf(content, *, force_ocr, ocr_engine, deadline, section_only):
+    from reporting.pdf_ocr import searchable_pdf, native_page_text, remaining_pdf_time, MAX_BYTES, MAX_PAGES
     stop_when = None
     if section_only:
         import fitz
@@ -233,7 +240,10 @@ def convert_statement_pdf(content: bytes, *, force_ocr=False, ocr_engine=None, t
                 raise ValueError('O PDF está protegido por senha. Envie uma cópia desbloqueada.')
             if not 1 <= len(document) <= MAX_PAGES:
                 raise ValueError(f'O extrato deve ter entre 1 e {MAX_PAGES} páginas.')
-            native_pages = [native_page_text(page) for page in document]
+            native_pages = []
+            for page in document:
+                remaining_pdf_time(deadline, section_only=True)
+                native_pages.append(native_page_text(page))
 
         def stop_when(pages):
             text = '\n\n'.join('\n'.join(row['text'] for row in page['rows']) for page in pages)
@@ -258,7 +268,8 @@ def convert_statement_pdf(content: bytes, *, force_ocr=False, ocr_engine=None, t
             _validate_ocr_confidence(pages)
             return True
 
-    options = dict(force_ocr=force_ocr, engine=ocr_engine, timeout_seconds=timeout_seconds)
+    options = dict(force_ocr=force_ocr, engine=ocr_engine,
+                   timeout_seconds=remaining_pdf_time(deadline, section_only=section_only), _deadline=deadline)
     if stop_when is not None:
         options['stop_when'] = stop_when
     converted = searchable_pdf(content, **options)
@@ -272,6 +283,7 @@ def convert_statement_pdf(content: bytes, *, force_ocr=False, ocr_engine=None, t
                   extractionScope='SECTION_22' if section_only else 'FULL_DOCUMENT',
                   searchablePdfScope='SELECTED_PAGES' if preserved else 'FULL_DOCUMENT',
                   ocrEngine=converted['ocrEngine'], searchablePdfCreated=True)
+    remaining_pdf_time(deadline, section_only=section_only)
     return result, converted['pdf'], converted['text']
 
 

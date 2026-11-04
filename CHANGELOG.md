@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.56.1] - 2026-11-04
+
+- Corrige o limite de espera da leitura RBT12 na análise Fiscal: 285 segundos para o processamento do PDF, conservando 55 segundos nas operações comuns.
+- Identifica falhas de plataforma e respostas sem JSON com mensagens acionáveis e referência segura da requisição.
+- Recupera uma leitura confirmada após perda de resposta, conferindo empresa, documento e tentativa; preserva o estado de processamento e evita iniciar OCR duplicado.
+- Mantém o motivo registrado pelo servidor ao verificar uma leitura pendente ou com erro.
+- Protege o uso nativo do PDF contra execução concorrente dentro do mesmo processo, contabilizando a espera no orçamento de conversão e preservando o original e a conferência da seção 2.2.
+
 ## [0.56.0] - 2026-11-04
 
 - Reúne os controles dentro da DRE de janeiro a setembro e permite mostrar ou ocultar os quatro regimes, com pelo menos uma coluna visível e identificação dos regimes não gerados ou pendentes.

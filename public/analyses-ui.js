@@ -10,7 +10,7 @@ import {normalizeUf} from './difal.js';
 import {defaultRegimeSelection,parseRegimeSelection,requiresSimplesReference,REGIME_SELECTION_VERSION} from './regime-selection.js';
 import {defaultDifalPolicy,parseDifalPolicy} from './simulator-engine.js';
 import {buildRbt12Schedule} from './simulator-rbt12.js';
-import {analysisDocumentStatus,loadAnalysisExtraction,retryAnalysisExtraction,uploadAnalysisExtraction} from './analyses-extrato.js';
+import {analysisDocumentStatus,analysisDocumentReadingMessage,loadAnalysisExtraction,retryAnalysisExtraction,uploadAnalysisExtraction} from './analyses-extrato.js';
 import {accountingAverage,accountingAverageMonths,accountingAverageInputValues} from './analysis-accounting-average.js';
 import {analysisGuidance,accountingSourceMonths,analysisPeriodFor,usesFixedAnalysisPeriod} from './analyses-guidance.js';
 import {analysisMonthsForYear,isAnalysisMonth} from './analysis-period.js';
@@ -40,7 +40,7 @@ const S={user:null,clients:null,analysis:null,sector:null,source:null,generation
 let modal=null;
 const activity=createLoadingScreen({id:'analysis-busy-screen',target:()=>document.querySelector('dialog[open] .analysis-wizard-frame')});
 let busyMessage='Processando…';
-let companyCheckController=null,evidenceTask=null,metadataTask=null,clientsTask=null,accountingSummaryFrame=0,metadataSequence=0;
+let companyCheckController=null,evidenceTask=null,metadataTask=null,clientsTask=null,pdfTask=null,accountingSummaryFrame=0,metadataSequence=0;
 let scheduleCache={reference:null,months:null,value:null};
 const writable=()=>['admin','operator'].includes(S.user?.role);
 const dirty=()=>S.configDirty||S.fiscalDirty||S.accountingDirty;
@@ -782,6 +782,7 @@ async function ensureEvidence({force=false}={}) {
 }
 async function openAnalysis(id,{record=null}={}) {
   if(!uuid(id))throw new Error('A identificação da análise é inválida. Abra a empresa pela carteira.');
+  cancelPdfTask();
   const sequence=++S.sequence;
   cancelEvidence();cancelMetadata();
   releaseWizard();
@@ -1108,6 +1109,7 @@ function bindFiscal() {
   $('#analysis-fiscal-form').onsubmit=event=>{event.preventDefault();void saveSector('fiscal',event.submitter?.value==='complete');};
   bindFiscalDocumentActions();bindInlineRbt12();
   for(const [id,mode] of [['analysis-extrato-none','NOT_PROVIDED'],['analysis-extrato-pdf','SIMPLES_SECTION_22'],['analysis-extrato-manual','MANUAL']])if($('#'+id))$('#'+id).onclick=()=>{
+    if(S.busy||S.pdfBusy||!writable())return;
     const previous=S.fiscalDraft;
     // Choosing another source explicitly discards the current reference, including
     // an unfinished manual value. Other fiscal fields retain their validation.
@@ -1292,59 +1294,91 @@ function pdfProgress(message){
   S.pdfStatus=message;
   for(const id of ['analysis-pdf-status','analysis-inline-pdf-status']){const host=$('#'+id);if(host)host.textContent=message;}
 }
-function pdfContext(){return {clientId:S.analysis.clientId,cnpj:S.analysis.company.cnpj,documentId:S.fiscalDraft.rbt12DocumentId,onProgress:pdfProgress};}
-async function savePdfReference(reference) {
+function beginPdfTask(){
+  const task={analysisId:S.analysis.id,sequence:S.sequence,clientId:S.analysis.clientId,cnpj:S.analysis.company.cnpj,
+    documentId:S.fiscalDraft.rbt12DocumentId,controller:new AbortController()};
+  pdfTask=task;return task;
+}
+function currentPdfTask(task){return pdfTask===task&&!task.controller.signal.aborted&&currentContext(task.analysisId,task.sequence);}
+function assertPdfTask(task){if(!currentPdfTask(task))throw new DOMException('Operação cancelada.','AbortError');}
+function cancelPdfTask(){
+  if(!pdfTask)return;
+  const task=pdfTask;pdfTask=null;task.controller.abort();S.pdfBusy=false;
+  if(S.busy)setBusy(false);
+}
+function finishPdfTask(task){
+  if(!task||pdfTask!==task)return;
+  pdfTask=null;S.pdfBusy=false;
+  if(currentContext(task.analysisId,task.sequence)&&S.busy){setBusy(false);renderDetail();}
+}
+function pdfContext(task){return {clientId:task.clientId,cnpj:task.cnpj,documentId:task.documentId,signal:task.controller.signal,
+  onProgress:message=>{if(currentPdfTask(task))pdfProgress(message);}};}
+async function savePdfReference(reference,task) {
+  assertPdfTask(task);
   S.reference=reference;S.fiscalDraft={...S.fiscalDraft,rbt12Source:'SIMPLES_SECTION_22',rbt12ExtractionId:reference.extractionId,
     rbt12DocumentId:reference.documentId||S.fiscalDraft.rbt12DocumentId,rbt12:reference.rbt12Cents/100,rbt12ManualConfirmed:false};
   S.fiscalDirty=true;await patchSector('fiscal',S.fiscalDraft,false);
+  assertPdfTask(task);
   pdfProgress('Leitura confirmada e salva no Fiscal. Confira a seção 2.2 antes de concluir o setor.');
 }
 async function readPdf(file) {
   if(S.busy||!writable())return;
+  let task;
   try {
     clearError();captureAll();if(S.configDirty)throw new Error('Salve os regimes da análise antes de adicionar o extrato.');
+    task=beginPdfTask();
     S.pdfBusy=true;setBusy(true,'Armazenando e lendo o extrato desta empresa…');
-    const reference=await uploadAnalysisExtraction({...pdfContext(),file,onStored:async documentId=>{
+    const reference=await uploadAnalysisExtraction({...pdfContext(task),file,onStored:async documentId=>{
+      assertPdfTask(task);task.documentId=documentId;
       S.reference=null;S.documentStatus=null;S.fiscalDraft={...S.fiscalDraft,rbt12Source:'SIMPLES_SECTION_22',rbt12DocumentId:documentId,
         rbt12ExtractionId:null,rbt12:null,rbt12ManualConfirmed:false};S.fiscalDirty=true;
       await patchSector('fiscal',S.fiscalDraft,false);
+      assertPdfTask(task);
     }});
+    assertPdfTask(task);
     pdfProgress('Seção 2.2 lida. Salvando a referência RBT12 no Fiscal…');
-    await savePdfReference(reference);feedback('Extrato lido e vinculado à análise. O Fiscal ainda precisa ser concluído.');
+    await savePdfReference(reference,task);feedback('Extrato lido e vinculado à análise. O Fiscal ainda precisa ser concluído.');
   } catch(error){
+    if(task&&!currentPdfTask(task))return;
     if(error.documentId)S.fiscalDraft.rbt12DocumentId=error.documentId;
+    if(error.documentStatus)S.documentStatus=error.documentStatus;
     pdfProgress((error.message||'A leitura não foi confirmada.')+(S.fiscalDraft.rbt12DocumentId?' O PDF vinculado pode ser conferido ou lido novamente.':''));
     showError(error);
-  } finally{const wasBusy=S.busy;S.pdfBusy=false;if(wasBusy){setBusy(false);renderDetail();}}
+  } finally{finishPdfTask(task);}
 }
 async function checkPdf() {
   if(S.busy)return;
+  let task;
   try {
-    clearError();captureAll();S.pdfBusy=true;setBusy(true,'Conferindo a leitura do documento armazenado…');
-    const context=pdfContext(),status=await analysisDocumentStatus(context);S.documentStatus=status;
+    clearError();captureAll();task=beginPdfTask();S.pdfBusy=true;setBusy(true,'Conferindo a leitura do documento armazenado…');
+    const context=pdfContext(task),status=await analysisDocumentStatus(context);assertPdfTask(task);S.documentStatus=status;
     if(status.status==='READY'&&!status.error&&!status.lastError&&uuid(status.extractionId)){
       const reference=await loadAnalysisExtraction({...context,extractionId:status.extractionId});
-      if(writable())await savePdfReference(reference);else{S.reference=reference;pdfProgress('Leitura do documento armazenado confirmada.');}
+      assertPdfTask(task);
+      if(writable())await savePdfReference(reference,task);else{S.reference=reference;pdfProgress('Leitura do documento armazenado confirmada.');}
       feedback('Leitura do PDF recuperada.');
     }else {
       S.reference=null;
-      pdfProgress(status.status==='PROCESSING'?'A leitura ainda está em andamento. Verifique novamente em instantes.':status.originalStored?'O original está armazenado, mas a última leitura não foi confirmada. Use Ler novamente para retomar.':'O envio ainda não foi confirmado. Verifique novamente ou selecione o PDF para reenviar.');
+      pdfProgress(analysisDocumentReadingMessage(status));
       feedback('A seção 2.2 ainda precisa ser confirmada.','info');
     }
-  } catch(error){pdfProgress(error.message);showError(error);}
-  finally{const wasBusy=S.busy;S.pdfBusy=false;if(wasBusy){setBusy(false);renderDetail();}}
+  } catch(error){if(task&&!currentPdfTask(task))return;pdfProgress(error.message);showError(error);}
+  finally{finishPdfTask(task);}
 }
 async function retryPdf() {
   if(S.busy||!writable())return;
+  let task;
   try {
     clearError();captureAll();if(S.configDirty)throw new Error('Salve os regimes da análise antes de ler o extrato novamente.');
+    task=beginPdfTask();
     S.pdfBusy=true;setBusy(true,'Retomando a leitura do PDF armazenado…');
     S.reference=null;S.fiscalDraft.rbt12ExtractionId=null;S.fiscalDraft.rbt12=null;S.fiscalDraft.rbt12ManualConfirmed=false;
     S.fiscalDraft.rbt12Source='SIMPLES_SECTION_22';S.fiscalDirty=true;await patchSector('fiscal',S.fiscalDraft,false);
-    const reference=await retryAnalysisExtraction(pdfContext());await savePdfReference(reference);
+    assertPdfTask(task);
+    const reference=await retryAnalysisExtraction(pdfContext(task));await savePdfReference(reference,task);
     feedback('Nova leitura do extrato confirmada e salva. Confira os dados antes de concluir o Fiscal.');
-  } catch(error){pdfProgress(error.message);showError(error);}
-  finally{const wasBusy=S.busy;S.pdfBusy=false;if(wasBusy){setBusy(false);renderDetail();}}
+  } catch(error){if(task&&!currentPdfTask(task))return;if(error.documentStatus)S.documentStatus=error.documentStatus;pdfProgress(error.message);showError(error);}
+  finally{finishPdfTask(task);}
 }
 
 function expectedAccountingMonths() {
@@ -1459,4 +1493,5 @@ async function boot() {
   }
 }
 window.addEventListener('beforeunload',event=>{if(hasLocalWork()||S.busy||S.pdfBusy||S.deleting){event.preventDefault();event.returnValue='';}});
+window.addEventListener('pagehide',()=>pdfTask?.controller.abort());
 boot();
