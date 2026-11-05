@@ -4,18 +4,21 @@ import {drePdfFixture} from './fixtures/dre-pdf.mjs';
 import {calculateMonthlySimulation} from '../public/simulator-monthly.js';
 import {buildDrePresentation} from '../public/simulator-dre.js';
 import {buildMonthlyDre} from '../public/simulator-calendar.js';
-import {draftToInput} from '../public/simulator-engine.js';
+import {CBS_IBS_OPTIONS,draftToInput,type CbsIbsPercent} from '../public/simulator-engine.js';
 import {defaultFiscalData,parseFiscalData} from '../src/analysis-contract.ts';
 import {validateSimulationRequest} from '../src/simulation-history.ts';
 
 const near=(actual:number,expected:number)=>assert.ok(Math.abs(actual-expected)<1e-6,`${actual} != ${expected}`);
 const selection={version:'REGIME_SELECTION_V1' as const,selected:['presumed' as const,'actual' as const]};
 
-test('a escolha Fiscal aceita as quatro reduções e preserva análises antigas',()=>{
+test('a escolha Fiscal aceita as seis opções e preserva análises antigas',()=>{
   const fiscal=defaultFiscalData(selection);assert.equal(fiscal.cbsIbsPercent,100);
   const legacy={...fiscal};delete legacy.cbsIbsPercent;
   assert.equal(Object.hasOwn(parseFiscalData(legacy,selection),'cbsIbsPercent'),false);
-  for(const percent of [100,60,40,0] as const)assert.equal(parseFiscalData({...fiscal,cbsIbsPercent:percent},selection).cbsIbsPercent,percent);
+  for(const percent of [100,70,60,40,30,0] as const)assert.equal(parseFiscalData({...fiscal,cbsIbsPercent:percent},selection).cbsIbsPercent,percent);
+  assert.deepEqual(CBS_IBS_OPTIONS.map(({percent,label,effective})=>[percent,label,Number(effective.toFixed(2))]),[
+    [100,'Sem redução',11.4],[0,'Redução de 100%',0],[30,'Redução de 70%',3.42],
+    [40,'Redução de 60%',4.56],[60,'Redução de 40%',6.84],[70,'Redução de 30%',7.98]]);
   for(const invalid of [41,1,0.6,'60',null,NaN,{},-40])assert.throws(()=>parseFiscalData({...fiscal,cbsIbsPercent:invalid},selection));
 });
 
@@ -25,22 +28,23 @@ test('percentual é validado e guardado no pedido sem mudar pedidos históricos'
     periodConfirmed:true,monthlyGroups:saved.monthlyGroups,draft:saved.draft,rbt12Source:'MANUAL',rbt12ManualConfirmed:true};
   const previous=validateSimulationRequest(request);
   assert.equal(Object.hasOwn(previous.draft,'cbsIbsPercent'),false);
-  for(const percent of [100,60,40,0])assert.equal(validateSimulationRequest({...request,draft:{...request.draft,cbsIbsPercent:percent}}).draft.cbsIbsPercent,percent);
+  for(const percent of [100,70,60,40,30,0])assert.equal(validateSimulationRequest({...request,draft:{...request.draft,cbsIbsPercent:percent}}).draft.cbsIbsPercent,percent);
   for(const invalid of [50,'60',null,NaN]){
     assert.throws(()=>validateSimulationRequest({...request,draft:{...request.draft,cbsIbsPercent:invalid}}));
     assert.equal(draftToInput({...request.draft,cbsIbsPercent:invalid}),null);
   }
 });
 
-test('sem redução e reduções de 100%, 60% e 40% aplicam as alíquotas corretas a cada mês',()=>{
+test('todas as reduções aplicam as alíquotas corretas a cada mês',()=>{
   const saved=drePdfFixture(),before=structuredClone(saved);
-  const calculate=(percent?:100|60|40|0)=>calculateMonthlySimulation({...saved.draft,...(percent===undefined?{}:{cbsIbsPercent:percent})},
+  const calculate=(percent?:CbsIbsPercent)=>calculateMonthlySimulation({...saved.draft,...(percent===undefined?{}:{cbsIbsPercent:percent})},
     saved.source.monthlyReports,saved.monthlyInputs,saved.source.sales.jobId,null,saved.analysisPeriod);
   const legacy=calculate(),base=calculate(100);
   assert.deepEqual(base.result,legacy.result);
   // Persisted percentages represent the retained rate, so old 60/40 choices
   // remain 6.84%/4.56% after the visible reduction labels are introduced.
-  for(const [percent,cbs,ibs,combined] of [[100,.113,.001,.114],[0,0,0,0],[40,.0452,.0004,.0456],[60,.0678,.0006,.0684]] as const){
+  for(const [percent,cbs,ibs,combined] of [[100,.113,.001,.114],[0,0,0,0],[30,.0339,.0003,.0342],
+    [40,.0452,.0004,.0456],[60,.0678,.0006,.0684],[70,.0791,.0007,.0798]] as const){
     const computed=calculate(percent);
     const calendar=buildMonthlyDre(computed.result,saved.year,saved.rbt12Manual,saved.reportPeriod);
     const presentation=buildDrePresentation({...saved,...computed,calendar});

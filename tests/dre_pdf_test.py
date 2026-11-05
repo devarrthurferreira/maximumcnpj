@@ -175,8 +175,10 @@ process.stdout.write(JSON.stringify(s));
 """
         for retained, expected in ((100, '11,40% (CBS 11,30% + IBS 0,10%)'),
                                    (0, '0,00% (CBS 0,00% + IBS 0,00%)'),
+                                   (30, '3,42% (CBS 3,39% + IBS 0,03%)'),
                                    (40, '4,56% (CBS 4,52% + IBS 0,04%)'),
-                                   (60, '6,84% (CBS 6,78% + IBS 0,06%)')):
+                                   (60, '6,84% (CBS 6,78% + IBS 0,06%)'),
+                                   (70, '7,98% (CBS 7,91% + IBS 0,07%)')):
             with self.subTest(retained=retained):
                 saved = json.loads(subprocess.run(['node', '--input-type=module', '-e', script, str(retained)], cwd=ROOT,
                                                  capture_output=True, text=True, check=True, timeout=30).stdout)

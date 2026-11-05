@@ -40,8 +40,10 @@ for(const guided of [false,true])test(`RBT12 opcional no ${guided?'fluxo guiado'
   await expect(page.locator('#rbt12-omitted-notice')).toContainText('Você pode gerar e salvar sem RBT12 ou extrato');
   const retainedPercent=guided?'0':'40';
   await expect(page.locator('#cbs-ibs-percent option[value="0"]')).toHaveText('Redução de 100% · alíquota de 0,00%');
+  await expect(page.locator('#cbs-ibs-percent option[value="30"]')).toHaveText('Redução de 70% · alíquota de 3,42%');
   await expect(page.locator('#cbs-ibs-percent option[value="40"]')).toHaveText('Redução de 60% · alíquota de 4,56%');
   await expect(page.locator('#cbs-ibs-percent option[value="60"]')).toHaveText('Redução de 40% · alíquota de 6,84%');
+  await expect(page.locator('#cbs-ibs-percent option[value="70"]')).toHaveText('Redução de 30% · alíquota de 7,98%');
   await page.locator('#cbs-ibs-percent').selectOption(retainedPercent);
   await page.locator('#period-confirm').check();
   for(const field of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses','financialExpenses','financialIncome'])await page.locator('#'+field).fill(field==='salaries'?'123':'0');
@@ -64,6 +66,25 @@ for(const guided of [false,true])test(`RBT12 opcional no ${guided?'fluxo guiado'
     await page.screenshot({path:info.outputPath(`rbt12-optional-${guided?'guided':'standalone'}-${width}.png`),fullPage:true});
   }
   expect(errors).toEqual([]);
+});
+
+for(const retained of ['30','70'])test(`Simulador conserva a nova redução com alíquota retida de ${retained}%`,async({page})=>{
+  await setup(page);const writes:any[]=[];
+  await page.route('**/api/v4/simulations',route=>{
+    const body=route.request().postDataJSON();writes.push(body);
+    return route.fulfill({status:201,json:snapshot(body)});
+  });
+  await page.goto(url);await page.locator('#cbs-ibs-percent').selectOption(retained);
+  await page.locator('#period-confirm').check();
+  for(const field of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses','financialExpenses','financialIncome'])await page.locator('#'+field).fill('0');
+  await page.reload();await expect(page.locator('#cbs-ibs-percent')).toHaveValue(retained);
+  await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
+  expect(writes).toHaveLength(1);expect(writes[0].draft.cbsIbsPercent).toBe(Number(retained));
+  const saved=snapshot(writes[0]);
+  await page.route('**/api/v4/simulations/'+saved._id,route=>route.fulfill({json:saved}));
+  await page.goto('/simulator.html?simulation='+saved._id);
+  await page.locator('#create-version').click();
+  await expect(page.locator('#cbs-ibs-percent')).toHaveValue(retained);
 });
 
 for(const referenceSource of ['SIMPLES_SECTION_22','SIMPLES_PDF'])test(`Nova versão de ${referenceSource} sem leitura válida preserva a escolha de PDF até o usuário dispensar a referência`,async({page})=>{

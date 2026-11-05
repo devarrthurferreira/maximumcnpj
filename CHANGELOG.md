@@ -1,5 +1,9 @@
 # Histórico de alterações
 
+## [0.60.3] - 2026-11-05
+
+- Acrescenta reduções de 70% e 30% da referência de CBS/IBS (alíquotas efetivas de 3,42% e 7,98%) no Fiscal, no simulador e no PDF.
+
 ## [0.60.2] - 2026-11-05
 
 - Acrescenta no Fiscal a conferência de NFC-e, bases e débito de ICMS dos documentos, com devoluções e alertas de espécie ou UF ausente.
