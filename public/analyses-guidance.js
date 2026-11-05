@@ -3,9 +3,15 @@ import {JAN_SEP_POLICY,buildAnalysisPeriod,analysisMonthsForYear,isAnalysisMonth
 export const ACCOUNTING_FIELDS=[
   ['salariesCents','Salários e pró-labore'],['rentCents','Aluguéis'],
   ['cardExpensesCents','Taxas de cartão'],['benefitsCents','Benefícios'],
-  ['adminExpensesCents','Outras despesas']
+  ['adminExpensesCents','Outras despesas'],
+  ['financialExpensesCents','Despesas financeiras'],['financialIncomeCents','Receitas financeiras']
 ];
 
+export function normalizeAccountingMonth(row){
+  if(!row)return row;
+  const started=ACCOUNTING_FIELDS.slice(0,5).some(([key])=>Number.isSafeInteger(row[key]));
+  return {...row,...Object.fromEntries(['financialExpensesCents','financialIncomeCents'].filter(key=>!Object.hasOwn(row,key)).map(key=>[key,started?0:null]))};
+}
 const SECTORS=['fiscal','accounting'];
 const names={fiscal:'Fiscal',accounting:'Contábil'};
 
@@ -72,14 +78,14 @@ const sum=values=>{
 
 /** Entered subtotals never confirm an empty field or an absent source month. */
 export function accountingSummary(months=[],expectedMonths=[]) {
-  const entries=Array.isArray(months)?months:[],expected=[...new Set(expectedMonths)].sort();
+  const entries=Array.isArray(months)?months.map(normalizeAccountingMonth):[],expected=[...new Set(expectedMonths)].sort();
   const monthsById=new Map(entries.map(row=>[row.sourceMonth,row]));
   const keys=[...new Set([...monthsById.keys(),...expected])].sort();
   const rows=keys.map(sourceMonth=>{
     const row=monthsById.get(sourceMonth),values=ACCOUNTING_FIELDS.map(([key])=>row?.[key]);
     const filled=values.filter(validCents),excluded=filled.length===0;
     const missingFields=excluded?[]:ACCOUNTING_FIELDS.filter(([key])=>!validCents(row?.[key])).map(([key])=>key);
-    const enteredCents=sum(filled),complete=!excluded&&missingFields.length===0&&enteredCents!==null;
+    const enteredCents=filled.length?sum(ACCOUNTING_FIELDS.filter(([key])=>validCents(row?.[key])).map(([key])=>key==='financialIncomeCents'?-row[key]:row[key])):null,complete=!excluded&&missingFields.length===0&&enteredCents!==null;
     return {sourceMonth,present:!!row,expected:expected.includes(sourceMonth),filledFields:filled.length,missingFields,
       enteredCents,totalCents:complete?enteredCents:null,complete,excluded};
   });

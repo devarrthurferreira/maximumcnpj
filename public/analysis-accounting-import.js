@@ -13,17 +13,21 @@
  * expense cells, including blanks; the controller must obtain confirmation.
  */
 
+import {normalizeAccountingMonth} from './analyses-guidance.js';
+
 export const ACCOUNTING_IMPORT_COLUMNS=Object.freeze([
   {key:'sourceMonth',label:'Competência'},
   {key:'salariesCents',label:'Salários e pró-labore'},
   {key:'rentCents',label:'Aluguéis'},
   {key:'cardExpensesCents',label:'Taxas de cartões'},
   {key:'benefitsCents',label:'Benefícios'},
-  {key:'adminExpensesCents',label:'Outras despesas'}
+  {key:'adminExpensesCents',label:'Outras despesas'},
+  {key:'financialExpensesCents',label:'Despesas financeiras'},
+  {key:'financialIncomeCents',label:'Receitas financeiras'}
 ].map(column=>Object.freeze(column)));
 export const ACCOUNTING_IMPORT_MAX_MONTHS=12;
 export const ACCOUNTING_IMPORT_MAX_CELL_CENTS=100_000_000_000_000;
-export const CSV_TEMPLATE=ACCOUNTING_IMPORT_COLUMNS.map(column=>column.label).join(';')+'\n01/2026;;;;;\n';
+export const CSV_TEMPLATE=ACCOUNTING_IMPORT_COLUMNS.map(column=>column.label).join(';')+'\n01/2026;;;;;;;\n';
 export const ACCOUNTING_IMPORT_CSV_TEMPLATE=CSV_TEMPLATE;
 
 const fields=ACCOUNTING_IMPORT_COLUMNS.slice(1).map(column=>column.key);
@@ -36,7 +40,8 @@ const headerAliases=[
   ['alugueis','aluguel'],
   ['taxas de cartoes','taxas de cartao','taxas cartoes','taxas cartao'],
   ['beneficios'],
-  ['outras despesas','despesas administrativas']
+  ['outras despesas','despesas administrativas'],
+  ['despesas financeiras'],['receitas financeiras']
 ].map((aliases,index)=>new Set(index?[...aliases,...aliases.map(alias=>alias+' (r$)')]:aliases));
 const normalizeHeader=value=>value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()
   .replace(/[\u2010-\u2015]/g,'-').replace(/[ \u00a0\u202f]+/g,' ').trim().replace(/\s*\/\s*/g,'/');
@@ -55,8 +60,8 @@ function fail(code,message,location){throw new AccountingImportError(code,messag
 
 function delimiterFor(line,lineNumber){
   const tabs=line.includes('\t'),semicolons=line.includes(';');
-  if(tabs&&semicolons)fail('MIXED_DELIMITERS','Use somente TAB ou somente ponto-e-vírgula para separar as seis colunas.',{line:lineNumber,column:1});
-  if(!tabs&&!semicolons)fail('COLUMN_COUNT','São necessárias seis colunas separadas por TAB ou ponto-e-vírgula.',{line:lineNumber,column:1});
+  if(tabs&&semicolons)fail('MIXED_DELIMITERS','Use somente TAB ou somente ponto-e-vírgula para separar as oito colunas (ou seis no modelo anterior).',{line:lineNumber,column:1});
+  if(!tabs&&!semicolons)fail('COLUMN_COUNT','São necessárias oito colunas (ou seis no modelo anterior) separadas por TAB ou ponto-e-vírgula.',{line:lineNumber,column:1});
   return tabs?'\t':';';
 }
 /** Standard double-quoted cells are allowed; embedded line breaks are not. */
@@ -84,7 +89,7 @@ function cellsFor(line,delimiter,lineNumber){
   }
   if(quoted)fail('QUOTED_CELL','Feche as aspas na mesma linha; não use quebras de linha dentro de uma célula.',location());
   cells.push(cell);
-  if(cells.length!==ACCOUNTING_IMPORT_COLUMNS.length)fail('COLUMN_COUNT',`A linha tem ${cells.length} colunas; informe exatamente seis, mantendo os separadores dos campos vazios.`,
+  if(![6,ACCOUNTING_IMPORT_COLUMNS.length].includes(cells.length))fail('COLUMN_COUNT',`A linha tem ${cells.length} colunas; informe oito colunas, ou seis no modelo anterior, mantendo os separadores dos campos vazios.`,
     {line:lineNumber,column:Math.min(cells.length+1,ACCOUNTING_IMPORT_COLUMNS.length+1)});
   return cells;
 }
@@ -123,9 +128,9 @@ function parseMoney(value,location){
 function summary(months){
   let total=0n,blankCount=0;
   for(const row of months)for(const field of fields){
-    if(row[field]===null)blankCount++;else total+=BigInt(row[field]);
+    if(row[field]===null)blankCount++;else total+=(field==='financialIncomeCents'?-1n:1n)*BigInt(row[field]);
   }
-  if(total>maxTotal)fail('TOTAL_LIMIT','A soma dos valores ultrapassa o limite seguro de centavos inteiros.');
+  if(total>maxTotal||total< -maxTotal)fail('TOTAL_LIMIT','A soma dos valores ultrapassa o limite seguro de centavos inteiros.');
   return {blankCount,totalCents:Number(total),monthCount:months.length};
 }
 function headerCandidate(cells){
@@ -135,11 +140,11 @@ function headerCandidate(cells){
 
 export function parseAccountingPaste(text){
   if(typeof text!=='string')fail('PASTE_TYPE','Cole o conteúdo da planilha como texto.',{line:1,column:1});
-  if(text.length>50_000)fail('PASTE_LIMIT','A colagem é grande demais. Envie no máximo 12 competências e seis colunas.',{line:1,column:1});
+  if(text.length>50_000)fail('PASTE_LIMIT','A colagem é grande demais. Envie no máximo 12 competências e oito colunas (ou seis no modelo anterior).',{line:1,column:1});
   const lines=text.replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n').split('\n').map((value,index)=>({value,line:index+1}));
   while(lines.length&&edgeSpaces.test(lines[0].value))lines.shift();
   while(lines.length&&edgeSpaces.test(lines.at(-1).value))lines.pop();
-  if(!lines.length)fail('EMPTY_PASTE','Cole pelo menos uma competência com as seis colunas.',{line:1,column:1});
+  if(!lines.length)fail('EMPTY_PASTE','Cole pelo menos uma competência com as oito colunas (ou seis no modelo anterior).',{line:1,column:1});
   const delimiter=delimiterFor(lines[0].value,lines[0].line);
   const first=cellsFor(lines[0].value,delimiter,lines[0].line),firstMonth=first[0].trim();
   const hasHeader=!canonicalMonth.test(firstMonth) && !/^(0[1-9]|1[0-2])\/20\d{2}$/.test(firstMonth) && headerCandidate(first);
@@ -156,7 +161,8 @@ export function parseAccountingPaste(text){
     const cells=cellsFor(value,delimiter,line),sourceMonth=parseMonth(cells[0],{line,column:1});
     if(seen.has(sourceMonth))fail('DUPLICATE_MONTH',`A competência ${sourceMonth} já foi informada na linha ${seen.get(sourceMonth)}.`,{line,column:1});
     seen.set(sourceMonth,line);
-    return {sourceMonth,...Object.fromEntries(fields.map((field,index)=>[field,parseMoney(cells[index+1],{line,column:index+2})]))};
+    if(cells.length!==first.length)fail('COLUMN_COUNT','Mantenha o mesmo número de colunas em todas as linhas.',{line,column:cells.length});
+    return normalizeAccountingMonth({sourceMonth,...Object.fromEntries(fields.slice(0,cells.length-1).map((field,index)=>[field,parseMoney(cells[index+1],{line,column:index+2})]))});
   }).sort((a,b)=>a.sourceMonth.localeCompare(b.sourceMonth));
   return {months,...summary(months),delimiter,hasHeader};
 }
@@ -166,9 +172,10 @@ function checkedMonths(value,input,{allowEmpty=false}={}){
   if(value.length>ACCOUNTING_IMPORT_MAX_MONTHS)fail('MONTH_LIMIT','São permitidas no máximo 12 competências.',{input,line:13,column:1});
   const seen=new Set(),keys=ACCOUNTING_IMPORT_COLUMNS.map(column=>column.key);
   return Array.from(value,(row,index)=>{
+    row=normalizeAccountingMonth(row);
     const location={input,line:index+1,column:1};
     if(!row || typeof row!=='object' || Array.isArray(row) || Object.keys(row).length!==keys.length || keys.some(key=>!Object.hasOwn(row,key))){
-      fail('MONTH_SHAPE','Cada competência precisa conter os cinco campos de despesas, sem campos adicionais.',location);
+      fail('MONTH_SHAPE','Cada competência precisa conter os campos contábeis, sem campos adicionais.',location);
     }
     if(typeof row.sourceMonth!=='string' || !canonicalMonth.test(row.sourceMonth))fail('MONTH_FORMAT','A competência dos dados preparados deve usar AAAA-MM entre 2000 e 2099.',location);
     if(seen.has(row.sourceMonth))fail('DUPLICATE_MONTH',`A competência ${row.sourceMonth} está repetida.`,location);

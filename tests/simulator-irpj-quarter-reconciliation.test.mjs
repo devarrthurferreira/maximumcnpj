@@ -44,7 +44,7 @@ test('quarterly normal, additional and movement reconcile without summing monthl
   const taxes=p.taxStatement.rows.filter(item=>item.key==='irpj');assert.equal(taxes.length,1);
   assert.deepEqual(taxes[0].monthlyValues.presumed,[4800,3600,1600]);assert.equal(taxes[0].values.presumed,10000);
   for(const key of ['irpjBasic','irpjAdditional',...QUARTERLY_IRPJ_RECONCILIATION_KEYS])assert.equal(keys.filter(value=>value===key).length,1);
-  assert.equal(keys.filter(value=>value==='taxesDeduction').length,1);
+  assert.equal(keys.filter(value=>value==='taxesDeduction').length,0);
   assert.deepEqual(saved,before);
 });
 
@@ -228,7 +228,7 @@ test('CSV, display and print label provision and movement, preserving signs, sel
   assert(csv.includes('"Movimento de IRPJ no mês";"detail";"BRL";19000,00;-16000,00;0,00;3000,00;'));
   assert(!csv.includes("'-16000,00"));assert(csv.includes('"Provisão mensal do IRPJ";"Lucro Real";"2025-02";'));
   const options={presentation:p,calendar:saved.monthlyDre,year:2027,visibleRegimeIds:['actual'],showPercent:true};
-  for(const html of [renderAnnualDre(options),renderCompleteMonthlyDre({...options,month:1}),renderDrePrintDocument({...options,period:'annual'})]){
+  for(const html of [renderAnnualDre(options),renderCompleteMonthlyDre({...options,month:1})]){
     assert.equal((html.match(/data-irpj-reconciliation="dre"/g)||[]).length,1);
     assert.match(html,/data-irpj-version="IRPJ_RECONCILIATION_V2"/);
     for(const key of QUARTERLY_IRPJ_RECONCILIATION_KEYS)assert.equal((html.match(new RegExp(`data-dre-row="${key}"`,'g'))||[]).length,1,key);

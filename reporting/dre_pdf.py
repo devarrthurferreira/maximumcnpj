@@ -877,6 +877,9 @@ class Report:
         c.restoreState()
 
     def render(self):
+        if self.model.compact_statement:
+            from .dre_final_pdf import render_final_pdf
+            return render_final_pdf(self.model, letterhead())
         self.cover()
         self.guide()
         self.executive()

@@ -36,24 +36,21 @@ test('DRE e Impostos separados compartilham regimes e permanecem no consolidado 
   for(const monthly of [false,true]){
     const html=monthly?renderCompleteMonthlyDre({...input,month:8,visibleRegimeIds}):renderAnnualDre({...input,visibleRegimeIds});
     assert.equal((html.match(/data-dre-visible-regime=/g)||[]).length,4);
-    assert.equal((html.match(/data-dre-regime-result=/g)||[]).length,2);
     assert.equal((row(html,'revenue').match(/<td /g)||[]).length,2);
-    assert.equal((row(html,'totalTaxes').match(/<td /g)||[]).length,2);
-    const expected=input.snapshot.result.regimes.find(regime=>regime.id==='actual');
-    const [dre,taxes]=html.split('id="tax-demonstrativo"');
-    assert(taxes,'Impostos é um card separado.');
-    for(const key of ['das','icmsNet','cbsIbsNet','irpj','csll','icmsAnticipation','difal','payroll','totalTaxes','taxBurden']){
-      if(['totalTaxes','taxBurden'].includes(key))assert.equal(row(dre,key),undefined,key+' fica somente no quadro de Impostos.');
-      else assert.equal((row(dre,key).match(/<td /g)||[]).length,2,key+' também integra o grupo da DRE.');
+    const taxStart=html.indexOf('id="tax-demonstrativo"'),dreStart=html.indexOf('id="dre-demonstrativo"');
+    assert(taxStart>html.indexOf('id="dre-summary"')&&dreStart>taxStart);
+    const taxes=html.slice(taxStart,dreStart),dre=html.slice(dreStart);
+    for(const key of ['das','icmsNet','cbsIbsNet','irpj','csll','icmsAnticipation','difal','payroll','totalTaxes','taxBurden'])
       assert.equal((row(taxes,key).match(/<td /g)||[]).length,2);
-    }
-    assert(row(dre,'taxesDeduction'));assert.equal((row(taxes,'irpj').match(/<td /g)||[]).length,2);
+    for(const key of ['das','icmsDebit','cbsIbsDebit','icmsCredit','cbsIbsCredit','irpj','csll','financialResult','ebitda'])
+      assert.equal((row(dre,key).match(/<td /g)||[]).length,2);
+    assert(!row(dre,'taxesDeduction'));assert(!row(dre,'totalTaxes'));
     assert(!dre.includes('data-irpj-reconciliation'));assert(taxes.includes('data-irpj-reconciliation'));
-    assert(!dre.includes('data-dre-combined-rate'));assert(taxes.includes('data-dre-combined-rate'));
     assert.equal((html.match(/data-tax-statement="DRE_TAX_STATEMENT_V1"/g)||[]).length,1);
+    const expected=input.snapshot.result.regimes.find(regime=>regime.id==='actual');
     assert(row(html,'netProfit').includes(expected.dre.netProfit.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}).replace(/\u00a0/g,' ')));
     assert(row(html,'taxBurden').includes('%'));assert(row(html,'netMargin').includes('%'));
-    assert.doesNotMatch(html,/id="dre-regime"|id="dre-show-percent"|id="dre-display-period"|Período da DRE|class="sim-period-toggle"|class="dre-quick-nav"|<h3>Demonstrativo completo/);
+    assert.doesNotMatch(html,/id="dre-regime"|id="dre-display-period"|Período da DRE|class="sim-period-toggle"|class="dre-quick-nav"/);
     assert.match(html,/11,40%/);assert.match(html,/CBS 11,30% \+ IBS 0,10%/);
     assert.match(html,/Jan–Set \/ 2025/);assert.match(html,/data-dre-period="annual"/);assert.match(html,/data-tax-period="annual"/);
   }
@@ -70,16 +67,13 @@ test('regime pendente continua visível sem zeros fictícios e opções não ger
   assert.match(row(html,'netProfit'),/—/);assert.doesNotMatch(row(html,'netProfit'),/R\$ 0,00/);
 });
 
-test('impressão respeita regimes visíveis e mantém todas as competências reais do período',()=>{
+test('impressão respeita regimes visíveis e consolida somente as competências disponíveis em duas páginas',()=>{
   const input=fixture('partial'),before=structuredClone(input);freeze(input);
   const html=renderDrePrintDocument({...input,period:'complete',visibleRegimeIds:['actual']});
-  assert.equal((html.match(/data-report-part="monthly"/g)||[]).length,1);
-  assert.match(html,/data-report-regime="actual"/);assert.doesNotMatch(html,/data-report-regime="pure"|data-report-regime="hybrid"|data-report-regime="presumed"/);
-  const monthly=html.split('data-report-part="monthly"')[1];
-  assert.match(monthly,/Janeiro/);assert.match(monthly,/Março/);assert.match(monthly,/Setembro/);
-  assert.equal((html.match(/data-tax-statement="DRE_TAX_STATEMENT_V1"/g)||[]).length,2);
-  assert.match(monthly,/data-tax-period="monthly"/);
-  assert(row(monthly,'irpj').includes((-input.snapshot.result.monthlyResults[0].result.regimes.find(regime=>regime.id==='actual').dre.irpj).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}).replace(/\u00a0/g,' ')));
-  assert.doesNotMatch(monthly,/Origem: 2025-02|Origem: 2025-10/);
+  assert.equal((html.match(/class="dre-final-page"/g)||[]).length,2);
+  assert.doesNotMatch(html,/data-report-part="monthly"|Simples Puro|Simples Híbrido|Lucro Presumido/);
+  assert.match(html,/3 de 9 competências/);
+  assert.equal((row(html,'netProfit').match(/<td /g)||[]).length,1);
+  assert(row(html,'irpj').includes((-input.snapshot.result.regimes.find(regime=>regime.id==='actual').dre.irpj).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}).replace(/\u00a0/g,' ')));
   assert.deepEqual(input,before);
 });

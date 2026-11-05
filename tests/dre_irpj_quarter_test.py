@@ -266,15 +266,15 @@ process.stdout.write(JSON.stringify(saved));
         saved = quarter_fixture()
         with pymupdf.open(stream=render(saved, regime_id='actual', regime_ids=['actual']), filetype='pdf') as document:
             content = section_text(document, 'Impostos', 'Conferência dos créditos')
-            for text in ['IRPJ trimestral e movimentos da DRE', 'origem 2025 / cenário 2027',
-                         'Provisão - fechamento pendente', 'Movimento negativo indica reversão', amount(-16000),
-                         *[label for _, label in IRPJ_V2_ROWS]]:
-                self.assertTrue(text in content, f'Missing PDF explanation: {text}')
+            self.assertEqual(document.page_count, 2)
+            self.assertIn('Cenário 2027', content)
+            self.assertIn('2025', content)
+            actual = next(regime for regime in saved['result']['regimes'] if regime['id'] == 'actual')
+            self.assertIn(amount(-actual['dre']['irpj']), content)
+            self.assertIn(amount(actual['totalTaxes']), content)
+            self.assertNotIn('IRPJ trimestral e movimentos da DRE', content)
             self.assertNotIn('Simples Puro', content)
             self.assertNotIn('Lucro Presumido', content)
-            titles = [page for page in document if 'IRPJ trimestral e movimentos da DRE' in page.get_text()]
-            self.assertEqual(len(titles), 1)
-            self.assertIn(IRPJ_V2_ROWS[0][1], titles[0].get_text())
 
 
 if __name__ == '__main__':

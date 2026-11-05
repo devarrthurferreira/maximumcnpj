@@ -1,7 +1,7 @@
 /** Quarterly income-tax provisions. No historical snapshot is recalculated here. */
 export const INCOME_TAX_ASSESSMENT_VERSION='INCOME_TAX_ASSESSMENT_V2';
 export const INCOME_TAX_METHOD='QUARTERLY_CUMULATIVE_PROVISION';
-export const INCOME_TAX_MODEL_VERSION='1.20.0-quarterly-income-tax';
+export const INCOME_TAX_MODEL_VERSION='1.21.0-quarterly-income-tax-financial';
 const LIMIT=60000,LC_QUARTER=1250000,LC_ANNUAL=5000000;
 const AMOUNT_KEYS=['irpjNormalCents','irpjAdditionalCents','irpjTotalCents','csllCents'];
 const BASE_KEYS=['salesRevenue','serviceRevenue','revenue','preTax','irpjBaseWithoutIncrease','csllBaseWithoutIncrease','irpjIncrease','csllIncrease','irpjBase','csllBase','irpjAdditionalLimit','irpjBaseWithinLimit','irpjExcessBase'];
@@ -42,7 +42,7 @@ export function incomeTaxPreTaxExact(input,icmsDueCents=null){
     return positive(sub(debit,credit));
   };
   const icms=icmsDueCents===null?positive(sub(mul(positive(decimal(input.salesRevenue)),decimal(input.rates.icms)),mul(decimal(input.regularPurchases),decimal(input.rates.icms)))):rational(BigInt(icmsDueCents),100n);
-  return exact(sub(sub(revenue,operating),total([netConsumptionTax('cbs'),netConsumptionTax('ibs'),icms,mul(decimal(input.serviceRevenue),decimal(input.rates.iss)),mul(decimal(input.salaries),decimal(input.rates.payroll))])));
+  return exact(add(sub(sub(revenue,operating),total([netConsumptionTax('cbs'),netConsumptionTax('ibs'),icms,mul(decimal(input.serviceRevenue),decimal(input.rates.iss)),mul(decimal(input.salaries),decimal(input.rates.payroll))])),sub(decimal(input.financialIncome??0),decimal(input.financialExpenses??0))));
 }
 const zeroTaxes=()=>Object.fromEntries(AMOUNT_KEYS.map(key=>[key,0]));
 const sumTaxes=values=>Object.fromEntries(AMOUNT_KEYS.map(key=>{
@@ -54,6 +54,7 @@ function sums(inputs){
   return {
     sales:total(inputs.map(row=>decimal(row.salesRevenue))),
     services:total(inputs.map(row=>decimal(row.serviceRevenue))),
+    financialIncome:total(inputs.map(row=>decimal(row.financialIncome??0))),
     preTax:inputs.every(row=>row.actualAvailable!==false&&row.preTax!==null)?total(inputs.map(row=>decimal(row.preTaxExact??row.preTax))):null
   };
 }
@@ -96,6 +97,7 @@ function periodFor(regimeId,quarter,inputs,year,rates,previousPeriods,overrideEx
       csIncrease=mul(mul(excess,div(csBase,revenue)),decimal('0.1'));
     }
   }
+  if(regimeId==='presumed'){irBase=add(irBase,values.financialIncome);csBase=add(csBase,values.financialIncome);}
   const irTotal=add(irBase,irIncrease),csTotal=add(csBase,csIncrease),excessBase=positive(sub(irTotal,decimal(LIMIT)));
   const irpjNormalCents=roundedCents(mul(irTotal,decimal('0.15'))),irpjAdditionalCents=roundedCents(mul(excessBase,decimal('0.1')));
   const provision={irpjNormalCents,irpjAdditionalCents,irpjTotalCents:irpjNormalCents+irpjAdditionalCents,csllCents:roundedCents(mul(csTotal,decimal('0.09')))};
@@ -158,6 +160,7 @@ export function assessQuarterlyIncomeTaxes({year,months,rates=DEFAULT_PRESUMPTIO
     check(row&&/^\d{4}-(0[1-9]|1[0-2])$/.test(row.sourceMonth)&&row.month===Number(row.sourceMonth.slice(5))&&!seen.has(row.month)&&!sourceSeen.has(row.sourceMonth),'Competências fiscais ausentes, incoerentes ou duplicadas.');
     seen.add(row.month);sourceSeen.add(row.sourceMonth);sourceYears.add(row.sourceMonth.slice(0,4));
     for(const key of ['salesRevenue','serviceRevenue'])check(typeof row[key]==='number'&&Number.isFinite(row[key])&&Math.abs(row[key])<=1e12,'Receita fiscal inválida.');
+    check(row.financialIncome===undefined||typeof row.financialIncome==='number'&&Number.isFinite(row.financialIncome)&&row.financialIncome>=0&&row.financialIncome<=1e12,'Receita financeira inválida.');
     check(row.serviceRevenue>=0,'Receita de serviços inválida.');
     check(row.actualAvailable===false&&row.preTax===null||typeof row.preTax==='number'&&Number.isFinite(row.preTax)&&Math.abs(row.preTax)<=1e13,'Resultado antes dos tributos inválido.');
     if(row.preTaxExact!=null){

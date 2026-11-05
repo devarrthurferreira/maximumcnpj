@@ -35,42 +35,35 @@ SECTIONS = (
                    ('incomeTaxes', 'Total de IRPJ e CSLL'), ('netProfit', 'Resultado líquido'))),
 )
 STATEMENT_SECTIONS = (
-    ('Receitas e tributos sobre receitas', (
-        ('services', 'Receita de serviços'), ('sales', 'Receita de vendas utilizada'),
-        ('revenue', 'Receita Total utilizada'), ('das', '(-) Simples Nacional (DAS)'),
-        ('icmsNet', '(-) ICMS líquido (D - C)'), ('cbsIbsNet', '(-) CBS/IBS líquido (D - C)'),
-        ('iss', '(-) ISS fora do DAS'), ('difal', '(-) DIFAL sobre vendas'),
-        ('revenueTaxes', '(=) Tributos sobre receitas'), ('netRevenueAfterTaxes', '= Receita líquida após tributos'))),
-    ('Compras e custos', (
-        ('cmvSimple', 'Compras do Simples'), ('cmvRegular', 'Compras fora do Simples'),
-        ('cmv', 'Total de compras / CMV'), ('icmsAnticipation', '(-) Antecipação de ICMS nas compras'),
-        ('cbsUsed', 'Crédito CBS utilizado - informativo'), ('ibsUsed', 'Crédito IBS utilizado - informativo'),
-        ('costsWithAnticipation', '= Compras / CMV e antecipação de ICMS'),
-        ('grossAfterCosts', '= Resultado após receitas, custos e tributos'))),
-    ('Despesas e encargos', (
-        ('salaries', 'Salários e pró-labore'), ('benefits', 'Benefícios'),
-        ('administrative', 'Outras despesas'), ('rent', 'Aluguéis'), ('cards', 'Taxas de cartão'),
-        ('operatingExpensesBeforePayroll', 'Subtotal de despesas operacionais (sem INSS)'),
-        ('payroll', '(-) INSS / encargos da folha'),
-        ('operatingExpensesWithPayroll', '= Despesas e encargos da folha'))),
-    ('IRPJ, CSLL e resultado', (
-        ('resultBeforeIncomeTaxes', '= Resultado antes de IRPJ / CSLL'),
-        ('irpj', '(-) IRPJ normal e adicional'), ('csll', '(-) CSLL'),
-        ('taxesDeduction', '(-) Total de impostos'), ('netProfit', 'Resultado líquido'),
-        ('netMargin', '% sobre a receita - resultado'))),
+    ('Receitas', (('revenue', 'Receita bruta'), ('services', 'Receitas de serviços'), ('sales', 'Receita de vendas'))),
+    ('Deduções da receita', (('revenueTaxes', 'Deduções da receita'), ('das', 'Simples'),
+        ('icmsDebit', 'ICMS Débito'), ('cbsIbsDebit', 'CBS/IBS Débito'), ('iss', 'ISS'),
+        ('difal', 'DIFAL sobre vendas'), ('netRevenueAfterTaxes', 'Receita líquida'))),
+    ('Custos', (('costsWithAnticipation', 'Custo de mercadoria'), ('cmvSimple', 'Compras do Simples'),
+        ('cmvRegular', 'Compras fora do Simples'), ('icmsAnticipation', 'Antecipação de ICMS nas compras'),
+        ('cbsIbsCredit', 'CBS/IBS Crédito'), ('icmsCredit', 'ICMS Crédito'),
+        ('grossAfterCosts', 'Lucro bruto (Margem de contribuição)'))),
+    ('Despesas operacionais', (('operatingExpensesWithPayroll', 'Despesas operacionais'),
+        ('salaries', 'Salários e pró-labore'), ('benefits', 'Benefícios de funcionários'), ('payroll', 'INSS / FGTS'),
+        ('rent', 'Aluguel'), ('cards', 'Taxas de cartão'), ('administrative', 'Outras despesas'))),
+    ('Resultado', (('ebitda', 'Resultado operacional (EBITDA)'), ('financialResult', 'Despesas/Receitas financeiras'),
+        ('resultBeforeIncomeTaxes', 'Antes do IRPJ / CSLL'), ('irpj', 'IRPJ'), ('csll', 'CSLL'), ('netProfit', 'Resultado líquido'))),
 )
+
 TAX_STATEMENT_ROWS = (
     ('das', 'Simples'), ('icmsNet', 'ICMS (D - C)'), ('cbsIbsNet', 'CBS/IBS (D - C)'),
     ('irpj', 'IRPJ'), ('csll', 'CSLL'), ('icmsAnticipation', 'Antecipação'), ('difal', 'DIFAL'),
     ('payroll', 'INSS'), ('iss', 'ISS fora do DAS'), ('totalTaxes', 'Total'),
-    ('taxBurden', '% sobre a receita'), ('netProfit', 'Resultado'), ('netMargin', '% sobre a receita'),
+    ('taxBurden', '% sobre a receita'), ('grossAfterCosts', 'Margem de contribuição'),
+    ('contributionMargin', 'Margem de contribuição (%)'), ('ebitda', 'Resultado operacional (EBITDA)'),
+    ('ebitdaMargin', 'EBITDA (%)'), ('netProfit', 'Resultado líquido'), ('netMargin', 'Resultado líquido (%)'),
 )
-TAX_COMPONENT_KEYS = frozenset(key for key, _ in TAX_STATEMENT_ROWS if key not in ('totalTaxes', 'taxBurden', 'netProfit', 'netMargin'))
-PERCENT_ROWS = {'taxBurden', 'netMargin'}
+TAX_COMPONENT_KEYS = frozenset(key for key, _ in TAX_STATEMENT_ROWS if key not in ('totalTaxes', 'taxBurden', 'netProfit', 'netMargin', 'grossAfterCosts', 'contributionMargin', 'ebitda', 'ebitdaMargin'))
+PERCENT_ROWS = {'taxBurden', 'netMargin', 'contributionMargin', 'ebitdaMargin'}
 SUBTOTALS = {'revenue', 'netRevenue', 'cmv', 'grossProfit', 'personnel', 'preTax', 'netProfit',
             'revenueTaxes', 'netRevenueAfterTaxes', 'costsWithAnticipation', 'grossAfterCosts',
             'operatingExpensesBeforePayroll', 'operatingExpensesWithPayroll', 'resultBeforeIncomeTaxes',
-            'totalTaxes', 'taxesDeduction'}
+            'totalTaxes', 'taxesDeduction', 'ebitda'}
 DERIVED = {'revenueDeductions', 'netCosts', 'operatingExpenses', 'incomeTaxes'}
 GROUP_LABELS = {'OPTANTE': 'Simples Nacional', 'NAO_OPTANTE': 'Não optante', 'CPF': 'Pessoa física (CPF)',
                 'NAO_CONFIRMADO': 'Não confirmado', 'OUTROS': 'Outros documentos',
@@ -234,7 +227,8 @@ def _income_period(period, regime_id, scenario_year, inputs_by_month, rates, bas
         captured = inputs_by_month.get(source)
         _income_require(captured is not None)
         _income_require(irpj_close(item['salesRevenue'], captured.get('salesRevenue'))
-                        and irpj_close(item['serviceRevenue'], captured.get('serviceRevenue')))
+                        and irpj_close(item['serviceRevenue'], captured.get('serviceRevenue'))
+                        and irpj_close(item.get('financialIncome', 0), captured.get('financialIncome', 0)))
         if regime_id == 'actual':
             pre_tax = captured.get('preTax')
             _income_require(finite(pre_tax) and item.get('actualAvailable') is not False
@@ -284,6 +278,9 @@ def _income_period(period, regime_id, scenario_year, inputs_by_month, rates, bas
                 (csll_base, 'csSales', 'csServices', 'csllBaseWithoutIncrease', 'csllIncrease')):
             plain = max(Fraction(0), sales * Fraction(str(rates[sales_key])) + services * Fraction(str(rates[services_key])))
             increase = increased_revenue * plain / revenue / 10 if increased_revenue else Fraction(0)
+            financial = sum((Fraction(str(item.get('financialIncome', 0))) for item in inputs), Fraction(0))
+            _income_require(all(finite(item.get('financialIncome', 0)) and item.get('financialIncome', 0) >= 0 for item in inputs))
+            plain += financial
             _income_require(exact_base == plain + increase
                             and irpj_close(bases[plain_key], float(plain))
                             and irpj_close(bases[increase_key], float(increase)))
@@ -372,7 +369,7 @@ def _reconcile_irpj_v2(result, regime_id, *, source_month=None, expected_source_
                 regimes_by_month[source] = regime
                 dre = (regime or {}).get('dre') or {}
                 inputs_by_month[source] = ({'salesRevenue': dre.get('sales'), 'serviceRevenue': dre.get('services'),
-                                           'preTax': dre.get('preTax')} if regime and regime.get('available') is True else None)
+                                           'preTax': dre.get('preTax'), 'financialIncome': dre.get('financialIncome', 0)} if regime and regime.get('available') is True else None)
         else:
             _income_require(isinstance(container, dict) and container.get('basis') == 'UNIFORM_PROJECTION')
             containers = container.get('monthlyAssessments')
@@ -384,6 +381,7 @@ def _reconcile_irpj_v2(result, regime_id, *, source_month=None, expected_source_
                 inputs_by_month[source] = {
                     key: dre.get(dre_key) / 12 if finite(dre.get(dre_key)) else None
                     for key, dre_key in (('salesRevenue', 'sales'), ('serviceRevenue', 'services'), ('preTax', 'preTax'))}
+                inputs_by_month[source]['financialIncome'] = dre.get('financialIncome', 0) / 12
         sources = sorted(containers, key=lambda month: int(month[5:]))
         _income_require(len({month[5:] for month in sources}) == len(sources) and len({month[:4] for month in sources}) == 1,
                         IRPJ_V2_PERIOD_REASON)
@@ -704,24 +702,25 @@ class DreModel:
             return -value if finite(value) else None
         # Captured taxes are redistributed, not recalculated or deducted again.
         # Missing inputs remain unavailable instead of becoming zero.
-        revenue_taxes = ('das', 'icmsNet', 'cbsIbsNet', 'iss', 'difal')
+        revenue_taxes = ('das', 'icmsDebit', 'cbsIbsDebit', 'iss', 'difal')
         if key == 'revenueTaxes':
             return total(self.value(regime, part, index) for part in revenue_taxes)
         if key == 'netRevenueAfterTaxes':
             return total([self.value(regime, 'revenue', index), self.value(regime, 'revenueTaxes', index)])
         if key == 'costsWithAnticipation':
-            return total([self.value(regime, 'cmv', index), self.value(regime, 'icmsAnticipation', index)])
+            return total([self.value(regime, 'cmv', index), self.value(regime, 'icmsAnticipation', index),
+                          self.value(regime, 'cbsIbsCredit', index), self.value(regime, 'icmsCredit', index)])
         if key == 'grossAfterCosts':
-            return total([self.value(regime, 'netRevenueAfterTaxes', index),
-                          self.value(regime, 'costsWithAnticipation', index)])
+            value = total([self.value(regime, 'netRevenueAfterTaxes', index), self.value(regime, 'costsWithAnticipation', index)])
+            expected = self.value(regime, 'grossProfit', index)
+            return expected if not finite(value) or finite(expected) and close(value, expected) else None
         if key == 'operatingExpensesWithPayroll':
             return total([self.value(regime, 'operatingExpensesBeforePayroll', index),
                           self.value(regime, 'payroll', index)])
         if key == 'resultBeforeIncomeTaxes':
-            value = total([self.value(regime, 'grossAfterCosts', index),
-                           self.value(regime, 'operatingExpensesWithPayroll', index)])
+            value = total([self.value(regime, 'ebitda', index), self.value(regime, 'financialResult', index)])
             expected = self.value(regime, 'preTax', index)
-            return expected if finite(value) and finite(expected) and close(value, expected) else None
+            return expected if not finite(value) or finite(expected) and close(value, expected) else None
         if key in IRPJ_V2_KEYS or key in ('irpjBasic', 'irpjAdditional'):
             assessed = self.irpj(regime, index)
             if key in ('irpjBasic', 'irpjAdditional') and assessed.get('version') == IRPJ_RECONCILIATION_VERSION_V2:
@@ -734,6 +733,19 @@ class DreModel:
         if frame.get('available') is not True:
             return None
         dre = frame.get('dre') or {}
+        if key == 'financialResult':
+            value = dre.get(key, 0)
+            return value if finite(value) else None
+        if key == 'ebitda':
+            value = total([self.value(regime, 'grossAfterCosts', index) if self.compact_statement else self.value(regime, 'grossProfit', index), self.value(regime, 'operatingExpensesWithPayroll', index)])
+            expected = dre.get('ebitda', total([dre.get('preTax'), -dre.get('financialResult', 0)]))
+            return expected if not finite(value) or finite(expected) and close(value, expected) else None
+        if key == 'icmsCredit':
+            value = dre.get('icmsUsed')
+            return value if finite(value) and value >= 0 else None
+        if key == 'icmsDebit':
+            credit = self.value(regime, 'icmsCredit', index)
+            return total([self.value(regime, 'icmsNet', index), -credit if finite(credit) else None])
         combinations = {
             'revenueDeductions': ['das', 'cbsDebit', 'ibsDebit', 'icmsNet', 'iss'] + [key for key in ('difal', 'icmsAnticipation') if key in dre],
             'netCosts': ['cmv', 'cbsUsed', 'ibsUsed'],
@@ -741,6 +753,7 @@ class DreModel:
             'incomeTaxes': ['irpj', 'csll'],
             'creditsApplied': ['cbsUsed', 'ibsUsed', 'icmsUsed'],
             'cbsIbsNet': ['cbsDebit', 'ibsDebit', 'cbsUsed', 'ibsUsed'],
+            'cbsIbsDebit': ['cbsDebit', 'ibsDebit'], 'cbsIbsCredit': ['cbsUsed', 'ibsUsed'],
             'operatingExpensesBeforePayroll': ['salaries', 'benefits', 'administrative', 'rent', 'cards'],
         }
         if key in combinations:
@@ -751,7 +764,7 @@ class DreModel:
             taxes = total(dre.get(part) for part in combinations['revenueDeductions'] + ['payroll', 'irpj', 'csll', 'cbsUsed', 'ibsUsed'])
             return -taxes if finite(taxes) else None
         if key in PERCENT_ROWS:
-            return self.ratio(regime, 'totalTaxes' if key == 'taxBurden' else 'netProfit', index)
+            return self.ratio(regime, {'taxBurden':'totalTaxes','netMargin':'netProfit','contributionMargin':'grossAfterCosts','ebitdaMargin':'ebitda'}[key], index)
         value = dre.get(key)
         return value if finite(value) else None
 

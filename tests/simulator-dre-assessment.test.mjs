@@ -12,7 +12,7 @@ import {filterDreVisibleRegimes} from '../public/simulator-dre-visibility.js';
 const near=(actual,expected)=>assert(Number.isFinite(actual)&&Math.abs(actual-expected)<=Math.max(1e-7,Math.abs(expected)*1e-12),`${actual} != ${expected}`);
 const sum=values=>values.reduce((total,value)=>total+value,0);
 const presentation=snapshot=>buildDrePresentation({...snapshot,calendar:snapshot.monthlyDre});
-const find=(p,key)=>unifiedDreRows(p).find(row=>row.key===key);
+const find=(p,key)=>unifiedDreRows(p).find(row=>row.key===key)||capturedDreRows(p).find(row=>row.key===key);
 const tax=(p,key)=>p.taxStatement.rows.find(row=>row.key===key);
 const taxComponentKeys=['das','icmsNet','cbsIbsNet','irpj','csll','icmsAnticipation','difal','payroll','iss'];
 const freeze=value=>{if(value&&typeof value==='object'){Object.freeze(value);for(const child of Object.values(value))freeze(child);}return value;};
@@ -22,14 +22,14 @@ test('DRE separa o quadro Impostos e preserva todos os componentes capturados pa
   const p=presentation(snapshot),rows=unifiedDreRows(p),keys=rows.map(row=>row.key);
   assert.equal(p.statement.version,'DRE_STATEMENT_V1');
   assert.equal(p.taxStatement.version,'DRE_TAX_STATEMENT_V1');assert.equal(p.taxStatement.label,'Impostos');
-  assert.deepEqual(p.statement.sections.map(section=>section.key),['revenue','costs','expenses','profit']);
-  assert.deepEqual(p.statement.sections[0].rows.slice(0,3).map(row=>row.label),['Receita de serviços','Receita de vendas utilizada','Receita Total utilizada']);
-  assert.deepEqual(p.taxStatement.rows.map(row=>row.key),[...taxComponentKeys,'totalTaxes','taxBurden','netProfit','netMargin']);
-  assert.deepEqual(p.taxStatement.rows.map(row=>row.label),['Simples','ICMS (D − C)','CBS/IBS (D − C)','IRPJ','CSLL','Antecipação','DIFAL','INSS','ISS fora do DAS','Total','% sobre a receita','Resultado','% sobre a receita']);
-  assert.deepEqual(p.statement.sections.at(-1).rows.map(row=>row.key),['resultBeforeIncomeTaxes','irpj','csll','taxesDeduction','netProfit','netMargin']);
+  assert.deepEqual(p.statement.sections.map(section=>section.key),['revenue','deductions','costs','expenses','profit']);
+  assert.deepEqual(p.statement.sections[0].rows.slice(0,3).map(row=>row.label),['Receita bruta','Receitas de serviços','Receita de vendas']);
+  assert.deepEqual(p.taxStatement.rows.map(row=>row.key),[...taxComponentKeys,'totalTaxes','taxBurden','grossAfterCosts','contributionMargin','ebitda','ebitdaMargin','netProfit','netMargin']);
+  assert.deepEqual(p.statement.sections.at(-1).rows.map(row=>row.key),['ebitda','financialResult','resultBeforeIncomeTaxes','irpj','csll','netProfit']);
+
   assert.equal(new Set(keys).size,keys.length);
   for(const key of ['totalTaxes','taxBurden','cbsDebit','ibsDebit','cbs.debit','ibs.debit'])assert(!keys.includes(key),key);
-  for(const key of ['das','icmsNet','cbsIbsNet','irpj','csll','icmsAnticipation','difal','payroll','revenueTaxes','netRevenueAfterTaxes','resultBeforeIncomeTaxes'])assert(keys.includes(key),key);
+  for(const key of ['das','icmsDebit','cbsIbsDebit','irpj','csll','icmsAnticipation','difal','payroll','revenueTaxes','netRevenueAfterTaxes','resultBeforeIncomeTaxes'])assert(keys.includes(key),key);
   for(const key of ['cbsDebit','ibsDebit','cbsUsed','ibsUsed'])assert(capturedDreRows(p).some(row=>row.key===key),key);
   near(p.taxStatement.taxRates.cbs,.113);near(p.taxStatement.taxRates.ibs,.001);near(p.taxStatement.taxRates.combined,.114);
   assert.equal(p.taxStatement.taxRates.monthly.length,9);
@@ -40,21 +40,20 @@ test('DRE distribui impostos sem duplicar o total nos regimes e períodos',()=>{
   for(const variant of ['complete','partial','loss','purchases-above-revenue']){
     const snapshot=drePdfFixture({variant}),before=structuredClone(snapshot),p=presentation(snapshot);
     const groups=p.statement.sections;
-    assert.deepEqual(groups.map(section=>section.key),['revenue','costs','expenses','profit']);
-    for(const [section,key] of [['revenue','cbsIbsNet'],['costs','icmsAnticipation'],['expenses','payroll'],['profit','irpj']])
+    assert.deepEqual(groups.map(section=>section.key),['revenue','deductions','costs','expenses','profit']);
+    for(const [section,key] of [['deductions','cbsIbsDebit'],['costs','icmsAnticipation'],['expenses','payroll'],['profit','irpj']])
       assert(groups.find(group=>group.key===section).rows.some(row=>row.key===key));
-    assert(groups.at(-1).rows.find(row=>row.key==='taxesDeduction').informative);
+    assert(!groups.flatMap(group=>group.rows).some(row=>row.key==='taxesDeduction'));
     for(const regime of p.regimes)for(const frame of [{mode:'annual'},{mode:'calendarAnnual'},...p.months.map((_,month)=>({mode:'month',month}))]){
       const column={id:regime.id,...frame},get=key=>readDreValue(find(p,key),column),due=key=>readDreValue(tax(p,key),column);
       if(get('netProfit')===null)continue;
-      near(get('revenueTaxes'),-(due('das')+due('icmsNet')+due('cbsIbsNet')+due('iss')+due('difal')));
+      near(get('revenueTaxes'),get('das')+get('icmsDebit')+get('cbsIbsDebit')+get('iss')+get('difal'));
       near(get('netRevenueAfterTaxes'),get('revenue')+get('revenueTaxes'));
-      near(get('costsWithAnticipation'),get('cmv')-due('icmsAnticipation'));
+      near(get('costsWithAnticipation'),get('cmvSimple')+get('cmvRegular')-due('icmsAnticipation')+get('cbsIbsCredit')+get('icmsCredit'));
       near(get('grossAfterCosts'),get('netRevenueAfterTaxes')+get('costsWithAnticipation'));
-      near(get('operatingExpensesWithPayroll'),get('operatingExpensesBeforePayroll')-due('payroll'));
-      near(get('resultBeforeIncomeTaxes'),get('grossAfterCosts')+get('operatingExpensesWithPayroll'));
+      near(get('operatingExpensesWithPayroll'),get('salaries')+get('benefits')+get('administrative')+get('rent')+get('cards')-due('payroll'));
+      near(get('resultBeforeIncomeTaxes'),get('grossAfterCosts')+get('operatingExpensesWithPayroll')+get('financialResult'));
       near(get('netProfit'),get('resultBeforeIncomeTaxes')-due('irpj')-due('csll'));
-      near(get('taxesDeduction'),-due('totalTaxes'));
       near(due('totalTaxes'),due('das')+due('icmsNet')+due('cbsIbsNet')+due('iss')+due('difal')+
         due('icmsAnticipation')+due('payroll')+due('irpj')+due('csll'));
     }
@@ -70,11 +69,11 @@ test('impostos, despesas e resultado fecham uma única vez no consolidado e em c
       const captured=frame.mode==='month'?snapshot.result.monthlyResults[frame.month].result.regimes.find(row=>row.id===regime.id):snapshot.result.regimes.find(row=>row.id===regime.id);
       const value=key=>readDreValue(find(p,key),column),assessed=key=>readDreValue(tax(p,key),column),d=captured.dre;
       near(assessed('cbsIbsNet'),-(d.cbsDebit+d.ibsDebit+d.cbsUsed+d.ibsUsed));
-      near(value('operatingExpensesBeforePayroll'),d.salaries+d.benefits+d.administrative+d.rent+d.cards);
+      near(value('operatingExpensesWithPayroll'),d.salaries+d.benefits+d.administrative+d.rent+d.cards+d.payroll);
       const taxComponents=p.taxStatement.rows.filter(row=>taxComponentKeys.includes(row.key));
       near(sum(taxComponents.map(row=>readDreValue(row,column))),captured.totalTaxes);
-      near(assessed('totalTaxes'),captured.totalTaxes);near(value('taxesDeduction'),-captured.totalTaxes);
-      near(value('revenue')+value('cmv')+value('operatingExpensesBeforePayroll')+value('taxesDeduction'),d.netProfit);
+      near(assessed('totalTaxes'),captured.totalTaxes);
+      near(value('ebitda')+value('financialResult')-assessed('irpj')-assessed('csll'),d.netProfit);
       near(value('netProfit'),d.netProfit);near(assessed('netProfit'),d.netProfit);
       near(assessed('taxBurden'),captured.totalTaxes/d.revenue);near(assessed('netMargin'),d.netProfit/d.revenue);near(value('netMargin'),d.netProfit/d.revenue);
       assert.equal(buildDreSummary(p,column).reconciled,true);
@@ -104,7 +103,7 @@ test('receita zero ou negativa mantém valores e deixa percentuais indisponívei
     for(const regime of p.regimes){
       const original=snapshot.result.regimes.find(row=>row.id===regime.id);
       if(!original.available){
-        for(const row of [...p.taxStatement.rows,find(p,'operatingExpensesBeforePayroll'),find(p,'taxesDeduction'),find(p,'netProfit'),find(p,'netMargin')]){
+        for(const row of [...p.taxStatement.rows,find(p,'operatingExpensesWithPayroll'),tax(p,'totalTaxes'),find(p,'netProfit'),find(p,'netMargin')]){
           assert.equal(row.values[regime.id],null,row.key);assert(row.monthlyValues[regime.id].every(value=>value===null),row.key);
         }
       }else{
@@ -114,8 +113,8 @@ test('receita zero ou negativa mantém valores e deixa percentuais indisponívei
     }
   }
   const snapshot=drePdfFixture();delete snapshot.result.regimes.find(row=>row.id==='actual').dre.cbsUsed;
-  const p=presentation(snapshot);assert.equal(tax(p,'cbsIbsNet').values.actual,null);assert.equal(tax(p,'totalTaxes').values.actual,null);assert.equal(find(p,'taxesDeduction').values.actual,null);
-  assert(tax(p,'cbsIbsNet').reasonByRegime.actual);assert(find(p,'taxesDeduction').reasonByRegime.actual);
+  const p=presentation(snapshot);assert.equal(tax(p,'cbsIbsNet').values.actual,null);assert.equal(tax(p,'totalTaxes').values.actual,null);assert.equal(tax(p,'totalTaxes').values.actual,null);
+  assert(tax(p,'cbsIbsNet').reasonByRegime.actual);assert(tax(p,'totalTaxes').reasonByRegime.actual);
   assert(Number.isFinite(tax(p,'cbsIbsNet').monthlyValues.actual[0]),'Uma ausência consolidada não apaga uma competência completa.');
 });
 
@@ -123,7 +122,6 @@ test('Impostos inverte somente os componentes devidos e conserva percentuais, ra
   for(const variant of ['complete','zero','without-rbt12']){
     const p=presentation(drePdfFixture({variant})),captured=capturedDreRows(p);
     const pairs=taxComponentKeys.filter(key=>key!=='cbsIbsNet'&&tax(p,key)).map(key=>[tax(p,key),captured.find(row=>row.key===key)]);
-    pairs.push([find(p,'taxesDeduction'),tax(p,'totalTaxes')]);
     for(const [shown,original] of pairs){
       for(const field of ['values','calendarAnnualValues','percentValues','calendarAnnualPercentValues'])for(const regime of p.regimes){
         const before=original[field][regime.id],after=shown[field][regime.id];
@@ -152,9 +150,8 @@ test('prejuízo acumulado Jan–Set não gera IRPJ/CSLL e mantém a DRE concilia
   const column={id:'actual',mode:'month',month:1},value=key=>readDreValue(find(p,key),column),assessed=key=>readDreValue(tax(p,key),column);
   for(const key of ['irpj','csll']){assert.equal(assessed(key),0);assert.equal(tax(p,key).values.actual,0);}
   near(sum(p.taxStatement.rows.filter(row=>taxComponentKeys.includes(row.key)).map(row=>readDreValue(row,column))),assessed('totalTaxes'));
-  near(value('taxesDeduction'),-assessed('totalTaxes'));
   near(assessed('taxBurden'),assessed('totalTaxes')/value('revenue'));
-  near(value('revenue')+value('cmv')+value('operatingExpensesBeforePayroll')+value('taxesDeduction'),value('netProfit'));
+  near(value('ebitda')+value('financialResult')-assessed('irpj')-assessed('csll'),value('netProfit'));
   const original=calculated.result.monthlyResults[1].result.regimes.find(regime=>regime.id==='actual');
   near(value('netProfit'),original.dre.netProfit);near(assessed('totalTaxes'),original.totalTaxes);
   near(tax(p,'totalTaxes').values.actual,calculated.result.regimes.find(regime=>regime.id==='actual').totalTaxes);
@@ -170,14 +167,14 @@ test('ISS fora do DAS permanece quando aplicado ou pendente e some somente quand
   const pending=presentation(missing),iss=tax(pending,'iss');
   assert(iss,'Uma competência sem confirmação exige a linha de ISS.');
   assert.equal(iss.monthlyValues.actual[0],null);assert(iss.monthlyReasonByRegime.actual[0]);
-  assert.equal(tax(pending,'totalTaxes').monthlyValues.actual[0],null);assert.equal(find(pending,'taxesDeduction').monthlyValues.actual[0],null);
+  assert.equal(tax(pending,'totalTaxes').monthlyValues.actual[0],null);assert.equal(tax(pending,'totalTaxes').monthlyValues.actual[0],null);
   assert.equal(iss.monthlyValues.actual[1],0);
   const missingAnnual=drePdfFixture({variant:'zero'});
   missingAnnual.monthlyDre.regimes.find(regime=>regime.id==='actual').rows.find(row=>row.key==='iss').annual=null;
   const annualPending=presentation(missingAnnual),annualIss=tax(annualPending,'iss');
   assert(annualIss,'A coluna de total do calendário também precisa explicar seu ISS pendente.');
   assert.equal(annualIss.calendarAnnualValues.actual,null);assert(annualIss.calendarReasonByRegime.actual);
-  assert.equal(tax(annualPending,'totalTaxes').calendarAnnualValues.actual,null);assert.equal(find(annualPending,'taxesDeduction').calendarAnnualValues.actual,null);
+  assert.equal(tax(annualPending,'totalTaxes').calendarAnnualValues.actual,null);assert.equal(tax(annualPending,'totalTaxes').calendarAnnualValues.actual,null);
   assert.equal(annualIss.values.actual,0);assert(annualIss.monthlyValues.actual.every(value=>value===0));
 });
 
@@ -232,10 +229,10 @@ test('CSV exporta os regimes visíveis e mantém os percentuais essenciais sem A
   assert.equal(monthly.length,3,'Uma linha consolidada e uma para cada regime nos meses.');
   assert(monthly[0].startsWith('"Impostos";'));assert(monthly[1].startsWith('"Simples Puro";'));assert(monthly[2].startsWith('"Lucro Real";'));
   assert(!csv.split('\r\n').some(line=>line.startsWith('"DRE";')&&line.includes('"CBS/IBS (D − C)";')));
-  assert.equal(csv.split('\r\n').filter(line=>line.startsWith('"DRE";"IRPJ, CSLL e resultado";"(−) Total de impostos";"detail";')).length,1);
+  assert(!csv.includes('(−) Total de impostos'));
   assert.match(csv,/CBS 11,30% \+ IBS 0,10% = CBS\/IBS 11,40%/);
-  assert.equal(csv.split('\r\n').filter(line=>line.startsWith('"Impostos";"Impostos";"% sobre a receita";"indicator";"%";')).length,2);
-  assert.match(csv,/"% sobre a receita · resultado";"indicator";"%"/);
+  assert.equal(csv.split('\r\n').filter(line=>line.startsWith('"Impostos";"Impostos";"% sobre a receita";"indicator";"%";')).length,1);
+  assert.match(csv,/"Resultado líquido \(%\)";"indicator";"%"/);
   const visible=filterDreVisibleRegimes(p,['actual']);assert.equal(visible.taxStatement,p.taxStatement);assert.deepEqual(visible.regimes.map(row=>row.id),['actual']);
   const memory=dreReportMemory(filterDreVisibleRegimes(p,['actual']),{includeDre:true});
   assert(!memory.some(item=>/^(?:presumed\.|dre\.pure\.|summary\.hybrid\.)/.test(item.id)));

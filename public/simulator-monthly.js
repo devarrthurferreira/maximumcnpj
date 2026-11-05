@@ -117,7 +117,7 @@ export function monthlyDifal(reports,sourceJobId){
 }
 export function baselineMonth(row,expenses={}){
   return {sourceMonth:row.sourceMonth,groups:Object.fromEntries(REPORT_GROUPS.map(key=>[key,row.fields[key]/100])),
-    values:{serviceRevenue:row.fields.serviceRevenueCents/100,...Object.fromEntries(['salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,expenses[key]??0]))}};
+    values:{serviceRevenue:row.fields.serviceRevenueCents/100,...Object.fromEntries(['salaries','benefits','adminExpenses','rent','cardExpenses','financialExpenses','financialIncome'].map(key=>[key,expenses[key]??0]))}};
 }
 export function monthlyAnticipation(reports){
   const present=reports.filter(row=>row.anticipation);
@@ -163,9 +163,10 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
   const prepared=reports.map((row,index)=>{
     const input=monthlyInputs[index],baseline=baselineMonth(row);
     check(input?.sourceMonth===row.sourceMonth&&Object.keys(input).every(key=>['sourceMonth','groups','values'].includes(key)),'As competências do cenário divergem dos relatórios.');
-    check(input.groups&&Object.keys(input.groups).length===REPORT_GROUPS.length&&input.values&&Object.keys(input.values).length===6,'Campos mensais incompletos ou não reconhecidos.');
+    check(input.groups&&Object.keys(input.groups).length===REPORT_GROUPS.length&&input.values&&['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'].every(key=>Object.hasOwn(input.values,key))&&Object.keys(input.values).every(key=>['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses','financialExpenses','financialIncome'].includes(key)),'Campos mensais incompletos ou não reconhecidos.');
     const groups=Object.fromEntries(REPORT_GROUPS.map((key,i)=>[key,asCents(input.groups[key],i<3)/100]));
     const values=Object.fromEntries(['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,asCents(input.values[key])/100]));
+    for(const key of ['financialExpenses','financialIncome'])values[key]=asCents(Object.hasOwn(input.values,key)?input.values[key]:0)/100;
     values.salesRevenue=sum(REPORT_GROUPS.slice(0,3).map(key=>asCents(groups[key],true)))/100;
     values.simplePurchases=groups.purchasesOptantCents;values.regularPurchases=groups.purchasesNonOptantCents;
     for(const key of [...REPORT_GROUPS,'serviceRevenue']){
@@ -199,7 +200,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     months:monthlyResults.map(row=>{
       const actual=row.result.regimes.find(regime=>regime.id==='actual');
       const projectedExact=row.result.incomeTaxAssessment.monthlyAssessments?.[`${draft.year}-01`]?.regimes.actual?.periods[0]?.inputs[0]?.preTaxExact;
-      return {sourceMonth:row.sourceMonth,month:row.month,salesRevenue:row.values.salesRevenue,serviceRevenue:row.values.serviceRevenue,
+      return {sourceMonth:row.sourceMonth,month:row.month,salesRevenue:row.values.salesRevenue,serviceRevenue:row.values.serviceRevenue,financialIncome:row.values.financialIncome,
         preTax:actual?.available?actual.dre.preTax:null,...(actual?.available&&projectedExact?{preTaxExact:projectedExact}:{}),actualAvailable:actual?.available===true};
     })});
   for(const row of monthlyResults){
@@ -275,6 +276,6 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
   applyIncomeTaxAssessment(result,incomeTaxes.incomeTaxAssessment,false);
   projection.scenario={unit:'CENTS',annual:{revenueCents:sum(monthlyResults.map(row=>asCents(row.values.salesRevenue,true)+asCents(row.values.serviceRevenue)))},months:monthlyResults.map(({sourceMonth,groups,values})=>({sourceMonth,groups,values}))};
   if(analysisPeriod)projection.analysisPeriod=analysisPeriod;
-  return {result,projection,difalProjection,anticipationProjection,...(rbt12Schedule?{rbt12Schedule}:{}),adjustments,monthlyInputs:monthlyResults.map(({sourceMonth,groups,values})=>({sourceMonth,groups,values:Object.fromEntries(['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'].map(key=>[key,values[key]]))})),
+  return {result,projection,difalProjection,anticipationProjection,...(rbt12Schedule?{rbt12Schedule}:{}),adjustments,monthlyInputs:monthlyResults.map(({sourceMonth,groups,values},index)=>({sourceMonth,groups,values:Object.fromEntries([...['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'],...['financialExpenses','financialIncome'].filter(key=>Object.hasOwn(monthlyInputs[index].values,key))].map(key=>[key,values[key]]))})),
     engineInput:{version:MONTHLY_VERSION,...(analysisPeriod?{analysisPeriod}:{}),regimeSelection,icmsOutside:draft.icmsOutside===true,months:monthlyResults.map(({sourceMonth,engineInput})=>({sourceMonth,input:engineInput})),...(rbt12Schedule?{rbt12Method:rbt12Schedule.version}:{rbt12:hasSimples?draft.rbt12??null:null})}};
 }

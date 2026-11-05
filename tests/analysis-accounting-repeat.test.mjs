@@ -9,7 +9,7 @@ const request=(sourceMonth='2026-01',targetMonths=['2026-02'],allowedMonths=['20
 const failure=code=>error=>error instanceof AccountingCopyError&&error.code===code;
 function freeze(value){if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;}
 
-test('copia as cinco contas em centavos exatos e identifica somente substituições reais',()=>{
+test('copia todas as contas em centavos exatos e identifica somente substituições reais',()=>{
   const original=freeze([row('2026-01',[123456,78900,29,0,321]),row('2026-02',[7,null,0,200,321])]);
   const plan=planAccountingCopy(original,freeze(request()));
   assert.deepEqual(plan.months,[row('2026-01',[123456,78900,29,0,321]),row('2026-02',[123456,78900,29,0,321])]);
@@ -65,7 +65,7 @@ test('origem pendente bloqueia a cópia, sem transformar vazio em zero',()=>{
   }
   const source=row('2026-01',[0,0,0,0,0]);delete source.benefitsCents;
   assert.throws(()=>planAccountingCopy([source,row('2026-02')],request()),failure('SOURCE_INCOMPLETE'));
-  assert.throws(()=>planAccountingCopy([row('2026-01'),row('2026-02')],request()),/cinco contas/);
+  assert.throws(()=>planAccountingCopy([row('2026-01'),row('2026-02')],request()),/todas as contas/);
 });
 
 test('valores inválidos ou acima do limite financeiro bloqueiam toda a cópia',()=>{

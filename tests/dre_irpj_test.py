@@ -259,8 +259,10 @@ class DreIrpjTests(unittest.TestCase):
         with pymupdf.open(stream=render(saved, period='annual', regime_id='pure', regime_ids=['pure']), filetype='pdf') as document:
             content = section_text(document, 'Impostos', 'Conferência dos créditos')
             self.assertNotIn('Incluído no DAS', content)
-            self.assertIn(IRPJ_V2_INVALID_REASON, content)
-            self.assertIn('n/d', content)
+            self.assertEqual(document.page_count, 2)
+            regime = next(row for row in saved['result']['regimes'] if row['id'] == 'pure')
+            self.assertFalse(model(saved).irpj(regime)['available'])
+            self.assertIn(amount(-regime['dre']['irpj']), content)
 
     def test_python_and_screen_reconciliation_match_every_regime_and_period(self):
         snapshots = [fixture(variant) for variant in ('complete', 'partial', 'zero', 'loss', 'legacy', 'unavailable')]
@@ -296,15 +298,11 @@ class DreIrpjTests(unittest.TestCase):
         regime = view.regimes[0]
         with pymupdf.open(stream=render(saved, regime_id='presumed', regime_ids=['presumed']), filetype='pdf') as document:
             content = section_text(document, 'Impostos', 'Conferência dos créditos')
-            self.assertIn('IRPJ trimestral e movimentos da DRE', content)
-            self.assertIn('IRPJ acumulado menos provisão anterior', content)
-            self.assertIn('R$ 60.000,00 por trimestre', content)
-            self.assertIn('Regras do cenário tributário: 2027', content)
-            for _, label in IRPJ_V2_ROWS:
-                self.assertIn(label, content)
-            for index in (None, *range(len(view.months))):
-                for value in view.irpj(regime, index)['values'].values():
-                    self.assertIn(amount(value), content)
+            self.assertEqual(document.page_count, 2)
+            self.assertIn('Cenário 2027', content)
+            self.assertIn('IRPJ', content)
+            self.assertIn(amount(-regime['dre']['irpj']), content)
+            self.assertNotIn('IRPJ trimestral e movimentos da DRE', content)
             self.assertIn(amount(regime['totalTaxes']), content)
             for hidden in ('Simples Puro', 'Simples Híbrido', 'Lucro Real'):
                 self.assertNotIn(hidden, content)
@@ -316,8 +314,8 @@ class DreIrpjTests(unittest.TestCase):
         regime = next(row for row in saved['result']['regimes'] if row['id'] == 'presumed')
         with pymupdf.open(stream=render(saved, period='annual', regime_id='presumed', regime_ids=['presumed']), filetype='pdf') as document:
             content = section_text(document, 'Impostos', 'Conferência dos créditos')
-            self.assertIn(IRPJ_V2_EMPTY_REASON, content)
-            self.assertIn('n/d', content)
+            self.assertFalse(model(saved).irpj(regime)['available'])
+            self.assertEqual(document.page_count, 2)
             self.assertIn(amount(-regime['dre']['irpj']), content)
             self.assertIn(amount(regime['totalTaxes']), content)
 

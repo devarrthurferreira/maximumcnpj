@@ -96,23 +96,16 @@ class DreEditorialTests(unittest.TestCase):
         validate_dre_snapshot(saved)
         before = copy.deepcopy(saved)
         with pymupdf.open(stream=render(saved, 'complete', True), filetype='pdf') as document:
-            positions = sections(document)
-            guide = positions['Guia do relatório']
-            self.assertGreater(guide, 1, 'The fixture must move the guide beyond the second page.')
+            self.assertEqual(document.page_count, 2)
             full_text = normalized(' '.join(page.get_text() for page in document))
-            self.assertTrue(normalized(saved['company']['name']) in full_text)
-            expected_destinations = {page for label, page in positions.items() if label != 'Guia do relatório'}
-            guide_links = document[guide].get_links()
-            self.assertEqual({link['page'] for link in guide_links}, expected_destinations)
-            self.assertTrue(all(link['kind'] == pymupdf.LINK_GOTO for link in guide_links))
-            for index, page in enumerate(document):
-                if index <= guide:
-                    continue
-                with self.subTest(page=index + 1):
-                    links = page.get_links()
-                    self.assertEqual(len(links), 1)
-                    self.assertEqual(links[0]['kind'], pymupdf.LINK_GOTO)
-                    self.assertEqual(links[0]['page'], guide)
+            self.assertIn(normalized(saved['company']['name']), full_text)
+            self.assertIn('Resultado líquido', normalized(document[1].get_text()))
+            self.assertEqual(sections(document), {'Resumo e Impostos': 0, 'DRE - Consolidado': 1})
+            for page in document:
+                for word in page.get_text('words'):
+                    self.assertGreaterEqual(word[0], 0)
+                    self.assertLessEqual(word[2], page.rect.width)
+                    self.assertLessEqual(word[3], page.rect.height)
         self.assertEqual(saved, before)
 
 

@@ -191,7 +191,7 @@ function seedLegacy(item:Analysis,snapshot:any,actor:LookupActor){
   const inputs=Array.isArray(snapshot.monthlyInputs)?snapshot.monthlyInputs:[];
   const accounting:AccountingData={months:inputs.map((row:any)=>({sourceMonth:row.sourceMonth,
     salariesCents:Math.round(row.values.salaries*100),rentCents:Math.round(row.values.rent*100),cardExpensesCents:Math.round(row.values.cardExpenses*100),
-    benefitsCents:Math.round(row.values.benefits*100),adminExpensesCents:Math.round(row.values.adminExpenses*100)}))};
+    benefitsCents:Math.round(row.values.benefits*100),adminExpensesCents:Math.round(row.values.adminExpenses*100),financialExpensesCents:Math.round((row.values.financialExpenses??0)*100),financialIncomeCents:Math.round((row.values.financialIncome??0)*100)}))};
   if(inputs.length)data.monthlyOverrides=inputs.map((row:any)=>({sourceMonth:row.sourceMonth,groups:structuredClone(row.groups),serviceRevenue:row.values.serviceRevenue}));
   item.fiscal={...sector(parseFiscalData(data,selection),actor,now),revision:fiscalRevision};
   item.accounting={...sector(parseAccountingData(accounting),actor,now),revision:accountingRevision};
@@ -368,7 +368,7 @@ function calculationInput(item:Analysis,source:Source,simulationId:string){
     const expense=expenses.get(row.sourceMonth)!,entry=baselineMonth(row);const override=overrides.get(row.sourceMonth);
     if(override){entry.groups=structuredClone(override.groups);entry.values.serviceRevenue=override.serviceRevenue;}
     Object.assign(entry.values,{salaries:expense.salariesCents!/100,rent:expense.rentCents!/100,cardExpenses:expense.cardExpensesCents!/100,
-      benefits:expense.benefitsCents!/100,adminExpenses:expense.adminExpensesCents!/100});return entry;
+      benefits:expense.benefitsCents!/100,adminExpenses:expense.adminExpensesCents!/100,financialExpenses:(expense.financialExpensesCents??0)/100,financialIncome:(expense.financialIncomeCents??0)/100});return entry;
   });
   const first=monthlyInputs[0],draft={year:item.config.year,salesAnnex:f.salesAnnex,serviceAnnex:f.serviceAnnex,regimeSelection:item.config.regimeSelection,
     ...(requiresSimplesReference(item.config.regimeSelection)?{rbt12:f.rbt12}:{}),difalPolicy:f.difalPolicy,icmsOutside:f.icmsOutside,

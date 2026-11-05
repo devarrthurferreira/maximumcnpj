@@ -1,5 +1,5 @@
 export const JAN_SEP_POLICY:'JAN_SEP_V1';
-export const JAN_SEP_MODEL_VERSION:'1.20.1-quarterly-income-tax-available-months-loss-zero';
+export const JAN_SEP_MODEL_VERSION:'1.21.0-quarterly-income-tax-available-months-financial';
 export type AnalysisPeriod={version:typeof JAN_SEP_POLICY;sourceYear:number;startMonth:string;endMonth:string;months:number;
   availableMonths?:string[];expectedMonths:string[];includedMonths:string[];excludedMonths:string[];missingMonths:string[];complete:boolean};
 export type SourcePeriod={startMonth:string;endMonth:string;months:number};

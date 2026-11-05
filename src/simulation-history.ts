@@ -12,7 +12,7 @@ import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import { generationSimulator,selectAnalysisSourceMonths } from './simulator-store.ts';
 import { assertGenerationNotDeleted, assertLookupNotDeleted } from './generation-deletion.ts';
 import { CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
-  SIMULATION_VALUE_FIELDS, parseDifalPolicy, upgradeDifalPolicy } from '../public/simulator-engine.js';
+  SIMULATION_VALUE_FIELDS, FINANCIAL_VALUE_FIELDS, parseDifalPolicy, upgradeDifalPolicy } from '../public/simulator-engine.js';
 import type { SimulationDraft } from '../public/simulator-engine.js';
 import {parseRegimeSelection,requiresSimplesReference} from '../public/regime-selection.js';
 import {withLegacyAnalysisDeletion} from './analysis-store.ts';
@@ -69,7 +69,7 @@ export function validateSimulationRequest(input: unknown) {
   object(input.draft, ['year', 'salesAnnex', 'serviceAnnex', 'values'], ['rbt12', 'difalPolicy', 'icmsOutside','regimeSelection']);
   need([2027, 2028].includes(input.draft.year) && [1, 2].includes(input.draft.salesAnnex) && [3, 4, 5].includes(input.draft.serviceAnnex),
     'Ano ou anexo inválido para o modelo da calculadora.');
-  object(input.draft.values, SIMULATION_VALUE_FIELDS);
+  object(input.draft.values, SIMULATION_VALUE_FIELDS, FINANCIAL_VALUE_FIELDS);
   if (Object.hasOwn(input.draft, 'icmsOutside')) {
     need(typeof input.draft.icmsOutside === 'boolean', 'Informe se o ICMS/ISS está dentro ou fora do DAS neste cenário.');
   }
@@ -93,7 +93,7 @@ export function validateSimulationRequest(input: unknown) {
     // Keep omission and the normalized request hash unchanged for historical retries.
     ...(difalPolicy ? {difalPolicy} : {}),
     ...(regimeSelection ? {regimeSelection} : {}),
-    values: Object.fromEntries(SIMULATION_VALUE_FIELDS.map(key => [key, key==='salesRevenue'?signedSalesMoney(input.draft.values[key]):money(input.draft.values[key])])) as SimulationDraft['values']};
+    values: Object.fromEntries([...SIMULATION_VALUE_FIELDS,...FINANCIAL_VALUE_FIELDS.filter(key=>Object.hasOwn(input.draft.values,key))].map(key => [key, key==='salesRevenue'?signedSalesMoney(input.draft.values[key]):money(input.draft.values[key])])) as SimulationDraft['values']};
   need(!rbt12ExtractionId || draft.rbt12 != null, 'A extração de RBT12 precisa acompanhar o valor usado na simulação.');
   const rbt12Source = rbt12InputSource(input.rbt12Source, input.rbt12ManualConfirmed, rbt12ExtractionId, draft.rbt12,draft.regimeSelection);
   need(Math.round(draft.values.salesRevenue * 100) === GROUPS.slice(0, 3).reduce((sum, key) => sum + Math.round(monthlyGroups[key] * 100), 0) &&

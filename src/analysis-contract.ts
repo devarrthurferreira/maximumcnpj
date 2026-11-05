@@ -7,9 +7,12 @@ import {JAN_SEP_POLICY,isAnalysisMonth,analysisMonthsForYear} from '../public/an
 
 export const ANALYSIS_VERSION = 'ANALYSIS_SECTORS_V1';
 export const ANALYSIS_GROUPS = ['salesOptantCents','salesNonOptantCents','salesCpfCents','purchasesOptantCents','purchasesNonOptantCents'] as const;
-export const ACCOUNTING_FIELDS = ['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents'] as const;
+export const ACCOUNTING_FIELDS = ['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents','financialExpensesCents','financialIncomeCents'] as const;
 export type AccountingField = typeof ACCOUNTING_FIELDS[number];
-export type AccountingMonth = {sourceMonth:string} & Record<AccountingField, number|null>;
+export type AccountingMonth = {sourceMonth:string} & Record<Exclude<AccountingField,'financialExpensesCents'|'financialIncomeCents'>,number|null> & Partial<Record<'financialExpensesCents'|'financialIncomeCents',number|null>>;
+const financialFields=['financialExpensesCents','financialIncomeCents'];
+const legacyFields=ACCOUNTING_FIELDS.filter(key=>!financialFields.includes(key));
+const readAccount=(row:Record<string,any>,key:AccountingField)=>financialFields.includes(key)&&!Object.hasOwn(row,key)?(legacyFields.some(field=>row[field]!==null)?0:null):cents(row[key]);
 export const ACCOUNTING_AVERAGE_VERSION = 'MONTHLY_AVERAGE_V1';
 export type AccountingAverage = {version:typeof ACCOUNTING_AVERAGE_VERSION;values:Record<AccountingField,number|null>};
 export type AccountingData = {months:AccountingMonth[];monthlyAverage?:AccountingAverage};
@@ -64,15 +67,15 @@ export function parseAccountingData(value:unknown,complete=false,options:{period
   analysisObject(value,['months'],['monthlyAverage']);
   need(Array.isArray(value.months) && value.months.length<=12,'Informe até 12 competências explicitamente.');
   const months=uniqueMonths(value.months.map((row:unknown)=>{
-    analysisObject(row,['sourceMonth',...ACCOUNTING_FIELDS]);
-    return {sourceMonth:month(row.sourceMonth),...Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,cents(row[key])]))} as AccountingMonth;
+    analysisObject(row,['sourceMonth',...legacyFields],financialFields);
+    return {sourceMonth:month(row.sourceMonth),...Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,readAccount(row,key)]))} as AccountingMonth;
   }));
   let data:AccountingData={months};
   if(Object.hasOwn(value,'monthlyAverage')){
     analysisObject(value.monthlyAverage,['version','values']);
     need(value.monthlyAverage.version===ACCOUNTING_AVERAGE_VERSION,'A média mensal precisa identificar sua versão.');
-    analysisObject(value.monthlyAverage.values,ACCOUNTING_FIELDS);
-    const values=Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,cents(value.monthlyAverage.values[key])])) as AccountingAverage['values'];
+    analysisObject(value.monthlyAverage.values,legacyFields,financialFields);
+    const values=Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,readAccount(value.monthlyAverage.values,key)])) as AccountingAverage['values'];
     const sourceYear=Number(months[0]?.sourceMonth.slice(0,4));
     need(Number.isInteger(sourceYear)&&sourceYear>=2000&&sourceYear<=2099,'Informe o ano de janeiro a setembro da média mensal.');
     const expected=analysisMonthsForYear(sourceYear);
@@ -90,9 +93,10 @@ export function parseAccountingData(value:unknown,complete=false,options:{period
 /** A saved monthly average belongs to the analysis, even before Fiscal identifies its source year.
  * Derivation never mutates stored rows or historical revisions. Legacy monthly inputs retain their dates. */
 export function accountingForYear(data:AccountingData,sourceYear?:number):AccountingData {
-  if(!data.monthlyAverage)return data;
+  const normalize=(row:AccountingMonth)=>({...row,...Object.fromEntries(financialFields.filter(key=>!Object.hasOwn(row,key)).map(key=>[key,legacyFields.some(field=>row[field]!==null)?0:null]))});
+  if(!data.monthlyAverage)return {...data,months:data.months.map(normalize)};
   const year=sourceYear??Number(data.months[0]?.sourceMonth.slice(0,4));
-  return {...data,months:analysisMonthsForYear(year).map(sourceMonth=>({sourceMonth,...data.monthlyAverage!.values}))};
+  return {...data,months:analysisMonthsForYear(year).map(sourceMonth=>normalize({sourceMonth,...data.monthlyAverage!.values}))};
 }
 export function defaultFiscalData(selection:RegimeSelection):FiscalData {
   return {generationId:null,salesAnnex:1,serviceAnnex:3,icmsOutside:false,difalPolicy:upgradeDifalPolicy(),
