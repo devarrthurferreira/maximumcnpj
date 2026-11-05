@@ -9,4 +9,5 @@ export function summarizeIcmsOperations(input:{sourceMonth:string;purchases:Read
 export function parseIcmsOperations(value:unknown):IcmsOperations;
 export function projectIcmsOperations(value:unknown,input:{salesRevenueCents:number;regularPurchasesCents:number}):{
   source:IcmsOperations;available:boolean;status:string;pendingLines:number;missingSalesMix:boolean;grossSalesCents:number;unflooredGrossSalesCents:number;grossSalesFloorApplied:boolean;sourceNetSalesCents:number;salesAdjustmentCents:number;purchaseAdjustmentCents:number;
-  debitCents:number;purchaseCreditCents:number;salesReturnCreditCents:number;potentialCents:number;usedCents:number;dueCents:number;balanceCents:number};
+  grossDebitCents:number;returnDebitReductionCents:number;unflooredDebitCents:number;debitFloorAdjustmentCents:number;
+  debitCents:number;purchaseCreditCents:number;potentialCents:number;usedCents:number;dueCents:number;balanceCents:number};

@@ -116,7 +116,7 @@ test('DRE única conserva composição, escolhas, exportação e impressão anua
   const saved=fixture();saved.result.regimes[0].dre.netProfit=123456.78;saved.result.regimes[0].annualProfit=123456.78;
   await open(page,saved);
   await expect(page.locator('.dre-complete > .dre-table-wrap > table')).toHaveCount(1);await expect(page.locator('.dre-complete > .dre-table-wrap > table > tbody')).toHaveCount(1);
-  await expect(page.locator('.dre-complete > .dre-table-wrap [data-dre-row]')).toHaveCount(51);
+  await expect(page.locator('.dre-complete > .dre-table-wrap [data-dre-row]')).toHaveCount(53);
   await expect(page.locator('[data-revenue-reconciliation="dre"] table')).toHaveCount(1);await expect(page.locator('[data-revenue-reconciliation="dre"] [data-dre-row]')).toHaveCount(5);
   await expect(page.locator('[data-revenue-reconciliation="dre"] [data-revenue-unavailable]')).toContainText('projeção histórica');
   await expect(page.locator('.dre-complete details,.dre-section-row')).toHaveCount(0);
@@ -125,7 +125,7 @@ test('DRE única conserva composição, escolhas, exportação e impressão anua
   await expect(page.locator('.dre-complete [data-dre-row="netProfit"] td').first()).toContainText('123.456,78');
   await expect(page.locator('[data-dre-summary="result"]')).toContainText('123.456,78');
   await expect(page.locator('.dre-visual-empty')).toContainText('não concilia');await expect(page.locator('.dre-flow-bars')).toHaveCount(0);
-  await page.locator('#dre-regime').selectOption('actual');await expect(page.locator('.dre-flow-bars li')).toHaveCount(6);
+  await page.locator('#dre-regime').selectOption('actual');await expect(page.locator('.dre-flow-bars li')).toHaveCount(7);
   await expect(page.locator('.dre-table-wrap thead .dre-active-column')).toHaveText('Lucro Real');
   await page.locator('#dre-regime').selectOption('pure');
   await expect(page.locator('#dre-show-percent')).not.toBeChecked();await expect(page.locator('.dre-complete details[open]')).toHaveCount(0);

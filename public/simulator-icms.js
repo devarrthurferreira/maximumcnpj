@@ -46,7 +46,7 @@ export function summarizeIcmsOperations({sourceMonth,purchases,sales,issuerUf,pu
   for(const row of purchases){
     const operation=classifyOperationNature(row.natureCode);
     if(operation==='DEVOLUCAO_VENDA'){
-      // A sales return reverses the company's own sales debit, regardless of the buyer's group.
+      // Sales returns reduce the company's sales debit, regardless of the buyer's group.
       addOperation(result.salesReturns,row,result.purchaseIssuerUf);continue;
     }
     if(!['COMPRAS','SERVICO_COMPRA'].includes(operation))continue;
@@ -110,20 +110,24 @@ export function projectIcmsOperations(value,{salesRevenueCents,regularPurchasesC
   const pendingLines=GROUPS.reduce((total,key)=>total+source[key].pendingLines,0);
   const missingSalesMix=grossSalesCents>0&&source.sales.totalBaseCents===0;
   const available=!pendingLines&&!missingSalesMix;
-  let debitCents=source.sales.taxCents;
+  let grossDebitCents=source.sales.taxCents;
   if(salesAdjustmentCents!==0){
     // Weight the original BASES, never the already-rounded line taxes. Scaling a
     // rounded one-cent invoice can otherwise turn an 18% rate into 0% or 33%.
     const denominator=BigInt(source.sales.totalBaseCents)*100n;
     const weightedBase=BigInt(source.sales.internalBaseCents)*18n+BigInt(source.sales.interstateBaseCents)*12n;
-    debitCents=denominator?Number((weightedBase*BigInt(grossSalesCents)+denominator/2n)/denominator):0;
-    check(cents(debitCents),'Débito ajustado de ICMS acima do limite seguro.');
+    grossDebitCents=denominator?Number((weightedBase*BigInt(grossSalesCents)+denominator/2n)/denominator):0;
+    check(cents(grossDebitCents),'Débito ajustado de ICMS acima do limite seguro.');
   }
-  const purchaseCreditCents=source.purchases.taxCents,salesReturnCreditCents=source.salesReturns.taxCents;
-  const potentialCents=add(purchaseCreditCents,salesReturnCreditCents);
+  const returnDebitReductionCents=source.salesReturns.taxCents;
+  const unflooredDebitCents=grossDebitCents-returnDebitReductionCents;
+  check(Number.isSafeInteger(unflooredDebitCents),'Débito de ICMS acima do limite seguro.');
+  const debitFloorAdjustmentCents=Math.max(0,-unflooredDebitCents),debitCents=Math.max(0,unflooredDebitCents);
+  const purchaseCreditCents=source.purchases.taxCents,potentialCents=purchaseCreditCents;
   const usedCents=Math.min(debitCents,potentialCents),dueCents=debitCents-usedCents,balanceCents=potentialCents-usedCents;
   const status=pendingLines?`ICMS pendente: ${pendingLines} operação(ões) elegível(is) sem UF confirmada. Revise as UFs nos relatórios de origem.`:
     missingSalesMix?'ICMS pendente: o ajuste de receita não possui vendas de origem com composição de UFs para determinar a alíquota.':'ICMS calculado por natureza e UF nas operações importadas.';
   return {source,available,status,pendingLines,missingSalesMix,grossSalesCents,unflooredGrossSalesCents,grossSalesFloorApplied,sourceNetSalesCents,salesAdjustmentCents,purchaseAdjustmentCents,
-    debitCents,purchaseCreditCents,salesReturnCreditCents,potentialCents,usedCents,dueCents,balanceCents};
+    grossDebitCents,returnDebitReductionCents,unflooredDebitCents,debitFloorAdjustmentCents,debitCents,
+    purchaseCreditCents,potentialCents,usedCents,dueCents,balanceCents};
 }

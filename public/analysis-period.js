@@ -1,5 +1,5 @@
 export const JAN_SEP_POLICY='JAN_SEP_V1';
-export const JAN_SEP_MODEL_VERSION='1.21.0-quarterly-income-tax-available-months-financial';
+export const JAN_SEP_MODEL_VERSION='1.22.0-quarterly-income-tax-available-months-icms-devolucoes-debito';
 
 const check=(condition,message)=>{if(!condition)throw new TypeError(message);};
 export function analysisMonthsForYear(sourceYear){

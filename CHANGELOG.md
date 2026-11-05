@@ -1,5 +1,10 @@
 # Histórico de alterações
 
+## [0.59.1] - 2026-11-05
+
+- Deduz devoluções internas e interestaduais do débito de ICMS por competência e retira essas devoluções do crédito potencial.
+- Detalha vendas, devoluções e eventual limite zero na memória e na conferência; preserva históricos e permite gerar resultado atualizado.
+
 ## [0.59.0] - 2026-11-05
 
 - Adiciona ao Fiscal a escolha de 100%, 60% ou 40% da alíquota de referência CBS/IBS de 11,40%, aplicada aos débitos da receita e guardada por cenário e competência.

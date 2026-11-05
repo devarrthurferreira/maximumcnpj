@@ -1,6 +1,6 @@
 export const INCOME_TAX_ASSESSMENT_VERSION: 'INCOME_TAX_ASSESSMENT_V2';
 export const INCOME_TAX_METHOD: 'QUARTERLY_CUMULATIVE_PROVISION';
-export const INCOME_TAX_MODEL_VERSION: '1.20.0-quarterly-income-tax';
+export const INCOME_TAX_MODEL_VERSION: '1.22.0-quarterly-income-tax-icms-devolucoes-debito';
 export type ExactAmount = {numerator:string;denominator:string};
 export type IncomeTaxAmounts = {irpjNormalCents:number;irpjAdditionalCents:number;irpjTotalCents:number;csllCents:number};
 export type IncomeTaxMonthInput = {sourceMonth:string;month:number;salesRevenue:number;serviceRevenue:number;preTax:number|null;preTaxExact?:ExactAmount;actualAvailable?:boolean;actualReason?:string};

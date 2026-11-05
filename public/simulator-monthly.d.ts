@@ -1,4 +1,4 @@
-export const MONTHLY_MODEL_VERSION: '1.20.0-quarterly-income-tax';
+export const MONTHLY_MODEL_VERSION: '1.22.0-quarterly-income-tax-icms-devolucoes-debito';
 import type {ReportFields} from './simulator-projection.js';
 import type {Rbt12Schedule} from './simulator-rbt12.js';
 import type {AnalysisPeriod} from './analysis-period.js';

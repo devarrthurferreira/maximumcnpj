@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import {summarizeIcmsOperations,parseIcmsOperations,projectIcmsOperations} from '../public/simulator-icms.js';
 import {calculateTax,draftToInput,calculateSimulation} from '../public/simulator-engine.js';
 import {baselineMonth,calculateMonthlySimulation} from '../public/simulator-monthly.js';
+import {buildDrePresentation} from '../public/simulator-dre.js';
+import {buildMonthlyDre} from '../public/simulator-calendar.js';
+import {buildDreCsv} from '../public/simulator-dre-export.js';
+import {renderDrePrintDocument} from '../public/simulator-dre-view.js';
 
 const line=(natureCode,amount,recipientUf='MG',extra={})=>({natureCode,totalCents:Math.round(amount*100),recipientUf,creditGroup:'NAO_OPTANTE',...extra});
 const input=()=>({sourceMonth:'2026-01',issuerUf:'MG',purchaseIssuerUf:'MG',
@@ -14,19 +18,19 @@ const report=(source=fixture())=>({sourceMonth:source.sourceMonth,month:Number(s
   fields:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:source.sales.totalBaseCents-source.salesReturns.totalBaseCents,purchasesOptantCents:0,purchasesNonOptantCents:source.sourceRegularPurchasesCents,serviceRevenueCents:0},
   salesLines:2,purchaseLines:6,difal:null,icmsOperations:source});
 
-test('ICMS usa bases de naturezas e UFs: compras 8000 são custo, devolução é crédito e interestadual usa12%',()=>{
+test('ICMS deduz devoluções por UF do débito e mantém serviços 8000 no custo',()=>{
   const original=input(),before=structuredClone(original),source=summarizeIcmsOperations(original);
   const result=projectIcmsOperations(source,{salesRevenueCents:270000,regularPurchasesCents:140000});
   assert.deepEqual(original,before);
   assert.equal(source.excludedServicePurchasesCents,60000);assert.equal(source.sourceRegularPurchasesCents,140000);
   assert.equal(source.purchases.totalBaseCents,80000);assert.equal(source.purchases.internalTaxCents,5400);assert.equal(source.purchases.interstateTaxCents,6000);
   assert.equal(source.salesReturns.totalBaseCents,30000);assert.equal(source.salesReturns.taxCents,4200);
-  assert.deepEqual(Object.fromEntries(['debitCents','purchaseCreditCents','salesReturnCreditCents','potentialCents','usedCents','dueCents','balanceCents'].map(key=>[key,result[key]])),
-    {debitCents:42000,purchaseCreditCents:11400,salesReturnCreditCents:4200,potentialCents:15600,usedCents:15600,dueCents:26400,balanceCents:0});
+  assert.deepEqual(Object.fromEntries(['grossDebitCents','returnDebitReductionCents','unflooredDebitCents','debitFloorAdjustmentCents','debitCents','purchaseCreditCents','potentialCents','usedCents','dueCents','balanceCents'].map(key=>[key,result[key]])),
+    {grossDebitCents:42000,returnDebitReductionCents:4200,unflooredDebitCents:37800,debitFloorAdjustmentCents:0,debitCents:37800,purchaseCreditCents:11400,potentialCents:11400,usedCents:11400,dueCents:26400,balanceCents:0});
   assert.equal(result.available,true);assert.equal(2700-1400-result.dueCents/100,1036);
 });
 
-test('prefixos8000 e compras do Simples não geram crédito ou pendência de UF, mas devoluções de venda geram',()=>{
+test('prefixos8000 e compras do Simples não geram crédito; devoluções reduzem o débito independentemente do comprador',()=>{
   const source=summarizeIcmsOperations({...input(),purchases:[
     ...['8000','8000002','8000102','8.000.999'].map(nature=>line(nature,100,'')),
     line('2102',200,'',{creditGroup:'OPTANTE'}),line('2202009',100,'SP',{creditGroup:'OPTANTE'}),line('1202',100,'MG',{creditGroup:undefined}),
@@ -48,23 +52,36 @@ test('UF real define interna ou interestadual sem inferir geografia do prefixo d
 test('devolução integral não duplica benefício de ICMS e saldo excedente não aumenta resultado',()=>{
   const source=summarizeIcmsOperations({...input(),sales:[line('6102',1000,'SP')],purchases:[line('2202',200,'SP')]});
   const p=projectIcmsOperations(source,{salesRevenueCents:80000,regularPurchasesCents:0});
-  assert.equal(p.debitCents,12000);assert.equal(p.salesReturnCreditCents,2400);assert.equal(p.dueCents,9600);
+  assert.equal(p.grossDebitCents,12000);assert.equal(p.returnDebitReductionCents,2400);assert.equal(p.debitCents,9600);assert.equal(p.potentialCents,0);assert.equal(p.dueCents,9600);
   const complete=summarizeIcmsOperations({...input(),sales:[line('6102',1000,'SP')],purchases:[line('2202',1000,'SP'),line('2102',2000,'SP')]});
   const all=projectIcmsOperations(complete,{salesRevenueCents:0,regularPurchasesCents:200000});
-  assert.equal(all.usedCents,12000);assert.equal(all.dueCents,0);assert.equal(all.balanceCents,24000);
+  assert.equal(all.debitCents,0);assert.equal(all.usedCents,0);assert.equal(all.dueCents,0);assert.equal(all.balanceCents,24000);
 });
 
-test('devoluções maiores que vendas mantêm receita negativa, débito bruto e saldo credor separado',()=>{
+test('crédito de compras excedente é limitado ao débito já reduzido pelas devoluções',()=>{
+  const source=summarizeIcmsOperations({...input(),sales:[line('5102',1000)],purchases:[line('1202',200),line('1102',2000)]});
+  const result=projectIcmsOperations(source,{salesRevenueCents:80000,regularPurchasesCents:200000});
+  assert.equal(result.grossDebitCents,18000);
+  assert.equal(result.returnDebitReductionCents,3600);
+  assert.equal(result.debitCents,14400);
+  assert.equal(result.potentialCents,36000);
+  assert.equal(result.usedCents,14400);
+  assert.equal(result.dueCents,0);
+  assert.equal(result.balanceCents,21600);
+});
+
+test('devoluções maiores que vendas mantêm receita negativa, mostram débito negativo antes do limite e não geram crédito',()=>{
   const source=summarizeIcmsOperations({...input(),sales:[line('6102',1000,'SP')],purchases:[line('2202',2500,'SP'),line('2102',2000,'SP')]}),before=structuredClone(source);
   const p=projectIcmsOperations(source,{salesRevenueCents:-150000,regularPurchasesCents:200000});
-  assert.equal(p.available,true);assert.equal(p.grossSalesCents,100000);assert.equal(p.debitCents,12000);
-  assert.equal(p.salesReturnCreditCents,30000);assert.equal(p.purchaseCreditCents,24000);
-  assert.equal(p.usedCents,12000);assert.equal(p.dueCents,0);assert.equal(p.balanceCents,42000);
+  assert.equal(p.available,true);assert.equal(p.grossSalesCents,100000);assert.equal(p.grossDebitCents,12000);
+  assert.equal(p.returnDebitReductionCents,30000);assert.equal(p.unflooredDebitCents,-18000);assert.equal(p.debitFloorAdjustmentCents,18000);assert.equal(p.debitCents,0);assert.equal(p.purchaseCreditCents,24000);
+  assert.equal(p.potentialCents,24000);assert.equal(p.usedCents,0);assert.equal(p.dueCents,0);assert.equal(p.balanceCents,24000);
   const row=report(source),out=calculateMonthlySimulation(draft(),[row],[baselineMonth(row)],'sales');
   assert.equal(out.result.annualRevenue,-1500);assert(out.result.regimes.every(row=>row.available));
   const regime=out.result.regimes.find(row=>row.id==='actual');
   assert.equal(regime.dre.revenue,-1500);assert.equal(regime.dre.cmv,-2000);assert.equal(regime.dre.netProfit,-3500);
-  assert.equal(regime.dre.icmsUsed,120);assert.equal(regime.dre.icmsBalance,420);
+  assert.equal(regime.dre.icmsUsed,0);assert.equal(regime.dre.icmsBalance,240);
+  assert(out.result.warnings.some(row=>row.code==='icms-return-debit-floor'));
   assert.deepEqual(source,before);
 });
 
@@ -80,9 +97,9 @@ test('ajuste com base reconstruída negativa gera alerta e débito zero, sem alt
 
 test('ajuste manual de vendas pondera as bases brutas e não altera crédito dos documentos',()=>{
   const source=fixture(),before=structuredClone(source);
-  for(const [net,debit,due] of [[300000,46200,30600],[240000,37800,22200]]){
+  for(const [net,debit,due] of [[300000,42000,30600],[240000,33600,22200]]){
     const p=projectIcmsOperations(source,{salesRevenueCents:net,regularPurchasesCents:190000});
-    assert.equal(p.debitCents,debit);assert.equal(p.dueCents,due);assert.equal(p.potentialCents,15600);assert.equal(p.purchaseAdjustmentCents,50000);
+    assert.equal(p.debitCents,debit);assert.equal(p.dueCents,due);assert.equal(p.potentialCents,11400);assert.equal(p.purchaseAdjustmentCents,50000);
   }
   assert.deepEqual(source,before);
 });
@@ -122,26 +139,76 @@ test('motor abate ICMS uma vez e mantém todos os custos8000',()=>{
   raw.rates.cbs=0;raw.rates.ibs=0;
   for(const group of Object.values(raw.credits)){group.cbsRate=0;group.ibsRate=0;}
   const result=calculateTax(raw),presumed=result.regimes.find(row=>row.id==='presumed');
-  assert.equal(result.credits.icms.debit/12,420);assert.equal(result.credits.icms.potential/12,156);
+  assert.equal(result.credits.icms.debit/12,378);assert.equal(result.credits.icms.potential/12,114);
   assert.equal(presumed.dre.cmv/12,-1400);assert.equal(presumed.dre.icmsNet/12,-264);assert.equal(presumed.dre.preTax/12,1036);
-  assert.equal(presumed.dre.icmsUsed/12,156);
+  assert.equal(presumed.dre.icmsUsed/12,114);
   assert.equal(result.memory.find(row=>row.id==='icms.purchaseCredit').value/12,114);
-  assert.equal(result.memory.find(row=>row.id==='icms.returnCredit').value/12,42);
+  assert.equal(result.memory.find(row=>row.id==='icms.returnDebitReduction').value/12,42);
+  assert.equal(result.memory.find(row=>row.id==='icms.salesGrossDebit').value/12,420);
+  assert.equal(result.memory.find(row=>row.id==='icms.debitBeforeFloor').value/12,378);
+  assert.equal(result.memory.find(row=>row.id==='icms.returnCredit'),undefined);
   assert.equal(result.memory.find(row=>row.id==='icms.excludedServices').value/12,600);
 });
 
 test('mensal e anual somam créditos por competência e preservam fonte e ajustes',()=>{
   const jan=report(),feb=report({...fixture(),sourceMonth:'2026-02'}),reports=[jan,feb],before=structuredClone(reports);
   const computed=calculateMonthlySimulation(draft(),reports,reports.map(row=>baselineMonth(row)),'sales');
-  assert.equal(computed.result.credits.icms.potential,312);assert.equal(computed.result.credits.icms.due,528);
+  assert.equal(computed.result.credits.icms.debit,756);assert.equal(computed.result.credits.icms.potential,228);assert.equal(computed.result.credits.icms.due,528);
   assert.equal(computed.result.memory.find(row=>row.id==='icms.purchaseCredit').value,228);
-  assert.equal(computed.result.memory.find(row=>row.id==='icms.returnCredit').value,84);
+  assert.equal(computed.result.memory.find(row=>row.id==='icms.returnDebitReduction').value,84);
   assert.equal(computed.result.monthlyResults[0].result.regimes.find(row=>row.id==='presumed').dre.icmsNet,-264);
   assert.deepEqual(reports,before);
   const bad=structuredClone(reports);bad[1].icmsOperations.sourceMonth='2026-03';
   assert.throws(()=>calculateMonthlySimulation(draft(),bad,bad.map(row=>baselineMonth(row)),'sales'),/composição de ICMS/);
   const mixed=structuredClone(reports);delete mixed[1].icmsOperations;
   assert.throws(()=>calculateMonthlySimulation(draft(),mixed,mixed.map(row=>baselineMonth(row)),'sales'),/Composição de ICMS/);
+});
+
+test('conferência e exportações mostram devolução no débito, somente compras no crédito e mantêm o líquido',()=>{
+  const source=fixture(),d=draft(),engineInput=draftToInput(d,null,null,null,source),result=calculateTax(engineInput);
+  const p=buildDrePresentation({result,engineInput,calendar:buildMonthlyDre(result,2027)});
+  const row=key=>p.icmsReconciliation.rows.find(item=>item.key===key);
+  assert.deepEqual(p.icmsReconciliation.rows.map(item=>item.key),['icms.debit','icms.salesGrossDebit','icms.returnDebitReduction','icms.potential','icms.purchaseCredit','icms.used','icms.due','icms.balance']);
+  assert.equal(row('icms.salesGrossDebit').monthlyValues.actual[0],420);
+  assert.equal(row('icms.returnDebitReduction').monthlyValues.actual[0],-42);
+  assert.equal(row('icms.debit').monthlyValues.actual[0],378);
+  assert.equal(row('icms.purchaseCredit').monthlyValues.actual[0],114);
+  assert.equal(row('icms.potential').monthlyValues.actual[0],114);
+  assert.equal(row('icms.due').monthlyValues.actual[0],264);
+  assert.equal(row('icms.returnCredit'),undefined);
+  const csv=buildDreCsv({presentation:p,period:'complete',year:2027});
+  const html=renderDrePrintDocument({presentation:p,period:'complete',year:2027});
+  assert.match(csv,/Devoluções deduzidas do ICMS débito/);
+  assert.match(html,/data-dre-row="icms.returnDebitReduction"/);
+  assert.doesNotMatch(html,/data-dre-row="icms.returnCredit"/);
+});
+
+test('consolidado soma o mínimo zero por competência e informa o ajuste por excesso de devoluções',()=>{
+  const jan=report(),feb=report(summarizeIcmsOperations({...input(),sourceMonth:'2026-02',sales:[line('6102',1000,'SP')],purchases:[line('2202',2500,'SP'),line('2102',2000,'SP')]}));
+  const reports=[jan,feb],computed=calculateMonthlySimulation(draft(),reports,reports.map(row=>baselineMonth(row)),'sales');
+  const result=computed.result,p=buildDrePresentation({result,engineInput:computed.engineInput,calendar:buildMonthlyDre(result,2027)});
+  const row=key=>p.icmsReconciliation.rows.find(item=>item.key===key);
+  assert.equal(row('icms.salesGrossDebit').values.actual,540);
+  assert.equal(row('icms.returnDebitReduction').values.actual,-342);
+  assert.equal(row('icms.debitFloorAdjustment').values.actual,180);
+  assert.equal(row('icms.debit').values.actual,378);
+  assert.equal(row('icms.purchaseCredit').values.actual,354);
+  assert.equal(row('icms.used').values.actual,114);
+  assert.equal(row('icms.due').values.actual,264);
+  assert.equal(row('icms.balance').values.actual,240);
+});
+
+test('competência sem devolução não apresenta zero negativo na conferência ou no CSV',()=>{
+  const jan=report(),feb=report(summarizeIcmsOperations({...input(),sourceMonth:'2026-02',purchases:[]}));
+  const reports=[jan,feb],computed=calculateMonthlySimulation(draft(),reports,reports.map(row=>baselineMonth(row)),'sales');
+  const result=computed.result,p=buildDrePresentation({result,engineInput:computed.engineInput,calendar:buildMonthlyDre(result,2027)});
+  const row=p.icmsReconciliation.rows.find(item=>item.key==='icms.returnDebitReduction');
+  assert.equal(Object.is(row.monthlyValues.actual[1],-0),false);
+  assert.equal(row.monthlyValues.actual[1],0);
+  const csv=buildDreCsv({presentation:p,period:'complete',year:2027});
+  const detail=csv.split('\r\n').find(line=>line.includes('Lucro Real')&&line.includes('Devoluções deduzidas do ICMS débito'));
+  assert(detail);
+  assert(!detail.includes('-0,00'));
 });
 
 test('composição pendente em um mês não produz total anual confirmado nem memória fiscal numérica',()=>{

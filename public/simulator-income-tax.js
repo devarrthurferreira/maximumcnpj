@@ -1,7 +1,7 @@
 /** Quarterly income-tax provisions. No historical snapshot is recalculated here. */
 export const INCOME_TAX_ASSESSMENT_VERSION='INCOME_TAX_ASSESSMENT_V2';
 export const INCOME_TAX_METHOD='QUARTERLY_CUMULATIVE_PROVISION';
-export const INCOME_TAX_MODEL_VERSION='1.21.0-quarterly-income-tax-financial';
+export const INCOME_TAX_MODEL_VERSION='1.22.0-quarterly-income-tax-icms-devolucoes-debito';
 const LIMIT=60000,LC_QUARTER=1250000,LC_ANNUAL=5000000;
 const AMOUNT_KEYS=['irpjNormalCents','irpjAdditionalCents','irpjTotalCents','csllCents'];
 const BASE_KEYS=['salesRevenue','serviceRevenue','revenue','preTax','irpjBaseWithoutIncrease','csllBaseWithoutIncrease','irpjIncrease','csllIncrease','irpjBase','csllBase','irpjAdditionalLimit','irpjBaseWithinLimit','irpjExcessBase'];
