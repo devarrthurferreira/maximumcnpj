@@ -16,8 +16,8 @@ import {accountingAverage,accountingAverageInputValues,accountingAveragePreview}
 export {ACCOUNTING_FIELDS} from './analyses-guidance.js';
 export const ADJUSTMENT_FIELDS=[
   ['salesOptantCents','Vendas a optantes do Simples'],['salesNonOptantCents','Vendas a não optantes'],
-  ['salesCpfCents','Vendas a CPFs'],['purchasesOptantCents','Compras do Simples'],
-  ['purchasesNonOptantCents','Compras fora do Simples']
+  ['salesCpfCents','Vendas a CPFs'],['purchasesOptantCents','Compras e serviços do Simples'],
+  ['purchasesNonOptantCents','Compras e serviços fora do Simples']
 ];
 export const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 export const sectorName=sector=>sector==='fiscal'?'Fiscal':'Contábil';

@@ -1,6 +1,6 @@
 """Complete, single-file DRE report rendered in Python from a saved snapshot.
 
-The user's Luna letterhead is embedded unchanged. All charts are PDF vectors;
+The supplied Maximum letterhead is embedded on every page. All charts are PDF vectors;
 the report makes no network request, executes no tax calculation and stores no
 additional customer data. Long statements and calculation memory paginate.
 """
@@ -34,7 +34,7 @@ from .dre_layout import Panel, Navigation, draw_navigation_links, running_label
 PAGE_W, PAGE_H = A4
 MARGIN = 38
 WIDTH = PAGE_W - 2 * MARGIN
-LETTERHEAD = Path(__file__).resolve().parent / 'assets' / 'luna-letterhead.jpg'
+LETTERHEAD = Path(__file__).resolve().parent / 'assets' / 'maximum-letterhead.png'
 
 
 @lru_cache(maxsize=1)
@@ -48,8 +48,8 @@ def register_fonts():
 @lru_cache(maxsize=1)
 def letterhead():
     image = ImageReader(str(LETTERHEAD))
-    if image.getSize() != (1241, 1755):
-        raise ValueError('Timbrado Luna ausente ou com dimensões inesperadas.')
+    if image.getSize() != (1414, 2000):
+        raise ValueError('Timbrado Maximum ausente ou com dimensões inesperadas.')
     return image
 
 
@@ -122,13 +122,13 @@ class NumberedCanvas(canvas.Canvas):
             draw_navigation_links(self, panels, entries)
             if self._pageNumber > 1:
                 active = next((label for page, label in reversed(running) if page <= self._pageNumber), '')
-                running_label(self, active, PAGE_W - MARGIN, PAGE_H - 76, WIDTH * .73, align='right')
+                running_label(self, active, PAGE_W - MARGIN, PAGE_H - 84, WIDTH * .73, align='right')
             if guide and self._pageNumber > guide[0]:
-                draw_text(self, 'SUMÁRIO', PAGE_W - MARGIN - 72, 25, 6.6, TEAL, align='right')
+                draw_text(self, 'SUMÁRIO', PAGE_W - MARGIN - 72, 70, 6.6, TEAL, align='right')
                 self.linkAbsolute('Voltar ao sumário', guide[1],
-                                  (PAGE_W - MARGIN - 125, 19, PAGE_W - MARGIN - 65, 35), thickness=0,
+                                  (PAGE_W - MARGIN - 125, 64, PAGE_W - MARGIN - 65, 80), thickness=0,
                                   name=f'dre-back-{self._pageNumber}')
-            draw_text(self, f'{self._pageNumber:02d} / {pages:02d}', PAGE_W - MARGIN, 25, 7.5, TEAL, bold=True, align='right')
+            draw_text(self, f'{self._pageNumber:02d} / {pages:02d}', PAGE_W - MARGIN, 70, 7.5, TEAL, bold=True, align='right')
             super().showPage()
         super().save()
 
@@ -865,15 +865,12 @@ class Report:
     def page(self, c, doc):
         c.saveState()
         c.drawImage(letterhead(), 0, 0, width=PAGE_W, height=PAGE_H)
-        draw_text(c, 'DRE | ANÁLISE GERENCIAL', PAGE_W - MARGIN, PAGE_H - 30, 8.5, '#FFFFFF', bold=True, align='right')
-        draw_text(c, 'Cenário ' + str(self.model.year) + ' / ' + self.model.period_label,
-                  PAGE_W - MARGIN, PAGE_H - 44, 7, '#E1F0EF', align='right', max_width=330)
         if doc.page > 1:
-            running_label(c, 'Código ' + str(self.model.company.get('code') or 'não informado'), MARGIN, PAGE_H - 76, WIDTH * .25)
+            running_label(c, 'Código ' + str(self.model.company.get('code') or 'não informado'), MARGIN, PAGE_H - 84, WIDTH * .25)
         c.setStrokeColor(colors.HexColor(LINE))
         c.setLineWidth(.6)
-        c.line(MARGIN, 42, PAGE_W - MARGIN, 42)
-        draw_text(c, 'Luna. / DRE gerencial / Versão salva', MARGIN, 25, 7, MUTED)
+        c.line(MARGIN, 82, PAGE_W - MARGIN, 82)
+        draw_text(c, 'Maximum Contábil / DRE gerencial / Versão salva', MARGIN, 70, 7, MUTED)
         c.restoreState()
 
     def render(self):
@@ -897,10 +894,10 @@ class Report:
         self.memory()
         output = io.BytesIO()
         doc = ReportDocument(output, pagesize=A4, leftMargin=MARGIN, rightMargin=MARGIN,
-                              topMargin=84, bottomMargin=52, title='DRE completa - ' + str(self.model.company.get('name') or 'Empresa'),
+                              topMargin=96, bottomMargin=87, title='DRE completa - ' + str(self.model.company.get('name') or 'Empresa'),
                               author='Maximum Contábil', subject='DRE gerencial e comparativo de cenários salvos',
                               pageCompression=1, allowSplitting=1)
-        doc.addPageTemplates(PageTemplate(id='LunaDRE', frames=[Frame(MARGIN, 52, WIDTH, PAGE_H - 136,
+        doc.addPageTemplates(PageTemplate(id='MaximumDRE', frames=[Frame(MARGIN, 87, WIDTH, PAGE_H - 183,
                                    leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)], onPage=self.page))
         doc.build(self.story, canvasmaker=NumberedCanvas)
         return output.getvalue()

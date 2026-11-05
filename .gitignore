@@ -4,6 +4,7 @@ dist/
 .env.*
 !.env.example
 public/vendor/
+public/img/maximum-letterhead.png
 public/domain.js
 artifacts/
 *.log

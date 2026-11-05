@@ -13,7 +13,7 @@ from .dre_charts import FONT, BOLD
 from .dre_model import SUBTOTALS, PERCENT_ROWS, money, percentage, finite
 
 PAGE_W, PAGE_H = A4
-LEFT, RIGHT, BOTTOM = 34, PAGE_W - 34, 52
+LEFT, RIGHT, BOTTOM = 34, PAGE_W - 34, 87
 WIDTH = RIGHT - LEFT
 BURGUNDY, INK, MUTED = '#750207', '#24272C', '#62666D'
 
@@ -37,8 +37,8 @@ def render_final_pdf(model, letterhead):
 
     def header(page, section):
         pdf.drawImage(letterhead, 0, 0, width=PAGE_W, height=PAGE_H)
-        paragraph('SIMULADOR REFORMA TRIBUTÁRIA', LEFT, PAGE_H - 74, WIDTH, 17, True, BURGUNDY)
-        top = PAGE_H - 103
+        paragraph('SIMULADOR REFORMA TRIBUTÁRIA', LEFT, PAGE_H - 86, WIDTH, 17, True, BURGUNDY)
+        top = PAGE_H - 115
         top -= paragraph(model.company.get('name') or 'Empresa', LEFT, top, WIDTH, 10.5, True) + 5
         identity = ' · '.join(value for value in [
             'Código ' + str(model.company['code']) if model.company.get('code') else '',
@@ -48,9 +48,9 @@ def render_final_pdf(model, letterhead):
         top -= paragraph(model.period_label + ' · ' + model.coverage, LEFT, top, WIDTH, 7.5, color=MUTED) + 12
         top -= paragraph(section, LEFT, top, WIDTH, 12, True, BURGUNDY) + 9
         pdf.setStrokeColor(colors.HexColor('#E2D9DA'))
-        pdf.line(LEFT, 42, RIGHT, 42)
-        paragraph('Maximum Contábil · Simulação gerencial · Valores em R$', LEFT, 31, WIDTH - 45, 6.8, color=MUTED)
-        paragraph(f'{page} / 2', RIGHT - 35, 31, 35, 7.5, True, BURGUNDY, 2)
+        pdf.line(LEFT, 82, RIGHT, 82)
+        paragraph('Maximum Contábil · Simulação gerencial · Valores em R$', LEFT, 75, WIDTH - 45, 6.8, color=MUTED)
+        paragraph(f'{page} / 2', RIGHT - 35, 75, 35, 7.5, True, BURGUNDY, 2)
         return top
 
     def table(top, definitions, *, taxes=False, body_height=None):

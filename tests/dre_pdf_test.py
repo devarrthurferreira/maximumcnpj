@@ -59,7 +59,7 @@ class DrePdfTests(unittest.TestCase):
                 self.assertIn('Maximum Contábil', text)
                 self.assertIn(f'{index + 1} / 2', text)
                 self.assertNotRegex(text, r'\b(?:NaN|Infinity|undefined)\b')
-                images = [image for image in page.get_images(full=True) if image[2:4] == (1241, 1755)]
+                images = [image for image in page.get_images(full=True) if image[2:4] == (1414, 2000)]
                 self.assertEqual(len(images), 1)
                 letterheads.add(images[0][0])
                 rect = page.get_image_rects(images[0][0])[0]
@@ -68,14 +68,17 @@ class DrePdfTests(unittest.TestCase):
                 for word in page.get_text('words'):
                     self.assertGreaterEqual(word[0], 0)
                     self.assertLessEqual(word[2], page.rect.width)
-                    self.assertGreaterEqual(word[1], 0)
-                    self.assertLessEqual(word[3], page.rect.height)
+                    self.assertGreaterEqual(word[1], 74, 'Texto não deve invadir o cabeçalho do timbrado.')
+                    self.assertLessEqual(word[3], page.rect.height - 62, 'Texto não deve invadir o rodapé do timbrado.')
             self.assertEqual(len(letterheads), 1)
             self.assertNotIn('Resumo dos resultados', document[0].get_text())
             self.assertIn('Impostos e indicadores', document[0].get_text())
             self.assertIn('DRE - Consolidado', document[1].get_text())
             self.assertIn('Receitas de serviços', document[1].get_text())
             self.assertIn('Receita de vendas', document[1].get_text())
+            self.assertIn('Compras e serviços do Simples', document[1].get_text())
+            self.assertIn('Compras e serviços fora do Simples', document[1].get_text())
+            self.assertIn('Resultado Antes do IRPJ/CSLL', document[1].get_text())
             burden = document[0].search_for('% sobre a receita')[0]
             contribution = document[0].search_for('Margem de contribuição')[0]
             self.assertGreaterEqual(contribution.y0 - burden.y1, 15,

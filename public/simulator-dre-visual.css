@@ -432,7 +432,8 @@
 .dre-final-page footer{text-align:right;color:#750207}
 @media print{
   body.dre-print-only .dre-final-print{font-family:Arial,sans-serif!important}
-  .dre-final-print .dre-final-page{height:272mm;box-sizing:border-box;position:relative;break-after:page;page-break-after:always}
+  .dre-final-print .dre-final-page{width:210mm;height:297mm;box-sizing:border-box;position:relative;isolation:isolate;padding:30mm 12mm 28mm;break-after:page;page-break-after:always}
+  .dre-final-print .dre-print-letterhead{position:absolute;inset:0;width:100%;height:100%;z-index:-1;object-fit:fill}
   .dre-final-print .dre-final-page:last-child{break-after:auto;page-break-after:auto}
   .dre-final-print .dre-final-identification h1{font-size:17px!important;color:#750207;margin:0 0 6px}
   .dre-final-print .dre-final-identification h2{font-size:12px!important;margin:0 0 4px}
@@ -445,7 +446,7 @@
   body.dre-print-only .dre-final-print th:first-child{width:37%!important;min-width:0!important;position:static!important}
   .dre-final-print .dre-percent,.dre-final-print .dre-composition-label,.dre-final-print .dre-irpj-total-note{display:none!important}
   .dre-final-print .dre-final-note{font-size:8px!important;line-height:1.4;margin:10px 0}
-  .dre-final-print .dre-final-page footer{display:none}
+  .dre-final-print .dre-final-page footer{display:block;position:absolute;right:12mm;bottom:25mm;font-size:9px}
 }
 
 /* Hierarquia do resumo: cada grupo pode ser aberto sem recalcular os valores. */
