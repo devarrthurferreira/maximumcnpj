@@ -640,6 +640,14 @@ body:has(#analysis-delete-dialog[open]){overflow:hidden}
 .analysis-prepare-period input[readonly]{background:var(--analysis-soft);color:var(--analysis-text)}
 #analysis-commercial-composition:not(:empty){margin-top:20px}
 #analysis-commercial-composition .commercial-composition-heading h2{font-size:18px}
+.analysis-icms-audit{margin:0 0 16px;padding:16px;border:1px solid var(--analysis-line);border-radius:10px;background:#fff;color:var(--analysis-text)}
+.analysis-icms-audit h3,.analysis-icms-audit>strong{display:block;margin:0 0 8px;font-size:14px;color:var(--analysis-ink)}
+.analysis-icms-audit p{margin:8px 0;font-size:12px;line-height:1.6}
+.analysis-icms-audit dl{margin:12px 0;border-top:1px solid var(--analysis-line)}
+.analysis-icms-audit dl>div{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--analysis-line);font-size:12px}
+.analysis-icms-audit dt{font-weight:650}.analysis-icms-audit dd{margin:0;text-align:right}.analysis-icms-debit{font-weight:700}
+.analysis-icms-audit.is-warning{border-color:#ead5b3;background:#fff9ef;color:#775528}
+@media(max-width:600px){.analysis-icms-audit dl>div{display:grid;gap:3px}.analysis-icms-audit dd{text-align:left}}
 .analysis-expense-month[hidden]{display:none!important}
 .analysis-expense-month.is-outside-period{border-color:#e0c9a8}
 .analysis-expense-month-name [data-accounting-period-note]{display:block;font-size:10px;font-weight:500;color:#805521;margin-top:3px}

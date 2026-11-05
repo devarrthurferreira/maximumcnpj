@@ -1,4 +1,8 @@
-# Maximum CNPJ · v0.60.1
+# Maximum CNPJ · v0.60.2
+
+## v0.60.2 — Conferência de ICMS e NFC-e (05/11/2026)
+
+O Fiscal apresenta a quantidade e a base de NFC-e classificadas como internas, as bases e os débitos de vendas internas e interestaduais, a redução das devoluções e o débito antes dos créditos das compras. A conferência usa o período dos documentos, arredonda por linha e limita o débito a zero em cada competência; ajustes manuais podem alterar o resultado da simulação. Espécie ou UF ausente mantém a conferência como pendente, sem exibir um débito confirmado.
 
 ## v0.60.1 — NFC-e nas vendas internas (05/11/2026)
 

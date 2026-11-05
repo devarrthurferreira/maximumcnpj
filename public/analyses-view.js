@@ -11,6 +11,7 @@ import {BRAZIL_UFS,normalizeUf} from './difal.js';
 import {assessAnalysisDifal} from './analysis-difal-assessment.js';
 import {documentDifalSummary} from './analysis-document-difal.js';
 import {renderFinancialAlerts} from './financial-alerts-view.js';
+import {renderIcmsSalesAudit} from './analysis-icms-audit.js';
 import {accountingAverage,accountingAverageInputValues,accountingAveragePreview} from './analysis-accounting-average.js';
 
 export {ACCOUNTING_FIELDS} from './analyses-guidance.js';
@@ -177,7 +178,7 @@ export function renderFiscalReports({analysis,generation,canWrite,generationUnav
     const repairs=Array.isArray(upload.repairs)?upload.repairs.length:Number(upload.repairs)||0;
     const difal=renderDocumentDifal(documentDifalSummary({job,type,jobId,clientId:analysis.clientId,generationId:data.generationId,
       policy:(fiscalDraft||data).difalPolicy,regimeSelection:(configDraft||analysis.config).regimeSelection,choice:fiscalDifalChoice}),type);
-    const details=`${canSelect&&!running?`<p class="analysis-document-hint">${job?.status==='UPLOADING'?'Selecione o mesmo arquivo para continuar.':'Arraste o arquivo ou selecione acima.'}<br>CSV, XLSX ou XLS · até 10 MiB</p>`:''}${upload.progress?`<p class="analysis-document-progress" data-analysis-document-progress="${type}" role="status" aria-live="polite">${esc(upload.progress)}</p>`:''}${upload.error?`<p class="analysis-document-error" data-analysis-document-error="${type}" role="alert">${esc(upload.error)}</p>`:''}${repairs?`<p class="analysis-document-hint">${repairs} linha(s) alinhada(s) automaticamente, preservando os valores originais.</p>`:''}`;
+    const details=`${canSelect&&!running?`<p class="analysis-document-hint">${job?.status==='UPLOADING'?'Selecione o mesmo arquivo para continuar.':'Arraste o arquivo ou selecione acima.'}<br>CSV, XLSX ou XLS · até 10 MiB</p>`:''}${type==='SALES'?'<p class="analysis-document-hint">No ICMS, a coluna D (Espécie) identifica as NFC-e como vendas internas, mesmo quando a UF do cliente é outra.</p>':''}${upload.progress?`<p class="analysis-document-progress" data-analysis-document-progress="${type}" role="status" aria-live="polite">${esc(upload.progress)}</p>`:''}${upload.error?`<p class="analysis-document-error" data-analysis-document-error="${type}" role="alert">${esc(upload.error)}</p>`:''}${repairs?`<p class="analysis-document-hint">${repairs} linha(s) alinhada(s) automaticamente, preservando os valores originais.</p>`:''}`;
     return `<article class="analysis-document analysis-document-inline${canSelect?' is-uploadable':''}${complete?' is-complete':''}${running?' is-loading':''}" data-analysis-document="${type}" ${canSelect?`data-analysis-document-drop="${type}"`:''} aria-busy="${running}"><span class="analysis-document-icon">${icon('report')}</span><div class="analysis-document-copy"><h3>${label}</h3><p>${description}</p>${fileName?`<p class="analysis-document-filename">${esc(fileName)}</p>`:''}${badge(state)}${difal}</div>${action?`<div class="analysis-document-actions">${action}</div>`:''}${details?`<div class="analysis-document-upload-details">${details}</div>`:''}</article>`;
   }).join('')}</div>${canWrite?`<details class="analysis-document-options"><summary>Outras opções dos documentos</summary><div class="analysis-actions"><button type="button" id="analysis-start-import">${generationUnavailable?'Preparar nova importação':data.generationId?'Substituir os relatórios fiscais':'Preparar importação de entradas e saídas'}</button></div><p class="analysis-note">As versões e os relatórios anteriores continuam no histórico. Os relatórios conservam as opções de DIFAL desta importação; a simulação usa as escolhas atuais após concluir o Fiscal.</p></details>`:''}${company&&generation?._id===data.generationId&&!generationUnavailable?`<p class="analysis-document-history"><a href="/generations.html?${new URLSearchParams({id:data.generationId,analysis:analysis.id,client:analysis.clientId})}">Conferir todos os relatórios desta empresa →</a></p>`:''}</div>`;
 }
@@ -279,7 +280,7 @@ export function renderAnalysisPeriod(options,{compact=false}={}) {
 
 export function renderFiscalComposition(options) {
   const composition=options.source?.commercialComposition;
-  return renderFinancialAlerts({source:options.source})+(composition?renderCommercialComposition(composition,{title:'Receitas e compras dos documentos',compact:true})+
+  return renderFinancialAlerts({source:options.source})+renderIcmsSalesAudit(options.source)+(composition?renderCommercialComposition(composition,{title:'Receitas e compras dos documentos',compact:true})+
     (options.fiscalDraft?.monthlyOverrides?.length?'<p class="analysis-note">A composição mantém a classificação dos documentos. Ajustes manuais de receita e compras são aplicados no resultado da simulação.</p>':''):'');
 }
 

@@ -1,5 +1,10 @@
 # Histórico de alterações
 
+## [0.60.2] - 2026-11-05
+
+- Acrescenta no Fiscal a conferência de NFC-e, bases e débito de ICMS dos documentos, com devoluções e alertas de espécie ou UF ausente.
+- Mantém a fórmula, os ajustes manuais e o histórico; limita o débito por competência antes do consolidado.
+
 ## [0.60.1] - 2026-11-05
 
 - Preserva a espécie da coluna D nas saídas e classifica NFC-e como venda interna na apuração de ICMS, sem modificar a UF da origem.
