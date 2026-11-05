@@ -73,6 +73,7 @@ class DrePdfTests(unittest.TestCase):
             self.assertEqual(len(letterheads), 1)
             self.assertNotIn('Resumo dos resultados', document[0].get_text())
             self.assertIn('Impostos e indicadores', document[0].get_text())
+            self.assertIn('CBS/IBS do cenário: 11,40%', document[0].get_text())
             self.assertIn('DRE - Consolidado', document[1].get_text())
             self.assertIn('Receitas de serviços', document[1].get_text())
             self.assertIn('Receita de vendas', document[1].get_text())
@@ -80,6 +81,8 @@ class DrePdfTests(unittest.TestCase):
             self.assertIn('Compras e serviços (do Simples)', document[1].get_text())
             self.assertIn('Compras e serviços (fora do Simples)', document[1].get_text())
             self.assertIn('Resultado Antes do IRPJ/CSLL', document[1].get_text())
+            self.assertIn('Benefícios e Encargos', document[1].get_text())
+            self.assertIn('INSS', document[1].get_text())
             burden = document[0].search_for('% sobre a receita')[0]
             contribution = document[0].search_for('Margem de contribuição')[0]
             self.assertGreaterEqual(contribution.y0 - burden.y1, 15,
@@ -146,6 +149,24 @@ class DrePdfTests(unittest.TestCase):
                             self.assertIn(amount(regime['dre']['netProfit']), text)
                         else:
                             self.assertNotIn(regime['name'], text)
+
+    def test_reduced_cbs_ibs_rate_is_taken_from_the_saved_calculation(self):
+        script = """
+import {drePdfFixture} from './tests/fixtures/dre-pdf.mjs';
+import {calculateMonthlySimulation} from './public/simulator-monthly.js';
+import {buildMonthlyDre} from './public/simulator-calendar.js';
+const s=drePdfFixture();s.draft.cbsIbsPercent=60;
+Object.assign(s,calculateMonthlySimulation(s.draft,s.source.monthlyReports,s.monthlyInputs,s.source.sales.jobId,null,s.analysisPeriod));
+s.monthlyDre=buildMonthlyDre(s.result,s.year,s.rbt12Manual,s.reportPeriod);s.modelVersion=s.result.version;
+s.annualRevenue=s.result.annualRevenue;s.bestRegimeId=s.result.bestRegimeId;
+process.stdout.write(JSON.stringify(s));
+"""
+        saved = json.loads(subprocess.run(['node', '--input-type=module', '-e', script], cwd=ROOT,
+                                         capture_output=True, text=True, check=True, timeout=30).stdout)
+        with pymupdf.open(stream=render(saved), filetype='pdf') as document:
+            self.assertEqual(document.page_count, 2)
+            text = normalized(document[0].get_text())
+            self.assertIn('CBS/IBS do cenário: 6,84% (CBS 6,78% + IBS 0,06%)', text)
 
     def test_missing_optional_tax_captures_are_unavailable_not_zero(self):
         from dre_irpj_quarter_test import quarter_fixture

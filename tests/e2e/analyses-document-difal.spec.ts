@@ -125,7 +125,7 @@ async function entrySnapshot(workspace:Workspace,jobId:string){
   };
 }
 async function fiscalStep(page:Page,step:'regimes'|'difal'|'rbt12'|'documents'){
-  const wizard=page.locator('#analysis-wizard'),steps=['regimes','rbt12','documents','difal'];
+  const wizard=page.locator('#analysis-wizard'),steps=['regimes','rbt12','documents','cbs-ibs','difal'];
   for(let attempt=0;attempt<steps.length;attempt++){
     const current=await wizard.getAttribute('data-wizard-step');expect(steps).toContain(current);if(current===step)return;
     await page.locator(steps.indexOf(current!)>steps.indexOf(step)?'#analysis-wizard-back':'#analysis-wizard-next').click();

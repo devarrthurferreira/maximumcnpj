@@ -941,6 +941,8 @@ function readNumber(input,{cents=false,signed=false,label='o valor'}={}) {
 function captureFiscal() {
   if(!$('#analysis-fiscal-form'))return clone(S.fiscalDraft);
   const result=clone(S.fiscalDraft);
+  const cbsIbsChoice=$('#analysis-fiscal-form input[name="cbsIbsPercent"]:checked');
+  if(cbsIbsChoice)result.cbsIbsPercent=Number(cbsIbsChoice.value);
   result.salesAnnex=Number($('#analysis-sales-annex')?.value||result.salesAnnex);
   result.serviceAnnex=Number($('#analysis-service-annex')?.value||result.serviceAnnex);
   if($('#analysis-icms-outside'))result.icmsOutside=$('#analysis-icms-outside').value==='outside';

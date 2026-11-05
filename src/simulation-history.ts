@@ -12,7 +12,7 @@ import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import { generationSimulator,selectAnalysisSourceMonths } from './simulator-store.ts';
 import { assertGenerationNotDeleted, assertLookupNotDeleted } from './generation-deletion.ts';
 import { CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
-  SIMULATION_VALUE_FIELDS, FINANCIAL_VALUE_FIELDS, parseDifalPolicy, upgradeDifalPolicy } from '../public/simulator-engine.js';
+  SIMULATION_VALUE_FIELDS, FINANCIAL_VALUE_FIELDS, parseDifalPolicy, upgradeDifalPolicy,parseCbsIbsPercent } from '../public/simulator-engine.js';
 import type { SimulationDraft } from '../public/simulator-engine.js';
 import {parseRegimeSelection,requiresSimplesReference} from '../public/regime-selection.js';
 import {withLegacyAnalysisDeletion} from './analysis-store.ts';
@@ -66,7 +66,7 @@ export function validateSimulationRequest(input: unknown) {
   const title = input.title === undefined ? null : text(input.title, 160);
   object(input.monthlyGroups, GROUPS);
   const monthlyGroups = Object.fromEntries(GROUPS.map((key, index) => [key, index < 3 ? signedSalesMoney(input.monthlyGroups[key]) : money(input.monthlyGroups[key])])) as MonthlyGroups;
-  object(input.draft, ['year', 'salesAnnex', 'serviceAnnex', 'values'], ['rbt12', 'difalPolicy', 'icmsOutside','regimeSelection']);
+  object(input.draft, ['year', 'salesAnnex', 'serviceAnnex', 'values'], ['rbt12', 'difalPolicy', 'icmsOutside','regimeSelection','cbsIbsPercent']);
   need([2027, 2028].includes(input.draft.year) && [1, 2].includes(input.draft.salesAnnex) && [3, 4, 5].includes(input.draft.serviceAnnex),
     'Ano ou anexo inválido para o modelo da calculadora.');
   object(input.draft.values, SIMULATION_VALUE_FIELDS, FINANCIAL_VALUE_FIELDS);
@@ -75,6 +75,11 @@ export function validateSimulationRequest(input: unknown) {
   }
   let difalPolicy: SimulationDraft['difalPolicy'];
   let regimeSelection: SimulationDraft['regimeSelection'];
+  let cbsIbsPercent: SimulationDraft['cbsIbsPercent'];
+  if(Object.hasOwn(input.draft,'cbsIbsPercent')){
+    try{cbsIbsPercent=parseCbsIbsPercent(input.draft.cbsIbsPercent);}
+    catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Alíquota de CBS/IBS inválida.');}
+  }
   if(Object.hasOwn(input.draft,'regimeSelection')){
     try{regimeSelection=parseRegimeSelection(input.draft.regimeSelection);}
     catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Seleção de regimes inválida.');}
@@ -90,6 +95,7 @@ export function validateSimulationRequest(input: unknown) {
       (input.rbt12Source==='NOT_PROVIDED' && input.draft.rbt12==null) || (input.draft.rbt12===null && !requiresSimplesReference(regimeSelection))
         ? null : money(input.draft.rbt12)} : {}),
     ...(Object.hasOwn(input.draft, 'icmsOutside') ? {icmsOutside: input.draft.icmsOutside} : {}),
+    ...(cbsIbsPercent===undefined?{}:{cbsIbsPercent}),
     // Keep omission and the normalized request hash unchanged for historical retries.
     ...(difalPolicy ? {difalPolicy} : {}),
     ...(regimeSelection ? {regimeSelection} : {}),

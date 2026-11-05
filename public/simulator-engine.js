@@ -23,6 +23,11 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
+/** Portion of the scenario's 11.4% combined rate applied to outgoing debits. */
+export function parseCbsIbsPercent(value) {
+    if (value !== 100 && value !== 60 && value !== 40) throw new TypeError('Selecione 100%, 60% ou 40% da alíquota de CBS/IBS.');
+    return value;
+}
 export const MODEL_VERSION = INCOME_TAX_MODEL_VERSION;
 export const OUTGOING_DIFAL_MESSAGE = 'Não possui DIFAL de saída. Cálculo de saída desativado nesta análise.';
 export const SIMPLES_DIAGNOSTIC_VERSION = 'SIMPLES_DIAGNOSTIC_V1';
@@ -1223,7 +1228,9 @@ export function draftToInput(draft, difalProjection = null, anticipationProjecti
     const hasDifalPolicy=Object.hasOwn(draft,'difalPolicy');
     const hasIcmsOutside=Object.hasOwn(draft,'icmsOutside');
     const hasRegimeSelection=Object.hasOwn(draft,'regimeSelection');
-    strictObject(draft, ['year','salesAnnex','serviceAnnex','values',...(explicitRbt12?['rbt12']:[]),...(hasDifalPolicy?['difalPolicy']:[]),...(hasIcmsOutside?['icmsOutside']:[]),...(hasRegimeSelection?['regimeSelection']:[])]);
+    const hasCbsIbsPercent=Object.hasOwn(draft,'cbsIbsPercent');
+    strictObject(draft, ['year','salesAnnex','serviceAnnex','values',...(explicitRbt12?['rbt12']:[]),...(hasDifalPolicy?['difalPolicy']:[]),...(hasIcmsOutside?['icmsOutside']:[]),...(hasRegimeSelection?['regimeSelection']:[]),...(hasCbsIbsPercent?['cbsIbsPercent']:[])]);
+    const cbsIbsPercent=hasCbsIbsPercent?parseCbsIbsPercent(draft.cbsIbsPercent):100;
     const regimeSelection=hasRegimeSelection?parseRegimeSelection(draft.regimeSelection):undefined,needsRbt12=requiresSimplesReference(regimeSelection);
     if(hasIcmsOutside&&typeof draft.icmsOutside!=='boolean')failInput(['icmsOutside'],'Informe uma opção válida.');
     const difalPolicy=hasDifalPolicy?upgradeDifalPolicy(draft.difalPolicy):null;
@@ -1264,7 +1271,11 @@ export function draftToInput(draft, difalProjection = null, anticipationProjecti
       ...(anticipationProjection === null ? {} : {icmsAnticipation: {version: ICMS_ANTICIPATION_VERSION, monthlyCents: anticipationProjection.monthlyCents}}),
       simpleRegularPurchases: 0, extraPayroll: 0, icmsOutside: hasIcmsOutside?draft.icmsOutside:false,
       rbt12,
-      rates: { ...DEFAULT_RATES },
+      // Round the rate, not tax amounts, to avoid floating-point artifacts in
+      // the exact decimal income-tax calculation. Purchase credits remain tied
+      // to the existing supplier assumptions below.
+      rates: { ...DEFAULT_RATES, cbs:Math.round(DEFAULT_RATES.cbs*cbsIbsPercent*1e6)/1e8,
+        ibs:Math.round(DEFAULT_RATES.ibs*cbsIbsPercent*1e6)/1e8 },
       credits: {
         simple: { base: values.simplePurchases, cbsRate: .015, ibsRate: .0002 },
         simpleRegular: { base: 0, cbsRate: DEFAULT_RATES.cbs, ibsRate: DEFAULT_RATES.ibs },

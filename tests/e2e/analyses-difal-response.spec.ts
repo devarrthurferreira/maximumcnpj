@@ -1,5 +1,5 @@
 import {test,expect,type Page} from '@playwright/test';
-import {defaultFiscalData} from '../../src/analysis-contract.ts';
+import {defaultFiscalData,parseFiscalData} from '../../src/analysis-contract.ts';
 
 const analysisId='18777777-7777-4777-8777-777777777771',clientId='18777777-7777-4777-8777-777777777772';
 const generationId='18777777-7777-4777-8777-777777777773',purchaseId='18777777-7777-4777-8777-777777777774',salesId='18777777-7777-4777-8777-777777777775';
@@ -54,7 +54,7 @@ async function setup(page:Page,options:Options={}){
     const reply=options.exit?await options.exit(++counts.exit):(counts.exit++,{json:outgoingResponse()});
     await route.fulfill(reply);
   });
-  return {counts,errors};
+  return {counts,errors,analysis};
 }
 const entry=(page:Page)=>page.locator('[data-difal-assessment="entry"]');
 const amount=(page:Page)=>entry(page).locator('[data-difal-detected-amount]');
@@ -66,6 +66,33 @@ async function releaseSource(page:Page,hold:ReturnType<typeof gate>){
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
 }
 
+test('Fiscal apresenta as três opções após documentos e conserva a escolha ao salvar e retomar',async({page},info)=>{
+  const {analysis,errors}=await setup(page,{inline:'valid'});
+  let savedPercent:number|null=null;
+  await page.route(`**/api/v4/analyses/${analysisId}/fiscal?*`,async route=>{
+    const payload=route.request().postDataJSON();
+    savedPercent=payload.data.cbsIbsPercent;
+    analysis.fiscal.data=parseFiscalData(payload.data,analysis.config.regimeSelection);
+    analysis.fiscal.revision++;analysis.revision++;
+    await route.fulfill({json:{analysis}});
+  });
+  await page.setViewportSize({width:390,height:750});
+  await open(page,'documents');
+  await page.locator('#analysis-wizard-next').click();
+  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','cbs-ibs');
+  const step=page.locator('section[data-wizard-step="cbs-ibs"]');
+  for(const rate of ['11,40%','6,84%','4,56%'])await expect(step).toContainText(rate);
+  await expect(step.locator('input[value="100"]')).toBeChecked();
+  await step.locator('input[value="60"]').check();
+  const patch=page.waitForResponse(response=>response.request().method()==='PATCH'&&response.url().includes('/fiscal'));
+  await page.locator('#analysis-wizard button[value="save"]').click();expect((await patch).ok()).toBe(true);
+  expect(savedPercent).toBe(60);
+  await page.reload();await expect(step.locator('input[value="60"]')).toBeChecked();
+  await step.screenshot({path:info.outputPath('cbs-ibs-mobile.png')});
+  expect(await page.locator('#analysis-wizard').evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
 test('consulta em andamento mostra Conferindo nos dois cartões; atualização real preserva escolhas sem reler RBT12/source',async({page})=>{
   const first=gate(),second=gate();
   const {counts,errors}=await setup(page,{entry:async attempt=>{await(attempt===1?first:second).promise;return {json:response(attempt===1?7320:14640)};}});
@@ -73,6 +100,7 @@ test('consulta em andamento mostra Conferindo nos dois cartões; atualização r
     await open(page,'documents');
     const card=page.locator('[data-analysis-document-difal="PURCHASES"]');
     await expect(card).toHaveAttribute('data-difal-state','reading');await expect(card).toContainText('Conferindo…');await expect(card).not.toContainText('Indisponível');
+    await page.locator('#analysis-wizard-next').click();
     await page.locator('#analysis-wizard-next').click();
     await expect(entry(page)).toHaveAttribute('data-difal-state','reading');await expect(amount(page)).toHaveCount(0);await expect(retry(page)).toBeDisabled();
     first.release();await expect(amount(page)).toContainText('73,20');
@@ -153,6 +181,7 @@ for(const width of [320,390])test(`saída desativada mantém evidência pendente
     expect(await page.locator('#analysis-wizard').evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
     await card.screenshot({path:info.outputPath(`outgoing-policy-pending-${width}.png`)});
+    await page.locator('#analysis-wizard-next').click();
     await page.locator('#analysis-wizard-next').click();
     await expect(exit).toHaveAttribute('data-difal-state','unavailable');await expect(exit).toHaveAttribute('data-difal-application-state','disabled');
     await expect(exit.locator('.analysis-difal-result-heading')).toContainText('Saída não aplicada pela regra da análise');

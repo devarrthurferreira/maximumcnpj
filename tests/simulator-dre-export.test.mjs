@@ -78,14 +78,16 @@ test('CSV separa Impostos da DRE, com dedução única, resultado igual e os doi
       assert.deepEqual(taxAnnual.map(row=>row[2]),presentation.taxStatement.rows.map(row=>row.label));
       assert.equal(taxAnnual.filter(row=>row[2]==='% sobre a receita').length,1);
       const dre=data.filter(row=>row[0]==='DRE');
-      for(const label of ['ICMS (D − C)','CBS/IBS (D − C)','Antecipação de ICMS','DIFAL','INSS','Total'])
+      for(const label of ['ICMS (D − C)','CBS/IBS (D − C)','Antecipação de ICMS','DIFAL','Total'])
         assert(!dre.some(row=>row[2]===label),`${period}: ${label} não pertence à DRE`);
+      assert.equal(dre.filter(row=>row[2]==='INSS').length,1);
       assert(!dre.some(row=>row[2]==='(−) Total de impostos'));
       assert(dre.some(row=>row[2]==='ICMS Débito'));assert(dre.some(row=>row[2]==='ICMS Crédito'));
       const total=taxAnnual.find(row=>row[2]==='Total');
       const profit=dre.find(row=>row[2]==='Resultado líquido');
       for(const [index,id] of visibleRegimeIds.entries()){
         const captured=snapshot.result.regimes.find(regime=>regime.id===id);
+        assert.equal(dre.find(row=>row[2]==='INSS')[index+5],currency(captured.dre.payroll));
         assert.equal(total[index+5],currency(captured.totalTaxes));
         assert.equal(profit[index+5],taxAnnual.find(row=>row[2]==='Resultado líquido')[index+5]);
         for(const [rowIndex,row] of presentation.taxStatement.rows.entries())assert.equal(taxAnnual[rowIndex][index+5],number(row.values[id],row.unit),row.key);
