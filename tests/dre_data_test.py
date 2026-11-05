@@ -413,7 +413,7 @@ class DreDataMongoTests(unittest.TestCase):
                     import pymupdf
                     with pymupdf.open(stream=response.read(), filetype='pdf') as document:
                         self.assertEqual(document.page_count, 2)
-                        self.assertEqual([entry[1] for entry in document.get_toc()], ['Resumo e Impostos', 'DRE - Consolidado'])
+                        self.assertEqual([entry[1] for entry in document.get_toc()], ['Impostos e Resumo', 'DRE - Consolidado'])
                         text = ' '.join(page.get_text() for page in document)
                     self.assertIn('Lucro Real', text)
                     self.assertNotIn('Simples Puro', text)

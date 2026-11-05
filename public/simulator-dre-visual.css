@@ -446,3 +446,15 @@
   .dre-final-print .dre-final-note{font-size:8px!important;line-height:1.4;margin:10px 0}
   .dre-final-print .dre-final-page footer{position:absolute;bottom:0;right:0;font-size:9px}
 }
+
+/* Hierarquia do resumo: cada grupo pode ser aberto sem recalcular os valores. */
+.dre-summary-help{font-size:12px;color:#667085;margin:16px 0 10px}
+.dre-summary-toggle{display:inline-flex;align-items:center;gap:8px;padding:4px 0;border:0;background:transparent;color:inherit;font:inherit;font-weight:700;text-align:left;cursor:pointer}
+.dre-summary-toggle:focus-visible{outline:2px solid #750207;outline-offset:3px;border-radius:3px}
+.dre-summary-chevron{font-size:14px;color:#750207;transition:transform .15s ease}
+.dre-summary-toggle[aria-expanded=true] .dre-summary-chevron{transform:rotate(90deg)}
+.dre-summary-toggle-hint{font-size:10px;font-weight:500;color:#7b6670}
+.simulator-clean .dre-visual .dre-summary-child th{padding-left:34px;color:#606b7d;font-weight:500}
+.dre-summary-child[hidden]{display:none!important}
+.dre-tax-statement .dre-statement-controls{margin:20px 0 0}
+.dre-tax-statement .dre-report-toolbar{margin-bottom:18px}

@@ -327,7 +327,6 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
     expect(Math.round((regime.dre.netProfit-previous.dre.netProfit)*100)).toBe(8_784);
   }
   await expectZeroDre(page);
-  await page.locator('#dre-report-period').selectOption('complete');
   const downloading=page.waitForEvent('download');await page.locator('#export-dre-csv').click();
   const download=await downloading;await download.saveAs(info.outputPath('analysis-difal-excluded-dre.csv'));
   const stream=await download.createReadStream();let csv='';for await(const chunk of stream!)csv+=chunk;

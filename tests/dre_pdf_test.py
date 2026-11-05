@@ -35,7 +35,7 @@ def rendered(variant, period='complete', show_percent=False):
 
 
 def section_text(document, label, following):
-    if document.page_count == 2 and document.get_toc()[0][1] == 'Resumo e Impostos':
+    if document.page_count == 2 and document.get_toc()[0][1] == 'Impostos e Resumo':
         index = 1 if label == 'DRE comparativa detalhada' else 0
         return normalized(document[index].get_text())
     sections = {title: page for _, title, page in document.get_toc()}
@@ -51,7 +51,7 @@ class DrePdfTests(unittest.TestCase):
             self.assertEqual(document.page_count, 2)
             self.assertFalse(document.needs_pass)
             self.assertIn('Simulador Reforma Tributária', document.metadata['title'])
-            self.assertEqual(document.get_toc(), [[1, 'Resumo e Impostos', 1], [1, 'DRE - Consolidado', 2]])
+            self.assertEqual(document.get_toc(), [[1, 'Impostos e Resumo', 1], [1, 'DRE - Consolidado', 2]])
             letterheads = set()
             for index, page in enumerate(document):
                 text = normalized(page.get_text())
@@ -73,6 +73,9 @@ class DrePdfTests(unittest.TestCase):
             self.assertEqual(len(letterheads), 1)
             self.assertIn('Resumo dos resultados', document[0].get_text())
             self.assertIn('Impostos e indicadores', document[0].get_text())
+            self.assertLess(document[0].get_text().index('Impostos e indicadores'), document[0].get_text().index('Resumo dos resultados'))
+            self.assertIn('Receitas de serviços', document[0].get_text())
+            self.assertIn('Receita de vendas', document[0].get_text())
             self.assertIn('DRE - Consolidado', document[1].get_text())
             self.assertNotIn('Memória de cálculo', normalized(' '.join(page.get_text() for page in document)))
 
@@ -114,7 +117,7 @@ class DrePdfTests(unittest.TestCase):
                             self.assertIn(amount(regime['dre']['netProfit']), text)
                             self.assertIn(amount(regime['totalTaxes']), text)
                         else:
-                            self.assertIn(normalized(regime['status']) if len(regime['status']) <= 180 else 'Confira os motivos por mês na análise.', text)
+                            self.assertIn(normalized(regime['status']) if len(regime['status']) <= 100 else 'Confira os motivos por competência na análise.', text)
                             self.assertIn('—', text)
                     if variant == 'partial':
                         self.assertIn('3 de 9 competências', text)

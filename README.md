@@ -1,4 +1,12 @@
-# Maximum CNPJ · v0.58.0
+# Maximum CNPJ · v0.58.1
+## v0.58.1 — Impostos no topo e resumo detalhável (05/11/2026)
+
+A tela consolidada de janeiro a setembro segue **Impostos e seleção de regimes → Resumo dos resultados → DRE - Consolidado**. A seleção vale para os três quadros e para o download. No resumo, os títulos abrem ou recolhem seus subitens; receita bruta mostra serviços e vendas. As escolhas abertas são mantidas ao trocar os regimes.
+
+O PDF Python e a impressão Jan–Set têm **duas páginas**: impostos, indicadores e resumo na primeira; DRE consolidada na segunda. O CSV completo inclui o consolidado e as competências mensais. Relatórios históricos anteriores ao contrato Jan–Set mantêm seu formato original. Dados contábeis anteriores preservam campos financeiros ausentes em seu histórico; a colagem orienta a ordem de todas as oito colunas.
+
+As descrições a seguir registram a versão anterior; em caso de diferença na apresentação, prevalece o descrito em v0.58.1 acima.
+
 ## v0.58.0 — Simulador Reforma Tributária e DRE final em duas páginas (05/11/2026)
 
 A tela consolidada de janeiro a setembro segue **Resumo dos resultados → Impostos → Demonstração do Resultado / DRE - Consolidado**. O título superior é **Simulador Reforma Tributária**. A seleção de regimes vale para os três quadros e para o download. As conferências, memórias e evolução ficam em blocos recolhidos; os dados originais continuam disponíveis.

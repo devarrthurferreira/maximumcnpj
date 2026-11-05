@@ -204,7 +204,7 @@ test('Jan–Set coloca Impostos após as ações de relatório e mostra IRPJ sem
   const input=fixture(),before=structuredClone(input),p=input.presentation,html=renderAnnualDre(input);
   const reportPosition=html.indexOf('id="download-dre-pdf"'),taxPosition=html.indexOf('id="tax-demonstrativo"'),
     followUpPosition=html.indexOf('data-revenue-reconciliation="dre"');
-  assert(reportPosition>=0&&taxPosition>reportPosition&&followUpPosition>taxPosition);
+  assert(taxPosition>=0&&reportPosition>taxPosition&&html.indexOf('id="dre-summary"')>reportPosition&&followUpPosition>taxPosition);
   assert.match(html,/APURAÇÃO DOS TRIBUTOS/);assert.match(html,/data-tax-row="irpj"/);
   const captured=p.sections.flatMap(section=>section.rows).find(item=>item.key==='irpj'),assessed=tax(p,'irpj');
   const normal=row(p,'irpjBasic'),additional=row(p,'irpjAdditional');

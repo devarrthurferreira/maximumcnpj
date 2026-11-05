@@ -100,7 +100,7 @@ class DreEditorialTests(unittest.TestCase):
             full_text = normalized(' '.join(page.get_text() for page in document))
             self.assertIn(normalized(saved['company']['name']), full_text)
             self.assertIn('Resultado líquido', normalized(document[1].get_text()))
-            self.assertEqual(sections(document), {'Resumo e Impostos': 0, 'DRE - Consolidado': 1})
+            self.assertEqual(sections(document), {'Impostos e Resumo': 0, 'DRE - Consolidado': 1})
             for page in document:
                 for word in page.get_text('words'):
                     self.assertGreaterEqual(word[0], 0)

@@ -1,5 +1,12 @@
 # Histórico de alterações
 
+## [0.58.1] - 2026-11-05
+
+- Posiciona os impostos e a seleção de regimes antes do resumo e da DRE; organiza o resumo em grupos expansíveis, com serviços e vendas sob receita bruta.
+- Atualiza o visual do PDF e da impressão de duas páginas, apresentando impostos e resumo na primeira e DRE na segunda.
+- Inclui as competências mensais no CSV Jan–Set completo e preserva campos financeiros ausentes em históricos reprocessados.
+- Completa a orientação da colagem contábil e atualiza testes de seleção, histórico e impressão.
+
 ## [0.58.0] - 2026-11-05
 
 - Renomeia o título para Simulador Reforma Tributária e coloca resumo/resultados e impostos antes da DRE consolidada no navegador.

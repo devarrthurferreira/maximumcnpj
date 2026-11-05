@@ -53,7 +53,7 @@ def render_final_pdf(model, letterhead):
         paragraph(f'{page} / 2', RIGHT - 35, 31, 35, 7.5, True, BURGUNDY, 2)
         return top
 
-    def table(top, definitions, *, taxes=False, body_height=None):
+    def table(top, definitions, *, taxes=False, summary=False, body_height=None):
         # Measure every label. The table never paginates and never clips rows.
         header_height = 30
         rows = []
@@ -70,9 +70,9 @@ def render_final_pdf(model, letterhead):
         pdf.saveState()
         pdf.translate(LEFT, top)
         pdf.scale(1, scale)
-        pdf.setFillColor(colors.HexColor(BURGUNDY))
+        pdf.setFillColor(colors.HexColor('#343D4A' if summary else BURGUNDY))
         pdf.rect(0, -header_height, WIDTH, header_height, stroke=0, fill=1)
-        paragraph('Impostos e indicadores' if taxes else 'Valores em R$', 8, -7, label_width - 16, 8, True, '#FFFFFF')
+        paragraph('Impostos e indicadores' if taxes else 'Resumo por regime' if summary else 'Valores em R$', 8, -7, label_width - 16, 8, True, '#FFFFFF')
         for index, regime in enumerate(regimes):
             paragraph(regime['name'], label_width + index * column_width + 5, -5,
                       column_width - 10, 7.5, True, '#FFFFFF', 2)
@@ -80,7 +80,7 @@ def render_final_pdf(model, letterhead):
         for index, (key, label, height, gap) in enumerate(rows):
             cursor -= gap
             subtotal = key in SUBTOTALS
-            background = '#750207' if key == 'netProfit' else '#F2E8E9' if subtotal else '#F7F8FA' if index % 2 == 0 else '#FFFFFF'
+            background = '#175348' if key == 'netProfit' else '#F2E8E9' if subtotal else '#F7F8FA' if index % 2 == 0 else '#FFFFFF'
             pdf.setFillColor(colors.HexColor(background))
             pdf.rect(0, cursor - height, WIDTH, height, stroke=0, fill=1)
             color = '#FFFFFF' if key == 'netProfit' else INK
@@ -88,6 +88,9 @@ def render_final_pdf(model, letterhead):
             for number, regime in enumerate(regimes):
                 value = model.tax_value(regime, key) if taxes else model.value(regime, key)
                 displayed = '—' if not finite(value) else percentage(value, 2) if key in PERCENT_ROWS else money(value, False)
+                if key == 'netProfit' and (not finite(value) or value < 0):
+                    pdf.setFillColor(colors.HexColor('#59616E' if not finite(value) else '#842C40'))
+                    pdf.rect(label_width + number * column_width, cursor - height, column_width, height, stroke=0, fill=1)
                 amount_color = color if key == 'netProfit' else '#A12434' if finite(value) and value < 0 else INK
                 font = BOLD if subtotal else FONT
                 size = min(7.7, (column_width - 12) / max(stringWidth(displayed, font, 1), 1))
@@ -101,23 +104,33 @@ def render_final_pdf(model, letterhead):
     definitions = [row for _, rows in model.sections() for row in rows]
     by_key = dict(definitions)
     summary = [(key, by_key.get(key, label)) for key, label in [
-        ('revenue', 'Receita bruta'), ('netRevenueAfterTaxes', 'Receita líquida'),
-        ('costsWithAnticipation', 'Custo de mercadoria'), ('operatingExpensesWithPayroll', 'Despesas operacionais'),
-        ('ebitda', 'Resultado operacional (EBITDA)'), ('totalTaxes', 'Total de impostos'),
-        ('netProfit', 'Resultado líquido'), ('netMargin', 'Resultado líquido (%)')]]
+        ('revenue', 'Receita bruta'), ('services', 'Receitas de serviços'), ('sales', 'Receita de vendas'),
+        ('revenueTaxes', 'Deduções da receita'), ('netRevenueAfterTaxes', 'Receita líquida'),
+        ('costsWithAnticipation', 'Custo de mercadoria'), ('grossAfterCosts', 'Lucro bruto (Margem de contribuição)'),
+        ('operatingExpensesWithPayroll', 'Despesas operacionais'), ('ebitda', 'Resultado operacional (EBITDA)'),
+        ('financialResult', 'Despesas/Receitas financeiras'), ('resultBeforeIncomeTaxes', 'Antes do IRPJ / CSLL'),
+        ('totalTaxes', 'Total de impostos'), ('netProfit', 'Resultado líquido'), ('netMargin', 'Resultado líquido (%)')]]
     pdf.bookmarkPage('summary')
-    pdf.addOutlineEntry('Resumo e Impostos', 'summary', 0)
-    top = header(1, 'Resumo dos resultados')
-    top = table(top, summary, body_height=175) - 14
-    top -= paragraph('Impostos', LEFT, top, WIDTH, 11, True, BURGUNDY) + 7
-    top = table(top, model.tax_rows(), taxes=True, body_height=top - BOTTOM - 72)
+    pdf.addOutlineEntry('Impostos e Resumo', 'summary', 0)
+    top = header(1, 'Impostos e indicadores')
+    # Reserve space for both tables and their explanatory notes on this page.
+    top = table(top, model.tax_rows(), taxes=True, body_height=top - BOTTOM - 325) - 12
+    top -= paragraph('Resumo dos resultados', LEFT, top, WIDTH, 11, True, BURGUNDY) + 7
+    top = table(top, summary, summary=True, body_height=top - BOTTOM - 54)
     notes = ('D = Débito; C = Crédito. Tributos líquidos dos créditos utilizados. '
-             'Percentuais sobre a receita bruta (serviços + vendas) do mesmo regime e período; '
-             'sem receita positiva, o percentual não se aplica. — indica indisponível.')
-    paragraph(notes, LEFT, top - 9, WIDTH, 6.8, color=MUTED)
-    pending = [regime['name'] + ': ' + (regime.get('status', 'Cálculo pendente') if len(regime.get('status', '')) <= 180 else 'Cálculo pendente em uma ou mais competências. Confira os motivos por mês na análise.') for regime in regimes if regime.get('available') is not True]
+             'Percentuais sobre a receita bruta de serviços e vendas; sem receita positiva, '
+             'não se aplica. — indica valor indisponível.')
+    note_top = top - 7
+    note_height = paragraph(notes, LEFT, note_top, WIDTH, 6.8, color=MUTED)
+    pending = []
+    for regime in regimes:
+        if regime.get('available') is True:
+            continue
+        status = regime.get('status') or 'Cálculo pendente.'
+        reason = status if len(status) <= 100 else 'Cálculo pendente. Confira os motivos por competência na análise.'
+        pending.append(regime['name'] + ': ' + reason)
     if pending:
-        paragraph(' | '.join(pending), LEFT, BOTTOM + 30, WIDTH, 6.3, color=BURGUNDY)
+        paragraph(' | '.join(pending), LEFT, note_top - note_height - 4, WIDTH, 6.3, color=BURGUNDY)
     pdf.showPage()
     pdf.bookmarkPage('dre')
     pdf.addOutlineEntry('DRE - Consolidado', 'dre', 0)

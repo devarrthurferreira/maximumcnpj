@@ -12,7 +12,7 @@ export function renderAccountingPaste({text='',preview=null,error='',replaceConf
   return `<details class="analysis-paste" id="analysis-accounting-paste-panel" ${open?'open':''}>
     <summary>Colar despesas de uma planilha</summary>
     <p class="analysis-note">Copie as oito colunas na ordem abaixo e cole aqui. Você confere os meses e valores antes de aplicar ao formulário.</p>
-    <p class="analysis-note"><strong>Competência · Salários e pró-labore · Aluguéis · Taxas de cartão · Benefícios · Outras despesas</strong></p>
+    <p class="analysis-note"><strong>Competência · Salários e pró-labore · Aluguéis · Taxas de cartão · Benefícios · Outras despesas · Despesas financeiras · Receitas financeiras</strong></p>
     <label for="analysis-accounting-paste">Dados copiados da planilha</label>
     <textarea id="analysis-accounting-paste" rows="5" wrap="off" spellcheck="false" maxlength="100000" aria-describedby="analysis-paste-help" ${canWrite?'':'disabled'} placeholder="01/2026&#9;1.500,00&#9;800,00&#9;120,00&#9;300,00&#9;0,00&#9;0,00&#9;0,00">${esc(text)}</textarea>
     <p class="analysis-note" id="analysis-paste-help">Use TAB (ao copiar do Excel) ou ponto e vírgula. Competência: 01/2026 ou 2026-01. Valores em reais, como 1.234,56 ou 1234.56; ponto com grupos de três dígitos indica milhar. Meses totalmente vazios ficam fora do cálculo. Em meses iniciados, complete as contas. ${fixedPeriod?'Pode colar o ano completo: somente janeiro a setembro entram no resultado.':'Máximo de 12 competências.'}</p>
