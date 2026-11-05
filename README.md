@@ -1,4 +1,10 @@
-# Maximum CNPJ · v0.58.5
+# Maximum CNPJ · v0.59.0
+## v0.59.0 — Alíquota CBS/IBS e descrição dos encargos (05/11/2026)
+
+No Fiscal, após RBT12 e relatórios, escolha **100%, 60% ou 40%** da alíquota de referência de **11,40%**, resultando em **11,40%, 6,84% ou 4,56%**. A seleção é aplicada aos débitos de CBS e IBS da receita por competência nos regimes Híbrido, Presumido e Real; o DAS do Simples Puro mantém a fórmula atual. Os créditos das compras mantêm as premissas dos fornecedores e permanecem limitados aos débitos. A opção fica registrada na análise e em cada simulação; versões anteriores sem escolha conservam 100%.
+
+A DRE apresenta **Benefícios e Encargos** e **INSS**, com os mesmos valores e fórmulas já capturados. A linha de INSS representa os encargos calculados no cenário, sem discriminar suas parcelas. O PDF e a impressão exibem a alíquota efetiva registrada, quando disponível. A seleção é uma premissa de simulação e depende do enquadramento da empresa.
+
 ## v0.58.5 — Identificação dos custos (05/11/2026)
 
 A DRE mostra **CUSTO** e os itens **Compras e serviços (do Simples)** e **Compras e serviços (fora do Simples)** na tela, no PDF e na impressão, sem alterar os valores calculados.

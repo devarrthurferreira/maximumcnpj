@@ -136,5 +136,5 @@ test('contrato fiscal valida a decisão, sem aceitar texto arbitrário ou prefer
  assert.throws(()=>parseFiscalData({...data,difalChoice:'yes'},selection));
 });
 test('Fiscal confere documentos antes de perguntar sobre inclusão',()=>{
- assert.deepEqual(WIZARD_STEPS.fiscal.map(step=>step.id),['regimes','rbt12','documents','difal']);
+ assert.deepEqual(WIZARD_STEPS.fiscal.map(step=>step.id),['regimes','rbt12','documents','cbs-ibs','difal']);
 });

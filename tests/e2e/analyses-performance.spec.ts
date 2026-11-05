@@ -63,7 +63,7 @@ async function switchSector(page:Page,sector:'fiscal'|'accounting'){
 }
 
 async function fiscalDocuments(page:Page){
-  const wizard=page.locator('#analysis-wizard'),steps=['regimes','rbt12','documents','difal'];
+  const wizard=page.locator('#analysis-wizard'),steps=['regimes','rbt12','documents','cbs-ibs','difal'];
   for(let attempt=0;attempt<steps.length;attempt++){
     const current=await wizard.getAttribute('data-wizard-step');expect(steps).toContain(current);
     if(current==='documents')return;
@@ -166,6 +166,8 @@ test('Geração realmente excluída permite salvar RBT12 e recuperar importaçã
   await page.locator('#analysis-wizard-next').click();
   await expect(page.locator('#analysis-fiscal-evidence')).toContainText('nova importação');
   await expect(page.locator('#analysis-fiscal-documents-view a')).toHaveCount(0);
+  await page.locator('#analysis-wizard-next').click();
+  await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','cbs-ibs');
   await page.locator('#analysis-wizard-next').click();
   await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','difal');
   await page.locator('#analysis-wizard button[value="complete"]').click();

@@ -205,6 +205,8 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   const baseRows=dreRows({...result,regimes:originals}),labels=new Map(baseRows);
   labels.set('cmvSimple','− Compras e serviços (do Simples)');
   labels.set('cmvRegular','− Compras e serviços (fora do Simples)');
+  labels.set('benefits','− Benefícios e Encargos');
+  labels.set('payroll','− INSS');
   const base=key=>row(key,labels.get(key),SUBTOTALS.has(key)?'subtotal':'line',f=>currency(f.get(key)),{sourceRefs:[`result.regimes[].dre.${key}`]});
   const reconciledSum=(keys,parent,less=null)=>f=>{
     const value=sum(keys.map(key=>f.get(key))),expected=less?sum([f.get(parent),finite(f.get(less))?-f.get(less):null]):f.get(parent);
@@ -546,12 +548,12 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
           optionalTax('icmsAnticipation','Antecipação de ICMS nas compras',['Antecipação deduzida uma única vez.']),
           finalRow('cbsIbsCredit','CBS/IBS Crédito'),finalRow('icmsCredit','ICMS Crédito'),contribution]},
         {key:'expenses',label:'Despesas operacionais',rows:[finalRow('operatingExpensesWithPayroll','Despesas operacionais','subtotal'),
-          display('salaries','Salários e pró-labore'),display('benefits','Benefícios de funcionários'),display('payroll','INSS / FGTS'),
+          display('salaries','Salários e pró-labore'),display('benefits','Benefícios e Encargos'),display('payroll','INSS'),
           display('rent','Aluguel'),display('cards','Taxas de cartão'),display('administrative','Outras despesas')]},
         {key:'profit',label:'Resultado',rows:[ebitda,finalRow('financialResult','Despesas/Receitas financeiras'),
           finalRow('resultBeforeIncomeTaxes','Resultado Antes do IRPJ/CSLL','subtotal','preTax'),
           display('irpj','IRPJ'),display('csll','CSLL'),display('netProfit','Resultado líquido')]}
-      ],note:'Receita bruta = serviços + vendas utilizados no cenário (devoluções já tratadas na origem). Deduções negativas; créditos utilizados positivos. Resultado financeiro = receitas menos despesas financeiras. INSS / FGTS usa os encargos capturados, sem discriminar cada parcela.'};
+      ],note:'Receita bruta = serviços + vendas utilizados no cenário (devoluções já tratadas na origem). Deduções negativas; créditos utilizados positivos. Resultado financeiro = receitas menos despesas financeiras. INSS representa os encargos de folha capturados, sem discriminação das parcelas.'};
   }
   return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,revenueReconciliation,icmsReconciliation,irpjReconciliation,months,calendarYear,
     ...(statement?{statement,taxStatement}:{}),

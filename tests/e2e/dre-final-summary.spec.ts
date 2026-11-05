@@ -32,6 +32,8 @@ test('impostos e DRE detalhável compartilham os regimes e a impressão',async({
   await expect(dre.locator('[data-dre-row="cmvSimple"] th')).toHaveText('Compras e serviços (do Simples)');
   await expect(dre.locator('[data-dre-row="cmvRegular"] th')).toHaveText('Compras e serviços (fora do Simples)');
   await expect(dre.locator('[data-dre-group-toggle="resultBeforeIncomeTaxes"]')).toContainText('Resultado Antes do IRPJ/CSLL');
+  await expect(dre.locator('[data-dre-row="benefits"] th')).toHaveText('Benefícios e Encargos');
+  await expect(dre.locator('[data-dre-row="payroll"] th')).toHaveText('INSS');
   await dre.locator('[data-dre-group-toggle="revenue"]').click();
   await dre.locator('[data-dre-group-toggle="revenueTaxes"]').click();
   await expect(dre.locator('#dre-child-revenue-services')).toBeHidden();
@@ -53,6 +55,7 @@ test('impostos e DRE detalhável compartilham os regimes e a impressão',async({
   await expect(pages.locator('.dre-print-letterhead')).toHaveCount(2);
   await expect.poll(()=>pages.locator('.dre-print-letterhead').evaluateAll(images=>images.every(image=>(image as HTMLImageElement).naturalWidth===1414))).toBe(true);
   await expect(pages.first()).toContainText('Impostos e indicadores');
+  await expect(pages.first().locator('[data-dre-combined-rate]')).toContainText('11,40%');
   await expect(pages.first()).not.toContainText('Resumo dos resultados');
   await expect(pages.first().locator('[data-tax-row="taxBurden"] + .dre-indicator-spacer + [data-tax-row="grossAfterCosts"]')).toHaveCount(1);
   await expect(pages.last()).toContainText('DRE - Consolidado');

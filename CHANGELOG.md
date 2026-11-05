@@ -1,5 +1,11 @@
 # Histórico de alterações
 
+## [0.59.0] - 2026-11-05
+
+- Adiciona ao Fiscal a escolha de 100%, 60% ou 40% da alíquota de referência CBS/IBS de 11,40%, aplicada aos débitos da receita e guardada por cenário e competência.
+- Preserva as premissas dos créditos de compras, as simulações históricas e o padrão de 100% para dados anteriores.
+- Renomeia as linhas da DRE para Benefícios e Encargos e INSS sem mudar as fórmulas; exibe a alíquota efetiva no PDF e na impressão.
+
 ## [0.58.5] - 2026-11-05
 
 - Renomeia o subtotal da DRE para CUSTO e coloca o enquadramento do fornecedor entre parênteses nos itens de compras e serviços, preservando os cálculos.

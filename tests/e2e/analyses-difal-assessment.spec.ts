@@ -57,6 +57,7 @@ test('DIFAL pela leitura: novo rascunho não tem resposta e preparar importaçã
   const saved=(await api(page.request,baseURL!,'GET',`/api/v4/analyses/${analysis.id}?summary=1`)).analysis;
   expect(saved.fiscal.data.difalChoice).toBeNull();
   await page.locator('#analysis-difal-documents').click();await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','documents');
+  await page.locator('#analysis-wizard-next').click();await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','cbs-ibs');
   await page.locator('#analysis-wizard-next').click();await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','difal');
 });
 

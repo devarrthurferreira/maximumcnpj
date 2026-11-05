@@ -20,7 +20,7 @@ function snapshot(body:any){
     ...(rbt12Source==='MANUAL'?{rbt12Manual:{source:'MANUAL',confirmed:true,rbt12Cents:Math.round(body.draft.rbt12*100)}}:{}),
     draft:body.draft,result:calculateSimulation(body.draft),engineInput:draftToInput(body.draft),taxSources:TAX_SOURCES,monthlyGroups:body.monthlyGroups,monthlyGroupsUnit:'BRL',reportMonths:body.reportMonths,periodConfirmed:true,manuallyAdjusted:false,adjustments:[],createdAt:'2026-09-30T16:00:00Z',createdBy:{id:'operator',name:'Teste'},modelVersion:MODEL_VERSION,calculatorSourceCommit:CALCULATOR_SOURCE_COMMIT,parentSimulationId:body.parentSimulationId||null};
 }
-async function complete(page:any, values:any={}){await page.locator('#period-confirm').check();await readStatement(page,Math.round((values.rbt12??150000)*100));for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill(String(values[id]??0));}
+async function complete(page:any, values:any={}){await page.locator('#period-confirm').check();await readStatement(page,Math.round((values.rbt12??150000)*100));for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses','financialExpenses','financialIncome'])await page.locator('#'+id).fill(String(values[id]??0));}
 
 for(const guided of [false,true])test(`RBT12 opcional no ${guided?'fluxo guiado':'simulador'} salva ausência explícita e preserva o rascunho sem PDF`,async({page},info)=>{
   await setup(page);const errors:string[]=[],savedBodies:any[]=[];
@@ -38,12 +38,14 @@ for(const guided of [false,true])test(`RBT12 opcional no ${guided?'fluxo guiado'
   await expect(page.locator('#rbt12-none')).toHaveAttribute('aria-pressed','true');
   await expect(page.locator('#rbt12')).not.toBeVisible();await expect(page.locator('#rbt12-pdf')).not.toBeVisible();
   await expect(page.locator('#rbt12-omitted-notice')).toContainText('Você pode gerar e salvar sem RBT12 ou extrato');
+  await page.locator('#cbs-ibs-percent').selectOption('40');
   await page.locator('#period-confirm').check();
-  for(const field of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+field).fill(field==='salaries'?'123':'0');
+  for(const field of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses','financialExpenses','financialIncome'])await page.locator('#'+field).fill(field==='salaries'?'123':'0');
   await page.reload();
   await expect(page.locator('#rbt12-none')).toHaveAttribute('aria-pressed','true');await expect(page.locator('#salaries')).toHaveValue('123.00');
+  await expect(page.locator('#cbs-ibs-percent')).toHaveValue('40');
   await page.locator('#generate-simulation').click();await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
-  expect(savedBodies).toHaveLength(1);expect(savedBodies[0]).toMatchObject({rbt12Source:'NOT_PROVIDED',draft:{rbt12:null,values:{salaries:123}}});
+  expect(savedBodies).toHaveLength(1);expect(savedBodies[0]).toMatchObject({rbt12Source:'NOT_PROVIDED',draft:{rbt12:null,cbsIbsPercent:40,values:{salaries:123}}});
   expect(savedBodies[0].rbt12ExtractionId).toBeUndefined();expect(savedBodies[0].rbt12ManualConfirmed).toBeUndefined();
   await expect(page.locator('#dre-demonstrativo [data-simples-diagnostic="MISSING_RBT12"]')).toBeVisible();
   expect(snapshot(savedBodies[0]).result.regimes.filter((row:any)=>row.available).map((row:any)=>row.id)).toEqual(['presumed','actual']);
@@ -62,7 +64,7 @@ for(const guided of [false,true])test(`RBT12 opcional no ${guided?'fluxo guiado'
 
 for(const referenceSource of ['SIMPLES_SECTION_22','SIMPLES_PDF'])test(`Nova versão de ${referenceSource} sem leitura válida preserva a escolha de PDF até o usuário dispensar a referência`,async({page})=>{
   await setup(page);
-  const draft={...createEmptyDraft(),rbt12:150000,values:{salesRevenue:10000.01,serviceRevenue:0,simplePurchases:1000.01,regularPurchases:3500,salaries:0,rent:0,cardExpenses:0,benefits:0,adminExpenses:0}};
+  const draft={...createEmptyDraft(),rbt12:150000,cbsIbsPercent:60,values:{salesRevenue:10000.01,serviceRevenue:0,simplePurchases:1000.01,regularPurchases:3500,salaries:0,rent:0,cardExpenses:0,benefits:0,adminExpenses:0}};
   const body={simulationId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',draft,reportMonths:1,
     monthlyGroups:Object.fromEntries(Object.entries(source.fields).map(([key,value])=>[key,value/100]))};
   const saved={...snapshot(body),rbt12Source:referenceSource,rbt12Extraction:null};
@@ -71,6 +73,7 @@ for(const referenceSource of ['SIMPLES_SECTION_22','SIMPLES_PDF'])test(`Nova ver
     const request=route.request().postDataJSON();writes.push(request);return route.fulfill({status:201,json:snapshot(request)});
   });
   await page.goto('/simulator.html?simulation='+saved._id);await page.locator('#create-version').click();
+  await expect(page.locator('#cbs-ibs-percent')).toHaveValue('60');
   await expect(page.locator('#rbt12-use-pdf')).toHaveAttribute('aria-pressed','true');
   await expect(page.locator('#rbt12-none')).toHaveAttribute('aria-pressed','false');
   await expect(page.locator('#rbt12-pdf')).toBeVisible();await expect(page.locator('#rbt12')).toHaveValue('');
@@ -96,7 +99,7 @@ test('Verified report values populate five categories and require monthly inputs
   await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();await expect(page.locator('#results-top')).toHaveCount(0);
   await page.locator('#period-confirm').check();
   await readStatement(page);
-  for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses'])await page.locator('#'+id).fill('0');
+  for(const id of ['serviceRevenue','salaries','benefits','adminExpenses','rent','cardExpenses','financialExpenses','financialIncome'])await page.locator('#'+id).fill('0');
   await expect(page.locator('#annual-revenue')).toContainText('120.000,12');
   await page.getByRole('button',{name:'Gerar simulação',exact:true}).click();
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva no histórico');await expect(page.locator('.sim-regime')).toHaveCount(4);await expect(page.locator('.sim-dre')).toContainText('Indicador');
@@ -170,7 +173,7 @@ test('Saved detail only reads captured snapshot and opens an independent editabl
   await expect(page.locator('#simulation-snapshot .sim-detail-grid')).toBeHidden();await expect(page.locator('#create-version')).toBeVisible();
   await page.locator('.sim-captured-details summary').first().focus();await page.keyboard.press('Enter');
   await expect(page.locator('#simulation-snapshot .sim-detail-grid')).toBeVisible();
-  await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');await expect(page.locator('#simulation-snapshot .sim-detail-grid strong')).toHaveCount(13);
+  await expect(page.locator('.sim-regime').first()).toContainText('123.456,78');await expect(page.locator('#simulation-snapshot .sim-detail-grid strong')).toHaveCount(15);
   await page.locator('.sim-captured-details summary').first().focus();await page.keyboard.press('Enter');
   await expect(page.locator('.sim-charts')).toBeHidden();
   await page.evaluate(()=>{

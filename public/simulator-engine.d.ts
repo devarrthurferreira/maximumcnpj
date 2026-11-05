@@ -1,6 +1,8 @@
 /** Types for the shared, dependency-free calculator used by browser and server. */
 import type {RegimeId,RegimeSelection} from './regime-selection.js';
 export const MODEL_VERSION: string;
+export type CbsIbsPercent = 100 | 60 | 40;
+export function parseCbsIbsPercent(value:unknown):CbsIbsPercent;
 export const OUTGOING_DIFAL_MESSAGE: string;
 export const SIMPLES_DIAGNOSTIC_VERSION:'SIMPLES_DIAGNOSTIC_V1';
 export const REVENUE_CONTEXT_VERSION:'SIMPLES_REVENUE_CONTEXT_V1';
@@ -50,6 +52,8 @@ export type SimulationDraft = {
   regimeSelection?: RegimeSelection;
   /** User-confirmed local tax treatment. Absence preserves the historical inside-DAS premise. */
   icmsOutside?: boolean;
+  /** Share of the base CBS/IBS rate applied to revenue debits; omitted means 100%. */
+  cbsIbsPercent?: CbsIbsPercent;
   difalPolicy?: DifalPolicy;
   values: Record<SimulationValueField, number> & Partial<Record<'financialExpenses'|'financialIncome',number>>;
 };

@@ -25,7 +25,7 @@ async function fiscalStep(page:Page,step:'regimes'|'difal'|'rbt12'|'documents'){
     await opener.click();
   }
   await expect(wizard).toBeVisible();await expect(wizard).toHaveAttribute('data-wizard-kind','fiscal');
-  const steps=['regimes','rbt12','documents','difal'];
+  const steps=['regimes','rbt12','documents','cbs-ibs','difal'];
   for(let attempt=0;attempt<steps.length;attempt++){
     const current=await wizard.getAttribute('data-wizard-step');expect(steps).toContain(current);
     if(current===step)return;

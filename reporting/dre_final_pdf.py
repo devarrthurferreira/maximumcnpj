@@ -105,6 +105,11 @@ def render_final_pdf(model, letterhead):
     pdf.bookmarkPage('taxes')
     pdf.addOutlineEntry('Impostos e indicadores', 'taxes', 0)
     top = header(1, 'Impostos e indicadores')
+    rates = model.tax_rates()
+    if all(finite(rates[key]) for key in ('cbs', 'ibs', 'combined')):
+        rate_text = ('CBS/IBS do cenário: ' + percentage(rates['combined'], 2) +
+                     ' (CBS ' + percentage(rates['cbs'], 2) + ' + IBS ' + percentage(rates['ibs'], 2) + ')')
+        top -= paragraph(rate_text, LEFT, top, WIDTH, 8, color=MUTED) + 8
     # Preserve a full blank row between tax burden and operating indicators.
     top = table(top, model.tax_rows(), taxes=True, body_height=top - BOTTOM - 65)
     notes = ('D = Débito; C = Crédito. Tributos líquidos dos créditos utilizados. '
@@ -128,7 +133,7 @@ def render_final_pdf(model, letterhead):
     top = table(top, definitions, body_height=top - BOTTOM - 64)
     paragraph('Receita bruta = serviços + vendas utilizados no cenário, com devoluções já tratadas na origem. '
               'Deduções negativas e créditos utilizados positivos. Resultado financeiro = receitas menos despesas financeiras. '
-              'INSS / FGTS usa os encargos capturados, sem discriminar cada parcela. IRPJ e CSLL são finais. — indica indisponível.', LEFT, top - 10, WIDTH, 6.8, color=MUTED)
+              'INSS representa os encargos de folha capturados, sem discriminação das parcelas. IRPJ e CSLL são finais. — indica indisponível.', LEFT, top - 10, WIDTH, 6.8, color=MUTED)
     pdf.showPage()
     pdf.save()
     return stream.getvalue()

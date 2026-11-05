@@ -1,8 +1,8 @@
 import {AppError, need} from './security.ts';
 import {parseRegimeSelection, requiresSimplesReference} from '../public/regime-selection.js';
 import type {RegimeSelection} from '../public/regime-selection.js';
-import {parseDifalPolicy, upgradeDifalPolicy} from '../public/simulator-engine.js';
-import type {DifalPolicy} from '../public/simulator-engine.js';
+import {parseDifalPolicy, upgradeDifalPolicy,parseCbsIbsPercent} from '../public/simulator-engine.js';
+import type {DifalPolicy,CbsIbsPercent} from '../public/simulator-engine.js';
 import {JAN_SEP_POLICY,isAnalysisMonth,analysisMonthsForYear} from '../public/analysis-period.js';
 
 export const ANALYSIS_VERSION = 'ANALYSIS_SECTORS_V1';
@@ -19,6 +19,7 @@ export type AccountingData = {months:AccountingMonth[];monthlyAverage?:Accountin
 export type FiscalOverride = {sourceMonth:string;groups:Record<typeof ANALYSIS_GROUPS[number],number>;serviceRevenue:number};
 export type FiscalData = {
   generationId:string|null;salesAnnex:1|2;serviceAnnex:3|4|5;icmsOutside:boolean;difalPolicy:DifalPolicy;difalChoice?:'yes'|'no'|null;
+  cbsIbsPercent?:CbsIbsPercent;
   rbt12Source:'SIMPLES_SECTION_22'|'MANUAL'|'NOT_PROVIDED'|'NOT_REQUIRED';rbt12ExtractionId:string|null;rbt12DocumentId:string|null;
   rbt12:number|null;rbt12ManualConfirmed:boolean;monthlyOverrides:FiscalOverride[]|null;
 };
@@ -99,7 +100,7 @@ export function accountingForYear(data:AccountingData,sourceYear?:number):Accoun
   return {...data,months:analysisMonthsForYear(year).map(sourceMonth=>normalize({sourceMonth,...data.monthlyAverage!.values}))};
 }
 export function defaultFiscalData(selection:RegimeSelection):FiscalData {
-  return {generationId:null,salesAnnex:1,serviceAnnex:3,icmsOutside:false,difalPolicy:upgradeDifalPolicy(),
+  return {generationId:null,salesAnnex:1,serviceAnnex:3,icmsOutside:false,difalPolicy:upgradeDifalPolicy(),cbsIbsPercent:100,
     rbt12Source:requiresSimplesReference(selection)?'NOT_PROVIDED':'NOT_REQUIRED',rbt12ExtractionId:null,rbt12DocumentId:null,
     rbt12:null,rbt12ManualConfirmed:false,monthlyOverrides:null};
 }
@@ -112,10 +113,15 @@ export function effectiveAnalysisDifalPolicy(preferences:DifalPolicy,selection:R
   return effective;
 }
 export function parseFiscalData(value:unknown,selection:RegimeSelection):FiscalData {
-  analysisObject(value,['generationId','salesAnnex','serviceAnnex','icmsOutside','difalPolicy','rbt12Source','rbt12ExtractionId','rbt12DocumentId','rbt12','rbt12ManualConfirmed','monthlyOverrides'],['difalChoice']);
+  analysisObject(value,['generationId','salesAnnex','serviceAnnex','icmsOutside','difalPolicy','rbt12Source','rbt12ExtractionId','rbt12DocumentId','rbt12','rbt12ManualConfirmed','monthlyOverrides'],['difalChoice','cbsIbsPercent']);
   need([1,2].includes(value.salesAnnex) && [3,4,5].includes(value.serviceAnnex),'Selecione anexos válidos.');
   need(typeof value.icmsOutside==='boolean' && typeof value.rbt12ManualConfirmed==='boolean','Confirme as opções fiscais.');
   const difalPolicy=analysisDifalPolicy(value.difalPolicy);
+  let cbsIbsPercent:CbsIbsPercent|undefined;
+  if(Object.hasOwn(value,'cbsIbsPercent')){
+    try{cbsIbsPercent=parseCbsIbsPercent(value.cbsIbsPercent);}
+    catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Alíquota de CBS/IBS inválida.');}
+  }
   const needsReference=requiresSimplesReference(selection);
   if(Object.hasOwn(value,'difalChoice'))need(value.difalChoice===null||value.difalChoice==='yes'||value.difalChoice==='no','Escolha incluir ou não o DIFAL, ou mantenha a decisão pendente.');
   const includesEntry=selection.selected.some(id=>(id==='pure'||id==='hybrid')&&difalPolicy.enabled[id]&&difalPolicy.version==='DIFAL_SCENARIOS_V2'&&difalPolicy.operations[id].entry);
@@ -124,7 +130,7 @@ export function parseFiscalData(value:unknown,selection:RegimeSelection):FiscalD
   need(needsReference ? ['SIMPLES_SECTION_22','MANUAL','NOT_PROVIDED'].includes(value.rbt12Source) : value.rbt12Source==='NOT_REQUIRED',
     needsReference?'Escolha não informar a RBT12, preencher manualmente ou usar o extrato.':'Sem Simples selecionado, a referência de RBT12 deve estar dispensada.',400,'RBT12_SOURCE');
   const data: FiscalData={generationId:value.generationId===null?null:analysisId(value.generationId),salesAnnex:value.salesAnnex,serviceAnnex:value.serviceAnnex,
-    icmsOutside:value.icmsOutside,difalPolicy,...(Object.hasOwn(value,'difalChoice')?{difalChoice:value.difalChoice}:{}),rbt12Source:value.rbt12Source,
+    icmsOutside:value.icmsOutside,difalPolicy,...(cbsIbsPercent===undefined?{}:{cbsIbsPercent}),...(Object.hasOwn(value,'difalChoice')?{difalChoice:value.difalChoice}:{}),rbt12Source:value.rbt12Source,
     rbt12ExtractionId:value.rbt12ExtractionId===null?null:analysisId(value.rbt12ExtractionId),
     rbt12DocumentId:value.rbt12DocumentId===null?null:analysisId(value.rbt12DocumentId),
     rbt12:value.rbt12===null?null:money(value.rbt12),rbt12ManualConfirmed:value.rbt12ManualConfirmed,monthlyOverrides:null};

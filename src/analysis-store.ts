@@ -62,7 +62,8 @@ function fingerprint(source:Source,reference:unknown,config:AnalysisConfig,data:
   return digest(JSON.stringify(ordered({generationId:source.generationId,clientId:source.clientId,purchases:source.purchases,sales:source.sales,
     monthlyReports:source.monthlyReports,fields:source.fields,period:source.period,analysisPeriod:source.analysisPeriod,importedOperationAudit:source.importedOperationAudit,operationVersion:source.operationVersion,
     reference,year:config.year,regimeSelection:config.regimeSelection,salesAnnex:data.salesAnnex,serviceAnnex:data.serviceAnnex,
-    difalPolicy:data.difalPolicy,icmsOutside:data.icmsOutside,monthlyOverrides:data.monthlyOverrides})));
+    difalPolicy:data.difalPolicy,icmsOutside:data.icmsOutside,monthlyOverrides:data.monthlyOverrides,
+    ...(data.cbsIbsPercent!==undefined&&data.cbsIbsPercent!==100?{cbsIbsPercent:data.cbsIbsPercent}:{})})));
 }
 async function fiscalSource(item:Analysis,data=item.fiscal.data,onSource?:(source:Source)=>void){
   need(data.generationId,'Importe as entradas e saídas da empresa.',422,'ANALYSIS_FISCAL_INCOMPLETE');
@@ -185,7 +186,8 @@ function seedLegacy(item:Analysis,snapshot:any,actor:LookupActor){
   item.config={revision:item.config.revision+1,year:analysisYear(snapshot.draft?.year||item.config.year),regimeSelection:selection};
   const data=defaultFiscalData(selection);
   Object.assign(data,{generationId:snapshot.generationId,salesAnnex:snapshot.draft?.salesAnnex||1,serviceAnnex:snapshot.draft?.serviceAnnex||3,
-    difalPolicy:upgradeDifalPolicy(snapshot.draft?.difalPolicy??snapshot.source?.difalPolicy),icmsOutside:snapshot.draft?.icmsOutside===true});
+    difalPolicy:upgradeDifalPolicy(snapshot.draft?.difalPolicy??snapshot.source?.difalPolicy),icmsOutside:snapshot.draft?.icmsOutside===true,
+    cbsIbsPercent:snapshot.draft?.cbsIbsPercent??100});
   if(requiresSimplesReference(selection)) Object.assign(data,{rbt12Source:snapshot.rbt12Source==='NOT_PROVIDED'?'NOT_PROVIDED':snapshot.rbt12Source==='MANUAL'?'MANUAL':'SIMPLES_SECTION_22',
     rbt12ExtractionId:snapshot.rbt12Extraction?.id||null,rbt12:snapshot.draft?.rbt12??null,rbt12ManualConfirmed:snapshot.rbt12Manual?.confirmed===true});
   const inputs=Array.isArray(snapshot.monthlyInputs)?snapshot.monthlyInputs:[];
@@ -372,6 +374,7 @@ function calculationInput(item:Analysis,source:Source,simulationId:string){
   });
   const first=monthlyInputs[0],draft={year:item.config.year,salesAnnex:f.salesAnnex,serviceAnnex:f.serviceAnnex,regimeSelection:item.config.regimeSelection,
     ...(requiresSimplesReference(item.config.regimeSelection)?{rbt12:f.rbt12}:{}),difalPolicy:f.difalPolicy,icmsOutside:f.icmsOutside,
+    ...(f.cbsIbsPercent===undefined?{}:{cbsIbsPercent:f.cbsIbsPercent}),
     values:{...first.values,salesRevenue:ANALYSIS_GROUPS.slice(0,3).reduce((sum,key)=>sum+Math.round(first.groups[key]*100),0)/100,
       simplePurchases:first.groups.purchasesOptantCents,regularPurchases:first.groups.purchasesNonOptantCents}};
   return {simulationId,generationId:f.generationId,clientId:item.clientId,periodPolicy:JAN_SEP_POLICY,reportMonths:monthlyInputs.length,periodConfirmed:true,monthlyInputs,
