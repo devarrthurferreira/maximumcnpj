@@ -28,8 +28,9 @@ test('impostos e DRE detalhável compartilham os regimes e a impressão',async({
   for(const id of ['cmvSimple','cmvRegular','icmsAnticipation','cbsIbsCredit','icmsCredit'])await expect(dre.locator(`#dre-child-costsWithAnticipation-${id}`)).toBeVisible();
   for(const id of ['salaries','benefits','payroll','rent','cards','administrative'])await expect(dre.locator(`#dre-child-operatingExpensesWithPayroll-${id}`)).toBeVisible();
   for(const id of ['irpj','csll'])await expect(dre.locator(`#dre-child-resultBeforeIncomeTaxes-${id}`)).toBeVisible();
-  await expect(dre.locator('[data-dre-row="cmvSimple"] th')).toHaveText('Compras e serviços do Simples');
-  await expect(dre.locator('[data-dre-row="cmvRegular"] th')).toHaveText('Compras e serviços fora do Simples');
+  await expect(dre.locator('[data-dre-group-toggle="costsWithAnticipation"]')).toContainText('CUSTO');
+  await expect(dre.locator('[data-dre-row="cmvSimple"] th')).toHaveText('Compras e serviços (do Simples)');
+  await expect(dre.locator('[data-dre-row="cmvRegular"] th')).toHaveText('Compras e serviços (fora do Simples)');
   await expect(dre.locator('[data-dre-group-toggle="resultBeforeIncomeTaxes"]')).toContainText('Resultado Antes do IRPJ/CSLL');
   await dre.locator('[data-dre-group-toggle="revenue"]').click();
   await dre.locator('[data-dre-group-toggle="revenueTaxes"]').click();
@@ -59,7 +60,9 @@ test('impostos e DRE detalhável compartilham os regimes e a impressão',async({
   await expect(pages.last()).toContainText('Receita de vendas');
   await expect(pages.last()).toContainText('ICMS Débito');
   await expect(pages.last()).toContainText('CSLL');
-  await expect(pages.last()).toContainText('Compras e serviços do Simples');
+  await expect(pages.last()).toContainText('CUSTO');
+  await expect(pages.last()).toContainText('Compras e serviços (do Simples)');
+  await expect(pages.last()).toContainText('Compras e serviços (fora do Simples)');
   await expect(pages.last()).toContainText('Resultado Antes do IRPJ/CSLL');
   await expect(printed).not.toContainText('Simples Puro');
   await page.emulateMedia({media:'print'});
