@@ -84,7 +84,11 @@ jobs:
       - name: Análises por setor, unicidade e histórico de versões
         run: npm run test:analyses-integration
       - name: Projeção anual e competências com MongoDB descartável
-        run: npm run test:projection && npm run test:competences
+        run: |
+          mkdir -p test-results
+          set -o pipefail
+          npm run test:projection 2>&1 | tee test-results/projecao.log
+          npm run test:competences 2>&1 | tee test-results/competencias.log
       - name: Conta efêmera para teste
         run: npm run seed
       - name: Chromium para testes
