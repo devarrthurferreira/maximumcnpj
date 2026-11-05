@@ -1,4 +1,12 @@
-# Maximum CNPJ · v0.58.1
+# Maximum CNPJ · v0.58.2
+## v0.58.2 — DRE detalhada e impostos em duas páginas (05/11/2026)
+
+O quadro de resumo foi removido da tela e dos PDFs Jan–Set. Os impostos e a seleção de regimes aparecem primeiro, seguidos da DRE consolidada. Na DRE, receita bruta, deduções, custo de mercadoria, despesas operacionais e resultado antes do IRPJ/CSLL podem ser abertos ou recolhidos. Os itens começam visíveis e a escolha é preservada ao trocar regimes ou análise vertical.
+
+O PDF e a impressão têm duas páginas: impostos e indicadores na primeira; DRE completa na segunda, mesmo com grupos recolhidos na tela. Uma linha em branco separa o percentual de impostos da margem de contribuição. O CSV mantém o detalhamento mensal e os dados salvos não são alterados.
+
+A apresentação abaixo registra a versão anterior; prevalece a descrição v0.58.2 acima em caso de diferença.
+
 ## v0.58.1 — Impostos no topo e resumo detalhável (05/11/2026)
 
 A tela consolidada de janeiro a setembro segue **Impostos e seleção de regimes → Resumo dos resultados → DRE - Consolidado**. A seleção vale para os três quadros e para o download. No resumo, os títulos abrem ou recolhem seus subitens; receita bruta mostra serviços e vendas. As escolhas abertas são mantidas ao trocar os regimes.

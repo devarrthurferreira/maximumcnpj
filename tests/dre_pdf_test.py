@@ -35,7 +35,7 @@ def rendered(variant, period='complete', show_percent=False):
 
 
 def section_text(document, label, following):
-    if document.page_count == 2 and document.get_toc()[0][1] == 'Impostos e Resumo':
+    if document.page_count == 2 and document.get_toc()[0][1] == 'Impostos e indicadores':
         index = 1 if label == 'DRE comparativa detalhada' else 0
         return normalized(document[index].get_text())
     sections = {title: page for _, title, page in document.get_toc()}
@@ -51,7 +51,7 @@ class DrePdfTests(unittest.TestCase):
             self.assertEqual(document.page_count, 2)
             self.assertFalse(document.needs_pass)
             self.assertIn('Simulador Reforma Tributária', document.metadata['title'])
-            self.assertEqual(document.get_toc(), [[1, 'Impostos e Resumo', 1], [1, 'DRE - Consolidado', 2]])
+            self.assertEqual(document.get_toc(), [[1, 'Impostos e indicadores', 1], [1, 'DRE - Consolidado', 2]])
             letterheads = set()
             for index, page in enumerate(document):
                 text = normalized(page.get_text())
@@ -71,12 +71,15 @@ class DrePdfTests(unittest.TestCase):
                     self.assertGreaterEqual(word[1], 0)
                     self.assertLessEqual(word[3], page.rect.height)
             self.assertEqual(len(letterheads), 1)
-            self.assertIn('Resumo dos resultados', document[0].get_text())
+            self.assertNotIn('Resumo dos resultados', document[0].get_text())
             self.assertIn('Impostos e indicadores', document[0].get_text())
-            self.assertLess(document[0].get_text().index('Impostos e indicadores'), document[0].get_text().index('Resumo dos resultados'))
-            self.assertIn('Receitas de serviços', document[0].get_text())
-            self.assertIn('Receita de vendas', document[0].get_text())
             self.assertIn('DRE - Consolidado', document[1].get_text())
+            self.assertIn('Receitas de serviços', document[1].get_text())
+            self.assertIn('Receita de vendas', document[1].get_text())
+            burden = document[0].search_for('% sobre a receita')[0]
+            contribution = document[0].search_for('Margem de contribuição')[0]
+            self.assertGreaterEqual(contribution.y0 - burden.y1, 15,
+                                    'A linha em branco deve separar a carga tributária dos indicadores.')
             self.assertNotIn('Memória de cálculo', normalized(' '.join(page.get_text() for page in document)))
 
     def test_all_export_options_keep_two_pages_and_saved_values(self):
@@ -100,7 +103,7 @@ class DrePdfTests(unittest.TestCase):
                         for key in ('taxBurden', 'contributionMargin', 'ebitdaMargin', 'netMargin'):
                             self.assertIn(f"{view.tax_value(regime, key) * 100:.2f}".replace('.', ',') + '%', taxes)
                     self.assertNotIn('Total de impostos', statement)
-                    self.assertIn('Total de impostos', taxes)
+                    self.assertIn('Total', taxes)
         self.assertEqual(saved, before)
 
     def test_loss_zero_excesses_missing_months_and_pending_regimes_keep_two_pages(self):

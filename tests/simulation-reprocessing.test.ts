@@ -31,14 +31,18 @@ const currentPolicy = (value:any) => {
 const difalPolicy=(enabled:Record<string,boolean>={})=>({version:'DIFAL_SCENARIOS_V1',enabled:{pure:true,hybrid:true,presumed:true,actual:true,...enabled}});
 const anticipation={version:'ICMS_ANTICIPATION_V3',ratePercent:7.32,issuerUf:'MG',eligibleLines:0,baseCents:0,amountCents:0,pendingLines:1};
 
-test('DRE Jan–Set antiga e revisão V15 nunca reutilizam o identificador da atualização do prejuízo',()=>{
+test('DRE Jan–Set com contas financeiras não reutiliza identificadores das revisões V15 e V16',()=>{
   const workspace='ws',originalId='10000000-0000-4000-8000-000000000005';
-  assert.equal(REPROCESS_VERSION,'QUARTERLY_INCOME_TAX_2026_11_V16');
-  assert.equal(JAN_SEP_MODEL_VERSION,'1.20.1-quarterly-income-tax-available-months-loss-zero');
-  const old=digest(JSON.stringify([workspace,originalId,'QUARTERLY_INCOME_TAX_2026_11_V15',
-    '1.20.0-quarterly-income-tax-available-months']));
-  const priorId=`${old.slice(0,8)}-${old.slice(8,12)}-5${old.slice(13,16)}-a${old.slice(17,20)}-${old.slice(20,32)}`;
-  assert.notEqual(reprocessedSimulationId(workspace,originalId,JAN_SEP_POLICY),priorId);
+  assert.equal(REPROCESS_VERSION,'QUARTERLY_INCOME_TAX_2026_11_V17');
+  assert.equal(JAN_SEP_MODEL_VERSION,'1.21.0-quarterly-income-tax-available-months-financial');
+  for(const [revision,model] of [
+    ['QUARTERLY_INCOME_TAX_2026_11_V15','1.20.0-quarterly-income-tax-available-months'],
+    ['QUARTERLY_INCOME_TAX_2026_11_V16','1.20.1-quarterly-income-tax-available-months-loss-zero']
+  ]){
+    const old=digest(JSON.stringify([workspace,originalId,revision,model]));
+    const priorId=`${old.slice(0,8)}-${old.slice(8,12)}-5${old.slice(13,16)}-a${old.slice(17,20)}-${old.slice(20,32)}`;
+    assert.notEqual(reprocessedSimulationId(workspace,originalId,JAN_SEP_POLICY),priorId);
+  }
   assert.notEqual(reprocessedSimulationId(workspace,originalId,JAN_SEP_POLICY),
     reprocessedSimulationId(workspace,originalId));
 });

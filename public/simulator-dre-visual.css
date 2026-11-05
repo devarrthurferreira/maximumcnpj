@@ -441,10 +441,11 @@
   body.dre-print-only .dre-final-print .dre-table-wrap{min-width:0!important;width:100%;overflow:visible!important;margin:0}
   body.dre-print-only .dre-final-print table{min-width:0!important;width:100%!important;table-layout:fixed}
   body.dre-print-only .dre-final-print th,body.dre-print-only .dre-final-print td{font-size:8px!important;line-height:1.2!important;padding:4px 5px!important;white-space:normal!important;overflow-wrap:anywhere}
+  body.dre-print-only .dre-final-print .dre-final-page:first-child tr:not(.dre-indicator-spacer) th,body.dre-print-only .dre-final-print .dre-final-page:first-child tr:not(.dre-indicator-spacer) td{font-size:9px!important;padding:7px 5px!important}
   body.dre-print-only .dre-final-print th:first-child{width:37%!important;min-width:0!important;position:static!important}
   .dre-final-print .dre-percent,.dre-final-print .dre-composition-label,.dre-final-print .dre-irpj-total-note{display:none!important}
   .dre-final-print .dre-final-note{font-size:8px!important;line-height:1.4;margin:10px 0}
-  .dre-final-print .dre-final-page footer{position:absolute;bottom:0;right:0;font-size:9px}
+  .dre-final-print .dre-final-page footer{display:none}
 }
 
 /* Hierarquia do resumo: cada grupo pode ser aberto sem recalcular os valores. */
