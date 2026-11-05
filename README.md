@@ -1,4 +1,10 @@
-# Maximum CNPJ · v0.58.2
+# Maximum CNPJ · v0.58.3
+## v0.58.3 — Identificação dos impostos (05/11/2026)
+
+A linha de IRPJ segue o estilo das demais contas nos quadros de impostos e DRE. A antecipação aparece como **Antecipação de ICMS** nos impostos, no PDF e no CSV; os valores e cálculos permanecem iguais.
+
+As descrições abaixo registram versões anteriores.
+
 ## v0.58.2 — DRE detalhada e impostos em duas páginas (05/11/2026)
 
 O quadro de resumo foi removido da tela e dos PDFs Jan–Set. Os impostos e a seleção de regimes aparecem primeiro, seguidos da DRE consolidada. Na DRE, receita bruta, deduções, custo de mercadoria, despesas operacionais e resultado antes do IRPJ/CSLL podem ser abertos ou recolhidos. Os itens começam visíveis e a escolha é preservada ao trocar regimes ou análise vertical.

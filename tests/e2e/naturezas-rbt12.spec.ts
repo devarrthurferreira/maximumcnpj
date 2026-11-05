@@ -146,7 +146,7 @@ test('compras CNPJ preservam antecipação e CPF é excluído e vendas CPF/CNPJ 
   await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
   await expect(page.locator('#dre-demonstrativo [data-dre-row="salaries"]')).toBeVisible();
   await showDreRegimes(page,['pure']);await expect(page.locator('#tax-demonstrativo [data-dre-row="icmsAnticipation"] td').first()).toHaveText('R$ 219,60');
-  const monthlyCsv=await readDreMonthlyCsv(page),anticipation=dreMonthlyValues(monthlyCsv,'Simples Puro','Antecipação','Impostos');
+  const monthlyCsv=await readDreMonthlyCsv(page),anticipation=dreMonthlyValues(monthlyCsv,'Simples Puro','Antecipação de ICMS','Impostos');
   expect(anticipation[0]).toBe('219,60');expect(anticipation[1]).toBe('0,00');
   await expectConsolidatedDre(page);
   await showDreRegimes(page,['actual']);await expect(page.locator('#tax-demonstrativo [data-dre-row="icmsAnticipation"] td').first()).toHaveText('R$ 0,00');
@@ -159,7 +159,7 @@ test('compras CNPJ preservam antecipação e CPF é excluído e vendas CPF/CNPJ 
     await expectConsolidatedDre(reopened);await expect(reopened.locator('#dre-report-period')).toHaveValue('complete');
     await expect(reopened.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
     await showDreRegimes(reopened,['hybrid']);await expect(reopened.locator('[data-dre-row="icmsAnticipation"] td').first()).toContainText('219,60');
-    const reopenedMonths=await readDreMonthlyCsv(reopened);expect(dreMonthlyValues(reopenedMonths,'Simples Híbrido','Antecipação','Impostos')[0]).toBe('219,60');
+    const reopenedMonths=await readDreMonthlyCsv(reopened);expect(dreMonthlyValues(reopenedMonths,'Simples Híbrido','Antecipação de ICMS','Impostos')[0]).toBe('219,60');
     const stored=await fresh.request.get(`/api/v4/simulations/${saved._id}`);expect(await stored.json()).toEqual(saved);
     for(const width of [1440,390]){await reopened.setViewportSize({width,height:1000});expect(await reopened.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await reopened.locator('#simulator-anticipation').screenshot({path:info.outputPath(`antecipacao-${width}.png`)});}
     await expect(reopened.locator('#sim-difal-options [data-difal-option="pure"]')).toContainText('Incluído por escolha');

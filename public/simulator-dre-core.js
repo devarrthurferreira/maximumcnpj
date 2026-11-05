@@ -482,7 +482,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
       notes:[...notes,'Informação não capturada nesta versão permanece indisponível; não representa zero confirmado.'],
       sourceRefs:[`result.regimes[].dre.${key}`]});
     const assessedRows=[display('das','Simples'),display('icmsNet','ICMS (D − C)'),combinedTaxes,
-      display('irpj','IRPJ'),display('csll','CSLL'),optionalTax('icmsAnticipation','Antecipação',['Antecipação de ICMS capturada no cenário, incluída uma única vez no total de impostos.']),optionalTax('difal','DIFAL',['DIFAL capturado no cenário, incluído uma única vez no total de impostos.']),
+      display('irpj','IRPJ'),display('csll','CSLL'),optionalTax('icmsAnticipation','Antecipação de ICMS',['Antecipação de ICMS capturada no cenário, incluída uma única vez no total de impostos.']),optionalTax('difal','DIFAL',['DIFAL capturado no cenário, incluído uma única vez no total de impostos.']),
       display('payroll','INSS',{notes:['Encargos patronais da folha capturados no cenário. No Simples, somente a parcela fora do DAS; não somar novamente às despesas operacionais.']})].filter(Boolean);
     const iss=captured.get('iss');
     // Retain tax components whenever they are applied or their absence is not confirmed.

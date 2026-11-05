@@ -1,5 +1,10 @@
 # Histórico de alterações
 
+## [0.58.3] - 2026-11-05
+
+- Remove o destaque visual de IRPJ nos quadros de impostos e DRE.
+- Renomeia a linha de impostos para Antecipação de ICMS na tela, no PDF e no CSV, preservando os valores.
+
 ## [0.58.2] - 2026-11-05
 
 - Remove o quadro de resumo da tela e dos PDFs Jan–Set, concentrando os itens na DRE consolidada.
