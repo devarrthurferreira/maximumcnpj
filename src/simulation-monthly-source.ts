@@ -10,6 +10,7 @@ import {MONTHLY_FIELDS, type MonthlyReport} from '../public/simulator-monthly.js
 import {summarizeIcmsOperations, type IcmsOperations} from '../public/simulator-icms.js';
 import {JAN_SEP_POLICY,reportMonthsInPeriod} from '../public/analysis-period.js';
 import {summarizeCommercialMonth} from './simulation-commercial-composition.ts';
+import {isNfce} from '../public/sales-document-species.js';
 
 export type NatureAudit = {
   side: 'SALES' | 'PURCHASES'; natureCode: string; operation: CatalogOperation; lines: number;
@@ -23,6 +24,7 @@ export type OperationMonthlyReport = MonthlyReport & {
   operationVersion: typeof OPERATION_CATALOG_VERSION; operationAudit: OperationAudit;
   anticipation: ReturnType<typeof summarizeAnticipation>;
   icmsOperations: IcmsOperations;
+  salesSpecies: {version:'SALES_SPECIES_V1'; nfceLines:number; nfceBaseCents:number; missingLines:number; missingBaseCents:number};
 };
 const emptyAudit = (): OperationAudit => ({...Object.fromEntries(AUDIT_FIELDS.map(key=>[key,0])) as Record<typeof AUDIT_FIELDS[number],number>,natures:[]});
 const natureKey = (row: NatureAudit) => `${row.side}:${row.natureCode}`;
@@ -60,6 +62,7 @@ export function selectOperationMonths(purchases: ReconciledRows, sales: Reconcil
       fields:Object.fromEntries(MONTHLY_FIELDS.map(key=>[key,0])) as MonthlyReport['fields'],
       salesLines:0,purchaseLines:0,difal:null,operationVersion:OPERATION_CATALOG_VERSION,
       operationAudit:emptyAudit(),anticipation:summarizeAnticipation([],purchaseIssuerUf),
+      salesSpecies:{version:'SALES_SPECIES_V1',nfceLines:0,nfceBaseCents:0,missingLines:0,missingBaseCents:0},
       icmsOperations:summarizeIcmsOperations({sourceMonth:date.toISOString().slice(0,7),purchases:[],sales:[],issuerUf,purchaseIssuerUf})};
   });
   const byMonth=new Map(months.map(row=>[row.sourceMonth,row]));
@@ -82,6 +85,11 @@ export function selectOperationMonths(purchases: ReconciledRows, sales: Reconcil
       const salesField=salesGroup==='CPF'?'salesCpfCents':salesGroup==='OPTANTE'?'salesOptantCents':'salesNonOptantCents';
       if(mode===SALES_MODE){
         target.salesLines++;
+        if(operation==='VENDA' && total>0){
+          const species=typeof row.documentSpecies==='string'?row.documentSpecies.trim():'';
+          if(isNfce(species)){target.salesSpecies.nfceLines++;target.salesSpecies.nfceBaseCents=exactCents(target.salesSpecies.nfceBaseCents+total);}
+          else if(!species){target.salesSpecies.missingLines++;target.salesSpecies.missingBaseCents=exactCents(target.salesSpecies.missingBaseCents+total);}
+        }
         audit.reportSalesCents=exactSignedCents(audit.reportSalesCents+balance);
         audit.reportSalesGrossCents=exactCents(audit.reportSalesGrossCents+total);
         audit.reportSalesBalanceAdjustmentCents=exactSignedCents(audit.reportSalesBalanceAdjustmentCents+balance-total);

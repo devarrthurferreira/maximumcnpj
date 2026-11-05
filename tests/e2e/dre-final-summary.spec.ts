@@ -2,6 +2,18 @@ import {test,expect} from '@playwright/test';
 import {drePdfFixture} from '../fixtures/dre-pdf.mjs';
 import {expectConsolidatedDre} from './dre-controls.ts';
 
+test('DRE e impressão alertam quando espécie das saídas não foi capturada',async({page})=>{
+  const saved=drePdfFixture();
+  saved.result.warnings.push({code:'sales-species-missing',severity:'warning',title:'Espécie das vendas não identificada',detail:'Reimporte o relatório de saídas para identificar NFC-e.'});
+  await page.route('**/api/auth/session',route=>route.fulfill({json:{user:{_id:'synthetic',role:'viewer',name:'Conferência sintética'}}}));
+  await page.route('**/api/v4/simulations/'+saved._id,route=>route.fulfill({json:saved}));
+  await page.goto('/simulator.html?simulation='+saved._id);
+  await expectConsolidatedDre(page);
+  await expect(page.locator('#tax-demonstrativo [data-sales-species-warning]')).toContainText('Reimporte o relatório de saídas');
+  await page.evaluate(()=>{window.print=()=>{};});await page.locator('#print-dre').click();
+  await expect(page.locator('#dre-print-document [data-sales-species-warning]')).toContainText('identificar NFC-e');
+});
+
 test('DRE e impressão usam devoluções no débito de ICMS e compras no crédito',async({page},info)=>{
   const saved=drePdfFixture(),credits=saved.result.credits.icms,memory=saved.result.memory;
   const get=(id:string)=>memory.find((row:any)=>row.id===id).value;

@@ -1,5 +1,6 @@
 import {classifyOperationNature} from './operation-catalog.js';
 import {normalizeUf} from './difal.js';
+import {isNfce} from './sales-document-species.js';
 
 /** Maximum's managerial ICMS premise; invoice-specific legal rates are not inferred. */
 export const ICMS_OPERATIONS_VERSION='ICMS_OPERATIONS_V1';
@@ -16,17 +17,17 @@ const roundRatio=(value,numerator,denominator)=>{
   check(cents(result),'Valor de ICMS acima do limite seguro.');return result;
 };
 const emptyBucket=()=>Object.fromEntries(BUCKET_FIELDS.map(key=>[key,0]));
-function addOperation(bucket,row,issuerUf){
+function addOperation(bucket,row,issuerUf,forceInternal=false){
   const total=row.totalCents;
   check(cents(total),'A operação de ICMS exige centavos inteiros não negativos.');
   bucket.totalBaseCents=add(bucket.totalBaseCents,total);
   const recipientUf=normalizeUf(row.recipientUf);
   // A zero-valued operation cannot create tax or an artificial pending tax amount.
   if(!total)return;
-  if(!issuerUf||!recipientUf){
+  if(!issuerUf||(!forceInternal&&!recipientUf)){
     bucket.pendingBaseCents=add(bucket.pendingBaseCents,total);bucket.pendingLines++;return;
   }
-  const interstate=issuerUf!==recipientUf,prefix=interstate?'interstate':'internal';
+  const interstate=!forceInternal&&issuerUf!==recipientUf,prefix=interstate?'interstate':'internal';
   const tax=roundRatio(total,interstate?ICMS_INTERSTATE_RATE_PERCENT:ICMS_INTERNAL_RATE_PERCENT,100);
   bucket[prefix+'BaseCents']=add(bucket[prefix+'BaseCents'],total);
   bucket[prefix+'TaxCents']=add(bucket[prefix+'TaxCents'],tax);
@@ -41,7 +42,7 @@ export function summarizeIcmsOperations({sourceMonth,purchases,sales,issuerUf,pu
     sales:emptyBucket(),purchases:emptyBucket(),salesReturns:emptyBucket(),
     excludedServicePurchasesCents:0,excludedSimplePurchasesCents:0,sourceRegularPurchasesCents:0};
   for(const row of sales){
-    if(classifyOperationNature(row.natureCode)==='VENDA')addOperation(result.sales,row,result.issuerUf);
+    if(classifyOperationNature(row.natureCode)==='VENDA')addOperation(result.sales,row,result.issuerUf,isNfce(row.documentSpecies));
   }
   for(const row of purchases){
     const operation=classifyOperationNature(row.natureCode);

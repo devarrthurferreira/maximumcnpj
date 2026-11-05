@@ -18,6 +18,21 @@ const report=(source=fixture())=>({sourceMonth:source.sourceMonth,month:Number(s
   fields:{salesOptantCents:0,salesNonOptantCents:0,salesCpfCents:source.sales.totalBaseCents-source.salesReturns.totalBaseCents,purchasesOptantCents:0,purchasesNonOptantCents:source.sourceRegularPurchasesCents,serviceRevenueCents:0},
   salesLines:2,purchaseLines:6,difal:null,icmsOperations:source});
 
+test('NFC-e das saídas é interna com UF diferente ou ausente; demais operações mantêm suas regras',()=>{
+  const data={...input(),sales:[line('5102',1000,'SP',{documentSpecies:'NFC-e'}),line('5102',200,'',{documentSpecies:'  nfce  '}),
+    line('6102',500,'SP',{documentSpecies:'NFE'}),line('5102',100,'',{documentSpecies:'NFE'})],
+    purchases:[line('2202',50,'SP',{documentSpecies:'NFC-e'}),line('2102',200,'SP',{documentSpecies:'NFC-e'})]};
+  const source=summarizeIcmsOperations(data);
+  assert.equal(source.sales.internalBaseCents,120000);assert.equal(source.sales.internalTaxCents,21600);
+  assert.equal(source.sales.interstateBaseCents,50000);assert.equal(source.sales.interstateTaxCents,6000);
+  assert.equal(source.sales.pendingLines,1,'Outra espécie sem UF não pode ser tratada como NFC-e.');
+  assert.equal(source.salesReturns.interstateTaxCents,600,'Espécie das entradas não altera devolução.');
+  assert.equal(source.purchases.interstateTaxCents,2400,'Espécie das entradas não altera crédito.');
+  assert.equal(projectIcmsOperations(source,{salesRevenueCents:175000,regularPurchasesCents:20000}).available,false);
+  const noIssuer=summarizeIcmsOperations({...data,issuerUf:'',purchaseIssuerUf:'',purchases:[],sales:[line('5102',10,'SP',{documentSpecies:'NFC-e'})]});
+  assert.equal(noIssuer.sales.pendingLines,1,'A UF da empresa continua necessária.');
+});
+
 test('ICMS deduz devoluções por UF do débito e mantém serviços 8000 no custo',()=>{
   const original=input(),before=structuredClone(original),source=summarizeIcmsOperations(original);
   const result=projectIcmsOperations(source,{salesRevenueCents:270000,regularPurchasesCents:140000});

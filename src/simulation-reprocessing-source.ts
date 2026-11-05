@@ -63,8 +63,10 @@ async function originalSource(snapshot: Doc, purchases: Summary, sales: Summary)
     const fields=monthlyProjection(months!).annualGroupsCents;
     check(MONTHLY_FIELDS.every(key=>source.fields?.[key]===fields[key]),'As bases congeladas por natureza divergem dos relatórios originais.');
     check(isDeepStrictEqual(source.operationAudit,aggregateOperationAudit(months!)),'A conferência congelada de naturezas diverge dos relatórios originais.');
+    const hasSpeciesEvidence=source.monthlyReports?.some((row:any)=>row.salesSpecies!==undefined);
     const evidence=(row: any)=>({sourceMonth:row?.sourceMonth,month:row?.month,fields:row?.fields,
       salesLines:row?.salesLines,purchaseLines:row?.purchaseLines,operationVersion:row?.operationVersion,operationAudit:row?.operationAudit,
+      ...(hasSpeciesEvidence?{salesSpecies:row?.salesSpecies}:{}),
       ...(source.analysisPeriod?{commercialComposition:row?.commercialComposition}:{})});
     check(Array.isArray(source.monthlyReports)&&isDeepStrictEqual(source.monthlyReports.map(evidence),months!.map(evidence)),
       'As bases e evidências de cada competência divergem dos relatórios originais.');

@@ -1,5 +1,10 @@
 # Histórico de alterações
 
+## [0.60.1] - 2026-11-05
+
+- Preserva a espécie da coluna D nas saídas e classifica NFC-e como venda interna na apuração de ICMS, sem modificar a UF da origem.
+- Mantém as demais espécies e as devoluções de entrada nas regras anteriores; sinaliza espécie ausente no Fiscal, DRE e PDF e preserva o histórico.
+
 ## [0.60.0] - 2026-11-05
 
 - Exibe no Fiscal e no simulador reduções de 100%, 60% e 40%, além da opção sem redução, com a alíquota efetiva.

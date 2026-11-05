@@ -9,6 +9,18 @@ const header = Array(28).fill('');
 for (const [index,label] of [[0,'Documento'],[7,'Data Escrituração/Serviço'],[8,'Razão social'],[15,'Quantidade'],[16,'Valor Total'],[24,'Valor Desconto'],[25,'Valor Despesa Acessória'],[26,'Valor Frete'],[27,'Abatimento não Tributado']]) header[index] = label;
 const row = (document, name, quantity, total, serviceDate='15/08/2026') => { const r = Array(28).fill(''); r[0] = document; r[7] = serviceDate; r[8] = name; r[15] = quantity; r[16] = total; return r; };
 
+test('saídas conservam a espécie da coluna D somente quando o cabeçalho identifica a coluna', () => {
+  const columns=[...header];columns[3]='Espécie';
+  const nfce=row('12345678900','Cliente','1','100,00');nfce[3]='NFC-e';nfce[9]='SP';nfce[11]='5102';
+  const nfe=row('12345678900','Cliente','1','20,00');nfe[3]='NFE';nfe[9]='SP';nfe[11]='6102';
+  const sales=parsePurchaseMatrix([columns,nfce,nfe],0,{type:'SALES',issuerUf:'MG'});
+  assert.deepEqual(sales.errors,[]);assert.equal(sales.rows[0].documentSpecies,'NFC-e');
+  assert.equal(sales.rows[1].documentSpecies,'NFE');assert.equal(sales.rows[0].recipientUf,'SP');
+  assert.equal(Object.hasOwn(parsePurchaseMatrix([header,nfce],0,{type:'SALES'}).rows[0],'documentSpecies'),false);
+  assert.equal(Object.hasOwn(parsePurchaseMatrix([columns,nfce],0,{type:'PURCHASES'}).rows[0],'documentSpecies'),false);
+  nfce[3]='[FORMULA_NAO_SUPORTADA]';assert.match(parsePurchaseMatrix([columns,nfce],0,{type:'SALES'}).errors[0].message,/Espécie/);
+});
+
 test('purchase parser keeps cents exact and accepts Brazilian formatting or numeric Excel cells', () => {
   assert.equal(amountCents('1.234,56'), 123456);
   assert.equal(amountCents('R$ 10,05'), 1005);

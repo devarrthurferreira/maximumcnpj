@@ -33,8 +33,8 @@ const anticipation={version:'ICMS_ANTICIPATION_V3',ratePercent:7.32,issuerUf:'MG
 
 test('DRE Jan–Set não reutiliza identificadores das revisões anteriores ao ICMS com devoluções no débito',()=>{
   const workspace='ws',originalId='10000000-0000-4000-8000-000000000005';
-  assert.equal(REPROCESS_VERSION,'ICMS_DEVOLUCOES_DEBITO_2026_11_V18');
-  assert.equal(JAN_SEP_MODEL_VERSION,'1.22.0-quarterly-income-tax-available-months-icms-devolucoes-debito');
+  assert.equal(REPROCESS_VERSION,'ICMS_NFCE_INTERNA_2026_11_V19');
+  assert.equal(JAN_SEP_MODEL_VERSION,'1.23.0-quarterly-income-tax-available-months-nfce-interna');
   for(const [revision,model] of [
     ['QUARTERLY_INCOME_TAX_2026_11_V15','1.20.0-quarterly-income-tax-available-months'],
     ['QUARTERLY_INCOME_TAX_2026_11_V16','1.20.1-quarterly-income-tax-available-months-loss-zero'],

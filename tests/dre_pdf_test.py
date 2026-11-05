@@ -44,6 +44,18 @@ def section_text(document, label, following):
 
 
 class DrePdfTests(unittest.TestCase):
+    def test_species_warning_is_visible_without_adding_a_third_page(self):
+        saved = fixture()
+        saved['result']['warnings'].append({'code': 'sales-species-missing', 'severity': 'warning',
+            'title': 'Espécie das vendas não identificada',
+            'detail': '1 venda sem espécie na coluna D. Reimporte o relatório de saídas para identificar NFC-e.'})
+        content = render(saved)
+        self.verify_document(content)
+        with pymupdf.open(stream=content, filetype='pdf') as document:
+            text = normalized(document[0].get_text())
+            self.assertIn('ICMS a conferir', text)
+            self.assertIn('Reimporte o relatório de saídas', text)
+
     def verify_document(self, content):
         self.assertTrue(content.startswith(b'%PDF-'))
         self.assertLess(len(content), MAX_RESPONSE_BYTES)

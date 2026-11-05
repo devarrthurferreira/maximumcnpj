@@ -151,6 +151,8 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
   if (anticipationEnabled && !isAnticipationVersion(anticipationVersion)) throw new Error('Versão da antecipação de ICMS desconhecida.');
   if (!Number.isInteger(headerIndex) || headerIndex < 0 || headerIndex > 20) throw new Error('Escolha a linha de cabeçalho entre 1 e 21.');
   const header = matrix[headerIndex] || [], required = net ? [0,7,8,16,24,25,26,27] : [0,8,16];
+  // Never interpret an unrelated fourth column as the document species.
+  const hasSpecies = type === 'SALES' && ['especie', 'especiedocumento'].includes(normalizedHeader(header[3]));
   if (header.length < (net ? 28 : 17) || required.some(index => !String(header[index] ?? '').trim())) throw new Error(`O relatório precisa conter cabeçalhos nas colunas ${net ? 'A, H, I, Q, Y, Z, AA e AB' : 'A, I e Q'}. Confira a aba e o cabeçalho.`);
   const lastHeader = header.findLastIndex(value => String(value ?? '').trim());
   const quantityRequired = type === 'PURCHASES';
@@ -173,6 +175,8 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
         raw = repaired.row;
       }
       const document = String(raw[0] ?? '').trim(), name = String(raw[8] ?? '').trim();
+      const documentSpecies = hasSpecies ? String(raw[3] ?? '').trim() : undefined;
+      if (documentSpecies !== undefined && (documentSpecies.length > 80 || documentSpecies.includes('[FORMULA_NAO_SUPORTADA]'))) throw new Error('Espécie (D): confira o valor informado.');
       const rawNatureCode = String(raw[11] ?? '').trim(), natureCode = natureCode4(rawNatureCode), description = String(raw[14] ?? '').trim();
       if (rawNatureCode.length > 80 || description.length > 2000) throw new Error('Natureza/descrição acima do limite.');
       if (document.length > 40 || name.length > 200) throw new Error('Documento ou razão social acima do limite.');
@@ -201,7 +205,7 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
       const kind = documentKind(document);
       if (kind === 'CNPJ') unique.add(normalizeCnpj(document).cnpj); else nonCnpjLines++;
       rows.push(type === 'SALES'
-        ? {document, name, serviceDate, quantity, natureCode, description, operation, balanceCents:lineBalanceCents, ...financial, ...natureFields,
+        ? {document, name, serviceDate, quantity, natureCode, description, operation, balanceCents:lineBalanceCents, ...(hasSpecies ? {documentSpecies} : {}), ...financial, ...natureFields,
             ...(difalEnabled ? {recipientUf,difal:calculateDifal({document,natureCode,description,operation,recipientUf,issuerUf:options.issuerUf,totalCents:cents}, difalVersion)} : {})}
         : {document, name, serviceDate, quantity, ...financial, ...natureFields,
             ...(anticipationEnabled ? {anticipation:calculateAnticipation({document,natureCode,recipientUf,issuerUf:options.issuerUf,totalCents:cents}, anticipationVersion)} : {})});

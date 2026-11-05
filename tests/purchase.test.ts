@@ -5,6 +5,15 @@ import { compactPurchaseLine, calculationVersion, exactCents, percentage, signed
 import { OPERATION_CATALOG_VERSION } from '../src/operation-catalog.ts';
 
 const row = {document: '00.000.000/0001-91', name: 'Fornecedor sintético', serviceDate: '2026-08-15', quantity: '020.500000', grossCents: 1200, discountCents: 200, accessoryCents: 99999, freightCents: 100, abatementCents: 50, totalCents: 1050};
+test('servidor conserva espécie das saídas e mantém ausentes as origens antigas',()=>{
+  const line=compactPurchaseLine({...row,natureCode:'5102',recipientUf:'SP',documentSpecies:' NFC-e '},'NET_V2',SALES_MODE,{issuerUf:'MG',difalVersion:DIFAL_VERSION,operationVersion:OPERATION_CATALOG_VERSION});
+  assert.equal(line.documentSpecies,'NFC-e');assert.equal(line.recipientUf,'SP');
+  assert.equal(Object.hasOwn(compactPurchaseLine(row,'NET_V2',SALES_MODE),'documentSpecies'),false);
+  assert.equal(Object.hasOwn(compactPurchaseLine({...row,documentSpecies:'NFC-e'},'NET_V2',PURCHASE_MODE),'documentSpecies'),false);
+  assert.throws(()=>compactPurchaseLine({...row,documentSpecies:'x'.repeat(81)},'NET_V2',SALES_MODE),/Espécie/);
+  const csv=purchaseCsv({mode:SALES_MODE,calculationVersion:'NET_V2',_id:'test',clientName:'Empresa',fileName:'vendas.csv'},[{...line,index:0}]);
+  assert.match(csv,/Espécie \(D\)/);assert.match(csv,/NFC-e/);
+});
 test('Compras: valida componentes no servidor, centavos exatos e não multiplica P por Q', () => {
   const value = compactPurchaseLine({...row, status: 'OPTANTE', rawWorkbook: 'discard'});
   assert.equal(value.document, '00000000000191'); assert.equal(value.cnpj, '00000000000191'); assert.equal(value.documentKind, 'CNPJ');

@@ -54,7 +54,8 @@ function validateOperationSnapshot(job: Doc, rows: Record<string,any>[], allowMi
     'Linhas ou UF do catálogo de operações incompletas. Emissão bloqueada.',409,'OPERATION_SNAPSHOT');
   for(const row of rows)need(row.operationVersion===job.operationVersion&&typeof row.natureCode==='string'&&
     row.natureCode===normalizeOperationNature(row.natureCode)&&typeof row.description==='string'&&typeof row.recipientUf==='string'&&
-    row.recipientUf===normalizeUf(row.recipientUf)&&row.natureOperation===classifyOperationNature(row.natureCode),
+    row.recipientUf===normalizeUf(row.recipientUf)&&row.natureOperation===classifyOperationNature(row.natureCode)&&
+    (row.documentSpecies===undefined||typeof row.documentSpecies==='string'&&row.documentSpecies.length<=80&&row.documentSpecies===row.documentSpecies.trim()),
   'Natureza ou classificação divergente do snapshot. Emissão bloqueada.',409,'OPERATION_SNAPSHOT');
 }
 /** Recompute from source fields and compare every persisted estimate before exposing it. */
@@ -70,7 +71,7 @@ async function financialTaxes(name:string,id:string,job:Doc,deriveLegacy = false
   const deriveSales=deriveLegacy&&job.mode===SALES_MODE&&job.difalVersion!==DIFAL_VERSION&&calculationVersion(job)==='NET_V2';
   if(salesTax)need(isDifalVersion(job.difalVersion),'Versão do DIFAL desconhecida. Reimporte as vendas.',409,'DIFAL_VERSION');
   if(!catalog&&!salesTax&&!purchaseTax&&!derivePurchase&&!deriveSales)return {difal:null,difalOrigin:'UNAVAILABLE',anticipation:null,anticipationOrigin:'UNAVAILABLE'};
-  const rows=sourceRows ?? await (await jobCollection(name,job)).find(scope({jobId:id})).project({totalCents:1,natureCode:1,description:1,operation:1,document:1,recipientUf:1,
+  const rows=sourceRows ?? await (await jobCollection(name,job)).find(scope({jobId:id})).project({totalCents:1,natureCode:1,description:1,documentSpecies:1,operation:1,document:1,recipientUf:1,
     ...(catalog?{natureOperation:1,operationVersion:1}:{}),...(salesTax?{difal:1}:{}),...(purchaseTax?{anticipation:1}:{})}).maxTimeMS(20000).toArray();
   if(catalog)validateOperationSnapshot(job,rows,(derivePurchase||deriveSales)&&!salesTax&&!purchaseTax);
   if(salesTax||purchaseTax)need(rows.length===job.expectedRows&&typeof job.issuerUf==='string'&&job.issuerUf===normalizeUf(job.issuerUf),
@@ -284,7 +285,7 @@ const FINALIZATION_VERSION = 'FINANCIAL_FINALIZE_V1';
 const FINALIZATION_BATCH = 500;
 const FINALIZATION_ROWS_PER_REQUEST = 1000;
 const FINANCIAL_COPY_FIELDS = ['_id','workspaceId','jobId','index','document','documentKind','cnpj','name','serviceDate','quantity',
-  'natureCode','description','operation','natureOperation','operationVersion','recipientUf','difal','anticipation','totalCents','balanceCents','valid','kind',...COMPONENT_FIELDS];
+  'natureCode','description','documentSpecies','operation','natureOperation','operationVersion','recipientUf','difal','anticipation','totalCents','balanceCents','valid','kind',...COMPONENT_FIELDS];
 const financialCopyProjection = Object.fromEntries(FINANCIAL_COPY_FIELDS.map(field=>[field,1]));
 type FinalizationProgress = {version:string;phase:'COPYING'|'PREPARING'|'VERIFYING'|'COMMITTING';copiedRows:number;totalRows:number;
   preparedCnpjs:number;totalCnpjs:number;verifiedRows:number;lastCnpj:string};
@@ -409,7 +410,7 @@ async function reconciledPurchaseData(id: string, requireComplete = true, mode: 
   // Taxes, dates and purchase selection validate the same immutable rows. Fetch
   // only their required fields once; names and other report display data stay out.
   const sourceRows = await (await jobCollection('purchaseLines',job)).find(scope({jobId:id})).project({
-    index:1,serviceDate:1,totalCents:1,document:1,natureCode:1,description:1,natureOperation:1,operationVersion:1,recipientUf:1,
+    index:1,serviceDate:1,totalCents:1,document:1,natureCode:1,description:1,documentSpecies:1,natureOperation:1,operationVersion:1,recipientUf:1,
     ...(mode===SALES_MODE?{operation:1,difal:1}:{documentKind:1,valid:1,cnpj:1,anticipation:1,
       ...Object.fromEntries(COMPONENT_FIELDS.map(field=>[field,1]))})
   }).sort({index:1}).maxTimeMS(20000).toArray();

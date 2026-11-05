@@ -1,10 +1,10 @@
-export const MONTHLY_MODEL_VERSION: '1.22.0-quarterly-income-tax-icms-devolucoes-debito';
+export const MONTHLY_MODEL_VERSION: '1.23.0-quarterly-income-tax-nfce-interna';
 import type {ReportFields} from './simulator-projection.js';
 import type {Rbt12Schedule} from './simulator-rbt12.js';
 import type {AnalysisPeriod} from './analysis-period.js';
 export const MONTHLY_VERSION: 'REPORT_MONTHS_V1';
 export const MONTHLY_FIELDS: readonly string[];
-export type MonthlyReport = {sourceMonth:string;month:number;fields:ReportFields & {serviceRevenueCents:number};salesLines:number;purchaseLines:number;difal:any;operationVersion?:string;operationAudit?:any;anticipation?:any;icmsOperations?:import('./simulator-icms.js').IcmsOperations;commercialComposition?:import('../src/simulation-commercial-composition.ts').CommercialComposition};
+export type MonthlyReport = {sourceMonth:string;month:number;fields:ReportFields & {serviceRevenueCents:number};salesLines:number;purchaseLines:number;difal:any;operationVersion?:string;operationAudit?:any;anticipation?:any;icmsOperations?:import('./simulator-icms.js').IcmsOperations;salesSpecies?:{version:'SALES_SPECIES_V1';nfceLines:number;nfceBaseCents:number;missingLines:number;missingBaseCents:number};commercialComposition?:import('../src/simulation-commercial-composition.ts').CommercialComposition};
 export function monthlyProjection(reports:MonthlyReport[]):any;
 export function monthlyDifal(reports:MonthlyReport[],sourceJobId:string):any;
 export function monthlyAnticipation(reports:MonthlyReport[]):any;
