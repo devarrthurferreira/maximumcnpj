@@ -1,5 +1,7 @@
 import { mkdir, copyFile } from 'node:fs/promises';
 await mkdir('public/vendor', { recursive: true });
+await mkdir('public/img', { recursive: true });
+await copyFile('reporting/assets/maximum-letterhead.png', 'public/img/maximum-letterhead.png');
 await copyFile('dist/difal.js', 'public/difal.js');
 await copyFile('dist/operation-catalog.js', 'public/operation-catalog.js');
 await copyFile('dist/purchase-selection.js', 'public/purchase-selection.js');

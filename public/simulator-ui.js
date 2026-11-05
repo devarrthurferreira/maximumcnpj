@@ -723,20 +723,24 @@ let drePrintFocus=null;
 function setDrePrintPage(period){
   $('#dre-print-page-style')?.remove();
   const style=document.createElement('style');style.id='dre-print-page-style';
-  style.textContent=fixedAnalysisPeriod()?'@page { size: A4 portrait; margin: 12mm; }':`@page { size: ${period==='annual'?'A4':'A3'} landscape; margin: 12mm; }`;
+  style.textContent=fixedAnalysisPeriod()?'@page { size: A4 portrait; margin: 0; }':`@page { size: ${period==='annual'?'A4':'A3'} landscape; margin: 12mm; }`;
   document.head.append(style);
 }
 function clearDrePrint(){
   $('#dre-print-document')?.remove();$('#dre-print-page-style')?.remove();document.body.classList.remove('dre-print-only');
   if(drePrintFocus?.isConnected)drePrintFocus.focus({preventScroll:true});drePrintFocus=null;
 }
-function printDre(){
+async function printDre(){
   if(!S.result||!S.dreContext)return;
   clearDrePrint();drePrintFocus=document.activeElement;
   document.body.insertAdjacentHTML('beforeend',renderDrePrintDocument({...S.dreContext,...dreVisibilityOptions(),company:S.source.company,regimeId:S.calendarRegime,showPercent:S.dreShowPercent,period:S.dreReportPeriod}));
   document.querySelectorAll('#dre-print-document details').forEach(detail=>{detail.open=true;});
   document.body.classList.add('dre-print-only');setDrePrintPage(S.dreReportPeriod);
-  try{window.print();}catch(error){clearDrePrint();fail(error);}
+  const documentToPrint=$('#dre-print-document');
+  try{
+    await Promise.all([...documentToPrint.querySelectorAll('.dre-print-letterhead')].map(image=>image.decode().catch(()=>{throw new Error('Não foi possível carregar o timbrado para impressão.');})));
+    if(documentToPrint.isConnected)window.print();
+  }catch(error){if(documentToPrint.isConnected){clearDrePrint();fail(error);}}
 }
 
 function drePdfOptions(){
@@ -947,7 +951,7 @@ function renderResult() {
   $('#export-simulation').onclick=exportSimulation;
   $('#export-dre-csv').onclick=exportDre;
   $('#download-dre-pdf').onclick=()=>void downloadDrePdf();
-  $('#print-dre').onclick=printDre;
+  $('#print-dre').onclick=()=>void printDre();
   const reportPeriod=$('#dre-report-period');if(reportPeriod)reportPeriod.onchange=()=>{S.dreReportPeriod=reportPeriod.value;renderDrePdfStatus();};
   const percentControl=$('#dre-show-percent');if(percentControl)percentControl.onchange=event=>{S.dreShowPercent=event.target.checked;renderResult();$('#dre-show-percent').focus({preventScroll:true});};
   bindDreDetailControls();
@@ -1045,7 +1049,7 @@ function capturedFields(snapshot) {
     ${snapshot.parentSimulationId&&!snapshot.parentSimulationDeleted?`<a class="sim-back" href="/simulator.html?simulation=${encodeURIComponent(snapshot.parentSimulationId)}&historical=1">Abrir versão de origem →</a>`:snapshot.parentSimulationDeleted?'<p class="sim-help">A versão de origem foi excluída do histórico.</p>':''}
     <div class="sim-snapshot-meta">${selection}${settings}<span>${snapshot.reportMonths} ${snapshot.reportMonths===1?'mês':'meses'} nos arquivos · ${snapshot.periodBasis==='COLUMN_H'?'coluna H':'período confirmado'}</span><span>${referenceLabel}</span><span>${snapshot.manuallyAdjusted?'Valores importados ajustados':'Valores dos relatórios preservados'}</span></div>${monthlyTable||`<div class="sim-detail-grid">${fields.map(([label,val])=>`<article><span>${label}</span><strong>${money(val)}</strong></article>`).join('')}</div>`}${snapshot.adjustments?.length?`<details class="sim-adjustments"><summary>${snapshot.adjustments.length} ajustes em relação aos relatórios</summary><div class="sim-memory-items">${snapshot.adjustments.map(a=>`<article><div><strong>${a.sourceMonth?esc(a.sourceMonth)+' · ':''}${esc(fieldLabel(a.field))}</strong><p>Valor mensal dos relatórios: ${money(a.reportMonthlyValue)}</p></div><span>Simulado: ${money(a.simulatedMonthlyValue)}</span></article>`).join('')}</div></details>`:''}<p class="sim-help sim-record-id">Registro ${esc(snapshot._id)} · Modelo ${esc(snapshot.modelVersion)} · Base de cálculo ${esc(snapshot.calculatorSourceCommit)}</p></details></section>`;
 }
-function fieldLabel(key) { return {serviceRevenue:'Vendas de serviços',serviceRevenueCents:'Vendas de serviços',salesOptantCents:'Vendas Optantes SN',salesNonOptantCents:'Vendas Não Optantes SN',salesCpfCents:'Vendas de CPFs',purchasesOptantCents:'Compras do Simples',purchasesNonOptantCents:'Compras fora do Simples'}[key]||key; }
+function fieldLabel(key) { return {serviceRevenue:'Vendas de serviços',serviceRevenueCents:'Vendas de serviços',salesOptantCents:'Vendas Optantes SN',salesNonOptantCents:'Vendas Não Optantes SN',salesCpfCents:'Vendas de CPFs',purchasesOptantCents:'Compras e serviços do Simples',purchasesNonOptantCents:'Compras e serviços fora do Simples'}[key]||key; }
 function showSnapshot(snapshot) {
   cancelDrePdf();
   if(S.snapshot?._id!==snapshot._id)S.dreVisibleRegimeIds=null;

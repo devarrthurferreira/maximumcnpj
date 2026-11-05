@@ -1,12 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {selectOperationMonths,aggregateOperationAudit} from '../src/simulation-monthly-source.ts';
-import {monthlyProjection} from '../public/simulator-monthly.js';
+import {baselineMonth,calculateMonthlySimulation,monthlyProjection} from '../public/simulator-monthly.js';
 import {OPERATION_CATALOG_VERSION} from '../src/operation-catalog.ts';
 
 const row=(natureCode:string,totalCents:number,extra:Record<string,unknown>={})=>({natureCode,totalCents,serviceDate:'2026-01-15',
   document:'12345678900',documentKind:'CPF',cnpj:'',valid:false,recipientUf:'SP',description:'Descrição não classifica operação',...extra});
 const report=(rows:any[],statuses:Map<string,unknown>=new Map())=>({rows,statuses});
+
+test('compras e serviços 8000 entram uma vez no custo de cada grupo do Simples',()=>{
+  const optant={document:'00000000000191',cnpj:'00000000000191',documentKind:'CNPJ',valid:true,recipientUf:'MG'};
+  const regular={document:'11222333000181',cnpj:'11222333000181',documentKind:'CNPJ',valid:true,recipientUf:'MG'};
+  const statuses=new Map([['00000000000191','OPTANTE'],['11222333000181','NAO_OPTANTE']]);
+  const purchases=report([row('1102',4000,optant),row('8000002',6000,optant),row('2102',5000,regular),
+    row('8000102',7000,regular),row('1202',2000,optant)],statuses);
+  const sales=report([row('5102',100000,optant)],statuses),before=structuredClone({purchases,sales});
+  const month=selectOperationMonths(purchases,sales,'MG')![0];
+  assert.equal(month.fields.purchasesOptantCents,10000);
+  assert.equal(month.fields.purchasesNonOptantCents,12000);
+  assert.equal(month.operationAudit.purchaseGoodsCents,9000);
+  assert.equal(month.operationAudit.purchaseServicesCents,13000);
+  const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:100000,
+    values:{salesRevenue:0,serviceRevenue:0,simplePurchases:0,regularPurchases:0,salaries:0,benefits:0,adminExpenses:0,rent:0,cardExpenses:0}};
+  const calculated=calculateMonthlySimulation(draft,[month],[baselineMonth(month)],'synthetic-sales');
+  for(const regime of calculated.result.regimes.filter(item=>item.available)){
+    assert.equal(regime.dre.cmvSimple,-100);
+    assert.equal(regime.dre.cmvRegular,-120);
+  }
+  assert.deepEqual({purchases,sales},before);
+});
 
 test('catálogo seleciona receita e compras, devolução de venda vem somente de compras e conserva auditoria dos relatórios',()=>{
   const purchases=report([row('1102009',40000),row('8000002',10000),row('1202999',5000),row('1901',9000),

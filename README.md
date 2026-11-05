@@ -1,4 +1,10 @@
-# Maximum CNPJ · v0.58.3
+# Maximum CNPJ · v0.58.4
+## v0.58.4 — Timbrado Maximum e detalhamento de compras e serviços (05/11/2026)
+
+O PDF da DRE usa o timbrado Maximum fornecido, com margens para preservar cabeçalho, rodapé e o demonstrativo. A impressão Jan–Set usa o mesmo papel timbrado. A DRE apresenta **Resultado Antes do IRPJ/CSLL**, **Compras e serviços do Simples** e **Compras e serviços fora do Simples**; a classificação mantém as operações de serviço 8000 nos custos conforme o enquadramento de cada fornecedor, sem duplicar nem alterar os valores salvos.
+
+As descrições abaixo registram versões anteriores.
+
 ## v0.58.3 — Identificação dos impostos (05/11/2026)
 
 A linha de IRPJ segue o estilo das demais contas nos quadros de impostos e DRE. A antecipação aparece como **Antecipação de ICMS** nos impostos, no PDF e no CSV; os valores e cálculos permanecem iguais.

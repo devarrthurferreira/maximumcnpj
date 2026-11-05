@@ -1,5 +1,10 @@
 # Histórico de alterações
 
+## [0.58.4] - 2026-11-05
+
+- Aplica o timbrado Maximum fornecido aos PDFs de DRE e à impressão do consolidado, com margens para os dados e os contatos.
+- Identifica o resultado antes do IRPJ/CSLL e explicita compras e serviços dentro e fora do Simples nas linhas da DRE, preservando os valores capturados.
+
 ## [0.58.3] - 2026-11-05
 
 - Remove o destaque visual de IRPJ nos quadros de impostos e DRE.

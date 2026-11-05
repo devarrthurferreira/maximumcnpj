@@ -540,14 +540,14 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
           display('das','Simples'),finalRow('icmsDebit','ICMS Débito'),finalRow('cbsIbsDebit','CBS/IBS Débito'),display('iss','ISS'),
           optionalTax('difal','DIFAL sobre vendas',['DIFAL de saída capturado no cenário.']),finalRow('netRevenueAfterTaxes','Receita líquida','subtotal')]},
         {key:'costs',label:'Custos',rows:[finalRow('costsWithAnticipation','Custo de mercadoria','subtotal'),
-          display('cmvSimple','Compras do Simples'),display('cmvRegular','Compras fora do Simples'),
+          display('cmvSimple','Compras e serviços do Simples'),display('cmvRegular','Compras e serviços fora do Simples'),
           optionalTax('icmsAnticipation','Antecipação de ICMS nas compras',['Antecipação deduzida uma única vez.']),
           finalRow('cbsIbsCredit','CBS/IBS Crédito'),finalRow('icmsCredit','ICMS Crédito'),contribution]},
         {key:'expenses',label:'Despesas operacionais',rows:[finalRow('operatingExpensesWithPayroll','Despesas operacionais','subtotal'),
           display('salaries','Salários e pró-labore'),display('benefits','Benefícios de funcionários'),display('payroll','INSS / FGTS'),
           display('rent','Aluguel'),display('cards','Taxas de cartão'),display('administrative','Outras despesas')]},
         {key:'profit',label:'Resultado',rows:[ebitda,finalRow('financialResult','Despesas/Receitas financeiras'),
-          finalRow('resultBeforeIncomeTaxes','Antes do IRPJ / CSLL','subtotal','preTax'),
+          finalRow('resultBeforeIncomeTaxes','Resultado Antes do IRPJ/CSLL','subtotal','preTax'),
           display('irpj','IRPJ'),display('csll','CSLL'),display('netProfit','Resultado líquido')]}
       ],note:'Receita bruta = serviços + vendas utilizados no cenário (devoluções já tratadas na origem). Deduções negativas; créditos utilizados positivos. Resultado financeiro = receitas menos despesas financeiras. INSS / FGTS usa os encargos capturados, sem discriminar cada parcela.'};
   }

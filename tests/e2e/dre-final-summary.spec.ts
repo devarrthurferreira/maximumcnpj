@@ -28,6 +28,9 @@ test('impostos e DRE detalhável compartilham os regimes e a impressão',async({
   for(const id of ['cmvSimple','cmvRegular','icmsAnticipation','cbsIbsCredit','icmsCredit'])await expect(dre.locator(`#dre-child-costsWithAnticipation-${id}`)).toBeVisible();
   for(const id of ['salaries','benefits','payroll','rent','cards','administrative'])await expect(dre.locator(`#dre-child-operatingExpensesWithPayroll-${id}`)).toBeVisible();
   for(const id of ['irpj','csll'])await expect(dre.locator(`#dre-child-resultBeforeIncomeTaxes-${id}`)).toBeVisible();
+  await expect(dre.locator('[data-dre-row="cmvSimple"] th')).toHaveText('Compras e serviços do Simples');
+  await expect(dre.locator('[data-dre-row="cmvRegular"] th')).toHaveText('Compras e serviços fora do Simples');
+  await expect(dre.locator('[data-dre-group-toggle="resultBeforeIncomeTaxes"]')).toContainText('Resultado Antes do IRPJ/CSLL');
   await dre.locator('[data-dre-group-toggle="revenue"]').click();
   await dre.locator('[data-dre-group-toggle="revenueTaxes"]').click();
   await expect(dre.locator('#dre-child-revenue-services')).toBeHidden();
@@ -46,6 +49,8 @@ test('impostos e DRE detalhável compartilham os regimes e a impressão',async({
   await page.locator('#print-dre').click();
   const printed=page.locator('#dre-print-document'),pages=printed.locator('> .dre-final-page');
   await expect(pages).toHaveCount(2);
+  await expect(pages.locator('.dre-print-letterhead')).toHaveCount(2);
+  await expect.poll(()=>pages.locator('.dre-print-letterhead').evaluateAll(images=>images.every(image=>(image as HTMLImageElement).naturalWidth===1414))).toBe(true);
   await expect(pages.first()).toContainText('Impostos e indicadores');
   await expect(pages.first()).not.toContainText('Resumo dos resultados');
   await expect(pages.first().locator('[data-tax-row="taxBurden"] + .dre-indicator-spacer + [data-tax-row="grossAfterCosts"]')).toHaveCount(1);
@@ -54,6 +59,8 @@ test('impostos e DRE detalhável compartilham os regimes e a impressão',async({
   await expect(pages.last()).toContainText('Receita de vendas');
   await expect(pages.last()).toContainText('ICMS Débito');
   await expect(pages.last()).toContainText('CSLL');
+  await expect(pages.last()).toContainText('Compras e serviços do Simples');
+  await expect(pages.last()).toContainText('Resultado Antes do IRPJ/CSLL');
   await expect(printed).not.toContainText('Simples Puro');
   await page.emulateMedia({media:'print'});
   await page.pdf({path:info.outputPath('dre-impressao.pdf'),preferCSSPageSize:true,printBackground:true});
