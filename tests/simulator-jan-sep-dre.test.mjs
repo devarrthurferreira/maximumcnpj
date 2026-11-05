@@ -71,8 +71,8 @@ test('cartões da DRE mantêm prejuízo e valores sem destacar regime quando a r
  for(const adjustment of [-baseline-50,-baseline,0]){
   const input=fixture({selectedMonths,adjustment}),before=structuredClone(input);
   for(const html of [renderAnnualDre(input),renderCompleteMonthlyDre({...input,regimeId:'actual',month:0})]){
-   if(input.result.annualRevenue<=0){assert.doesNotMatch(html,/Maior resultado disponível|is-best/);assert.match(html,/Prejuízo estimado/);}
-   else assert.match(html,/Maior resultado disponível/);
+   if(input.result.annualRevenue<=0){assert.doesNotMatch(html,/Maior resultado disponível|is-best/);assert.match(html,/Resultado líquido/);assert.match(html,/-R\$/);}
+   else assert.match(html,/Resumo dos resultados/);
   }
   assert.deepEqual(input,before);
  }
@@ -97,7 +97,7 @@ test('prejuízo consolidado do Lucro Real zera IRPJ/CSLL na DRE, impostos e expo
   }
   const html=renderAnnualDre(input),csv=buildDreCsv({presentation:input.presentation,period:'annual',visibleRegimeIds:['actual']});
   assert.match(html,/data-dre-row="resultBeforeIncomeTaxes"/);
-  assert.match(html,/data-dre-row="taxesDeduction"/);
+  assert.doesNotMatch(html,/data-dre-row="taxesDeduction"/);assert.match(html,/data-dre-row="ebitda"/);
   assert.match(html,/data-tax-row="irpj"/);
   assert.match(csv,/"IRPJ";"line";"BRL";0,00/);
   assert.deepEqual(input,before);
@@ -171,9 +171,9 @@ test('CNPJ interestadual e CPF no mesmo estado mantêm saída zero de janeiro a 
     for(const value of consolidated[0].slice(5,9))near(Number(value.replace(',','.')),0);
     const html=renderDrePrintDocument({...input,period:'complete'});
     const rows=[...html.matchAll(/data-tax-row="difal"[^>]*>([\s\S]*?)<\/tr>/g)];
-    assert.equal(rows.length,5,'Consolidado e os quatro demonstrativos mensais mantêm a linha de saída.');
+    assert.equal(rows.length,1,'A primeira página mantém o DIFAL consolidado.');
     const values=rows.flatMap(match=>[...match[1].matchAll(/R\$\s([\d.,]+)/g)].map(value=>Number(value[1].replace(/\./g,'').replace(',','.'))));
-    assert.equal(values.length,44);assert(values.every(value=>value===0));
+    assert.equal(values.length,4);assert(values.every(value=>value===0));
     assert.deepEqual(input,before);
   }
 });
@@ -202,7 +202,7 @@ test('CPF de outra UF e estimativas V5 positivas permanecem com saída zero em t
 
 test('Jan–Set coloca Impostos após as ações de relatório e mostra IRPJ sem o rodapé extenso',()=>{
   const input=fixture(),before=structuredClone(input),p=input.presentation,html=renderAnnualDre(input);
-  const reportPosition=html.indexOf('id="dre-report-period"'),taxPosition=html.indexOf('id="tax-demonstrativo"'),
+  const reportPosition=html.indexOf('id="download-dre-pdf"'),taxPosition=html.indexOf('id="tax-demonstrativo"'),
     followUpPosition=html.indexOf('data-revenue-reconciliation="dre"');
   assert(reportPosition>=0&&taxPosition>reportPosition&&followUpPosition>taxPosition);
   assert.match(html,/APURAÇÃO DOS TRIBUTOS/);assert.match(html,/data-tax-row="irpj"/);
@@ -224,7 +224,7 @@ test('Jan–Set coloca Impostos após as ações de relatório e mostra IRPJ sem
 
 test('DRE completa aparece imediatamente e preserva todas as contas de janeiro a setembro',()=>{
   const input=fixture(),html=renderAnnualDre(input);
-  assert.match(html,/DRE completa/);assert.doesNotMatch(html,/DRE resumida/);assert.equal((html.match(/data-dre-regime-result=/g)||[]).length,4);
+  assert.match(html,/DRE completa/);assert.doesNotMatch(html,/DRE resumida/);assert.equal((html.match(/data-dre-visible-regime=/g)||[]).length,4);
   assert.match(html,/data-dre-row="revenue"/);assert.match(html,/data-dre-row="netProfit"/);
   assert.doesNotMatch(html,/data-simulation-lazy="dre"|data-simulation-detail="dre"/);
   for(const key of ['services','das','cmvSimple','salaries','benefits','rent','cards','cbsIbsNet','totalTaxes','taxBurden','netProfit','netMargin'])assert.match(html,new RegExp(`data-dre-row="${key}"`));
@@ -236,7 +236,7 @@ test('DRE completa aparece imediatamente e preserva todas as contas de janeiro a
   const salaryCells=selectedRegimes.match(/data-dre-row="salaries">([\s\S]*?)<\/tr>/)?.[1];
   assert.equal((salaryCells.match(/<td /g)||[]).length,2);assert.match(salaryCells,/-R\$ 2\.700,00/);
   assert.doesNotMatch(monthly,/id="dre-display-period"/);assert.match(monthly,/data-dre-period="annual"/);
-  assert.match(monthly,/id="dre-report-period"/);
+  assert.match(monthly,/id="download-dre-pdf"/);
   const detail=renderDreCompleteDetails({...input,monthly:true,month:8,monthView:false,regimeId:'pure'});
   assert.match(detail,/Créditos tributários utilizados/);assert.match(detail,/não somar novamente/);
   const revenue=detail.match(/data-dre-row="revenue">([\s\S]*?)<\/tr>/)?.[1];
@@ -253,10 +253,10 @@ test('CSV e impressão completos usam nove meses, detalham tudo e preservam perc
   assert.match(csv,/DRE resumida · consolidado de janeiro a setembro/);assert.match(csv,/Consolidado Jan–Set \/ indicador do período/);
   assert.match(csv,/"Compras por fornecedor";"Fora do Simples";22500,00;62,50;36000,00/);
   assert.doesNotMatch(csv,/;6250,000000;/);assert.match(csv,/"Créditos tributários utilizados · informativo"/);
-  assert.equal((html.match(/data-report-part="monthly"/g)||[]).length,4);
-  assert.equal((html.match(/data-dre-row="revenue"/g)||[]).length,5);
-  assert.equal((html.match(/data-icms-reconciliation="dre"/g)||[]).length,5);
-  assert.match(html,/DRE consolidada · janeiro a setembro/);assert.match(html,/data-report-part="references"/);
+  assert.equal((html.match(/class="dre-final-page"/g)||[]).length,2);
+  assert.equal((html.match(/data-dre-row="revenue"/g)||[]).length,2);
+  assert.equal((html.match(/data-icms-reconciliation="dre"/g)||[]).length,0);
+  assert.match(html,/DRE - Consolidado/);assert.match(html,/Jan–Set/);
   assert.doesNotMatch(html,/DRE anual consolidada|Janeiro a dezembro do cenário/);
 });
 
@@ -265,9 +265,9 @@ test('ajustes da DRE não alteram a composição documental nem escondem prejuí
   near(row(adjusted.presentation,'revenueManualAdjustment').values.actual,100);
   assert.match(html,/data-dre-row="revenueManualAdjustment"/);assert.match(html,/ajustes manuais estão refletidos na DRE/);
   assert.equal(adjusted.presentation.commercialComposition.revenue.totalCents,adjusted.source.commercialComposition.revenue.totalCents);
-  const loss=renderAnnualDre(fixture({rent:20000}));assert.match(loss,/Prejuízo estimado/);assert.match(loss,/class="dre-regime-result is-loss/);
+  const loss=renderAnnualDre(fixture({rent:20000}));assert.match(loss,/Resultado líquido/);assert.match(loss,/-R\$/);
   const pending=fixture({rbt12:4900000});assert.equal(buildDreExecutiveSummary(pending.presentation,{id:'pure',mode:'annual'}).result,null);
-  const pendingHtml=renderAnnualDre(pending);assert.match(pendingHtml,/Resultado indisponível/);assert.doesNotMatch(pendingHtml,/NaN|Infinity/);
+  const pendingHtml=renderAnnualDre(pending);assert.match(pendingHtml,/—/);assert.doesNotMatch(pendingHtml,/NaN|Infinity/);
 });
 
 test('histórico sem contrato Jan–Set conserva calendário de doze meses e DRE completa inicial',()=>{
@@ -308,7 +308,7 @@ test('competências parciais e não consecutivas preservam número, valor, DIFAL
   const header=csv.split('\r\n').find(line=>line.startsWith('"Regime";"Escopo";'));
   assert.equal(header.split(';').length,12);assert.match(header,/Março.*Maio.*Setembro/);assert.doesNotMatch(header,/Janeiro|Fevereiro|Abril|Outubro/);
   assert.match(csv,/consolidado de 3 competências confirmadas/);
-  const print=renderDrePrintDocument({...input,period:'complete'});assert.match(print,/consolidado das 3 competências com dados/);assert.doesNotMatch(print,/nove meses|nove competências/);
+  const print=renderDrePrintDocument({...input,period:'complete'});assert.match(print,/3 de 9 competências/);assert.doesNotMatch(print,/nove meses|nove competências/);
   const evolution=buildDreEvolution(input.presentation,input.calendar,'actual',1);
   assert.equal(evolution.current.sourceMonth,'2026-05');assert.equal(evolution.previous.sourceMonth,'2026-03');
   assert.equal(evolution.metrics[0].change,null);assert.match(evolution.reason,/não são consecutivas/);

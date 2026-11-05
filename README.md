@@ -1,4 +1,25 @@
-# Maximum CNPJ · v0.57.1
+# Maximum CNPJ · v0.58.0
+## v0.58.0 — Simulador Reforma Tributária e DRE final em duas páginas (05/11/2026)
+
+A tela consolidada de janeiro a setembro segue **Resumo dos resultados → Impostos → Demonstração do Resultado / DRE - Consolidado**. O título superior é **Simulador Reforma Tributária**. A seleção de regimes vale para os três quadros e para o download. As conferências, memórias e evolução ficam em blocos recolhidos; os dados originais continuam disponíveis.
+
+O PDF Python e a impressão do consolidado Jan–Set têm **exatamente duas páginas**, independentemente das antigas opções anual/mensal/completo: página 1 com resumo dos regimes, resultados, impostos e indicadores; página 2 com a DRE completa. Sem capa adicional, gráficos, anexos mensais ou páginas de memória. O CSV conserva os dados mensais para conferência, e os relatórios históricos anteriores ao contrato Jan–Set mantêm seu formato original.
+
+A DRE passa por receita bruta (serviços + vendas), deduções da receita, receita líquida, custo de mercadoria, lucro bruto/margem de contribuição, despesas operacionais, EBITDA, resultado financeiro, resultado antes do IRPJ/CSLL, IRPJ final, CSLL final e resultado líquido. ICMS e CBS/IBS aparecem como **débitos nas receitas e créditos efetivamente utilizados nas compras**. Antecipação fica nas compras; encargos ficam nas despesas. A linha INSS / FGTS exibe os encargos já capturados (premissa padrão de 27,8% da folha no Presumido/Real), sem separar as parcelas de INSS e FGTS; a natureza da despesa de benefícios deve ser conferida para evitar dupla contagem. A reorganização conserva o resultado, sem abater o total de impostos novamente e sem transformar saldo potencial de crédito em lucro. Receita bruta significa a soma das vendas e serviços usados no cenário, com devoluções já tratadas na origem.
+
+Contábil ganha **Despesas financeiras** e **Receitas financeiras**, informadas como valores positivos, por média ou por competência, incluindo repetição e colagem. A DRE apresenta receitas menos despesas financeiras **após o EBITDA**, antes do IRPJ/CSLL. Os totais auxiliares do Contábil também descontam receitas financeiras. A colagem aceita o novo modelo de oito colunas e o anterior de seis; campos financeiros omitidos em registros antigos são compatibilizados sem reescrever os originais. Vazios explícitos em uma nova conta continuam pendentes.
+
+Receitas financeiras são adicionadas integralmente às bases do IRPJ e da CSLL do Presumido, sem sofrer percentual de presunção nem o acréscimo sobre receitas de atividade; despesas financeiras não reduzem essa base. No Real, ambas alteram o resultado antes dos tributos. A regra gerencial Jan–Set que zera IRPJ/CSLL quando esse resultado é não positivo permanece. Referência: [Receita Federal — receitas financeiras no Lucro Presumido](https://www.gov.br/receitafederal/pt-br/assuntos/orientacao-tributaria/declaracoes-e-demonstrativos/revisao-de-declaracao-malha/pj-parametro-10.004).
+
+Em **Impostos**, um espaço separa os tributos dos indicadores: margem de contribuição em R$ e %, EBITDA em R$ e %, resultado líquido e margem líquida. O denominador é sempre a receita bruta do mesmo regime/período; receita zero ou negativa não gera percentual fictício. Detalhes ausentes permanecem indisponíveis, preservando subtotais conhecidos e resultados salvos.
+
+Motor `1.21.0-quarterly-income-tax-financial`, contrato Jan–Set `1.21.0-quarterly-income-tax-available-months-financial` e revisão de reprocessamento `QUARTERLY_INCOME_TAX_2026_11_V17`. A atualização gera uma nova versão vinculada quando solicitada pelo fluxo existente; não altera snapshots históricos nem aplica migração destrutiva.
+
+Validação: regras e contratos Node, tipos/build, conferência independente JavaScript/Python, PDFs reabertos para contagem de páginas e limites de texto, regressões com lucro/prejuízo/receita zero/meses parciais e banco MongoDB descartável. Verificações locais usam dados sintéticos; não representam homologação fiscal nem validação dos dados de clientes em produção.
+
+## Histórico das apresentações anteriores
+
+Os tópicos abaixo registram versões anteriores. A ordem dos quadros, linhas visíveis e paginação atuais são as descritas na v0.58.0 acima.
 
 ## Corrigir a HIT — versão nova da DRE com IRPJ zero quando o Lucro Real está negativo (04/11/2026)
 

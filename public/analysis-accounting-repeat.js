@@ -26,9 +26,10 @@ export function planAccountingCopy(months,options={}) {
     fail('COPY_SCOPE','Confira o período exibido antes de copiar os valores.');
   const allowed=new Set(allowedMonths),source=byMonth.get(sourceMonth);
   if(!source||!allowed.has(sourceMonth))fail('SOURCE_MONTH','Escolha um mês de origem exibido no período da análise.');
-  const missing=ACCOUNTING_FIELDS.filter(([field])=>source[field]===null||source[field]===undefined);
-  if(missing.length)fail('SOURCE_INCOMPLETE','Preencha as cinco contas do mês de origem. Use R$ 0,00 nas categorias sem despesa.');
-  const invalid=ACCOUNTING_FIELDS.find(([field])=>!validCents(source[field]));
+  const copiedFields=ACCOUNTING_FIELDS.filter(([key])=>!key.startsWith('financial')||Object.hasOwn(source,key));
+  const missing=copiedFields.filter(([field])=>source[field]===null||source[field]===undefined);
+  if(missing.length)fail('SOURCE_INCOMPLETE','Preencha todas as contas do mês de origem. Use R$ 0,00 nas categorias sem despesa.');
+  const invalid=copiedFields.find(([field])=>!validCents(source[field]));
   if(invalid)fail('SOURCE_VALUE',`Confira ${invalid[1]} no mês de origem. Informe um valor válido entre R$ 0,00 e R$ 1.000.000.000.000,00.`);
   if(!Array.isArray(targetMonths)||!targetMonths.length)
     fail('TARGET_REQUIRED','Escolha pelo menos um mês de destino diferente da origem.');
@@ -40,7 +41,7 @@ export function planAccountingCopy(months,options={}) {
   const copied=structuredClone(months),targetSet=new Set(targets),changes=[],overwritten=new Set();
   for(const row of copied){
     if(!targetSet.has(row.sourceMonth))continue;
-    for(const [field] of ACCOUNTING_FIELDS){
+    for(const [field] of copiedFields){
       const before=row[field],after=source[field];
       if(before===after)continue;
       changes.push({sourceMonth:row.sourceMonth,field,before,after});
@@ -50,5 +51,5 @@ export function planAccountingCopy(months,options={}) {
   }
   return {months:copied,changes,sourceMonth,targetMonths:targets,
     overwrittenMonths:targets.filter(month=>overwritten.has(month)),changedFields:changes.length,
-    totalCents:ACCOUNTING_FIELDS.reduce((total,[field])=>total+source[field],0)};
+    totalCents:copiedFields.reduce((total,[field])=>total+(field==='financialIncomeCents'?-source[field]:source[field]),0)};
 }

@@ -5,7 +5,7 @@ import {parseAccountingPaste,planAccountingPaste,AccountingImportError,ACCOUNTIN
 
 const expenseFields=ACCOUNTING_IMPORT_COLUMNS.slice(1).map(column=>column.key);
 const pasted=(month='01/2026',values=['','','','',''],delimiter=';')=>[month,...values].join(delimiter);
-const row=(sourceMonth,values=[null,null,null,null,null])=>({sourceMonth,...Object.fromEntries(expenseFields.map((field,index)=>[field,values[index]]))});
+const row=(sourceMonth,values=[null,null,null,null,null])=>({sourceMonth,...Object.fromEntries(expenseFields.map((field,index)=>[field,index<5?values[index]:(values.some(Number.isSafeInteger)?0:null)]))});
 const failure=(code,line,column)=>error=>error instanceof AccountingImportError && error.code===code &&
   (line===undefined||error.line===line) && (column===undefined||error.column===column);
 const freeze=rows=>Object.freeze(rows.map(value=>Object.freeze(value)));
@@ -18,12 +18,12 @@ test('colagem TAB reconhece as seis colunas, ordena meses e preserva os centavos
   assert.equal(result.delimiter,'\t');assert.equal(result.hasHeader,false);
 });
 
-test('modelo CSV contém cabeçalho e cinco valores vazios, sem zeros implícitos',()=>{
+test('modelo CSV contém cabeçalho e sete valores vazios, sem zeros implícitos',()=>{
   assert.equal(CSV_TEMPLATE,ACCOUNTING_IMPORT_CSV_TEMPLATE);
-  assert.equal(ACCOUNTING_IMPORT_COLUMNS.length,6);
+  assert.equal(ACCOUNTING_IMPORT_COLUMNS.length,8);
   assert.ok(Object.isFrozen(ACCOUNTING_IMPORT_COLUMNS));assert.ok(ACCOUNTING_IMPORT_COLUMNS.every(Object.isFrozen));
   const parsed=parseAccountingPaste(CSV_TEMPLATE);
-  assert.equal(parsed.hasHeader,true);assert.equal(parsed.delimiter,';');assert.equal(parsed.blankCount,5);assert.equal(parsed.totalCents,0);
+  assert.equal(parsed.hasHeader,true);assert.equal(parsed.delimiter,';');assert.equal(parsed.blankCount,7);assert.equal(parsed.totalCents,0);
   assert.deepEqual(parsed.months,[row('2026-01')]);
 });
 
@@ -86,11 +86,11 @@ test('competências são somente AAAA-MM ou MM/AAAA no intervalo de 2000 a 2099'
 
 test('colunas extras, ausentes e separadores misturados são recusados; vazios finais são preservados',()=>{
   assert.throws(()=>parseAccountingPaste('01/2026;1;2;3;4'),failure('COLUMN_COUNT',1,6));
-  assert.throws(()=>parseAccountingPaste('01/2026;1;2;3;4;5;'),failure('COLUMN_COUNT',1,7));
+  assert.throws(()=>parseAccountingPaste('01/2026;1;2;3;4;5;'),failure('COLUMN_COUNT',1,8));
   assert.throws(()=>parseAccountingPaste('01/2026\t1;2;3;4;5'),failure('MIXED_DELIMITERS',1,1));
   assert.throws(()=>parseAccountingPaste(pasted()+'\n'+pasted('02/2026',['','','','',''],'\t')),failure('MIXED_DELIMITERS',2,1));
   assert.throws(()=>parseAccountingPaste('01/2026,1,2,3,4,5'),failure('COLUMN_COUNT',1,1));
-  assert.equal(parseAccountingPaste('01/2026;;;;;').blankCount,5);
+  assert.equal(parseAccountingPaste('01/2026;;;;;').blankCount,7);
   assert.throws(()=>parseAccountingPaste('\t\t\t\t\t'),failure('MONTH_FORMAT',1,1));
 });
 

@@ -1,5 +1,16 @@
 # Histórico de alterações
 
+## [0.58.0] - 2026-11-05
+
+- Renomeia o título para Simulador Reforma Tributária e coloca resumo/resultados e impostos antes da DRE consolidada no navegador.
+- Fixa o PDF e a impressão Jan–Set em duas páginas: resumo com impostos e indicadores na primeira; DRE completa na segunda, com os mesmos regimes selecionados.
+- Reorganiza débitos nas receitas, créditos utilizados e antecipação nas compras, encargos nas despesas, EBITDA e IRPJ/CSLL finais sem duplicar deduções.
+- Adiciona despesas e receitas financeiras ao Contábil, aos lançamentos mensais, média, repetição, colagem, persistência e geração de versões.
+- Aplica resultado financeiro após EBITDA; inclui receitas financeiras integrais nas bases do Presumido e conserva a regra gerencial de prejuízo do Real.
+- Separa visualmente margem de contribuição e EBITDA, com valores e percentuais sobre receita bruta no bloco de impostos.
+- Preserva registros antigos sem campos financeiros, sinais, competências ausentes, autenticação e snapshots históricos; não transforma detalhes desconhecidos em zero.
+- Atualiza motor para 1.21 e reprocessamento para V17; cobre cálculo, conciliação JS/Python, PDF de duas páginas e retomada no banco de teste.
+
 ## [0.57.1] - 2026-11-04
 
 - Separa Impostos em um bloco próprio fora da DRE, sincronizado com a seleção dos regimes visíveis.

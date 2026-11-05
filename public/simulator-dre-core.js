@@ -12,7 +12,7 @@ const good = value => ({value,reason:''});
 const missing = (reason='Detalhamento não disponível nesta versão.') => ({value:null,reason});
 const currency = value => finite(value) ? good(value) : missing('Valor não disponível nesta versão.');
 const unique = (rows,key,value) => {const matches=Array.isArray(rows)?rows.filter(row=>row?.[key]===value):[];return matches.length===1?matches[0]:null;};
-const SUBTOTALS = new Set(['revenue','netRevenue','cmv','grossProfit','personnel','preTax','netProfit']);
+const SUBTOTALS = new Set(['revenue','netRevenue','cmv','grossProfit','personnel','ebitda','preTax','netProfit']);
 const GROUPS = ['salesOptantCents','salesNonOptantCents','salesCpfCents'];
 const capturedDifalVersion = value => ['DIFAL_SCENARIOS_V1','DIFAL_SCENARIOS_V2'].includes(value?.version);
 
@@ -121,7 +121,7 @@ export function capturedDreRows(presentation) {
   return rows;
 }
 
-/** The DRE keeps one tax deduction; the assessed taxes have their own statement. */
+/** Final statement rows; captured details remain available for reconciliation. */
 export function unifiedDreRows(presentation) {
   if(presentation?.statement?.version!=='DRE_STATEMENT_V1')return capturedDreRows(presentation);
   return [...presentation.statement.sections.flatMap(section=>section.rows||[]),
@@ -158,6 +158,8 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     return {regime:effective,kind,index,available,monthlyEntry,monthResult:monthlyEntry?.result,scale:kind==='month'&&!actual?1/12:1,
       get(key) {
         if(!available)return null;
+        if(key==='financialResult'&&!Object.hasOwn(effective.dre||{},key))return 0;
+        if(key==='ebitda'&&!Object.hasOwn(effective.dre||{},key))return this.get('preTax')===null?null:this.get('preTax')-this.get('financialResult');
         if(actual&&kind==='month'&&!hasCalendar){const value=effective.dre?.[key];return finite(value)?value:null;}
         if(uniformQuarterly&&kind==='month'&&!hasCalendar&&['irpj','csll','netProfit'].includes(key)&&['presumed','actual'].includes(regime.id)){
           const period=`${result.incomeTaxAssessment.scenarioYear}-${String(months[index].number).padStart(2,'0')}`;
@@ -213,7 +215,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     {key:'revenue',label:'Receitas',rows:['services','sales','revenue'].map(base)},
     {key:'deductions',label:'Tributos sobre a receita',rows:[...deductions.map(base),subtotal('revenueDeductions','Deduções tributárias da receita',deductions,'netRevenue','revenue'),base('netRevenue')]},
     {key:'costs',label:'Compras, custos e créditos',rows:[...['cmvSimple','cmvRegular','cmv','cbsUsed','ibsUsed'].map(base),subtotal('cmvNetCredits','Compras/CMV após créditos de CBS e IBS',['cmv','cbsUsed','ibsUsed'],'grossProfit','netRevenue'),base('grossProfit')]},
-    {key:'expenses',label:'Despesas operacionais',rows:[...['salaries','benefits','payroll','personnel','administrative','rent','cards'].map(base),subtotal('operatingExpenses','Total de despesas operacionais',['personnel','administrative','rent','cards'],'preTax','grossProfit'),base('preTax')]},
+    {key:'expenses',label:'Despesas operacionais',rows:[...['salaries','benefits','payroll','personnel','administrative','rent','cards'].map(base),subtotal('operatingExpenses','Total de despesas operacionais',['personnel','administrative','rent','cards'],'ebitda','grossProfit'),row('ebitda','Resultado operacional (EBITDA)','subtotal',f=>currency(f.get('ebitda'))),row('financialResult','Despesas/Receitas financeiras','line',f=>currency(f.get('financialResult'))),base('preTax')]},
     {key:'profit',label:'Tributos sobre o lucro e resultado',rows:[base('irpj'),base('csll'),subtotal('incomeTaxes','Total de IRPJ e CSLL',['irpj','csll'],'netProfit','preTax'),base('netProfit')]}
   ];
   const detail=(key,label,parentKey,compute,options={})=>row(key,label,'detail',compute,{informative:true,parentKey,...options});
@@ -391,7 +393,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     indicator('netMargin','Margem líquida',ratio('netProfit',{stored:'margin'})),
     indicator('taxBurden','Tributos e encargos sobre receita utilizada',ratio(taxes,{stored:'taxBurden'})),
     indicator('cmvBurden','Compras/CMV sobre receita utilizada',ratio('cmv',{negative:true})),
-    indicator('operatingExpenseBurden','Despesas operacionais sobre receita utilizada',ratio(reconciledSum(['personnel','administrative','rent','cards'],'preTax','grossProfit'),{negative:true})),
+    indicator('operatingExpenseBurden','Despesas operacionais sobre receita utilizada',ratio(reconciledSum(['personnel','administrative','rent','cards'],'ebitda','grossProfit'),{negative:true})),
     indicator('totalTaxes','Tributos e encargos totais',taxes,{unit:'currency',notes:['Inclui encargos sobre a folha. Créditos utilizados já foram abatidos; não deduzir novamente.']})
   ];
   // The source is already net of returns. This bridge explains the captured amount;
@@ -487,58 +489,67 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     if(iss&&originals.some(regime=>[iss.values[regime.id],iss.calendarAnnualValues[regime.id],...(iss.monthlyValues[regime.id]||[])].some(value=>value===null||value!==0)))assessedRows.push(display('iss','ISS fora do DAS'));
     const taxRates={cbs,ibs,combined:sum([cbs,ibs]),monthly:rateMonths};
     const taxTotal=display('totalTaxes','Total',{kind:'subtotal',notes:['Soma dos tributos e encargos apurados. Valores devidos são positivos e estornos são negativos. Créditos utilizados já foram abatidos; antecipação e INSS entram uma única vez.']});
-    const taxesDeduction=opposite(taxTotal,{key:'taxesDeduction',label:'(−) Total de impostos',kind:'detail',informative:true,
-      notes:['Dedução única do total apresentado no bloco Impostos. Inclui os encargos da folha e a antecipação de ICMS; os créditos utilizados já foram abatidos.']});
     taxStatement={version:'DRE_TAX_STATEMENT_V1',label:'Impostos',taxRates,
       rows:[...assessedRows.map(item=>opposite(item)),taxTotal,
         display('taxBurden','% sobre a receita',{notes:['Total de impostos ÷ Receita Total utilizada no mesmo período e regime × 100.']}),
         display('netProfit','Resultado',{kind:'subtotal',notes:['Resultado final da DRE, reproduzido para comparação. Não é uma parcela do total de impostos.']}),
         display('netMargin','% sobre a receita',{notes:['Resultado ÷ Receita Total utilizada no mesmo período e regime × 100.']})],
       note:'D = Débito; C = Crédito. Valores devidos são positivos; estornos são negativos. ICMS e CBS/IBS já estão líquidos dos créditos utilizados. Percentuais sobre a Receita Total utilizada no mesmo período e regime. O resultado é o mesmo da DRE.'};
-    // Allocate each already-captured tax once; the separate taxes table is unchanged.
-    const revenueTaxKeys=['das','icmsNet','cbsIbsNet','iss','difal'];
-    const allocated=(f,key)=>key==='cbsIbsNet'?
-      sum(['cbsDebit','ibsDebit','cbsUsed','ibsUsed'].map(part=>f.get(part))):f.get(key);
-    const allocatedSum=(f,keys)=>sum(keys.map(key=>allocated(f,key)));
-    const subtotalFrom=(key,label,parts,{expected=null,notes=[]}={})=>row(key,label,'subtotal',f=>{
-      const value=sum(parts.map(part=>typeof part==='function'?part(f):allocated(f,part)));
-      if(!finite(value))return missing('Faltam valores para conferir este subtotal no período.');
-      if(expected!==null&&!close(value,f.get(expected)))return missing('O subtotal não concilia com a DRE salva.');
+    // Gross debits on revenue and used credits on purchases must reconcile to
+    // the captured net taxes. Never add potential or unused credit to profit.
+    const icmsUsed=f=>{
+      const value=f.regime.dre?.icmsUsed;
+      return finite(value)&&value>=0?value*f.scale:null;
+    };
+    const values={
+      icmsDebit:f=>sum([f.get('icmsNet'),finite(icmsUsed(f))?-icmsUsed(f):null]),
+      icmsCredit:icmsUsed,
+      cbsIbsDebit:f=>sum([f.get('cbsDebit'),f.get('ibsDebit')]),
+      cbsIbsCredit:f=>sum([f.get('cbsUsed'),f.get('ibsUsed')]),
+      financialResult:f=>f.get('financialResult'),
+      operatingExpensesWithPayroll:f=>sum(['salaries','benefits','payroll','rent','cards','administrative'].map(key=>f.get(key)))
+    };
+    const get=(f,key)=>values[key]?values[key](f):f.get(key);
+    const add=(f,keys)=>sum(keys.map(key=>get(f,key)));
+    values.revenueTaxes=f=>add(f,['das','icmsDebit','cbsIbsDebit','iss','difal']);
+    values.netRevenueAfterTaxes=f=>add(f,['revenue','revenueTaxes']);
+    values.costsWithAnticipation=f=>add(f,['cmvSimple','cmvRegular','icmsAnticipation','cbsIbsCredit','icmsCredit']);
+    const capturedSubtotal=(computed,captured)=>finite(computed)?(finite(captured)&&close(computed,captured)?computed:null):captured;
+    values.grossAfterCosts=f=>capturedSubtotal(add(f,['netRevenueAfterTaxes','costsWithAnticipation']),f.get('grossProfit'));
+    values.ebitda=f=>capturedSubtotal(add(f,['grossAfterCosts','operatingExpensesWithPayroll']),f.get('ebitda'));
+    values.resultBeforeIncomeTaxes=f=>capturedSubtotal(add(f,['ebitda','financialResult']),f.get('preTax'));
+    const finalRow=(key,label,kind='line',expected=null)=>row(key,label,kind,f=>{
+      const value=get(f,key);
+      if(!finite(value))return missing('Valor não capturado ou indisponível nesta versão.');
+      if(expected&&!close(value,f.get(expected)))return missing('Este subtotal não concilia com a versão salva.');
       return good(value);
-    },{informative:true,notes,sourceRefs:['result.regimes[].dre']});
-    const revenueTaxes=subtotalFrom('revenueTaxes','(=) Tributos sobre receitas',revenueTaxKeys);
-    const netRevenueAfterTaxes=subtotalFrom('netRevenueAfterTaxes','= Receita líquida após tributos',['revenue',f=>allocatedSum(f,revenueTaxKeys)]);
-    const costsWithAnticipation=subtotalFrom('costsWithAnticipation','= Compras / CMV e antecipação de ICMS',['cmv','icmsAnticipation']);
-    const grossAfterCosts=subtotalFrom('grossAfterCosts','= Resultado após receitas, custos e tributos',
-      [f=>allocatedSum(f,['revenue','cmv','icmsAnticipation',...revenueTaxKeys])]);
-    const operatingExpensesWithPayroll=subtotalFrom('operatingExpensesWithPayroll','= Despesas e encargos da folha',
-      ['salaries','benefits','administrative','rent','cards','payroll']);
-    const resultBeforeIncomeTaxes=subtotalFrom('resultBeforeIncomeTaxes','= Resultado antes de IRPJ / CSLL',
-      [f=>allocatedSum(f,['revenue','cmv','icmsAnticipation',...revenueTaxKeys,'salaries','benefits','administrative','rent','cards','payroll'])],
-      {expected:'preTax',notes:['Base gerencial antes de IRPJ/CSLL; o imposto depende da base tributável trimestral.']});
-    const allocationNote=['Crédito já utilizado para reduzir CBS/IBS líquido. Informação de conferência, não acrescentar novamente.'];
-    statement={version:'DRE_STATEMENT_V1',taxRates,
+    },{sourceRefs:['result.regimes[].dre']});
+    const finalRatio=(key,label,numerator)=>indicator(key,label,ratio(f=>currency(get(f,numerator))));
+    const contribution=finalRow('grossAfterCosts','Lucro bruto (Margem de contribuição)','subtotal','grossProfit');
+    const ebitda=finalRow('ebitda','Resultado operacional (EBITDA)','subtotal','ebitda');
+    const contributionMargin=finalRatio('contributionMargin','Margem de contribuição (%)','grossAfterCosts');
+    const ebitdaMargin=finalRatio('ebitdaMargin','EBITDA (%)','ebitda');
+    taxStatement.rows=taxStatement.rows.filter(item=>!['netProfit','netMargin'].includes(item.key));
+    taxStatement.rows.push({...contribution,label:'Margem de contribuição',breakBefore:true},contributionMargin,
+      ebitda,ebitdaMargin,display('netProfit','Resultado líquido',{kind:'subtotal'}),display('netMargin','Resultado líquido (%)'));
+    taxStatement.note='D = Débito; C = Crédito. Impostos líquidos dos créditos utilizados. Percentuais: valor do indicador ÷ Receita bruta (serviços + vendas) do mesmo período e regime. Sem receita positiva, o percentual não se aplica.';
+    statement={version:'DRE_STATEMENT_V1',layout:'FINAL_TWO_PAGES_V1',taxRates,
       sections:[
-        {key:'revenue',label:'Receitas e tributos sobre receitas',rows:[
-          display('services','Receita de serviços'),display('sales','Receita de vendas utilizada'),display('revenue','Receita Total utilizada'),
-          display('das','(−) Simples Nacional (DAS)'),display('icmsNet','(−) ICMS líquido (D − C)'),
-          {...combinedTaxes,label:'(−) CBS/IBS líquido (D − C)'},display('iss','(−) ISS fora do DAS'),
-          optionalTax('difal','(−) DIFAL sobre vendas',['Imposto sobre vendas quando aplicável.']),
-          revenueTaxes,netRevenueAfterTaxes]},
-        {key:'costs',label:'Compras e custos',rows:[
-          display('cmvSimple'),display('cmvRegular'),display('cmv','Total de compras / CMV'),
-          optionalTax('icmsAnticipation','(−) Antecipação de ICMS nas compras',['Imposto de entrada sobre compras elegíveis.']),
-          display('cbsUsed','Crédito CBS utilizado · informativo',{kind:'detail',informative:true,notes:allocationNote}),
-          display('ibsUsed','Crédito IBS utilizado · informativo',{kind:'detail',informative:true,notes:allocationNote}),
-          costsWithAnticipation,grossAfterCosts]},
-        {key:'expenses',label:'Despesas e encargos',rows:[
-          display('salaries'),display('benefits'),display('administrative'),display('rent'),display('cards'),
-          {...expensesWithoutPayroll,label:'Subtotal de despesas operacionais (sem INSS)'},
-          display('payroll','(−) INSS / encargos da folha'),operatingExpensesWithPayroll]},
-        {key:'profit',label:'IRPJ, CSLL e resultado',rows:[
-          resultBeforeIncomeTaxes,display('irpj','(−) IRPJ normal e adicional'),display('csll','(−) CSLL'),
-          taxesDeduction,display('netProfit','Resultado líquido'),display('netMargin','% sobre a receita · resultado')]}
-      ],note:'Impostos distribuídos uma vez por natureza (receitas, compras, folha e resultado). A linha (−) Total de impostos apenas confere a soma já considerada; o quadro Impostos permanece completo.'};
+        {key:'revenue',label:'Receitas',rows:[display('revenue','Receita bruta'),display('services','Receitas de serviços'),display('sales','Receita de vendas')]},
+        {key:'deductions',label:'Deduções da receita',rows:[finalRow('revenueTaxes','Deduções da receita','subtotal'),
+          display('das','Simples'),finalRow('icmsDebit','ICMS Débito'),finalRow('cbsIbsDebit','CBS/IBS Débito'),display('iss','ISS'),
+          optionalTax('difal','DIFAL sobre vendas',['DIFAL de saída capturado no cenário.']),finalRow('netRevenueAfterTaxes','Receita líquida','subtotal')]},
+        {key:'costs',label:'Custos',rows:[finalRow('costsWithAnticipation','Custo de mercadoria','subtotal'),
+          display('cmvSimple','Compras do Simples'),display('cmvRegular','Compras fora do Simples'),
+          optionalTax('icmsAnticipation','Antecipação de ICMS nas compras',['Antecipação deduzida uma única vez.']),
+          finalRow('cbsIbsCredit','CBS/IBS Crédito'),finalRow('icmsCredit','ICMS Crédito'),contribution]},
+        {key:'expenses',label:'Despesas operacionais',rows:[finalRow('operatingExpensesWithPayroll','Despesas operacionais','subtotal'),
+          display('salaries','Salários e pró-labore'),display('benefits','Benefícios de funcionários'),display('payroll','INSS / FGTS'),
+          display('rent','Aluguel'),display('cards','Taxas de cartão'),display('administrative','Outras despesas')]},
+        {key:'profit',label:'Resultado',rows:[ebitda,finalRow('financialResult','Despesas/Receitas financeiras'),
+          finalRow('resultBeforeIncomeTaxes','Antes do IRPJ / CSLL','subtotal','preTax'),
+          display('irpj','IRPJ'),display('csll','CSLL'),display('netProfit','Resultado líquido')]}
+      ],note:'Receita bruta = serviços + vendas utilizados no cenário (devoluções já tratadas na origem). Deduções negativas; créditos utilizados positivos. Resultado financeiro = receitas menos despesas financeiras. INSS / FGTS usa os encargos capturados, sem discriminar cada parcela.'};
   }
   return {version:DRE_PRESENTATION_VERSION,method:actual?'REPORT_MONTHS_V1':null,regimes,sections,details,indicators,revenueReconciliation,icmsReconciliation,irpjReconciliation,months,calendarYear,
     ...(statement?{statement,taxStatement}:{}),

@@ -36,6 +36,7 @@ export function upgradeDifalPolicy(value?:unknown): CurrentDifalPolicy;
 export function resolveDifalApplication(input:{policy?:DifalPolicy;regimeId:SimulationRegimeId;rbt12:number|null;icmsOutside?:boolean}): DifalApplication & {version:'DIFAL_SCENARIOS_V2';operations:DifalOperations};
 export const CALCULATOR_SOURCE_COMMIT: string;
 export const TAX_SOURCES: ReadonlyArray<{label: string; url: string}>;
+export const FINANCIAL_VALUE_FIELDS: readonly ('financialExpenses'|'financialIncome')[];
 export const SIMULATION_VALUE_FIELDS: readonly SimulationValueField[];
 export type SimulationValueField = 'serviceRevenue' | 'salesRevenue' | 'simplePurchases' | 'regularPurchases' |
   'salaries' | 'benefits' | 'adminExpenses' | 'rent' | 'cardExpenses';
@@ -50,7 +51,7 @@ export type SimulationDraft = {
   /** User-confirmed local tax treatment. Absence preserves the historical inside-DAS premise. */
   icmsOutside?: boolean;
   difalPolicy?: DifalPolicy;
-  values: Record<SimulationValueField, number>;
+  values: Record<SimulationValueField, number> & Partial<Record<'financialExpenses'|'financialIncome',number>>;
 };
 /** Server-owned estimate from confirmed interstate purchases; never inferred from edited CMV. */
 export type IcmsAnticipationProjection = {

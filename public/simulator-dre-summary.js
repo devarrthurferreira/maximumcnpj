@@ -13,9 +13,10 @@ export function buildDreSummary(presentation,column) {
     ['revenueDeductions','Tributos sobre a receita','deduction'],
     ['cmvNetCredits','Compras e custos após créditos','deduction'],
     ['operatingExpenses','Despesas operacionais','deduction'],
+    ['financialResult','Despesas/Receitas financeiras','deduction'],
     ['incomeTaxes','IRPJ e CSLL','deduction'],
     ['netProfit','Resultado líquido','result']
-  ].map(([key,label,kind])=>({key,label,kind,value:get(key)}));
+  ].filter(([key])=>key!=='financialResult'||rows.some(row=>row.key===key)).map(([key,label,kind])=>({key,label,kind,value:get(key)}));
   const complete=movements.every(row=>row.value!==null);
   const expected=complete?movements.slice(0,-1).reduce((sum,row)=>sum+row.value,0):null;
   const result=get('netProfit');
@@ -41,7 +42,7 @@ export function buildDreExecutiveSummary(presentation,column) {
       ['operatingExpenses','− Despesas operacionais','line'],
       ['incomeTaxes','− IRPJ e CSLL','line'],
       ['netProfit','Resultado · lucro ou prejuízo','result']
-    ].map(([key,label,kind])=>({key,label,kind,value:get(key),row:rows.find(row=>row.key===key)}))};
+    ].filter(([key])=>key!=='financialResult'||rows.some(row=>row.key===key)).map(([key,label,kind])=>({key,label,kind,value:get(key),row:rows.find(row=>row.key===key)}))};
 }
 
 const evolutionMetrics = [

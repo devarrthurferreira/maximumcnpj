@@ -290,7 +290,7 @@ test('calendário salvo mantém meses e anuais distintos, subtotais derivados s�
  const input=fixture(),calendar=buildMonthlyDre(input.result,2027);
  const saved=calendar.regimes.find(r=>r.id==='actual'),by=key=>saved.rows.find(row=>row.key===key);
  // Synthetic saved schedule intentionally differs from the annual comparison.
- for(const key of ['services','revenue','netRevenue','grossProfit','preTax','netProfit']){
+ for(const key of ['services','revenue','netRevenue','grossProfit','ebitda','preTax','netProfit']){
   by(key).months[0]+=100;by(key).annual+=100;
  }
  const before=structuredClone(calendar),p=buildDrePresentation({...input,calendar});
@@ -369,14 +369,14 @@ test('resumo visual usa exatamente o quadro selecionado e não altera a apresent
   const column={id,mode,month:0},summary=buildDreSummary(p,column),row=find(p,'netProfit');
   assert.equal(summary.result,mode==='month'?row.monthlyValues[id][0]:mode==='calendarAnnual'?row.calendarAnnualValues[id]:row.values[id]);
   assert.equal(summary.reconciled,true);near(summary.revenue-summary.deductions,summary.result);
-  assert.equal(summary.movements.length,6);
+  assert.equal(summary.movements.length,7);
  }
  assert.deepEqual(p,before);
 });
 
 test('resumo visual distingue total anual salvo, prejuízo, zero e indisponibilidade',()=>{
  const input=fixture(),calendar=buildMonthlyDre(input.result,2027);
- const saved=calendar.regimes[3];for(const key of ['services','revenue','netRevenue','grossProfit','preTax','netProfit'])saved.rows.find(row=>row.key===key).annual+=50;
+ const saved=calendar.regimes[3];for(const key of ['services','revenue','netRevenue','grossProfit','ebitda','preTax','netProfit'])saved.rows.find(row=>row.key===key).annual+=50;
  const p=buildDrePresentation({...input,calendar}),annual=buildDreSummary(p,{id:'actual',mode:'annual'}),captured=buildDreSummary(p,{id:'actual',mode:'calendarAnnual'});
  assert.equal(captured.revenue,annual.revenue+50);assert.equal(captured.result,annual.result+50);assert(captured.reconciled);
  input.draft.values.salesRevenue=0;input.draft.values.serviceRevenue=0;
@@ -609,7 +609,7 @@ test('memória completa mantém itens anuais e normaliza rótulos legados sem co
 
 test('apuração de ICMS aparece uma vez no fechamento, antes da memória do IRPJ, sem duplicar crédito',()=>{
  const dre=Object.fromEntries(dreRows(fixture().result).map(([key])=>[key,0]));
- Object.assign(dre,{sales:2700,revenue:2700,icmsNet:-264,netRevenue:2436,cmvRegular:-1400,cmv:-1400,grossProfit:1036,preTax:1036,netProfit:1036,icmsUsed:156,icmsBalance:0});
+ Object.assign(dre,{sales:2700,revenue:2700,icmsNet:-264,netRevenue:2436,cmvRegular:-1400,cmv:-1400,grossProfit:1036,ebitda:1036,preTax:1036,netProfit:1036,icmsUsed:156,icmsBalance:0});
  const result={version:'histórico sintético',annualRevenue:2700,credits:{icms:{debit:420,potential:156,used:156,due:264,balance:0}},memory:[],
   regimes:[{id:'actual',name:'Lucro Real',available:true,dre,annualProfit:1036,totalTaxes:264,margin:1036/2700,taxBurden:264/2700}]};
  const input={result,calendar:buildMonthlyDre(result,2027)},before=structuredClone(input);freeze(input);

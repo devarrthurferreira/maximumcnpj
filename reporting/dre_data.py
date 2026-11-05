@@ -125,13 +125,19 @@ def _regimes(result):
             (dre['cmvSimple'] + dre['cmvRegular'], dre['cmv']),
             (dre['netRevenue'] + dre['cmv'] + dre['cbsUsed'] + dre['ibsUsed'], dre['grossProfit']),
             (dre['salaries'] + dre['benefits'] + dre['payroll'], dre['personnel']),
-            (dre['grossProfit'] + dre['personnel'] + dre['administrative'] + dre['rent'] + dre['cards'], dre['preTax']),
+            (dre['grossProfit'] + dre['personnel'] + dre['administrative'] + dre['rent'] + dre['cards'] + dre.get('financialResult', 0), dre['preTax']),
             (dre['preTax'] + dre['irpj'] + dre['csll'], dre['netProfit']),
             (dre['netProfit'], regime['annualProfit']),
             (-sum(dre.get(key, 0) for key in ('das', 'cbsDebit', 'ibsDebit', 'icmsNet', 'iss', *OPTIONAL_ROWS,
                                             'payroll', 'irpj', 'csll', 'cbsUsed', 'ibsUsed')), regime['totalTaxes']),
         )
         _valid(all(_close(left, right) for left, right in equations))
+        if 'financialResult' in dre:
+            _valid(_finite(dre.get('financialIncome')) and dre['financialIncome'] >= 0 and
+                   _finite(dre.get('financialExpenses')) and dre['financialExpenses'] <= 0 and
+                   _close(dre['financialIncome'] + dre['financialExpenses'], dre['financialResult']))
+        if 'ebitda' in dre:
+            _valid(_close(dre['ebitda'] + dre.get('financialResult', 0), dre['preTax']))
         for tax in ('cbs', 'ibs'):
             if tax in credits:
                 _valid(_close(dre[tax + 'Used'], 0 if regime['id'] == 'pure' else credits[tax]['used']) and
@@ -186,7 +192,7 @@ def _calendar(snapshot, regimes, monthly):
         if monthly:
             actual = next((key for key in monthly if int(key[-2:]) == month['number']), None)
             _valid(month.get('sourceMonth') == actual)
-    expected_keys = set(BASE_ROWS) | {key for key in OPTIONAL_ROWS if any(key in row['dre'] for row in regimes.values())}
+    expected_keys = set(BASE_ROWS) | {key for key in (*OPTIONAL_ROWS, 'ebitda', 'financialResult') if any(key in row['dre'] for row in regimes.values())}
     result = snapshot['result']
     quarterly_projection = not monthly and uses_quarterly_income_tax(result)
     for item in rows:

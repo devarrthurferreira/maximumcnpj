@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {ACCOUNTING_FIELDS,accountingSummary,analysisGuidance,accountingSourceMonths,analysisPeriodFor,scopedAccountingMonths} from '../public/analyses-guidance.js';
 import {JAN_SEP_POLICY,analysisMonthsForYear,buildAnalysisPeriod} from '../public/analysis-period.js';
 
-const month=(sourceMonth,values)=>({sourceMonth,...Object.fromEntries(ACCOUNTING_FIELDS.map(([key],index)=>[key,values[index]]))});
+const month=(sourceMonth,values)=>({sourceMonth,...Object.fromEntries(ACCOUNTING_FIELDS.map(([key],index)=>[key,index<5?values[index]:(values.some(Number.isSafeInteger)?0:null)]))});
 const readyAnalysis=()=>({
   id:'analysis',fiscal:{status:'COMPLETE',data:{generationId:'generation'}},
   accounting:{status:'COMPLETE',data:{months:[month('2026-08',[0,0,0,0,0])]}},
@@ -72,7 +72,7 @@ test('subtotal preenchido preserva centavos e distingue campos vazios de zero in
   const input=[month('2026-08',[123456,0,null,null,null])],before=structuredClone(input);
   const summary=accountingSummary(input);
   assert.equal(summary.enteredCents,123456);assert.equal(summary.totalCents,null);assert.equal(summary.complete,false);
-  assert.equal(summary.filledFields,2);assert.equal(summary.missingFields,3);assert.equal(summary.completeMonths,0);
+  assert.equal(summary.filledFields,4);assert.equal(summary.missingFields,3);assert.equal(summary.completeMonths,0);
   assert.equal(summary.rows[0].enteredCents,123456);assert.equal(summary.rows[0].totalCents,null);
   assert.equal(summary.categories.find(item=>item.key==='rentCents').totalCents,0);
   assert.equal(summary.categories.find(item=>item.key==='cardExpensesCents').enteredCents,null);

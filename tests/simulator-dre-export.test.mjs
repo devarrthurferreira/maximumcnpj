@@ -41,7 +41,7 @@ test('CSV conserva a categoria das parcelas clonadas do IRPJ e identifica sua me
   const data=readCsv(buildDreCsv({presentation,period:'complete',visibleRegimeIds:['presumed','actual']}));
   const total=data.find(row=>row[0]==='Impostos'&&row[2]==='IRPJ');
   assert.deepEqual(total.slice(0,5),['Impostos','Impostos','IRPJ','line','BRL']);
-  assert(data.some(row=>row[0]==='DRE'&&row[1]==='IRPJ, CSLL e resultado'&&row[2].startsWith('IRPJ')));
+  assert(data.some(row=>row[0]==='DRE'&&row[1]==='Resultado'&&row[2].startsWith('IRPJ')));
   for(const label of ['IRPJ normal · movimento do período','Adicional de IRPJ · movimento do período']){
     const part=data.find(row=>row[2]===label);
     assert.deepEqual(part.slice(0,2),['Detalhamento informativo','Composição do IRPJ']);
@@ -76,18 +76,18 @@ test('CSV separa Impostos da DRE, com dedução única, resultado igual e os doi
     if(period!=='monthly'){
       assert.equal(taxAnnual.length,presentation.taxStatement.rows.length);
       assert.deepEqual(taxAnnual.map(row=>row[2]),presentation.taxStatement.rows.map(row=>row.label));
-      assert.equal(taxAnnual.filter(row=>row[2]==='% sobre a receita').length,2);
+      assert.equal(taxAnnual.filter(row=>row[2]==='% sobre a receita').length,1);
       const dre=data.filter(row=>row[0]==='DRE');
-      for(const label of ['Simples','ICMS (D − C)','CBS/IBS (D − C)','IRPJ','CSLL','Antecipação','DIFAL','INSS','Total'])
+      for(const label of ['ICMS (D − C)','CBS/IBS (D − C)','Antecipação','DIFAL','INSS','Total'])
         assert(!dre.some(row=>row[2]===label),`${period}: ${label} não pertence à DRE`);
-      const deduction=dre.find(row=>row[2]==='(−) Total de impostos');
+      assert(!dre.some(row=>row[2]==='(−) Total de impostos'));
+      assert(dre.some(row=>row[2]==='ICMS Débito'));assert(dre.some(row=>row[2]==='ICMS Crédito'));
       const total=taxAnnual.find(row=>row[2]==='Total');
       const profit=dre.find(row=>row[2]==='Resultado líquido');
       for(const [index,id] of visibleRegimeIds.entries()){
         const captured=snapshot.result.regimes.find(regime=>regime.id===id);
-        assert.equal(deduction[index+5],currency(-captured.totalTaxes));
         assert.equal(total[index+5],currency(captured.totalTaxes));
-        assert.equal(profit[index+5],taxAnnual.find(row=>row[2]==='Resultado')[index+5]);
+        assert.equal(profit[index+5],taxAnnual.find(row=>row[2]==='Resultado líquido')[index+5]);
         for(const [rowIndex,row] of presentation.taxStatement.rows.entries())assert.equal(taxAnnual[rowIndex][index+5],number(row.values[id],row.unit),row.key);
       }
     }else assert.equal(taxAnnual.length,0);
@@ -115,7 +115,7 @@ test('tela e impressão exibem o mesmo quadro do IRPJ, com parcelas legíveis e 
   const snapshot=drePdfFixture(),presentation=buildDrePresentation({...snapshot,calendar:snapshot.monthlyDre});
   const before=structuredClone(presentation);
   const options={presentation,calendar:snapshot.monthlyDre,company:snapshot.company,year:2027,visibleRegimeIds:['presumed','actual'],showPercent:true};
-  for(const html of [renderAnnualDre(options),renderDrePrintDocument({...options,period:'annual'})]){
+  for(const html of [renderAnnualDre(options)]){
     assert.equal((html.match(/data-irpj-reconciliation="dre"/g)||[]).length,1);
     assert.match(html,/Memória de cálculo do IRPJ/);assert.match(html,/Base dentro do limite/);
     assert.match(html,/IRPJ normal · 15% por trimestre/);assert.match(html,/Adicional de IRPJ · 10% por trimestre/);
@@ -128,6 +128,10 @@ test('tela e impressão exibem o mesmo quadro do IRPJ, com parcelas legíveis e 
       assert.equal((html.match(new RegExp(`data-dre-row="${key}"`,'g'))||[]).length,key==='irpj'?2:1,key);
     }
   }
+  const printed=renderDrePrintDocument({...options,period:'annual'});
+  assert.equal((printed.match(/class="dre-final-page"/g)||[]).length,2);
+  assert(!printed.includes('data-irpj-reconciliation'));
+  assert.equal((printed.match(/data-dre-row="irpj"/g)||[]).length,2);
   assert.deepEqual(presentation,before);
 });
 

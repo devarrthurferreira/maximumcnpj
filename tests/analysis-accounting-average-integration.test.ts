@@ -82,6 +82,31 @@ test('MongoDB: média mensal e histórico sobrevivem à ordem dos setores e à m
       const generated=await generateAnalysis(actor,item.id,{requestId:randomUUID(),expectedRevision:item.revision});
       assert.equal(generated.simulation.result.regimes[0].dre.salaries,-9000);
     });
+    await t.test('contas financeiras sobrevivem à retomada, entram após EBITDA e geram outra versão preservando o histórico',async()=>{
+      let item=await reports(await fresh('98506'),2025);
+      const financial=data(2025) as any;
+      Object.assign(financial.monthlyAverage.values,{financialIncomeCents:150000,financialExpensesCents:60000});
+      financial.months.forEach((row:any)=>Object.assign(row,{financialIncomeCents:150000,financialExpensesCents:60000}));
+      item=(await save(item,'accounting',financial)).analysis;
+      await closeDatabase();resetLookupIndexes();
+      item=(await getAnalysis(item.id,options)).analysis;
+      assert.equal(item.accounting.data.monthlyAverage!.values.financialIncomeCents,150000);
+      const generated=await generateAnalysis(actor,item.id,{requestId:randomUUID(),expectedRevision:item.revision});
+      assert(generated.simulation.monthlyInputs.every((row:any)=>row.values.financialIncome===1500&&row.values.financialExpenses===600));
+      for(const regime of generated.simulation.result.regimes){
+        assert.equal(regime.dre.financialResult,8100);
+        assert(Math.abs(regime.dre.preTax-regime.dre.ebitda-8100)<1e-7);
+        assert(Math.abs(regime.dre.netProfit-regime.dre.preTax-regime.dre.irpj-regime.dre.csll)<1e-7);
+      }
+      const snapshot=structuredClone(await getSimulation(generated.simulation._id));
+      financial.monthlyAverage.values.financialIncomeCents=200000;
+      financial.months.forEach((row:any)=>{row.financialIncomeCents=200000;});
+      item=(await save(generated.analysis,'accounting',financial)).analysis;
+      const next=await generateAnalysis(actor,item.id,{requestId:randomUUID(),expectedRevision:item.revision});
+      assert.equal(next.simulation.result.regimes[0].dre.financialResult,12600);
+      assert.equal(next.simulation.parentSimulationId,snapshot._id);
+      assert.deepEqual(await getSimulation(snapshot._id),snapshot);
+    });
     await t.test('rascunho incompleto é preservado ao importar, sem transformar pendência em zero',async()=>{
       let item=await fresh('98503');const draft=data(2026) as any;
       draft.monthlyAverage.values.benefitsCents=null;draft.months.forEach((row:any)=>{row.benefitsCents=null;});

@@ -341,6 +341,7 @@ export const EXAMPLE_INPUT = {
 
 // Dependency-free equivalent of the strict source schema. Numbers never coerce.
 const VALUE_LIMIT = 1_000_000_000_000;
+export const FINANCIAL_VALUE_FIELDS = Object.freeze(['financialExpenses','financialIncome']);
 const TAX_AMOUNT_FIELDS = ['serviceRevenue', 'salesRevenue', 'simplePurchases', 'regularPurchases', 'simpleRegularPurchases', 'salaries', 'benefits', 'adminExpenses', 'rent', 'cardExpenses', 'extraPayroll', 'rbt12'];
 const RATE_FIELDS = ['cbs', 'ibs', 'icms', 'iss', 'payroll', 'irSales', 'csSales', 'irServices', 'csServices'];
 const CREDIT_GROUPS = ['simple', 'simpleRegular', 'regular'];
@@ -425,6 +426,9 @@ export function resolveDifalApplication({policy,regimeId,rbt12,icmsOutside=false
   return {version:DIFAL_POLICY_VERSION,enabled,operations,blocked,reason,message,rbt12:rbt12??null,icmsOutside,salesDifal:false,outgoingDisabled:true,purchaseAnticipation:enabled&&!blocked&&operations.entry};
 }
 function parseTaxInput(input) {
+  // Optional only for requests created before financial accounts were introduced.
+  const financial = FINANCIAL_VALUE_FIELDS.filter(key=>Object.hasOwn(input||{},key));
+  for(const key of financial)checkNumber(input[key],VALUE_LIMIT,[key]);
   const hasDifal = input != null && Object.hasOwn(input, 'difalMonthly');
   const hasAnticipation = input != null && Object.hasOwn(input, 'icmsAnticipation');
   const hasDifalPolicy=input!=null&&Object.hasOwn(input,'difalPolicy');
@@ -433,7 +437,7 @@ function parseTaxInput(input) {
   const hasRegimeSelection=input!=null&&Object.hasOwn(input,'regimeSelection');
   const regimeSelection=hasRegimeSelection?parseRegimeSelection(input.regimeSelection):undefined;
   const needsRbt12=requiresSimplesReference(regimeSelection);
-  strictObject(input, [...TAX_AMOUNT_FIELDS.filter(key=>key!=='rbt12'||needsRbt12||Object.hasOwn(input,'rbt12')), 'year', 'salesAnnex', 'serviceAnnex', 'icmsOutside', 'rates', 'credits', ...(hasDifal ? ['difalMonthly'] : []), ...(hasAnticipation ? ['icmsAnticipation'] : []),...(hasDifalPolicy?['difalPolicy']:[]),...(hasRevenueContext?['revenueContext']:[]),...(hasIcmsOperations?['icmsOperations']:[]),...(hasRegimeSelection?['regimeSelection']:[])]);
+  strictObject(input, [...financial,...TAX_AMOUNT_FIELDS.filter(key=>key!=='rbt12'||needsRbt12||Object.hasOwn(input,'rbt12')), 'year', 'salesAnnex', 'serviceAnnex', 'icmsOutside', 'rates', 'credits', ...(hasDifal ? ['difalMonthly'] : []), ...(hasAnticipation ? ['icmsAnticipation'] : []),...(hasDifalPolicy?['difalPolicy']:[]),...(hasRevenueContext?['revenueContext']:[]),...(hasIcmsOperations?['icmsOperations']:[]),...(hasRegimeSelection?['regimeSelection']:[])]);
   const icmsOperations=hasIcmsOperations?parseIcmsOperations(input.icmsOperations):null;
   const revenueContext=hasRevenueContext?parseRevenueContext(input.revenueContext):null;
   const difalPolicy=hasDifalPolicy?parseDifalPolicy(input.difalPolicy):null;
@@ -560,6 +564,10 @@ const DRE_LABELS = {
     administrative: 'Despesas administrativas',
     rent: 'Aluguel',
     cards: 'Cartões e vendas',
+    ebitda: 'Resultado operacional (EBITDA)',
+    financialResult: 'Despesas/Receitas financeiras',
+    financialIncome: 'Receitas financeiras',
+    financialExpenses: 'Despesas financeiras',
     preTax: 'Resultado antes de IRPJ/CSLL',
     irpj: 'IRPJ',
     csll: 'CSLL',
@@ -610,7 +618,8 @@ export function calculateTax(rawInput) {
         benefits: input.benefits * MONTHS,
         administrative: input.adminExpenses * MONTHS,
         rent: input.rent * MONTHS,
-        cards: input.cardExpenses * MONTHS
+        cards: input.cardExpenses * MONTHS,
+        financialResult: ((input.financialIncome ?? 0) - (input.financialExpenses ?? 0)) * MONTHS
     };
     const revenue = annual.services + annual.sales;
     // The financial result keeps returns and losses. A negative assessment base
@@ -879,12 +888,12 @@ export function calculateTax(rawInput) {
     // Follow the captured DRE's grouping for the displayed float. The separate
     // rational below supplies the exact decimal base, including half-cent ties.
     const regularGrossProfit=(revenue-credits.cbs.debit-credits.ibs.debit-credits.icms.due-iss)-cmv+credits.cbs.used+credits.ibs.used;
-    const actualPreTax=regularGrossProfit+(-annual.salaries-annual.benefits-regularPayroll)-annual.administrative-annual.rent-annual.cards;
+    const actualPreTax=regularGrossProfit+(-annual.salaries-annual.benefits-regularPayroll)-annual.administrative-annual.rent-annual.cards+annual.financialResult;
     const preTaxExact=incomeTaxPreTaxExact(input,icmsProjection?.dueCents??null);
     const incomeTaxes=assessQuarterlyIncomeTaxes({year:input.year,rates:input.rates,basis:'UNIFORM_PROJECTION',
       regimeIds:regimeSelection.selected.filter(id=>['presumed','actual'].includes(id)),
       months:Array.from({length:12},(_,index)=>({sourceMonth:`${input.year}-${String(index+1).padStart(2,'0')}`,month:index+1,
-        salesRevenue:input.salesRevenue,serviceRevenue:input.serviceRevenue,
+        salesRevenue:input.salesRevenue,serviceRevenue:input.serviceRevenue,financialIncome:input.financialIncome??0,
         preTax:icmsProjection&&!icmsProjection.available?null:actualPreTax/12,
         ...(icmsProjection&&!icmsProjection.available?{}:{preTaxExact}),actualAvailable:!icmsProjection||icmsProjection.available}))});
     const incomeTaxAssessment={...incomeTaxes.incomeTaxAssessment,monthlyAssessments:incomeTaxes.monthlyAssessments};
@@ -920,7 +929,7 @@ export function calculateTax(rawInput) {
         [
             'irTotalBase',
             'Base presumida total IRPJ',
-            'Base IRPJ sem acréscimo + acréscimo da base',
+            'Base IRPJ (atividades + receitas financeiras integrais) + acréscimo da base das atividades',
             irTotalBase
         ],
         [
@@ -1042,6 +1051,10 @@ export function calculateTax(rawInput) {
             administrative: -annual.administrative,
             rent: -annual.rent,
             cards: -annual.cards,
+            financialResult: annual.financialResult,
+            financialIncome: (input.financialIncome??0)*MONTHS,
+            financialExpenses: -(input.financialExpenses??0)*MONTHS,
+            ebitda: 0,
             preTax: 0,
             irpj: -(id === 'presumed' ? presumedIr : id === 'actual' ? actualIr : 0),
             csll: -(id === 'presumed' ? presumedCs : id === 'actual' ? actualCs : 0),
@@ -1052,7 +1065,8 @@ export function calculateTax(rawInput) {
         dre.netRevenue = dre.revenue + dre.das + dre.cbsDebit + dre.ibsDebit + dre.icmsNet + dre.iss + (dre.difal ?? 0) + (dre.icmsAnticipation ?? 0);
         dre.grossProfit = dre.netRevenue + dre.cmv + dre.cbsUsed + dre.ibsUsed;
         dre.personnel = dre.salaries + dre.benefits + dre.payroll;
-        dre.preTax = dre.grossProfit + dre.personnel + dre.administrative + dre.rent + dre.cards;
+        dre.ebitda = dre.grossProfit + dre.personnel + dre.administrative + dre.rent + dre.cards;
+        dre.preTax = dre.ebitda + dre.financialResult;
         dre.netProfit = dre.preTax + dre.irpj + dre.csll;
         const taxes = -dre.das - dre.cbsDebit - dre.ibsDebit - dre.icmsNet - dre.iss - (dre.difal ?? 0) - (dre.icmsAnticipation ?? 0) - dre.payroll - dre.irpj - dre.csll - dre.cbsUsed - dre.ibsUsed;
         const formulas = {
@@ -1080,7 +1094,11 @@ export function calculateTax(rawInput) {
             administrative: '−Despesas administrativas × 12',
             rent: '−Aluguel mensal × 12',
             cards: '−Despesas com cartões × 12',
-            preTax: 'Lucro bruto + pessoal total + administração + aluguel + cartões',
+            financialResult: 'Receitas financeiras menos despesas financeiras, após o EBITDA.',
+            financialIncome: 'Receitas financeiras mensais × 12; adicionadas integralmente à base de IRPJ/CSLL do Presumido.',
+            financialExpenses: 'Despesas financeiras mensais × 12; deduzidas após o EBITDA.',
+            ebitda: 'Lucro bruto menos despesas operacionais e encargos.',
+            preTax: 'EBITDA + receitas financeiras − despesas financeiras',
             irpj: isSimple ? 'Zero: IRPJ já no DAS' : id === 'presumed' ? '−IRPJ total presumido' : '−IRPJ total sobre base positiva do Real',
             csll: isSimple ? 'Zero: CSLL já no DAS' : id === 'presumed' ? '−CSLL presumida' : '−CSLL sobre base positiva do Real',
             netProfit: 'Resultado antes de IRPJ/CSLL + IRPJ negativo + CSLL negativa',
@@ -1211,7 +1229,9 @@ export function draftToInput(draft, difalProjection = null, anticipationProjecti
     const difalPolicy=hasDifalPolicy?upgradeDifalPolicy(draft.difalPolicy):null;
     if(difalPolicy)for(const id of DIFAL_REGIME_IDS)difalPolicy.operations[id].exit=false;
     checkChoices(draft);
-    strictObject(draft.values, SIMULATION_VALUE_FIELDS, ['values']);
+    const financial=FINANCIAL_VALUE_FIELDS.filter(key=>Object.hasOwn(draft.values||{},key));
+    strictObject(draft.values, [...SIMULATION_VALUE_FIELDS,...financial], ['values']);
+    for(const key of financial)checkNumber(draft.values[key],VALUE_LIMIT,['values',key]);
     for (const key of SIMULATION_VALUE_FIELDS) {
       if(key==='salesRevenue')checkSalesNumber(draft.values[key],['values',key]);else checkNumber(draft.values[key], VALUE_LIMIT, ['values', key]);
     }

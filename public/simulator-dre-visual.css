@@ -422,3 +422,27 @@
  .dre-statement-controls,.dre-visible-evolution { display:none!important; }
  .dre-fixed-complete .dre-table-wrap table { min-width:0; }
 }
+/* Final report: results, taxes and then the consolidated statement. */
+.dre-indicator-spacer td{height:16px!important;padding:0!important;border:0!important;background:#fff!important}
+.dre-tax-details{margin-top:18px;border-top:1px solid #e9dfe0;padding-top:14px}
+.dre-tax-details>summary,.dre-follow-up>summary{cursor:pointer;font-weight:700;color:#750207;padding:10px}
+.dre-fixed-complete .dre-subtotal th{font-weight:750;text-transform:uppercase;letter-spacing:.02em}
+.dre-fixed-complete .dre-subtotal td{font-weight:700}
+.dre-fixed-complete .dre-line th{padding-left:26px}
+.dre-final-page footer{text-align:right;color:#750207}
+@media print{
+  body.dre-print-only .dre-final-print{font-family:Arial,sans-serif!important}
+  .dre-final-print .dre-final-page{height:272mm;box-sizing:border-box;position:relative;break-after:page;page-break-after:always}
+  .dre-final-print .dre-final-page:last-child{break-after:auto;page-break-after:auto}
+  .dre-final-print .dre-final-identification h1{font-size:17px!important;color:#750207;margin:0 0 6px}
+  .dre-final-print .dre-final-identification h2{font-size:12px!important;margin:0 0 4px}
+  .dre-final-print .dre-final-identification p{font-size:9px;margin:0 0 10px}
+  .dre-final-print .dre-final-page>h2{font-size:13px!important;margin:10px 0 6px;color:#750207}
+  body.dre-print-only .dre-final-print .dre-table-wrap{min-width:0!important;width:100%;overflow:visible!important;margin:0}
+  body.dre-print-only .dre-final-print table{min-width:0!important;width:100%!important;table-layout:fixed}
+  body.dre-print-only .dre-final-print th,body.dre-print-only .dre-final-print td{font-size:8px!important;line-height:1.2!important;padding:4px 5px!important;white-space:normal!important;overflow-wrap:anywhere}
+  body.dre-print-only .dre-final-print th:first-child{width:37%!important;min-width:0!important;position:static!important}
+  .dre-final-print .dre-percent,.dre-final-print .dre-composition-label,.dre-final-print .dre-irpj-total-note{display:none!important}
+  .dre-final-print .dre-final-note{font-size:8px!important;line-height:1.4;margin:10px 0}
+  .dre-final-print .dre-final-page footer{position:absolute;bottom:0;right:0;font-size:9px}
+}

@@ -65,7 +65,7 @@ test('public DRE exposes reconciled components without changing monthly or saved
     assert.deepEqual(rows.slice(index,index+2).map(row=>row.key),['irpjBasic','irpjAdditional']);
     assert.equal(rows.filter(row=>row.key==='irpj').length,1,'O IRPJ está incluído no resultado da DRE.');
     assert(!rows.some(row=>row.key==='totalTaxes'),'O total de imposto é conferência fora da DRE.');
-    assert.equal(rows.filter(row=>row.key==='taxesDeduction').length,1);
+    assert.equal(rows.filter(row=>row.key==='taxesDeduction').length,0);
     for(const key of ['irpjBasic','irpjAdditional']){
       const saved=captured.find(row=>row.key===key),shown=rows.find(row=>row.key===key);
       assert.deepEqual(shown.values,saved.values);

@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {accountingAverage,accountingAverageMonths,accountingAverageInputValues,accountingAveragePreview} from '../public/analysis-accounting-average.js';
 
-const fields=['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents'];
-const values=(...amounts)=>Object.fromEntries(fields.map((key,index)=>[key,amounts[index]??null]));
+const fields=['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents','financialExpensesCents','financialIncomeCents'];
+const values=(...amounts)=>Object.fromEntries(fields.map((key,index)=>[key,index<5?(amounts[index]??null):(amounts.some(Number.isSafeInteger)?0:null)]));
 const row=(sourceMonth,...amounts)=>({sourceMonth,...values(...amounts)});
 
 test('média de R$ 1.000 gera exatamente R$ 1.000 por mês e R$ 9.000 Jan–Set',()=>{
@@ -30,7 +30,7 @@ test('dados legados desiguais são apenas proposta, sem alterar valores nem perd
 
 test('vazio permanece pendente e zero só é replicado quando explicitamente informado',()=>{
   const input=values(null,0,null,null,null),preview=accountingAveragePreview(input,2026);
-  assert.equal(preview.complete,false);assert.equal(preview.filledFields,1);assert.equal(preview.totalCents,0);
+  assert.equal(preview.complete,false);assert.equal(preview.filledFields,3);assert.equal(preview.totalCents,0);
   assert.ok(preview.months.every(entry=>entry.rentCents===0&&entry.salariesCents===null));
   assert.equal(accountingAveragePreview(values(null,null,null,null,null),2026).totalCents,null);
 });

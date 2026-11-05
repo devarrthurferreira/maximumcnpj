@@ -412,10 +412,9 @@ class DreDataMongoTests(unittest.TestCase):
                 with call({**self.options, 'regimeIds': ['actual']}) as response:
                     import pymupdf
                     with pymupdf.open(stream=response.read(), filetype='pdf') as document:
-                        sections = {title: page - 1 for _, title, page in document.get_toc()}
-                        text = ' '.join(document[index].get_text() for index in
-                            [*range(sections['Premissas, cobertura e conferências']),
-                             *range(sections['Memória de cálculo'], document.page_count)])
+                        self.assertEqual(document.page_count, 2)
+                        self.assertEqual([entry[1] for entry in document.get_toc()], ['Resumo e Impostos', 'DRE - Consolidado'])
+                        text = ' '.join(page.get_text() for page in document)
                     self.assertIn('Lucro Real', text)
                     self.assertNotIn('Simples Puro', text)
                     self.assertNotIn('Simples Híbrido', text)

@@ -98,14 +98,14 @@ class DreModelTests(unittest.TestCase):
             before = copy.deepcopy(saved)
             view = model(saved)
             keys = [key for _, rows in view.sections() for key, _ in rows]
-            self.assertEqual(keys.count('taxesDeduction'), 1)
+            self.assertEqual(keys.count('taxesDeduction'), 0)
             self.assertEqual(keys.count('totalTaxes'), 0)
-            self.assertTrue({'das', 'icmsNet', 'cbsIbsNet', 'irpj', 'csll', 'icmsAnticipation',
-                             'difal', 'payroll', 'cbsUsed', 'ibsUsed'} <= set(keys))
+            self.assertTrue({'das', 'icmsDebit', 'cbsIbsDebit', 'irpj', 'csll', 'icmsAnticipation',
+                             'difal', 'payroll', 'icmsCredit', 'cbsIbsCredit', 'ebitda', 'financialResult'} <= set(keys))
             tax_keys = [key for key, _ in view.tax_rows()]
             self.assertEqual(len(tax_keys), len(set(tax_keys)))
             self.assertEqual(tax_keys[:8], ['das', 'icmsNet', 'cbsIbsNet', 'irpj', 'csll', 'icmsAnticipation', 'difal', 'payroll'])
-            self.assertEqual(tax_keys[-4:], ['totalTaxes', 'taxBurden', 'netProfit', 'netMargin'])
+            self.assertEqual(tax_keys[-8:], ['totalTaxes', 'taxBurden', 'grossAfterCosts', 'contributionMargin', 'ebitda', 'ebitdaMargin', 'netProfit', 'netMargin'])
             for regime in view.regimes:
                 for index in (None, *range(len(view.months))):
                     frame = view.frame(regime, index)

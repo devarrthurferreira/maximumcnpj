@@ -85,18 +85,17 @@ def assert_statement(test, content, snapshot):
             expected = label + ' ' + ' '.join(amount(sign * row['dre'][key]) for row in snapshot['result']['regimes'])
             section = taxes if compact and key != 'netProfit' else statement
             test.assertTrue(expected in section, f'PDF does not preserve the saved {key} row: {expected}')
-        # The separate tax statement reverses deduction signs only for display.
-        # The captured net-revenue subtotal remains in the regime comparison.
-        revenue_section = section_text(document, 'Comparação entre regimes', 'DRE comparativa detalhada') if compact else statement
-        revenue_label = 'Receita após tributos' if compact else 'Receita após deduções tributárias'
-        expected = revenue_label + ' ' + ' '.join(amount(row['dre']['netRevenue']) for row in snapshot['result']['regimes'])
-        test.assertTrue(expected in revenue_section, f'PDF does not preserve the saved netRevenue row: {expected}')
         if compact:
+            view = model(snapshot)
+            expected = 'Receita líquida ' + ' '.join(amount(view.value(row, 'netRevenueAfterTaxes')) for row in view.regimes)
+            test.assertIn(expected, statement)
             expected = 'Total ' + ' '.join(amount(row['totalTaxes']) for row in snapshot['result']['regimes'])
-            test.assertTrue(expected in taxes, f'PDF does not preserve the saved totalTaxes row: {expected}')
-            deduction = '(-) Total de impostos ' + ' '.join(amount(-row['totalTaxes']) for row in snapshot['result']['regimes'])
-            test.assertTrue(deduction in statement, f'PDF does not deduct the captured total exactly once: {deduction}')
+            test.assertIn(expected, taxes)
+            test.assertNotIn('(-) Total de impostos', statement)
+            test.assertEqual(document.page_count, 2)
+            return taxes
         return section_text(document, 'DRE mensal por regime', 'Premissas, cobertura e conferências')
+
 
 
 class DreDifalZeroTests(unittest.TestCase):
@@ -179,12 +178,10 @@ class DreDifalZeroTests(unittest.TestCase):
         annex = assert_statement(self, pdf, corrected)
         with pymupdf.open(stream=pdf, filetype='pdf') as document:
             full_text = ' '.join(' '.join(page.get_text().split()) for page in document)
-        self.assertTrue('Não possui DIFAL de saída' in full_text)
+        self.assertIn('DIFAL sobre vendas', full_text)
         self.assertFalse('DIFAL sobre vendas (10%)' in full_text)
-        rows = re.findall(r'\bDIFAL ([\d.,\s-]+)(?=INSS)', annex)
-        self.assertEqual(len(rows), 12, 'All four regimes and three monthly table pages retain the zero row.')
-        self.assertTrue(all(set(row.split()) == {'0,00'} for row in rows))
-        self.assertIn('Antecipação 43,92 87,84 131,76 1.976,40', annex)
+        self.assertIn('DIFAL 0,00 0,00 0,00 0,00', annex)
+        self.assertIn('Antecipação 1.976,40 1.976,40 0,00 0,00', annex)
         self.assertEqual(corrected, frozen)
         csv_rows = list(csv.reader(io.StringIO(snapshots()['csv']['corrected']), delimiter=';'))
         exit_rows = [row for row in csv_rows if len(row) > 5 and row[0] == 'Impostos' and row[2] == 'DIFAL']

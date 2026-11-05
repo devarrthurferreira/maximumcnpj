@@ -108,7 +108,7 @@ function periodProof(period,id,context){
        !finite(input.salesRevenue)||!finite(input.serviceRevenue))return PERIOD;
     const financial=context.financial(input.sourceMonth,id);
     if(!financial||!close(input.salesRevenue,financial.sales)||!close(input.serviceRevenue,financial.services)||
-       (id==='actual'&&!close(input.preTax,financial.preTax)))return INVALID;
+       !close(input.financialIncome??0,financial.financialIncome??0)||(id==='actual'&&!close(input.preTax,financial.preTax)))return INVALID;
     sales=addRational(sales,numberRational(input.salesRevenue));
     services=addRational(services,numberRational(input.serviceRevenue));
     if(id==='actual'){
@@ -133,9 +133,14 @@ function periodProof(period,id,context){
     for(const [baseKey,salesRate,serviceRate,plainKey,increaseKey] of [
       ['irpjBase','irSales','irServices','irpjBaseWithoutIncrease','irpjIncrease'],
       ['csllBase','csSales','csServices','csllBaseWithoutIncrease','csllIncrease']]){
-      const plain=positiveRational(addRational(multiplyRational(sales,numberRational(context.rates[salesRate])),multiplyRational(services,numberRational(context.rates[serviceRate]))));
+      let plain=positiveRational(addRational(multiplyRational(sales,numberRational(context.rates[salesRate])),multiplyRational(services,numberRational(context.rates[serviceRate]))));
       const increase=excess.numerator===0n?{numerator:0n,denominator:1n}:
         multiplyRational(multiplyRational(excess,plain),{numerator:revenue.denominator,denominator:revenue.numerator*10n});
+      for(const item of period.inputs){
+        const financial=numberRational(item.financialIncome??0);
+        if(!financial||financial.numerator<0n)return INVALID;
+        plain=addRational(plain,financial);
+      }
       if(!equalRational(addRational(plain,increase),rational(period.exactBases[baseKey]))||
          !close(Number(plain.numerator)/Number(plain.denominator),bases[plainKey])||
          !close(Number(increase.numerator)/Number(increase.denominator),bases[increaseKey]))return INVALID;
@@ -219,7 +224,7 @@ export function reconcileQuarterlyIrpj(result,id,{sourceMonth:selected=null,expe
       const regime=unique(saved,'id',regimeId);return regime?.available===true?regime.dre??null:null;
     }
     const annual=unique(result?.regimes,'id',regimeId)?.dre;
-    return annual?{sales:annual.sales/12,services:annual.services/12,preTax:annual.preTax/12}:null;
+    return annual?{sales:annual.sales/12,services:annual.services/12,preTax:annual.preTax/12,financialIncome:(annual.financialIncome??0)/12}:null;
   }};
   const checked=new Map();
   function checkMonth(key){
