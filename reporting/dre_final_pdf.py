@@ -53,15 +53,15 @@ def render_final_pdf(model, letterhead):
         paragraph(f'{page} / 2', RIGHT - 35, 31, 35, 7.5, True, BURGUNDY, 2)
         return top
 
-    def table(top, definitions, *, taxes=False, summary=False, body_height=None):
+    def table(top, definitions, *, taxes=False, body_height=None):
         # Measure every label. The table never paginates and never clips rows.
         header_height = 30
         rows = []
         for key, label in definitions:
             style = ParagraphStyle('measure', fontName=BOLD if key in SUBTOTALS else FONT,
-                                   fontSize=7.5, leading=9.2)
+                                   fontSize=8.5 if taxes else 7.5, leading=10.5 if taxes else 9.2)
             _, height = Paragraph(escape(label), style).wrap(label_width - 14, PAGE_H)
-            rows.append((key, label, max(15, height + 5), 7 if taxes and key == 'grossAfterCosts' else 0))
+            rows.append((key, label, max(22 if taxes else 15, height + (8 if taxes else 5)), 18 if taxes and key == 'grossAfterCosts' else 0))
         total_height = header_height + sum(height + gap for _, _, height, gap in rows)
         # Long company names and unusual values stay inside their assigned page.
         scale = min(1, body_height / total_height) if body_height else 1
@@ -70,9 +70,9 @@ def render_final_pdf(model, letterhead):
         pdf.saveState()
         pdf.translate(LEFT, top)
         pdf.scale(1, scale)
-        pdf.setFillColor(colors.HexColor('#343D4A' if summary else BURGUNDY))
+        pdf.setFillColor(colors.HexColor(BURGUNDY))
         pdf.rect(0, -header_height, WIDTH, header_height, stroke=0, fill=1)
-        paragraph('Impostos e indicadores' if taxes else 'Resumo por regime' if summary else 'Valores em R$', 8, -7, label_width - 16, 8, True, '#FFFFFF')
+        paragraph('Impostos e indicadores' if taxes else 'Valores em R$', 8, -7, label_width - 16, 8, True, '#FFFFFF')
         for index, regime in enumerate(regimes):
             paragraph(regime['name'], label_width + index * column_width + 5, -5,
                       column_width - 10, 7.5, True, '#FFFFFF', 2)
@@ -84,7 +84,7 @@ def render_final_pdf(model, letterhead):
             pdf.setFillColor(colors.HexColor(background))
             pdf.rect(0, cursor - height, WIDTH, height, stroke=0, fill=1)
             color = '#FFFFFF' if key == 'netProfit' else INK
-            paragraph(label, 8 if subtotal else 14, cursor - 3, label_width - 22, 7.5, subtotal, color)
+            paragraph(label, 8 if subtotal else 14, cursor - (5 if taxes else 3), label_width - 22, 8.5 if taxes else 7.5, subtotal, color)
             for number, regime in enumerate(regimes):
                 value = model.tax_value(regime, key) if taxes else model.value(regime, key)
                 displayed = '—' if not finite(value) else percentage(value, 2) if key in PERCENT_ROWS else money(value, False)
@@ -93,7 +93,7 @@ def render_final_pdf(model, letterhead):
                     pdf.rect(label_width + number * column_width, cursor - height, column_width, height, stroke=0, fill=1)
                 amount_color = color if key == 'netProfit' else '#A12434' if finite(value) and value < 0 else INK
                 font = BOLD if subtotal else FONT
-                size = min(7.7, (column_width - 12) / max(stringWidth(displayed, font, 1), 1))
+                size = min(8.5 if taxes else 7.7, (column_width - 12) / max(stringWidth(displayed, font, 1), 1))
                 pdf.setFont(font, size)
                 pdf.setFillColor(colors.HexColor(amount_color))
                 pdf.drawRightString(label_width + (number + 1) * column_width - 6, cursor - (height + size) / 2 + 1, displayed)
@@ -102,21 +102,11 @@ def render_final_pdf(model, letterhead):
         return top - total_height * scale
 
     definitions = [row for _, rows in model.sections() for row in rows]
-    by_key = dict(definitions)
-    summary = [(key, by_key.get(key, label)) for key, label in [
-        ('revenue', 'Receita bruta'), ('services', 'Receitas de serviços'), ('sales', 'Receita de vendas'),
-        ('revenueTaxes', 'Deduções da receita'), ('netRevenueAfterTaxes', 'Receita líquida'),
-        ('costsWithAnticipation', 'Custo de mercadoria'), ('grossAfterCosts', 'Lucro bruto (Margem de contribuição)'),
-        ('operatingExpensesWithPayroll', 'Despesas operacionais'), ('ebitda', 'Resultado operacional (EBITDA)'),
-        ('financialResult', 'Despesas/Receitas financeiras'), ('resultBeforeIncomeTaxes', 'Antes do IRPJ / CSLL'),
-        ('totalTaxes', 'Total de impostos'), ('netProfit', 'Resultado líquido'), ('netMargin', 'Resultado líquido (%)')]]
-    pdf.bookmarkPage('summary')
-    pdf.addOutlineEntry('Impostos e Resumo', 'summary', 0)
+    pdf.bookmarkPage('taxes')
+    pdf.addOutlineEntry('Impostos e indicadores', 'taxes', 0)
     top = header(1, 'Impostos e indicadores')
-    # Reserve space for both tables and their explanatory notes on this page.
-    top = table(top, model.tax_rows(), taxes=True, body_height=top - BOTTOM - 325) - 12
-    top -= paragraph('Resumo dos resultados', LEFT, top, WIDTH, 11, True, BURGUNDY) + 7
-    top = table(top, summary, summary=True, body_height=top - BOTTOM - 54)
+    # Preserve a full blank row between tax burden and operating indicators.
+    top = table(top, model.tax_rows(), taxes=True, body_height=top - BOTTOM - 65)
     notes = ('D = Débito; C = Crédito. Tributos líquidos dos créditos utilizados. '
              'Percentuais sobre a receita bruta de serviços e vendas; sem receita positiva, '
              'não se aplica. — indica valor indisponível.')

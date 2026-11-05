@@ -213,7 +213,7 @@ test('Relatórios de doze meses geram Jan–Set, nove despesas e composição co
     const storedAccounting=await db.collection<any>('analyses').findOne({_id:id,workspaceId});
     expect(storedAccounting?.accounting.data.months[0].sourceMonth).toBe('2026-01');
     expect(storedAccounting?.accounting.data.months.map((row:any)=>row.salariesCents)).toEqual(Array(9).fill(10000));
-    await expect(fiscalPage.locator('#dre-summary table thead th:not(:first-child)')).toHaveCount(2);
+    await expect(fiscalPage.locator('#dre-demonstrativo table thead th:not(:first-child)')).toHaveCount(2);
     await expect(fiscalPage.locator('#dre-demonstrativo [data-dre-row="revenue"] td')).toHaveCount(2);
     await expect(fiscalPage.locator('#dre-demonstrativo [data-dre-row="revenue"] td').first()).toHaveText('R$ 3.000,00');
     await expect(fiscalPage.locator('[data-commercial-side="revenue"] [data-commercial-total]')).toHaveText('R$ 3.000,00');
@@ -257,7 +257,7 @@ test('Relatórios de doze meses geram Jan–Set, nove despesas e composição co
     await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await saveSector(page,id,'fiscal');
     await page.goto(`/analyses.html?id=${id}&sector=accounting`);await saveSector(page,id,'accounting');
     const single=await generate(page,id);expect(single.result.regimes.map((row:any)=>row.id)).toEqual(['actual']);
-    await expect(page.locator('#dre-summary table thead th:not(:first-child)')).toHaveCount(1);await expect(page.locator('#dre-display-status')).toContainText('1 de 1 regime gerado');
+    await expect(page.locator('#dre-demonstrativo table thead th:not(:first-child)')).toHaveCount(1);await expect(page.locator('#dre-display-status')).toContainText('1 de 1 regime gerado');
     await expect(page.locator('#dre-demonstrativo [data-dre-row="revenue"] td')).toHaveCount(1);
     await page.evaluate(()=>{window.print=()=>{};});await page.locator('#print-dre').click();
     await expect(page.locator('#dre-print-document .dre-final-page')).toHaveCount(2);

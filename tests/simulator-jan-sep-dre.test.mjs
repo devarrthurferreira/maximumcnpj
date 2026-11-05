@@ -72,7 +72,7 @@ test('cartões da DRE mantêm prejuízo e valores sem destacar regime quando a r
   const input=fixture({selectedMonths,adjustment}),before=structuredClone(input);
   for(const html of [renderAnnualDre(input),renderCompleteMonthlyDre({...input,regimeId:'actual',month:0})]){
    if(input.result.annualRevenue<=0){assert.doesNotMatch(html,/Maior resultado disponível|is-best/);assert.match(html,/Resultado líquido/);assert.match(html,/-R\$/);}
-   else assert.match(html,/Resumo dos resultados/);
+   else assert.match(html,/DRE - Consolidado/);
   }
   assert.deepEqual(input,before);
  }
@@ -204,7 +204,7 @@ test('Jan–Set coloca Impostos após as ações de relatório e mostra IRPJ sem
   const input=fixture(),before=structuredClone(input),p=input.presentation,html=renderAnnualDre(input);
   const reportPosition=html.indexOf('id="download-dre-pdf"'),taxPosition=html.indexOf('id="tax-demonstrativo"'),
     followUpPosition=html.indexOf('data-revenue-reconciliation="dre"');
-  assert(taxPosition>=0&&reportPosition>taxPosition&&html.indexOf('id="dre-summary"')>reportPosition&&followUpPosition>taxPosition);
+  assert(taxPosition>=0&&reportPosition>taxPosition&&html.indexOf('id="dre-demonstrativo"')>reportPosition&&followUpPosition>taxPosition);
   assert.match(html,/APURAÇÃO DOS TRIBUTOS/);assert.match(html,/data-tax-row="irpj"/);
   const captured=p.sections.flatMap(section=>section.rows).find(item=>item.key==='irpj'),assessed=tax(p,'irpj');
   const normal=row(p,'irpjBasic'),additional=row(p,'irpjAdditional');
@@ -254,7 +254,7 @@ test('CSV e impressão completos usam nove meses, detalham tudo e preservam perc
   assert.match(csv,/"Compras por fornecedor";"Fora do Simples";22500,00;62,50;36000,00/);
   assert.doesNotMatch(csv,/;6250,000000;/);assert.match(csv,/"Créditos tributários utilizados · informativo"/);
   assert.equal((html.match(/class="dre-final-page"/g)||[]).length,2);
-  assert.equal((html.match(/data-dre-row="revenue"/g)||[]).length,2);
+  assert.equal((html.match(/data-dre-row="revenue"/g)||[]).length,1);
   assert.equal((html.match(/data-icms-reconciliation="dre"/g)||[]).length,0);
   assert.match(html,/DRE - Consolidado/);assert.match(html,/Jan–Set/);
   assert.doesNotMatch(html,/DRE anual consolidada|Janeiro a dezembro do cenário/);

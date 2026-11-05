@@ -1,5 +1,12 @@
 # Histórico de alterações
 
+## [0.58.2] - 2026-11-05
+
+- Remove o quadro de resumo da tela e dos PDFs Jan–Set, concentrando os itens na DRE consolidada.
+- Permite detalhar ou recolher receitas, deduções, custos, despesas e tributos finais na DRE, com grupos inicialmente abertos e estado preservado ao mudar regimes e percentuais.
+- Mantém impostos e indicadores na primeira página e DRE completa na segunda, com uma linha em branco entre carga tributária e margem de contribuição.
+- Atualiza a conferência dos identificadores de reprocessamento para a versão financeira V17, mantendo os testes de isolamento das versões anteriores.
+
 ## [0.58.1] - 2026-11-05
 
 - Posiciona os impostos e a seleção de regimes antes do resumo e da DRE; organiza o resumo em grupos expansíveis, com serviços e vendas sob receita bruta.

@@ -125,7 +125,7 @@ test('tela e impressão exibem o mesmo quadro do IRPJ, com parcelas legíveis e 
     const main=html.slice(html.indexOf('data-dre-row="irpj"'),html.indexOf('data-dre-row="csll"'));
     assert(!main.includes('dre-composition-label'));assert(!main.includes('− IRPJ'));
     for(const key of ['irpj',...presentation.irpjReconciliation.rows.map(row=>row.key)]){
-      assert.equal((html.match(new RegExp(`data-dre-row="${key}"`,'g'))||[]).length,key==='irpj'?3:1,key);
+      assert.equal((html.match(new RegExp(`data-dre-row="${key}"`,'g'))||[]).length,key==='irpj'?2:1,key);
     }
   }
   const printed=renderDrePrintDocument({...options,period:'annual'});
