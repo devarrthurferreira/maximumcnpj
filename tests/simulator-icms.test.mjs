@@ -198,6 +198,19 @@ test('consolidado soma o mínimo zero por competência e informa o ajuste por ex
   assert.equal(row('icms.balance').values.actual,240);
 });
 
+test('competência sem devolução não apresenta zero negativo na conferência ou no CSV',()=>{
+  const jan=report(),feb=report(summarizeIcmsOperations({...input(),sourceMonth:'2026-02',purchases:[]}));
+  const reports=[jan,feb],computed=calculateMonthlySimulation(draft(),reports,reports.map(row=>baselineMonth(row)),'sales');
+  const result=computed.result,p=buildDrePresentation({result,engineInput:computed.engineInput,calendar:buildMonthlyDre(result,2027)});
+  const row=p.icmsReconciliation.rows.find(item=>item.key==='icms.returnDebitReduction');
+  assert.equal(Object.is(row.monthlyValues.actual[1],-0),false);
+  assert.equal(row.monthlyValues.actual[1],0);
+  const csv=buildDreCsv({presentation:p,period:'complete',year:2027});
+  const detail=csv.split('\r\n').find(line=>line.includes('Lucro Real')&&line.includes('Devoluções deduzidas do ICMS débito'));
+  assert(detail);
+  assert(!detail.includes('-0,00'));
+});
+
 test('composição pendente em um mês não produz total anual confirmado nem memória fiscal numérica',()=>{
   const jan=report(),source=summarizeIcmsOperations({...input(),sourceMonth:'2026-02',purchases:[line('2102',500,'')]}),feb=report(source);
   for(const reports of [[jan,feb],[feb,jan]]){

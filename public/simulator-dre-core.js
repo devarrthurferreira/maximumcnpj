@@ -296,7 +296,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
     if(debit.value===null)return debit;
     const gross=memory('icms.salesGrossDebit',f),returns=memory('icms.returnDebitReduction',f),floor=memory('icms.debitFloorAdjustment',f);
     if(![gross,returns,floor].every(finite)||!close((gross-returns+floor)*f.scale,debit.value))return missing('A composição do débito de ICMS não está capturada ou não concilia com o valor salvo.');
-    return good((field==='salesGrossDebit'?gross:field==='returnDebitReduction'?-returns:floor)*f.scale);
+    return good((field==='salesGrossDebit'?gross:field==='returnDebitReduction'?(returns===0?0:-returns):floor)*f.scale);
   };
   const debitRows=returnsInDebit?[
     ['salesGrossDebit','ICMS bruto das vendas'],['returnDebitReduction','Devoluções deduzidas do ICMS débito'],['debitFloorAdjustment','Ajuste do débito ao mínimo zero']
