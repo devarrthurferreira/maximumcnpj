@@ -203,6 +203,8 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
       reasonByRegime,calendarReasonByRegime,monthlyReasonByRegime,notes:[...notes],informative,...(parentKey?{parentKey}:{}),sourceRefs:[...sourceRefs]};
   }
   const baseRows=dreRows({...result,regimes:originals}),labels=new Map(baseRows);
+  labels.set('cmvSimple','− Compras e serviços (do Simples)');
+  labels.set('cmvRegular','− Compras e serviços (fora do Simples)');
   const base=key=>row(key,labels.get(key),SUBTOTALS.has(key)?'subtotal':'line',f=>currency(f.get(key)),{sourceRefs:[`result.regimes[].dre.${key}`]});
   const reconciledSum=(keys,parent,less=null)=>f=>{
     const value=sum(keys.map(key=>f.get(key))),expected=less?sum([f.get(parent),finite(f.get(less))?-f.get(less):null]):f.get(parent);
@@ -539,8 +541,8 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
         {key:'deductions',label:'Deduções da receita',rows:[finalRow('revenueTaxes','Deduções da receita','subtotal'),
           display('das','Simples'),finalRow('icmsDebit','ICMS Débito'),finalRow('cbsIbsDebit','CBS/IBS Débito'),display('iss','ISS'),
           optionalTax('difal','DIFAL sobre vendas',['DIFAL de saída capturado no cenário.']),finalRow('netRevenueAfterTaxes','Receita líquida','subtotal')]},
-        {key:'costs',label:'Custos',rows:[finalRow('costsWithAnticipation','Custo de mercadoria','subtotal'),
-          display('cmvSimple','Compras e serviços do Simples'),display('cmvRegular','Compras e serviços fora do Simples'),
+        {key:'costs',label:'Custos',rows:[finalRow('costsWithAnticipation','CUSTO','subtotal'),
+          display('cmvSimple','Compras e serviços (do Simples)'),display('cmvRegular','Compras e serviços (fora do Simples)'),
           optionalTax('icmsAnticipation','Antecipação de ICMS nas compras',['Antecipação deduzida uma única vez.']),
           finalRow('cbsIbsCredit','CBS/IBS Crédito'),finalRow('icmsCredit','ICMS Crédito'),contribution]},
         {key:'expenses',label:'Despesas operacionais',rows:[finalRow('operatingExpensesWithPayroll','Despesas operacionais','subtotal'),

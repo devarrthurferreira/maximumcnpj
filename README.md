@@ -1,4 +1,8 @@
-# Maximum CNPJ · v0.58.4
+# Maximum CNPJ · v0.58.5
+## v0.58.5 — Identificação dos custos (05/11/2026)
+
+A DRE mostra **CUSTO** e os itens **Compras e serviços (do Simples)** e **Compras e serviços (fora do Simples)** na tela, no PDF e na impressão, sem alterar os valores calculados.
+
 ## v0.58.4 — Timbrado Maximum e detalhamento de compras e serviços (05/11/2026)
 
 O PDF da DRE usa o timbrado Maximum fornecido, com margens para preservar cabeçalho, rodapé e o demonstrativo. A impressão Jan–Set usa o mesmo papel timbrado. A DRE apresenta **Resultado Antes do IRPJ/CSLL**, **Compras e serviços do Simples** e **Compras e serviços fora do Simples**; a classificação mantém as operações de serviço 8000 nos custos conforme o enquadramento de cada fornecedor, sem duplicar nem alterar os valores salvos.

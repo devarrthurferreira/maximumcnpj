@@ -1,5 +1,9 @@
 # Histórico de alterações
 
+## [0.58.5] - 2026-11-05
+
+- Renomeia o subtotal da DRE para CUSTO e coloca o enquadramento do fornecedor entre parênteses nos itens de compras e serviços, preservando os cálculos.
+
 ## [0.58.4] - 2026-11-05
 
 - Aplica o timbrado Maximum fornecido aos PDFs de DRE e à impressão do consolidado, com margens para os dados e os contatos.

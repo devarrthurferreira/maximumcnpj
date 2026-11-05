@@ -76,8 +76,9 @@ class DrePdfTests(unittest.TestCase):
             self.assertIn('DRE - Consolidado', document[1].get_text())
             self.assertIn('Receitas de serviços', document[1].get_text())
             self.assertIn('Receita de vendas', document[1].get_text())
-            self.assertIn('Compras e serviços do Simples', document[1].get_text())
-            self.assertIn('Compras e serviços fora do Simples', document[1].get_text())
+            self.assertIn('CUSTO', document[1].get_text())
+            self.assertIn('Compras e serviços (do Simples)', document[1].get_text())
+            self.assertIn('Compras e serviços (fora do Simples)', document[1].get_text())
             self.assertIn('Resultado Antes do IRPJ/CSLL', document[1].get_text())
             burden = document[0].search_for('% sobre a receita')[0]
             contribution = document[0].search_for('Margem de contribuição')[0]
