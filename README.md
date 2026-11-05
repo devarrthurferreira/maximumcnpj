@@ -1,4 +1,10 @@
-# Maximum CNPJ · v0.59.1
+# Maximum CNPJ · v0.60.0
+
+## v0.60.0 — Reduções de CBS/IBS no Fiscal (05/11/2026)
+
+O Fiscal e o simulador identificam a escolha como **redução** da alíquota de referência de 11,40%: sem redução = 11,40%; redução de 100% = 0,00%; redução de 60% = 4,56%; redução de 40% = 6,84%. CBS e IBS mantêm a mesma proporção da referência e a escolha altera os débitos da receita nos regimes Híbrido, Presumido e Real. Créditos das compras e o DAS do Simples Puro conservam as premissas existentes.
+
+As escolhas anteriores são preservadas pelo percentual da alíquota efetivamente aplicado: dados antigos com 60% da alíquota passam a ser mostrados como redução de 40%, e dados com 40% passam a ser mostrados como redução de 60%; o cálculo salvo não muda. A redução de 100% é salva como alíquota zero e continua selecionada ao retomar a análise.
 
 ## v0.59.1 — Devoluções no ICMS débito (05/11/2026)
 

@@ -113,9 +113,16 @@ test('MongoDB: serviços9000 e mercadorias com devolução alimentam DRE/DIFAL s
   close(saved.result.monthlyResults.reduce((total,month)=>total+month.result.regimes.find(item=>item.id==='actual')!.dre.csll,0),actual.dre.csll);
   close(saved.result.memory.find(item=>item.id==='actual.preTax')!.value as number,actual.dre.preTax);
   assert.deepEqual(saved.result.credits,baseline.credits);
-  assert.equal(saved.monthlyDre.version,'DRE_CALENDAR_V4');
-  assert.deepEqual(saved.monthlyDre.months.map(month=>month.sourceMonth),dates.map(date=>date.slice(0,7)));
-  for(const regime of saved.monthlyDre.regimes)assert.deepEqual(regime.rows.find(row=>row.key==='difal')!.months,[0,0,0]);
+  // This legacy generation has no JAN_SEP_V1 policy; its V3 calendar retains
+  // all twelve positions and marks months without reports as unavailable.
+  assert.equal(saved.monthlyDre.version,'DRE_CALENDAR_V3');
+  assert.equal(saved.monthlyDre.months.length,12);
+  assert.deepEqual(saved.monthlyDre.months.map(month=>month.sourceMonth).filter(Boolean),dates.map(date=>date.slice(0,7)));
+  for(const regime of saved.monthlyDre.regimes){
+   const difal=regime.rows.find(row=>row.key==='difal')!.months;
+   assert.deepEqual(difal.slice(5,8),[0,0,0]);
+   assert(difal.slice(0,5).concat(difal.slice(8)).every(value=>value===null));
+  }
   for(const addition of[{difalProjection:{monthlyCents:0}},{difalMonthly:0},{source:{sales:{difal:{amountCents:0}}}}]){
    await assert.rejects(createSimulation(actor,{...request,...addition,simulationId:randomUUID()}),(error:any)=>error.code==='VALIDATION');
   }

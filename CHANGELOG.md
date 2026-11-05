@@ -1,5 +1,10 @@
 # Histórico de alterações
 
+## [0.60.0] - 2026-11-05
+
+- Exibe no Fiscal e no simulador reduções de 100%, 60% e 40%, além da opção sem redução, com a alíquota efetiva.
+- Permite alíquota zero e preserva o significado e o resultado das escolhas anteriormente salvas.
+
 ## [0.59.1] - 2026-11-05
 
 - Deduz devoluções internas e interestaduais do débito de ICMS por competência e retira essas devoluções do crédito potencial.
