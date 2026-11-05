@@ -38,8 +38,8 @@ test('DRE e Impostos separados compartilham regimes e permanecem no consolidado 
     assert.equal((html.match(/data-dre-visible-regime=/g)||[]).length,4);
     assert.equal((row(html,'revenue').match(/<td /g)||[]).length,2);
     const taxStart=html.indexOf('id="tax-demonstrativo"'),dreStart=html.indexOf('id="dre-demonstrativo"');
-    assert(taxStart>html.indexOf('id="dre-summary"')&&dreStart>taxStart);
-    const taxes=html.slice(taxStart,dreStart),dre=html.slice(dreStart);
+    const summaryStart=html.indexOf('id="dre-summary"');assert(taxStart<summaryStart&&dreStart>summaryStart);
+    const taxes=html.slice(taxStart,summaryStart),dre=html.slice(dreStart);
     for(const key of ['das','icmsNet','cbsIbsNet','irpj','csll','icmsAnticipation','difal','payroll','totalTaxes','taxBurden'])
       assert.equal((row(taxes,key).match(/<td /g)||[]).length,2);
     for(const key of ['das','icmsDebit','cbsIbsDebit','icmsCredit','cbsIbsCredit','irpj','csll','financialResult','ebitda'])

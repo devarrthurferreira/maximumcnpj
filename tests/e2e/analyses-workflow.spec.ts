@@ -144,8 +144,8 @@ async function fillAverage(page:Page,year:string,values:(number|null)[]){
   const sourceYear=page.locator('#analysis-new-source-year');
   if(await sourceYear.getAttribute('readonly')===null)await sourceYear.fill(year);
   else await expect(sourceYear).toHaveValue(year);
-  const keys=['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents'];
-  for(let i=0;i<keys.length;i++)if(values[i]!==null)await page.locator(`[data-accounting-average="${keys[i]}"]`).fill(String(values[i]));
+  const keys=['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents','financialExpensesCents','financialIncomeCents'];
+  for(let i=0;i<keys.length;i++)if(values[i]!==null)await page.locator(`[data-accounting-average="${keys[i]}"]`).fill(String(values[i]??0));
 }
 
 test('Relatórios de doze meses geram Jan–Set, nove despesas e composição comercial com histórico compartilhado',async({page,browser,baseURL,analysisAccounts},info)=>{
@@ -209,23 +209,22 @@ test('Relatórios de doze meses geram Jan–Set, nove despesas e composição co
     expect(first.source.commercialComposition.purchases.totalCents).toBe(60000);
     expect(first.source.commercialComposition.purchases.byTaxStatus.find((row:any)=>row.key==='CPF')).toMatchObject({totalCents:60000,percent:100});
     expect(first.monthlyInputs.map((row:any)=>row.values)).toEqual(Array.from({length:9},()=>
-      ({serviceRevenue:0,salaries:100,rent:50,cardExpenses:10,benefits:20,adminExpenses:0})));
+      ({serviceRevenue:0,salaries:100,rent:50,cardExpenses:10,benefits:20,adminExpenses:0,financialExpenses:0,financialIncome:0})));
     const storedAccounting=await db.collection<any>('analyses').findOne({_id:id,workspaceId});
     expect(storedAccounting?.accounting.data.months[0].sourceMonth).toBe('2026-01');
     expect(storedAccounting?.accounting.data.months.map((row:any)=>row.salariesCents)).toEqual(Array(9).fill(10000));
-    await expect(fiscalPage.locator('[data-dre-regime-result]')).toHaveCount(2);
+    await expect(fiscalPage.locator('#dre-summary table thead th:not(:first-child)')).toHaveCount(2);
     await expect(fiscalPage.locator('#dre-demonstrativo [data-dre-row="revenue"] td')).toHaveCount(2);
     await expect(fiscalPage.locator('#dre-demonstrativo [data-dre-row="revenue"] td').first()).toHaveText('R$ 3.000,00');
-    await expect(fiscalPage.locator('#dre-demonstrativo [data-commercial-side="revenue"] [data-commercial-total]')).toHaveText('R$ 3.000,00');
-    await expect(fiscalPage.locator('#dre-demonstrativo [data-commercial-side="purchases"] [data-commercial-total]')).toHaveText('R$ 600,00');
-    await expect(fiscalPage.locator('#dre-demonstrativo [data-commercial-side="purchases"] [data-commercial-group="CPF"] [data-commercial-percent]')).toHaveText('100,00%');
+    await expect(fiscalPage.locator('[data-commercial-side="revenue"] [data-commercial-total]')).toHaveText('R$ 3.000,00');
+    await expect(fiscalPage.locator('[data-commercial-side="purchases"] [data-commercial-total]')).toHaveText('R$ 600,00');
+    await expect(fiscalPage.locator('[data-commercial-side="purchases"] [data-commercial-group="CPF"] [data-commercial-percent]')).toHaveText('100,00%');
     expect(requests).toEqual([]);
     expect(await db.collection('analyses').countDocuments({workspaceId,clientId:client.id})).toBe(1);
     const jobIds=[first.source.purchases.jobId,first.source.sales.jobId];
     const frozenRows=await db.collection('purchaseLines').find({workspaceId,jobId:{$in:jobIds}}).sort({jobId:1,index:1}).toArray();
     expect(frozenRows).toHaveLength(24);
 
-    await fiscalPage.locator('#dre-report-period').selectOption('complete');
     const downloading=fiscalPage.waitForEvent('download');await fiscalPage.locator('#export-dre-csv').click();
     const download=await downloading,stream=await download.createReadStream();let csv='';for await(const chunk of stream!)csv+=chunk;
     const rows=csvParse(csv,';');expect(rows.some(row=>row[0]==='Lucro Presumido')).toBe(true);expect(rows.some(row=>row[0]==='Lucro Real')).toBe(true);
@@ -236,7 +235,7 @@ test('Relatórios de doze meses geram Jan–Set, nove despesas e composição co
     expect(monthlyHeader!.slice(6,15)).toEqual(['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro']);
     expect(monthlyHeader!.slice(15)).toEqual(['Consolidado Jan–Set / indicador do período','Observações','Referências']);
     await fiscalPage.evaluate(()=>{window.print=()=>{};});await fiscalPage.locator('#print-dre').click();
-    await expect(fiscalPage.locator('#dre-print-document [data-report-part="monthly"]')).toHaveCount(2);
+    await expect(fiscalPage.locator('#dre-print-document .dre-final-page')).toHaveCount(2);
     await fiscalPage.pdf({path:info.outputPath('analysis-two-regimes-complete.pdf'),format:'A4',landscape:true,printBackground:true,preferCSSPageSize:true});
 
     // A new login resumes the same shared costs; editing creates a new immutable version.
@@ -258,10 +257,10 @@ test('Relatórios de doze meses geram Jan–Set, nove despesas e composição co
     await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await saveSector(page,id,'fiscal');
     await page.goto(`/analyses.html?id=${id}&sector=accounting`);await saveSector(page,id,'accounting');
     const single=await generate(page,id);expect(single.result.regimes.map((row:any)=>row.id)).toEqual(['actual']);
-    await expect(page.locator('[data-dre-regime-result]')).toHaveCount(1);await expect(page.locator('#dre-display-status')).toContainText('1 de 1 regime gerado');
+    await expect(page.locator('#dre-summary table thead th:not(:first-child)')).toHaveCount(1);await expect(page.locator('#dre-display-status')).toContainText('1 de 1 regime gerado');
     await expect(page.locator('#dre-demonstrativo [data-dre-row="revenue"] td')).toHaveCount(1);
     await page.evaluate(()=>{window.print=()=>{};});await page.locator('#print-dre').click();
-    await expect(page.locator('#dre-print-document [data-report-part="monthly"]')).toHaveCount(1);
+    await expect(page.locator('#dre-print-document .dre-final-page')).toHaveCount(2);
     await page.pdf({path:info.outputPath('analysis-single-regime-complete.pdf'),format:'A4',landscape:true,printBackground:true,preferCSSPageSize:true});
     await page.goto(`/analyses.html?id=${id}&view=versions`);
     await expect(page.locator('[data-analysis-version]')).toHaveCount(3);
@@ -359,7 +358,7 @@ test('Análise conclui e exporta sem RBT12 ou PDF; informar PGDAS-D manualmente 
   expect(first.result.simplesDiagnostic).toMatchObject({available:false,statusCode:'MISSING_RBT12',rbt12:null});
   for(const month of first.result.monthlyResults)expect(month.engineInput.rbt12).toBeNull();
   await expect(page.locator('#dre-demonstrativo [data-dre-row=netProfit]')).toBeVisible();
-  await expect(page.locator('#dre-demonstrativo [data-simples-diagnostic="MISSING_RBT12"]')).toBeVisible();
+  await expect(page.locator('#tax-demonstrativo [data-simples-diagnostic="MISSING_RBT12"]')).toBeVisible();
   await expect(page.locator('#simulation-snapshot')).toContainText('não informada · opcional');
   await expect(page.locator('#simulation-result')).not.toContainText('NaN');
   const downloading=page.waitForEvent('download');await page.locator('#export-dre-csv').click();
@@ -368,7 +367,7 @@ test('Análise conclui e exporta sem RBT12 ou PDF; informar PGDAS-D manualmente 
   expect(csv).not.toContain('RBT12 fixa: 0');
   await page.screenshot({path:info.outputPath('analysis-without-rbt12-result.png'),fullPage:true});
   await page.reload();await expect(page.locator('#dre-demonstrativo [data-dre-row=netProfit]')).toBeVisible();
-  await expect(page.locator('#dre-demonstrativo [data-simples-diagnostic="MISSING_RBT12"]')).toBeVisible();
+  await expect(page.locator('#tax-demonstrativo [data-simples-diagnostic="MISSING_RBT12"]')).toBeVisible();
   expect(await get(page.request,`/api/v4/simulations/${first._id}`)).toEqual(first);
 
   await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await openSector(page,'fiscal','rbt12');

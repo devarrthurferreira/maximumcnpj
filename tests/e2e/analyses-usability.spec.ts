@@ -207,7 +207,7 @@ test('Contábil usa somente média mensal e exige confirmação ao preencher vaz
   await signIn(page.request,baseURL!,analysisWorkspace.account);
   const created=await createAnalysis(page.request,baseURL!,2027);
   await page.goto('/analyses.html?id='+created.analysis.id+'&sector=accounting');
-  await expect(page.locator('[data-accounting-average]')).toHaveCount(5);
+  await expect(page.locator('[data-accounting-average]')).toHaveCount(7);
   await expect(page.locator('[name="accounting-fill-mode"],#analysis-accounting-paste')).toHaveCount(0);
   await expense(page,'2025-01','salariesCents').fill('123.45');
   page.once('dialog',dialog=>dialog.dismiss());await page.locator('#analysis-zero-empty').click();

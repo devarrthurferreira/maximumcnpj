@@ -345,7 +345,8 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.equal(child.engineInput.months[0].input.credits.simple.cbsRate,.015);
    assert(Math.abs(child.result.credits.cbs.debit-160*.113)<1e-10);
    assert(Math.abs(child.result.credits.cbs.potential-12*.113)<1e-10);
-   assert.match(done.items[0].message,/DIFAL de saída zerado/);
+   assert.match(done.items[0].message,/regras atuais de DIFAL/);
+   assert(child.result.regimes.every((regime:any)=>regime.dre.difal===0));
    assert.deepEqual(await simulations.findOne(scope({_id:original._id})),original);
    assert.deepEqual(await simulations.findOne(scope({_id:oldChild._id})),oldChild);
    assert.deepEqual(await batches.findOne(scope({_id:oldBatchId})),oldBatch);

@@ -4,7 +4,7 @@ import {MongoClient,type Db} from 'mongodb';
 import {hashPassword} from '../../src/security.ts';
 
 type Context={db:Db;workspaceId:string;accountId:string};
-const fields=['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents'];
+const fields=['salariesCents','rentCents','cardExpensesCents','benefitsCents','adminExpensesCents','financialExpensesCents','financialIncomeCents'];
 const test=base.extend<{accountingContext:Context}>({
   accountingContext:async({page,baseURL},use)=>{
     expect(process.env.MONGODB_URI,'Use somente MongoDB descartável').toBeTruthy();
@@ -32,7 +32,7 @@ async function create(request:APIRequestContext,origin:string){
     regimeSelection:{version:'REGIME_SELECTION_V1',selected:['actual']}})).analysis;
 }
 const field=(page:Page,key:string)=>page.locator(`[data-accounting-average="${key}"]`);
-async function fill(page:Page,values:string[]){for(let i=0;i<fields.length;i++)await field(page,fields[i]).fill(values[i]);}
+async function fill(page:Page,values:string[]){for(let i=0;i<fields.length;i++)await field(page,fields[i]).fill(values[i]??'0');}
 async function save(page:Page,id:string,complete=false){
   const response=page.waitForResponse(r=>new URL(r.url()).pathname===`/api/v4/analyses/${id}/accounting`&&r.request().method()==='PATCH');
   await page.locator('#analysis-accounting-form button[value="'+(complete?'complete':'save')+'"]').click();
@@ -47,17 +47,19 @@ async function switchTo(page:Page,sector:'accounting'|'fiscal'){
 test('média numérica replica nove meses, totaliza, salva antes Fiscal e reabre em desktop e celular',async({page,baseURL,accountingContext},info)=>{
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   const analysis=await create(page.request,baseURL!);await page.goto(`/analyses.html?id=${analysis.id}&sector=accounting`);
-  await expect(page.locator('[data-accounting-average]')).toHaveCount(5);
+  await expect(page.locator('[data-accounting-average]')).toHaveCount(7);
   await expect(page.locator('[name=accounting-fill-mode],#analysis-accounting-copy,#analysis-accounting-paste')).toHaveCount(0);
   await expect(field(page,'salariesCents')).toHaveAttribute('type','number');
-  await page.locator('#analysis-new-source-year').fill('2026');await fill(page,['1000','200','12.34','0','0.01']);
-  await expect(page.locator('[data-accounting-summary-total]')).toHaveText('R$ 10.911,15');
+  await page.locator('#analysis-new-source-year').fill('2026');await fill(page,['1000','200','12.34','0','0.01','60','150']);
+  await expect(page.locator('[data-accounting-summary-total]')).toHaveText('R$ 10.101,15');
   await page.locator('#analysis-average-months > summary').click();
   await expect(page.locator('[data-accounting-month]')).toHaveCount(9);
   await expect(page.locator('[data-accounting-month="2026-09"] [data-average-value=salariesCents]')).toHaveText('R$ 1.000,00');
   await expect(page.locator('[data-accounting-month="2026-10"]')).toHaveCount(0);
   const saved=await save(page,analysis.id,true);
   expect(saved.accounting.data.monthlyAverage.values.salariesCents).toBe(100000);
+  expect(saved.accounting.data.monthlyAverage.values.financialIncomeCents).toBe(15000);
+  expect(saved.accounting.data.monthlyAverage.values.financialExpensesCents).toBe(6000);
   expect(saved.accounting.data.months).toHaveLength(9);expect(saved.accounting.data.months.every((row:any)=>row.salariesCents===100000)).toBe(true);
   expect(saved.accounting.status).toBe('COMPLETE');expect(saved.fiscal.status).toBe('DRAFT');
   await page.goto(`/analyses.html?id=${analysis.id}&sector=accounting`);await expect(field(page,'salariesCents')).toHaveValue('1000.00');
@@ -111,7 +113,7 @@ test('médias legadas são sugeridas sem apagar meses e só se tornam uniformes 
   await expect(page.locator('#analysis-average-legacy')).toContainText('preenchimento anterior está preservado');
   await expect(field(page,'salariesCents')).toHaveValue('150.00');
   await switchTo(page,'fiscal');await switchTo(page,'accounting');
-  expect((await api(page.request,baseURL!,'GET',`/api/v4/analyses/${analysis.id}`)).analysis.accounting.data).toEqual({months});
+  expect((await api(page.request,baseURL!,'GET',`/api/v4/analyses/${analysis.id}`)).analysis.accounting.data).toEqual({months:months.map(row=>({...row,financialExpensesCents:0,financialIncomeCents:0}))});
   const saved=await save(page,analysis.id,true);expect(saved.accounting.revision).toBe(analysis.accounting.revision+1);
   expect(saved.accounting.data.months).toHaveLength(9);expect(saved.accounting.data.months.every((row:any)=>row.salariesCents===15000)).toBe(true);
 });

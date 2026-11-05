@@ -176,6 +176,10 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   Object.assign(monthlyGroups,monthlyInputs[0].groups);
   draft.values={...monthlyInputs[0].values,salesRevenue:REPORT_GROUPS.slice(0,3).reduce((sum,key)=>sum+moneyCents(monthlyGroups[key],true),0)/100,
     simplePurchases:monthlyGroups.purchasesOptantCents,regularPurchases:monthlyGroups.purchasesNonOptantCents};
+  // Do not add a new zero-valued field to a historical draft that never had it.
+  // Explicit values (including non-zero month overrides) stay in the new version.
+  for(const key of ['financialExpenses','financialIncome'] as const)
+    if(!Object.hasOwn(original.draft.values,key)&&draft.values[key]===0)delete draft.values[key];
   const rbt12Schedule=rbt12Extraction?buildRbt12Schedule(rbt12Extraction,source.monthlyReports.map((row:any)=>row.sourceMonth)):null;
   pending(!rbt12Schedule||rbt12Schedule.complete,'RBT12_MONTHS_MISSING',`O extrato congelado não cobre todas as competências. Reimporte o extrato com as receitas mensais do quadro 2.2. ${rbt12Schedule?.rows.filter(row=>row.status!=='CONFIRMED').map(row=>`${row.sourceMonth}: faltam ${row.missingMonths.join(', ')}`).join('; ')||''}`);
   const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports,monthlyInputs,source.sales.jobId,rbt12Schedule,source.analysisPeriod);}catch(error){throw new AppError(409,'REPROCESS_ADJUSTMENT',error instanceof Error?error.message:'Valores mensais inválidos.');}})();

@@ -55,18 +55,25 @@ test('final statement reconciles gross debits, used credits, EBITDA and final ta
     }
   }
 });
-test('screen order is summary, taxes, DRE; printed output is two consolidated sections for every requested period',()=>{
+test('screen order is taxes with regime controls, summary, DRE; print stays on two consolidated pages',()=>{
   const saved=scenario(),p=buildDrePresentation({...saved,calendar:saved.monthlyDre});
   const options={presentation:p,calendar:saved.monthlyDre,year:saved.year,company:saved.company,visibleRegimeIds:['pure','actual']};
   const html=renderAnnualDre(options);
-  assert(html.indexOf('id="dre-summary"')<html.indexOf('id="tax-demonstrativo"'));
-  assert(html.indexOf('id="tax-demonstrativo"')<html.indexOf('id="dre-demonstrativo"'));
+  assert(html.indexOf('id="tax-demonstrativo"')<html.indexOf('id="dre-summary"'));
+  assert(html.indexOf('id="dre-summary"')<html.indexOf('id="dre-demonstrativo"'));
+  assert(html.indexOf('data-dre-visible-regime=')>html.indexOf('id="tax-demonstrativo"'));
+  assert(html.indexOf('data-dre-visible-regime=')<html.indexOf('id="dre-summary"'));
+  for(const key of ['revenue','revenueTaxes','costsWithAnticipation','operatingExpensesWithPayroll','resultBeforeIncomeTaxes'])assert.match(html,new RegExp(`data-summary-toggle="${key}"`));
+  for(const key of ['services','sales'])assert.match(html,new RegExp(`id="summary-child-revenue-${key}" data-summary-child="revenue" class=`));
+  assert.match(html,/id="summary-child-revenueTaxes-das" data-summary-child="revenueTaxes" hidden/);
   assert.match(html,/dre-indicator-spacer/);assert.match(html,/Baixar PDF · 2 páginas/);
   for(const period of ['complete','annual','monthly']){
     const printed=renderDrePrintDocument({...options,period});
     assert.equal((printed.match(/class="dre-final-page"/g)||[]).length,2);
     assert(!printed.includes('Lucro Presumido'));assert(!printed.includes('dre-report-monthly-part'));
     assert(!printed.includes('taxesDeduction'));assert.match(printed,/Simulador Reforma Tributária/);
+    assert(printed.indexOf('Impostos e indicadores')<printed.indexOf('Resumo dos resultados'));
+    assert.match(printed,/Receitas de serviços/);assert.match(printed,/Receita de vendas/);
   }
 });
 test('accounting preserves historical fields while accepting explicit financial accounts and rejecting invalid values',()=>{

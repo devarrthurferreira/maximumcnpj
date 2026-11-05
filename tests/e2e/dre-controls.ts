@@ -24,8 +24,9 @@ export async function expectConsolidatedDre(page:Page){
 
 /** Read monthly values through the real report control and download action. */
 export async function readDreMonthlyCsv(page:Page):Promise<string[][]>{
-  const control=page.locator('#dre-report-period'),previous=await control.inputValue();
-  await control.selectOption('monthly');
+  const control=page.locator('#dre-report-period'),hasControl=await control.count()>0;
+  const previous=hasControl?await control.inputValue():null;
+  if(hasControl)await control.selectOption('monthly');
   try{
     const downloaded=page.waitForEvent('download');await page.locator('#export-dre-csv').click();
     const stream=await(await downloaded).createReadStream(),parts:Buffer[]=[];
@@ -41,12 +42,14 @@ export async function readDreMonthlyCsv(page:Page):Promise<string[][]>{
       else cell+=char;
     }
     return rows;
-  }finally{await control.selectOption(previous);}
+  }finally{if(hasControl&&previous!==null)await control.selectOption(previous);}
 }
 
 /** Monthly cells followed by the captured period total, without notes/references. */
 export function dreMonthlyValues(rows:string[][],regime:string,label:string,scope='DRE'):string[]{
-  const matches=rows.filter(row=>row[0]===regime&&row[1]===scope&&row[3]?.replace(/^'/,'')===label);
+  const aliases:Record<string,string>={'Receita Total utilizada':'Receita bruta','Receita de vendas utilizada':'Receita de vendas','− Aluguel':'Aluguel'};
+  const exact=rows.filter(row=>row[0]===regime&&row[1]===scope&&row[3]?.replace(/^'/,'')===label);
+  const matches=exact.length?exact:rows.filter(row=>row[0]===regime&&row[1]===scope&&row[3]?.replace(/^'/,'')===aliases[label]);
   expect(matches,`${scope}: ${label} · ${regime}`).toHaveLength(1);
   return matches[0].slice(6,-2);
 }
