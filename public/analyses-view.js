@@ -12,6 +12,7 @@ import {assessAnalysisDifal} from './analysis-difal-assessment.js';
 import {documentDifalSummary} from './analysis-document-difal.js';
 import {renderFinancialAlerts} from './financial-alerts-view.js';
 import {renderIcmsSalesAudit} from './analysis-icms-audit.js';
+import {CBS_IBS_OPTIONS} from './simulator-engine.js';
 import {accountingAverage,accountingAverageInputValues,accountingAveragePreview} from './analysis-accounting-average.js';
 
 export {ACCOUNTING_FIELDS} from './analyses-guidance.js';
@@ -292,7 +293,7 @@ function fiscalPanel(options) {
   const config=options.configDraft||analysis.config;
   const regimes=`${regimeChoices(config.regimeSelection,'analysis-fiscal-regime')}<label class="analysis-config-year">Ano do cenário<select id="analysis-fiscal-year"><option value="2027" ${config.year===2027?'selected':''}>2027</option><option value="2028" ${config.year===2028?'selected':''}>2028</option></select></label><p class="analysis-note">Escolha um ou mais regimes. A DRE única compara somente os regimes selecionados. O período dos documentos fica limitado aos meses disponíveis de janeiro a setembro.</p>`;
   const ratePercent=draft.cbsIbsPercent??100;
-  const consumptionRate=`<fieldset class="analysis-new-sector analysis-cbs-ibs-options"><legend>Redução da alíquota de CBS/IBS</legend>${[[100,'Sem redução','11,40'],[0,'Redução de 100%','0,00'],[40,'Redução de 60%','4,56'],[60,'Redução de 40%','6,84']].map(([percent,label,effective])=>`<label><input type="radio" name="cbsIbsPercent" value="${percent}" ${ratePercent===percent?'checked':''}><span><strong>${label}</strong><small>Alíquota aplicada: ${effective}%</small></span></label>`).join('')}</fieldset><p class="analysis-note">A redução é aplicada à alíquota de referência de 11,40% (CBS de 11,30% + IBS de 0,10%) nos débitos da receita do Simples Híbrido, Lucro Presumido e Lucro Real. No Simples Puro, o DAS mantém a fórmula atual. Os créditos das compras seguem as premissas atuais dos fornecedores. A escolha é uma premissa da simulação e depende do enquadramento da empresa.</p>`;
+  const consumptionRate=`<fieldset class="analysis-new-sector analysis-cbs-ibs-options"><legend>Redução da alíquota de CBS/IBS</legend>${CBS_IBS_OPTIONS.map(({percent,label,effective})=>`<label><input type="radio" name="cbsIbsPercent" value="${percent}" ${ratePercent===percent?'checked':''}><span><strong>${label}</strong><small>Alíquota aplicada: ${effective.toFixed(2).replace('.',',')}%</small></span></label>`).join('')}</fieldset><p class="analysis-note">A redução é aplicada à alíquota de referência de 11,40% (CBS de 11,30% + IBS de 0,10%) nos débitos da receita do Simples Híbrido, Lucro Presumido e Lucro Real. No Simples Puro, o DAS mantém a fórmula atual. Os créditos das compras seguem as premissas atuais dos fornecedores. A escolha é uma premissa da simulação e depende do enquadramento da empresa.</p>`;
   const form=`<form id="analysis-fiscal-form" class="analysis-wizard-form" novalidate><div class="analysis-wizard-body"><fieldset class="analysis-fields" ${canWrite?'':'disabled'}>
       ${wizardStep('regimes','Quais regimes terão DRE?','Selecione os regimes da comparação.',regimes,{first:true})}
       ${wizardStep('rbt12','RBT12 / PGDAS-D · opcional','',extratoPanel({...options,draft}))}

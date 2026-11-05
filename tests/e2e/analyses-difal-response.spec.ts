@@ -81,7 +81,8 @@ test('Fiscal apresenta as reduções e conserva as escolhas ao salvar e retomar'
   await page.locator('#analysis-wizard-next').click();
   await expect(page.locator('#analysis-wizard')).toHaveAttribute('data-wizard-step','cbs-ibs');
   const step=page.locator('section[data-wizard-step="cbs-ibs"]');
-  for(const [value,label,rate] of [['100','Sem redução','11,40%'],['0','Redução de 100%','0,00%'],['40','Redução de 60%','4,56%'],['60','Redução de 40%','6,84%']]){
+  for(const [value,label,rate] of [['100','Sem redução','11,40%'],['0','Redução de 100%','0,00%'],
+    ['30','Redução de 70%','3,42%'],['40','Redução de 60%','4,56%'],['60','Redução de 40%','6,84%'],['70','Redução de 30%','7,98%']]){
     const option=step.locator(`label:has(input[value="${value}"])`);
     await expect(option).toContainText(label);await expect(option).toContainText(rate);
   }
@@ -96,6 +97,13 @@ test('Fiscal apresenta as reduções e conserva as escolhas ao salvar e retomar'
   await page.locator('#analysis-wizard button[value="save"]').click();expect((await zeroPatch).ok()).toBe(true);
   expect(savedPercent).toBe(0);
   await page.reload();await expect(step.locator('input[value="0"]')).toBeChecked();
+  for(const retained of [30,70]){
+    await step.locator(`input[value="${retained}"]`).check();
+    const save=page.waitForResponse(response=>response.request().method()==='PATCH'&&response.url().includes('/fiscal'));
+    await page.locator('#analysis-wizard button[value="save"]').click();expect((await save).ok()).toBe(true);
+    expect(savedPercent).toBe(retained);
+    await page.reload();await expect(step.locator(`input[value="${retained}"]`)).toBeChecked();
+  }
   await step.screenshot({path:info.outputPath('cbs-ibs-mobile.png')});
   expect(await page.locator('#analysis-wizard').evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
   expect(errors).toEqual([]);

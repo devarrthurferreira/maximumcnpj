@@ -23,9 +23,15 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
+/** Os valores salvos representam a parcela da alíquota de referência que permanece. */
+export const CBS_IBS_OPTIONS = Object.freeze([100,0,30,40,60,70].map(percent=>Object.freeze({
+    percent,
+    label:percent===100?'Sem redução':`Redução de ${100-percent}%`,
+    effective:(DEFAULT_RATES.cbs+DEFAULT_RATES.ibs)*percent
+})));
 /** Retained portion of 11.4%, kept compatible with choices saved before reduction labels. */
 export function parseCbsIbsPercent(value) {
-    if (value !== 100 && value !== 60 && value !== 40 && value !== 0) throw new TypeError('Selecione uma redução válida de CBS/IBS.');
+    if (!CBS_IBS_OPTIONS.some(option=>option.percent===value)) throw new TypeError('Selecione uma redução válida de CBS/IBS.');
     return value;
 }
 export const MODEL_VERSION = INCOME_TAX_MODEL_VERSION;

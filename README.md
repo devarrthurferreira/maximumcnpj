@@ -1,4 +1,8 @@
-# Maximum CNPJ · v0.60.2
+# Maximum CNPJ · v0.60.3
+
+## v0.60.3 — Reduções adicionais de CBS/IBS (05/11/2026)
+
+O Fiscal e o simulador também oferecem redução de 70% e de 30% da referência CBS/IBS de 11,40%, aplicando respectivamente 3,42% (CBS 3,39% + IBS 0,03%) e 7,98% (CBS 7,91% + IBS 0,07%). A escolha salva representa a parcela que permanece (30% ou 70%) e é mantida ao retomar a análise. As opções anteriores, os créditos de compras e o cálculo do DAS do Simples Puro continuam preservados.
 
 ## v0.60.2 — Conferência de ICMS e NFC-e (05/11/2026)
 
