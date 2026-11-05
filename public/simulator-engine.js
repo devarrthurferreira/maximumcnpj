@@ -23,9 +23,9 @@ export const DEFAULT_RATES = {
     irServices: 0.32,
     csServices: 0.32
 };
-/** Portion of the scenario's 11.4% combined rate applied to outgoing debits. */
+/** Retained portion of 11.4%, kept compatible with choices saved before reduction labels. */
 export function parseCbsIbsPercent(value) {
-    if (value !== 100 && value !== 60 && value !== 40) throw new TypeError('Selecione 100%, 60% ou 40% da alíquota de CBS/IBS.');
+    if (value !== 100 && value !== 60 && value !== 40 && value !== 0) throw new TypeError('Selecione uma redução válida de CBS/IBS.');
     return value;
 }
 export const MODEL_VERSION = INCOME_TAX_MODEL_VERSION;

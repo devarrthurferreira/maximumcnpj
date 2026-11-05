@@ -129,6 +129,22 @@ test('Contábil aplica média a nove meses e gera somente as competências com d
   const historical=await api(page.request,baseURL!,'GET',`/api/v4/simulations/${simulationId}`);
   expect(historical.draft.cbsIbsPercent).toBe(40);
   expect(historical.engineInput.months[0].input.rates.cbs).toBe(0.0452);
+  await page.goto(`/analyses.html?id=${analysis.id}&sector=fiscal&step=cbs-ibs`);
+  await page.locator('input[name=cbsIbsPercent][value="0"]').check();
+  await page.locator('#analysis-wizard-next').click();
+  await page.locator('#analysis-wizard button[value=complete]').click();
+  await expect(page.locator('#analysis-wizard')).not.toBeVisible();
+  await expect(page.locator('#analysis-generate')).toBeEnabled();await page.locator('#analysis-generate').click();
+  await expect(page.locator('#simulation-snapshot')).toBeVisible();
+  const zeroId=new URL(page.url()).searchParams.get('simulation');expect(zeroId).not.toBe(updatedId);
+  const zero=await api(page.request,baseURL!,'GET',`/api/v4/simulations/${zeroId}`);
+  expect(zero.draft.cbsIbsPercent).toBe(0);
+  expect(zero.engineInput.months.every((row:any)=>row.input.rates.cbs===0&&row.input.rates.ibs===0)).toBe(true);
+  await expect(page.locator('[data-dre-combined-rate]')).toContainText('0,00%');
+  await page.goto(`/analyses.html?id=${analysis.id}&sector=fiscal&step=cbs-ibs`);
+  await expect(page.locator('input[name=cbsIbsPercent][value="0"]')).toBeChecked();
+  expect((await api(page.request,baseURL!,'GET',`/api/v4/simulations/${updatedId}`)).draft.cbsIbsPercent).toBe(60);
+  await page.goto(`/simulator.html?simulation=${zeroId}`);await expect(page.locator('#simulation-snapshot')).toBeVisible();
   await page.screenshot({path:info.outputPath('partial-consolidated-dre.png'),fullPage:true});expect(errors).toEqual([]);
 });
 

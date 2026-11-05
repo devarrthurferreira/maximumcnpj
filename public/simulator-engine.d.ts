@@ -1,7 +1,7 @@
 /** Types for the shared, dependency-free calculator used by browser and server. */
 import type {RegimeId,RegimeSelection} from './regime-selection.js';
 export const MODEL_VERSION: string;
-export type CbsIbsPercent = 100 | 60 | 40;
+export type CbsIbsPercent = 100 | 60 | 40 | 0;
 export function parseCbsIbsPercent(value:unknown):CbsIbsPercent;
 export const OUTGOING_DIFAL_MESSAGE: string;
 export const SIMPLES_DIAGNOSTIC_VERSION:'SIMPLES_DIAGNOSTIC_V1';

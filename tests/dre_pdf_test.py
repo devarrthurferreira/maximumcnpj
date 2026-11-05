@@ -155,18 +155,23 @@ class DrePdfTests(unittest.TestCase):
 import {drePdfFixture} from './tests/fixtures/dre-pdf.mjs';
 import {calculateMonthlySimulation} from './public/simulator-monthly.js';
 import {buildMonthlyDre} from './public/simulator-calendar.js';
-const s=drePdfFixture();s.draft.cbsIbsPercent=60;
+const s=drePdfFixture();s.draft.cbsIbsPercent=Number(process.argv[1]);
 Object.assign(s,calculateMonthlySimulation(s.draft,s.source.monthlyReports,s.monthlyInputs,s.source.sales.jobId,null,s.analysisPeriod));
 s.monthlyDre=buildMonthlyDre(s.result,s.year,s.rbt12Manual,s.reportPeriod);s.modelVersion=s.result.version;
 s.annualRevenue=s.result.annualRevenue;s.bestRegimeId=s.result.bestRegimeId;
 process.stdout.write(JSON.stringify(s));
 """
-        saved = json.loads(subprocess.run(['node', '--input-type=module', '-e', script], cwd=ROOT,
-                                         capture_output=True, text=True, check=True, timeout=30).stdout)
-        with pymupdf.open(stream=render(saved), filetype='pdf') as document:
-            self.assertEqual(document.page_count, 2)
-            text = normalized(document[0].get_text())
-            self.assertIn('CBS/IBS do cenário: 6,84% (CBS 6,78% + IBS 0,06%)', text)
+        for retained, expected in ((100, '11,40% (CBS 11,30% + IBS 0,10%)'),
+                                   (0, '0,00% (CBS 0,00% + IBS 0,00%)'),
+                                   (40, '4,56% (CBS 4,52% + IBS 0,04%)'),
+                                   (60, '6,84% (CBS 6,78% + IBS 0,06%)')):
+            with self.subTest(retained=retained):
+                saved = json.loads(subprocess.run(['node', '--input-type=module', '-e', script, str(retained)], cwd=ROOT,
+                                                 capture_output=True, text=True, check=True, timeout=30).stdout)
+                with pymupdf.open(stream=render(saved), filetype='pdf') as document:
+                    self.assertEqual(document.page_count, 2)
+                    text = normalized(document[0].get_text())
+                    self.assertIn('CBS/IBS do cenário: ' + expected, text)
 
     def test_missing_optional_tax_captures_are_unavailable_not_zero(self):
         from dre_irpj_quarter_test import quarter_fixture
