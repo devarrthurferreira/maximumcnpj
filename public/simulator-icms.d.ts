@@ -5,7 +5,7 @@ export type IcmsOperationBucket={internalBaseCents:number;interstateBaseCents:nu
 export type IcmsOperations={version:'ICMS_OPERATIONS_V1';sourceMonth:string;issuerUf:string;purchaseIssuerUf:string;internalRatePercent:18;interstateRatePercent:12;
   sales:IcmsOperationBucket;purchases:IcmsOperationBucket;salesReturns:IcmsOperationBucket;excludedServicePurchasesCents:number;excludedSimplePurchasesCents:number;sourceRegularPurchasesCents:number};
 export function summarizeIcmsOperations(input:{sourceMonth:string;purchases:ReadonlyArray<{natureCode?:unknown;totalCents:number;recipientUf?:unknown;creditGroup?:unknown}>;
-  sales:ReadonlyArray<{natureCode?:unknown;totalCents:number;recipientUf?:unknown}>;issuerUf?:unknown;purchaseIssuerUf?:unknown}):IcmsOperations;
+  sales:ReadonlyArray<{natureCode?:unknown;totalCents:number;recipientUf?:unknown;documentSpecies?:unknown}>;issuerUf?:unknown;purchaseIssuerUf?:unknown}):IcmsOperations;
 export function parseIcmsOperations(value:unknown):IcmsOperations;
 export function projectIcmsOperations(value:unknown,input:{salesRevenueCents:number;regularPurchasesCents:number}):{
   source:IcmsOperations;available:boolean;status:string;pendingLines:number;missingSalesMix:boolean;grossSalesCents:number;unflooredGrossSalesCents:number;grossSalesFloorApplied:boolean;sourceNetSalesCents:number;salesAdjustmentCents:number;purchaseAdjustmentCents:number;

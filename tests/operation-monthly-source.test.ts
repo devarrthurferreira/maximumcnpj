@@ -8,6 +8,21 @@ const row=(natureCode:string,totalCents:number,extra:Record<string,unknown>={})=
   document:'12345678900',documentKind:'CPF',cnpj:'',valid:false,recipientUf:'SP',description:'Descrição não classifica operação',...extra});
 const report=(rows:any[],statuses:Map<string,unknown>=new Map())=>({rows,statuses});
 
+test('espécie da saída chega ao ICMS e sinaliza vendas antigas sem identificar NFC-e',()=>{
+  const sales=report([row('5102',10000,{documentSpecies:'NFC-e'}),row('6102',20000,{documentSpecies:'NFE'}),row('5102',3000)]);
+  const purchases=report([row('1102',100,{recipientUf:'MG'})]);
+  const month=selectOperationMonths(purchases,sales,'MG')![0];
+  assert.deepEqual(month.salesSpecies,{version:'SALES_SPECIES_V1',nfceLines:1,nfceBaseCents:10000,missingLines:1,missingBaseCents:3000});
+  assert.equal(month.icmsOperations.sales.internalTaxCents,1800);
+  assert.equal(month.icmsOperations.sales.interstateTaxCents,2760);
+  const draft={year:2027,salesAnnex:1,serviceAnnex:3,rbt12:100000,values:{salesRevenue:0,serviceRevenue:0,simplePurchases:0,regularPurchases:0,salaries:0,benefits:0,adminExpenses:0,rent:0,cardExpenses:0}};
+  const calculated=calculateMonthlySimulation(draft,[month],[baselineMonth(month)],'synthetic-sales');
+  assert.equal(calculated.result.credits.icms.debit,45.60);
+  assert.match(calculated.result.warnings.find(item=>item.code==='sales-species-missing')!.detail,/reimporte o relatório de saídas/i);
+  assert.equal(calculated.result.memory.find(item=>item.id==='icms.nfceSales')!.value,100);
+  assert.equal(sales.rows[0].recipientUf,'SP');
+});
+
 test('compras e serviços 8000 entram uma vez no custo de cada grupo do Simples',()=>{
   const optant={document:'00000000000191',cnpj:'00000000000191',documentKind:'CNPJ',valid:true,recipientUf:'MG'};
   const regular={document:'11222333000181',cnpj:'11222333000181',documentKind:'CNPJ',valid:true,recipientUf:'MG'};

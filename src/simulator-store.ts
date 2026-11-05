@@ -20,6 +20,7 @@ export function financialSourceWarnings(reports:readonly OperationMonthlyReport[
     const revenue=exactSignedCents(sales+fields.serviceRevenueCents);
     const purchases=exactCents(fields.purchasesOptantCents+fields.purchasesNonOptantCents);
     const notes:string[]=[];
+    if(row.salesSpecies?.missingLines)notes.push(`${row.salesSpecies.missingLines} venda(s) sem espécie registrada na coluna D. NFC-e não pode ser identificada nessas linhas; reimporte as saídas para conferir o ICMS.`);
     const returnNatures: NatureAudit[]=row.operationAudit?.natures||[];
     const purchaseReturns=exactCents(returnNatures
       .filter(nature=>nature.side==='SALES'&&nature.operation==='DEVOLUCAO_COMPRA')
@@ -115,7 +116,7 @@ export async function generationSimulator(id: string, clientId: string, options:
   if (operationAudit.unknownSalesLines || operationAudit.unknownPurchaseLines) warnings.push(`${operationAudit.unknownSalesLines + operationAudit.unknownPurchaseLines} linhas possuem natureza não cadastrada. Esses valores não entraram nas bases; revise as naturezas indicadas na conferência.`);
   const anticipationPending=monthlyReports.reduce((sum,row)=>sum+row.anticipation.pendingLines,0);
   if (anticipationPending) warnings.push(`${anticipationPending} compras elegíveis não possuem UF suficiente para confirmar a antecipação de ICMS; nenhum endereço foi presumido.`);
-  warnings.push('ICMS: serviços de prefixo 8000 permanecem nos custos, sem antecipação ou crédito. As operações elegíveis usam 18% na mesma UF e 12% entre UFs diferentes; devoluções de venda reduzem o débito e não integram o crédito de compras.');
+  warnings.push('ICMS: NFC-e das saídas são internas; demais operações elegíveis usam 18% na mesma UF e 12% entre UFs diferentes. Serviços 8000 não geram crédito. Devoluções de venda reduzem o débito.');
   const icmsPending=monthlyReports.reduce((total,row)=>total+row.icmsOperations.sales.pendingLines+row.icmsOperations.purchases.pendingLines+row.icmsOperations.salesReturns.pendingLines,0);
   if(icmsPending)warnings.push(`${icmsPending} operações elegíveis de ICMS dependem de UF confirmada. Os cenários com ICMS fora do DAS aguardam essa conferência.`);
   if (fields.serviceRevenueCents > 0) warnings.push('Vendas de serviços foram separadas das mercadorias e preenchem a receita de serviços pela competência de cada linha, sem duplicar o faturamento. Naturezas iniciadas por 9000 são serviços, independentemente do sufixo.');

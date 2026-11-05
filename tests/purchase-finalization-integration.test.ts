@@ -13,7 +13,7 @@ import {digits} from '../src/domain.ts';
 const actor={_id:'finalization-tester',role:'admin',name:'Equipe sintética',email:'finalization@example.test'};
 const cnpjs=['178654320001','279876540001'].map(base=>base+digits(base));
 const copiedFields=['_id','workspaceId','jobId','index','document','documentKind','cnpj','name','serviceDate','quantity',
-  'natureCode','description','operation','natureOperation','operationVersion','recipientUf','difal','anticipation',
+  'natureCode','description','documentSpecies','operation','natureOperation','operationVersion','recipientUf','difal','anticipation',
   'totalCents','balanceCents','valid','kind','grossCents','discountCents','accessoryCents','freightCents','abatementCents'];
 const approved=(row:any)=>Object.fromEntries(copiedFields.filter(key=>Object.hasOwn(row,key)).map(key=>[key,row[key]]));
 const opts={skip:!process.env.MONGODB_URI,timeout:120000};
@@ -30,6 +30,7 @@ function sourceRows(count:number,type=SALES_MODE){
     const totalCents=10000+index,document=[cnpjs[0],cnpjs[1],cnpjs[0],'12345678900',''][index%5];
     return {document,name:'Documento sintético '+index,quantity:'1',serviceDate:`2025-${String(index%9+1).padStart(2,'0')}-15`,
       natureCode:type===SALES_MODE?'6102001':'2102001',description:'Conferência sintética por competência',recipientUf:'SP',
+      ...(type===SALES_MODE?{documentSpecies:index%2?'NFE':'NFC-e'}:{}),
       grossCents:totalCents+500,discountCents:600,accessoryCents:99,freightCents:150,abatementCents:50,totalCents};
   });
 }

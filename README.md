@@ -1,4 +1,10 @@
-# Maximum CNPJ · v0.60.0
+# Maximum CNPJ · v0.60.1
+
+## v0.60.1 — NFC-e nas vendas internas (05/11/2026)
+
+No relatório de saídas, a espécie da coluna D é preservada em cada linha. Valores identificados como NFC-e são tratados como vendas internas no ICMS, inclusive se a UF do destinatário for diferente ou estiver ausente; a UF original não é alterada. Outras espécies continuam classificadas pelas UFs. As devoluções do relatório de entradas mantêm suas regras anteriores.
+
+Relatórios antigos que não guardaram a espécie, ou linhas com a coluna vazia, mostram alerta de ICMS a conferir e orientam nova importação das saídas. O sistema conserva a estimativa anterior e as versões históricas; não presume quais linhas são NFC-e. O alerta aparece na DRE e no PDF. Após reimportar, gere uma nova simulação para usar a nova regra.
 
 ## v0.60.0 — Reduções de CBS/IBS no Fiscal (05/11/2026)
 
