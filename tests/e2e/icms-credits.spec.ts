@@ -50,14 +50,17 @@ function report(name:string,source:SourceRow[]){
 }
 
 const creditRows=[
-  ['icms.debit','Débito de ICMS','420,00'],
-  ['icms.potential','Crédito potencial de ICMS','156,00'],
+  ['icms.debit','Débito de ICMS','378,00'],
+  ['icms.salesGrossDebit','ICMS bruto das vendas','420,00'],
+  ['icms.returnDebitReduction','Devoluções deduzidas do ICMS débito','-42,00'],
+  ['icms.potential','Crédito potencial de ICMS','114,00'],
   ['icms.purchaseCredit','Crédito de ICMS das compras elegíveis','114,00'],
-  ['icms.returnCredit','Crédito de ICMS das devoluções de venda','42,00'],
-  ['icms.used','Crédito utilizado de ICMS','156,00'],
+  ['icms.used','Crédito utilizado de ICMS','114,00'],
   ['icms.due','Valor líquido a recolher de ICMS','264,00'],
   ['icms.balance','Saldo credor potencial de ICMS','0,00']
 ] as const;
+
+const displayAmount=(amount:string)=>amount.startsWith('-')?`-R$ ${amount.slice(1)}`:`R$ ${amount}`;
 
 async function openCompleteDre(page:Page){
   await expect(page.locator('#dre-demonstrativo [data-dre-row="netProfit"]')).toBeVisible();
@@ -67,6 +70,8 @@ async function assertAnnual(page:Page){
   await showDreRegimes(page,['pure','hybrid','presumed','actual']);
   await openCompleteDre(page);
   const main=page.locator('#dre-demonstrativo > .dre-table-wrap'),taxes=page.locator('#tax-demonstrativo > .dre-tax-table');
+  const taxDetails=page.locator('#tax-demonstrativo .dre-tax-details');
+  if(!await taxDetails.evaluate(node=>(node as HTMLDetailsElement).open))await taxDetails.locator('summary').click();
   const footer=page.locator('#tax-demonstrativo [data-icms-reconciliation="dre"]');
   await expect(footer).toHaveCount(1);
   await expect(footer.locator('[data-dre-row]')).toHaveCount(creditRows.length);
@@ -74,22 +79,24 @@ async function assertAnnual(page:Page){
   // remain informational and never become another deduction in the main table.
   await expect(main.locator('[data-dre-row^="icms."]')).toHaveCount(0);
   await expect(main.locator('[data-dre-row="icmsNet"]')).toHaveCount(0);
-  await expect(main.locator('[data-dre-row="taxesDeduction"]')).toHaveCount(1);
+  await expect(main.locator('[data-dre-row="revenueTaxes"]')).toHaveCount(1);
   await expect(taxes.locator('[data-dre-row="icmsNet"] td').nth(2)).toHaveText('R$ 264,00');
   await expect(taxes.locator('[data-dre-row="cbsIbsNet"] td').nth(2)).toHaveText('R$ 148,20');
   await expect(main.locator('[data-dre-row="revenue"] td').nth(2)).toHaveText('R$ 2.700,00');
-  await expect(main.locator('[data-dre-row="cmv"] td').nth(2)).toHaveText('-R$ 1.400,00');
+  await expect(main.locator('[data-dre-row="cmvRegular"] td').nth(2)).toHaveText('-R$ 1.400,00');
+  await expect(main.locator('[data-dre-row="icmsDebit"] td').nth(2)).toHaveText('-R$ 378,00');
+  await expect(main.locator('[data-dre-row="icmsCredit"] td').nth(2)).toHaveText('R$ 114,00');
   for(const [key,,amount] of creditRows){
     const cells=footer.locator(`[data-dre-row="${key}"] td`);
     await expect(cells).toHaveCount(4);
-    await expect(cells.nth(2)).toHaveText(`R$ ${amount}`);
+    await expect(cells.nth(2)).toHaveText(displayAmount(amount));
     await expect(cells.first()).toHaveText('—');
     await expect(cells.first().locator('.dre-amount')).toHaveAttribute('title',/Incluído no DAS/);
   }
   expect(await page.locator('#dre-demonstrativo').evaluate(element=>{
     const taxes=document.querySelector('#tax-demonstrativo');
     return !!(taxes&&element.parentElement===taxes.parentElement&&
-      (element.compareDocumentPosition(taxes)&Node.DOCUMENT_POSITION_FOLLOWING)&&
+      (taxes.compareDocumentPosition(element)&Node.DOCUMENT_POSITION_FOLLOWING)&&
       !element.querySelector('[data-icms-reconciliation="dre"]')&&taxes.querySelector('[data-icms-reconciliation="dre"]'));
   })).toBe(true);
   await expect(footer).toContainText('já está abatido');
@@ -179,7 +186,7 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
   await expect(page.locator('#simulation-save-status')).toContainText('Simulação salva');
 
   // Independent arithmetic: 1,000×18% + 2,000×12% = 420; eligible purchases
-  // 300×18% + 500×12% = 114; returns 100×18% + 200×12% = 42; due = 264.
+  // 300×18% + 500×12% = 114; returns 100×18% + 200×12% = 42; debit = 378; due = 264.
   expect(saved.modelVersion).toBe(JAN_SEP_MODEL_VERSION);
   expect(saved.analysisPeriod).toMatchObject({version:'JAN_SEP_V1',months:9,complete:true});
   expect(saved.monthlyDre.version).toBe('DRE_CALENDAR_V4');
@@ -199,19 +206,19 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
     expect(operations[group]).toMatchObject({internalBaseCents:internal,interstateBaseCents:interstate,totalBaseCents:internal+interstate,taxCents:tax,eligibleLines:2,pendingLines:0,pendingBaseCents:0});
   }
   expect(saved.source.monthlyReports[0].anticipation).toMatchObject({version:'ICMS_ANTICIPATION_V5',ratePercent:7.32,baseCents:50_000,amountCents:3660,eligibleLines:1,pendingLines:0});
-  expect(saved.result.credits.icms).toEqual({debit:420,potential:156,used:156,due:264,balance:0});
+  expect(saved.result.credits.icms).toEqual({debit:378,potential:114,used:114,due:264,balance:0});
   expect(saved.result.monthlyResults[0].result.credits.icms).toEqual(saved.result.credits.icms);
-  for(const [id,value] of [['icms.purchaseCredit',114],['icms.returnCredit',42],['icms.excludedServices',600]] as const){
+  for(const [id,value] of [['icms.purchaseCredit',114],['icms.salesGrossDebit',420],['icms.returnDebitReduction',42],['icms.excludedServices',600]] as const){
     expect(saved.result.memory.find((entry:any)=>entry.id===id)).toMatchObject({unit:'currency',value});
   }
   const presumed=saved.result.regimes.find((regime:any)=>regime.id==='presumed'),pure=saved.result.regimes.find((regime:any)=>regime.id==='pure');
   expect(presumed.available).toBe(true);expect(pure.available).toBe(true);
-  expect(presumed.dre).toMatchObject({revenue:2700,cmv:-1400,icmsNet:-264,icmsUsed:156,icmsBalance:0,difal:0,icmsAnticipation:0});
+  expect(presumed.dre).toMatchObject({revenue:2700,cmv:-1400,icmsNet:-264,icmsUsed:114,icmsBalance:0,difal:0,icmsAnticipation:0});
   expect(pure.dre).toMatchObject({revenue:2700,cmv:-1400,icmsNet:0,icmsUsed:0,icmsBalance:0,difal:0,icmsAnticipation:-36.6});
   expect(presumed.dre.revenue+presumed.dre.cmv+presumed.dre.icmsNet).toBe(1036);
   const otherTaxes=presumed.dre.das+presumed.dre.cbsDebit+presumed.dre.ibsDebit+presumed.dre.iss+presumed.dre.cbsUsed+presumed.dre.ibsUsed+presumed.dre.irpj+presumed.dre.csll;
   expect(presumed.dre.netProfit).toBeCloseTo(1036+otherTaxes,8);
-  expect(presumed.dre.netProfit).not.toBeCloseTo(1036+otherTaxes+156,2);
+  expect(presumed.dre.netProfit).not.toBeCloseTo(1036+otherTaxes+114,2);
   expect(saved.result.monthlyResults[0].result.regimes.find((regime:any)=>regime.id==='presumed').dre).toEqual(presumed.dre);
 
   const jobIds=[saved.source.purchases.jobId,saved.source.sales.jobId],sourceFilter={workspaceId,jobId:{$in:jobIds}};
@@ -248,7 +255,7 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
 
   await assertAnnual(page);await assertMonthly(page);
   await page.setViewportSize({width:390,height:960});
-  await expect(page.locator('#tax-demonstrativo [data-icms-reconciliation="dre"] [data-dre-row="icms.potential"] td')).toHaveText('R$ 156,00');
+  await expect(page.locator('#tax-demonstrativo [data-icms-reconciliation="dre"] [data-dre-row="icms.potential"] td')).toHaveText('R$ 114,00');
   await expect(page.locator('#tax-demonstrativo [data-icms-reconciliation="dre"] [data-dre-row="icms.due"] td')).toHaveText('R$ 264,00');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   await page.locator('#tax-demonstrativo [data-icms-reconciliation="dre"]').screenshot({path:info.outputPath('credito-icms-mobile.png')});
@@ -263,15 +270,15 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
     const retrieved=await fresh.request.get(`/api/v4/simulations/${saved._id}`);expect(retrieved.ok()).toBe(true);expect(await retrieved.json()).toEqual(saved);
     await assertAnnual(reopened);await assertMonthly(reopened);
     await showDreRegimes(reopened,['pure','hybrid','presumed','actual']);await expectConsolidatedDre(reopened);
-    await reopened.locator('#dre-report-period').selectOption('complete');
-    await expect(reopened.locator('#dre-show-percent')).toHaveCount(0);
+    await expect(reopened.locator('#dre-report-period')).toHaveCount(0);
+    await expect(reopened.locator('#dre-show-percent')).toHaveCount(1);
     const downloading=reopened.waitForEvent('download');await reopened.locator('#export-dre-csv').click();
     const download=await downloading,stream=await download.createReadStream();let csv='';
     for await(const chunk of stream!)csv+=chunk;
     expect(download.suggestedFilename()).toContain('completo');
     const csvRows=csvParse(csv,';'),scope='Apuração do crédito de ICMS';
-    expect(csvRows.filter(row=>row[0]===scope)).toHaveLength(7);
-    expect(csvRows.filter(row=>row[1]===scope&&['Simples Puro','Simples Híbrido','Lucro Presumido','Lucro Real'].includes(row[0]))).toHaveLength(28);
+    expect(csvRows.filter(row=>row[0]===scope)).toHaveLength(creditRows.length);
+    expect(csvRows.filter(row=>row[1]===scope&&['Simples Puro','Simples Híbrido','Lucro Presumido','Lucro Real'].includes(row[0]))).toHaveLength(creditRows.length*4);
     for(const [,label,amount] of creditRows){
       const annual=csvRows.find(row=>row[0]===scope&&row[2]===label)!;
       expect(annual,label).toBeDefined();expect(annual[5]).toBe('Não disponível');expect(annual[7]).toBe(amount);
@@ -285,17 +292,10 @@ test('créditos por UF e devoluções conciliam uma vez no navegador, MongoDB, h
 
     await reopened.evaluate(()=>{window.print=()=>{};});await reopened.locator('#print-dre').click();
     const printed=reopened.locator('#dre-print-document');
-    await expect(printed.locator('[data-icms-reconciliation="dre"]')).toHaveCount(5);
-    await expect(printed.locator('.dre-print-annual-table [data-dre-row^="icms."],.dre-print-monthly-table [data-dre-row^="icms."]')).toHaveCount(0);
-    for(const [key,,amount] of creditRows){
-      await expect(printed.locator(`[data-dre-row="${key}"]`)).toHaveCount(5);
-      await expect(printed.locator('[data-icms-reconciliation="dre"]').first().locator(`[data-dre-row="${key}"] td`).nth(2)).toHaveText(`R$ ${amount}`);
-      const monthly=printed.locator(`[data-report-part="monthly"][data-report-regime="presumed"] [data-dre-row="${key}"] td`);
-      await expect(monthly.first()).toHaveText(`R$ ${amount}`);await expect(monthly.nth(1)).toHaveText('R$ 0,00');await expect(monthly.last()).toHaveText(`R$ ${amount}`);
-    }
-    await expect(printed.locator('[data-report-memory="icms.purchaseCredit"]')).toContainText('114,00');
-    await expect(printed.locator('[data-report-memory="icms.returnCredit"]')).toContainText('42,00');
-    await expect(printed.locator('[data-report-memory="icms.excludedServices"]')).toContainText('600,00');
+    await expect(printed.locator('> .dre-final-page')).toHaveCount(2);
+    await expect(printed.locator('[data-dre-row="icmsDebit"] td').nth(2)).toHaveText('-R$ 378,00');
+    await expect(printed.locator('[data-dre-row="icmsCredit"] td').nth(2)).toHaveText('R$ 114,00');
+    await expect(printed.locator('[data-dre-row="icms.returnCredit"]')).toHaveCount(0);
     await reopened.emulateMedia({media:'print'});await expect(printed).toBeVisible();
     const pdfPath=info.outputPath('credito-icms-completo.pdf'),pdf=await reopened.pdf({path:pdfPath,preferCSSPageSize:true,printBackground:true});
     expect(pdf.subarray(0,5).toString()).toBe('%PDF-');expect(pdf.length).toBeGreaterThan(10_000);

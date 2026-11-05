@@ -573,16 +573,24 @@ class Report:
             self.add(self.p('A antecipação é uma obrigação tributária, não um crédito. Este quadro confere o valor já incluído '
                             'uma vez no total de tributos e no resultado; não soma nem compensa novamente.', 'small'))
         self.add(self.note('Os créditos são exibidos somente quando aplicáveis ao regime e conciliados com a versão salva. '
-                          'Saldo credor potencial é informativo: não aumenta o lucro nem representa restituição automática. '
-                          'Créditos de ICMS de compras e devoluções são componentes do potencial, e não deduções adicionais.'))
+                          'Saldo credor potencial é informativo: não aumenta o lucro nem representa restituição automática.'))
         icms = m.result.get('credits', {}).get('icms', {})
         # Duplicate memory identifiers cannot silently override one another.
         origins = {}
-        for key in ('icms.purchaseCredit', 'icms.returnCredit'):
+        for key in ('icms.purchaseCredit', 'icms.returnCredit', 'icms.salesGrossDebit',
+                    'icms.returnDebitReduction', 'icms.debitFloorAdjustment'):
             found = [item for item in m.result.get('memory', []) if isinstance(item, dict) and item.get('id') == key]
             origins[key] = found[0].get('value') if len(found) == 1 else None
         purchase, returns = origins['icms.purchaseCredit'], origins['icms.returnCredit']
-        if close(total([purchase, returns]), icms.get('potential')) and any(m.credit('icms', regime, 'potential') is not None for regime in m.regimes):
+        gross, reduction, floor = (origins['icms.salesGrossDebit'], origins['icms.returnDebitReduction'],
+                                   origins['icms.debitFloorAdjustment'])
+        if all(finite(value) for value in (gross, reduction, floor)) and close(gross - reduction + floor, icms.get('debit')):
+            self.add(self.p(f'Débito de ICMS: vendas {money(gross)} − devoluções {money(reduction)}'
+                            + (f' + ajuste ao mínimo zero {money(floor)}' if floor else '')
+                            + f' = {money(icms.get("debit"))}. As devoluções não integram o crédito.', 'small'))
+            if close(purchase, icms.get('potential')) and any(m.credit('icms', regime, 'potential') is not None for regime in m.regimes):
+                self.add(self.p(f'Crédito potencial de ICMS das compras elegíveis: {money(purchase)}.', 'small'))
+        elif close(total([purchase, returns]), icms.get('potential')) and any(m.credit('icms', regime, 'potential') is not None for regime in m.regimes):
             self.add(self.p(f'Origem do crédito potencial de ICMS: compras elegíveis {money(purchase)}; '
                             f'devoluções de venda {money(returns)}. Total potencial {money(icms.get("potential"))}.', 'small'))
 

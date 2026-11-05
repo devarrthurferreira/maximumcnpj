@@ -95,7 +95,7 @@ test('explicit historical CBS rates preserve other taxes while income tax uses q
 
 test('new CBS default applies 11.3% to debits and regular credits while preserving the inside-DAS credit', () => {
   assert.equal(DEFAULT_RATES.cbs, .113);
-  assert.equal(MODEL_VERSION, '1.21.0-quarterly-income-tax-financial');
+  assert.equal(MODEL_VERSION, '1.22.0-quarterly-income-tax-icms-devolucoes-debito');
   const input = zero();
   Object.assign(input, {salesRevenue:10000, rbt12:120000, simplePurchases:2000, simpleRegularPurchases:500, regularPurchases:3000});
   input.credits.simple.base = 1500;

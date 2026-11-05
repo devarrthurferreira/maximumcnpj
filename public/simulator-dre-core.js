@@ -278,20 +278,36 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
   const creditDetails=['cbs','ibs','icms'].map(tax=>({key:tax+'Credits',label:'Apuração de '+tax.toUpperCase(),parentKey:tax==='icms'?'icmsNet':tax+'Debit',
     rows:[['debit','Débito'],['potential','Crédito potencial'],['used','Crédito utilizado'],['due','Valor líquido a recolher'],['balance','Saldo credor potencial']].filter(([field])=>tax==='icms'||!['potential','used'].includes(field)).map(([field,label])=>detail(tax+'.'+field,label+' de '+tax.toUpperCase(),tax==='icms'?'icmsNet':tax+'Debit',creditCell(tax,field),{
       notes:[field==='balance'?'Saldo informativo: não compõe o lucro nem representa restituição automática.':tax==='icms'?'Crédito já abatido do ICMS líquido; não somar novamente ao resultado.':'Detalhe da apuração já refletida nas linhas de débitos e créditos da DRE.'],sourceRefs:[`result.credits.${tax}.${field}`]}))}));
+  // Preserve old snapshots' recorded credit composition. New snapshots put
+  // returns in the debit bridge and contain only purchases in the credit.
+  const returnsInDebit=Array.isArray(result?.memory)&&result.memory.some(entry=>entry.id==='icms.returnDebitReduction');
   const icmsOrigin=field=>f=>{
     const potential=creditCell('icms','potential')(f);
     if(potential.value===null)return potential;
-    const purchase=memory('icms.purchaseCredit',f),returns=memory('icms.returnCredit',f),total=sum([purchase,returns]);
-    if(!finite(total)||!close(total*f.scale,potential.value))return missing('A composição do crédito entre compras e devoluções não está capturada ou não concilia com o potencial salvo.');
+    const purchase=memory('icms.purchaseCredit',f),returns=returnsInDebit?0:memory('icms.returnCredit',f),total=sum([purchase,returns]);
+    if(!finite(total)||!close(total*f.scale,potential.value))return missing('A composição do crédito não está capturada ou não concilia com o potencial salvo.');
     return good((field==='purchaseCredit'?purchase:returns)*f.scale);
   };
-  const icmsOriginRows=[['purchaseCredit','Crédito de ICMS das compras elegíveis'],['returnCredit','Crédito de ICMS das devoluções de venda']].map(([field,label])=>
+  const icmsOriginRows=(returnsInDebit?[['purchaseCredit','Crédito de ICMS das compras elegíveis']]:[['purchaseCredit','Crédito de ICMS das compras elegíveis'],['returnCredit','Crédito de ICMS das devoluções de venda']]).map(([field,label])=>
     detail('icms.'+field,label,'icms.potential',icmsOrigin(field),{notes:['Parcela do crédito potencial de ICMS; já incluída no crédito utilizado quando houver débito. Não somar novamente ao resultado.'],sourceRefs:[`result.memory:icms.${field}`]}));
   const capturedOrigin=icmsOriginRows.every(row=>Object.values(row.values).some(finite)||Object.values(row.monthlyValues).some(values=>values.some(finite))||Object.values(row.calendarAnnualValues).some(finite));
+  const debitComponent=field=>f=>{
+    const debit=creditCell('icms','debit')(f);
+    if(debit.value===null)return debit;
+    const gross=memory('icms.salesGrossDebit',f),returns=memory('icms.returnDebitReduction',f),floor=memory('icms.debitFloorAdjustment',f);
+    if(![gross,returns,floor].every(finite)||!close((gross-returns+floor)*f.scale,debit.value))return missing('A composição do débito de ICMS não está capturada ou não concilia com o valor salvo.');
+    return good((field==='salesGrossDebit'?gross:field==='returnDebitReduction'?-returns:floor)*f.scale);
+  };
+  const debitRows=returnsInDebit?[
+    ['salesGrossDebit','ICMS bruto das vendas'],['returnDebitReduction','Devoluções deduzidas do ICMS débito'],['debitFloorAdjustment','Ajuste do débito ao mínimo zero']
+  ].map(([field,label])=>detail('icms.'+field,label,'icms.debit',debitComponent(field),{
+    notes:[field==='returnDebitReduction'?'Devoluções reduzem o débito e não integram o crédito.':field==='debitFloorAdjustment'?'O mínimo zero é aplicado por competência; sem transferência automática.':'Débito das vendas antes das devoluções.'],sourceRefs:[`result.memory:icms.${field}`]})):[];
+  const debitComponentsCaptured=debitRows.length>0&&debitRows.every(row=>Object.values(row.values).some(finite)||Object.values(row.monthlyValues).some(values=>values.some(finite))||Object.values(row.calendarAnnualValues).some(finite));
+  const nonzeroFloor=debitComponentsCaptured&&[...Object.values(debitRows[2].values),...Object.values(debitRows[2].calendarAnnualValues),...Object.values(debitRows[2].monthlyValues).flat()].some(value=>finite(value)&&value!==0);
   const icmsRows=creditDetails.find(group=>group.key==='icmsCredits').rows;
   const icmsReconciliation={key:'icmsReconciliation',label:'Apuração do crédito de ICMS',
-    note:`Débito de ICMS menos crédito utilizado = valor líquido a recolher. O crédito utilizado já está abatido na linha “${analysisPeriod?'ICMS (D − C) apurado':'− ICMS líquido fora do DAS'}” desta DRE. Este quadro é informativo e não acrescenta uma segunda dedução ao resultado. Crédito potencial menos crédito utilizado = saldo credor potencial, sem restituição ou compensação automática.`,
-    rows:[...icmsRows.slice(0,2),...(capturedOrigin?icmsOriginRows:[]),...icmsRows.slice(2)]};
+    note:`${returnsInDebit?'Devoluções de venda reduzem o débito e não compõem o crédito. ':''}Débito de ICMS menos crédito utilizado = valor líquido a recolher. O crédito utilizado já está abatido na linha “${analysisPeriod?'ICMS (D − C) apurado':'− ICMS líquido fora do DAS'}” desta DRE. Este quadro é informativo e não acrescenta uma segunda dedução ao resultado. Crédito potencial menos crédito utilizado = saldo credor potencial, sem restituição ou compensação automática.`,
+    rows:[icmsRows[0],...(debitComponentsCaptured?debitRows.filter(row=>row.key!=='icms.debitFloorAdjustment'||nonzeroFloor):[]),icmsRows[1],...(capturedOrigin?icmsOriginRows:[]),...icmsRows.slice(2)]};
   const irpjExpectedMonths=uniformQuarterly?null:analysisPeriod?.includedMonths??(Array.isArray(source?.monthlyReports)?
     source.monthlyReports.map(entry=>entry?.sourceMonth):validCalendar?calendar.months.filter(month=>month.sourceMonth).map(month=>month.sourceMonth):null);
   const irpjExpectedCount=uniformQuarterly?null:analysisPeriod?.months??reportMonths??source?.reportMonths??null;

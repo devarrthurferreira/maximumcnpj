@@ -2,6 +2,35 @@ import {test,expect} from '@playwright/test';
 import {drePdfFixture} from '../fixtures/dre-pdf.mjs';
 import {expectConsolidatedDre} from './dre-controls.ts';
 
+test('DRE e impressão usam devoluções no débito de ICMS e compras no crédito',async({page},info)=>{
+  const saved=drePdfFixture(),credits=saved.result.credits.icms,memory=saved.result.memory;
+  const get=(id:string)=>memory.find((row:any)=>row.id===id).value;
+  const money=(value:number)=>`${value<0?'-':''}R$ ${Math.abs(value).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  expect(credits.debit).toBeCloseTo(get('icms.salesGrossDebit')-get('icms.returnDebitReduction')+get('icms.debitFloorAdjustment'),2);
+  expect(credits.potential).toBeCloseTo(get('icms.purchaseCredit'),2);
+  expect(memory.some((row:any)=>row.id==='icms.returnCredit')).toBe(false);
+  await page.route('**/api/auth/session',route=>route.fulfill({json:{user:{_id:'synthetic',role:'viewer',name:'Conferência sintética'}}}));
+  await page.route('**/api/v4/simulations/'+saved._id,route=>route.fulfill({json:saved}));
+  await page.goto('/simulator.html?simulation='+saved._id);
+  await expectConsolidatedDre(page);
+  const tax=page.locator('#tax-demonstrativo'),dre=page.locator('#dre-demonstrativo');
+  await tax.locator('.dre-tax-details > summary').click();
+  const detail=tax.locator('[data-icms-reconciliation="dre"]');
+  await expect(detail.locator('[data-dre-row="icms.debit"] td').nth(2)).toHaveText(money(credits.debit));
+  await expect(detail.locator('[data-dre-row="icms.returnDebitReduction"] td').nth(2)).toHaveText(money(-get('icms.returnDebitReduction')));
+  await expect(detail.locator('[data-dre-row="icms.purchaseCredit"] td').nth(2)).toHaveText(money(credits.potential));
+  await expect(detail.locator('[data-dre-row="icms.returnCredit"]')).toHaveCount(0);
+  await expect(dre.locator('[data-dre-row="icmsDebit"] td').nth(2)).toHaveText(money(-credits.debit));
+  await expect(dre.locator('[data-dre-row="icmsCredit"] td').nth(2)).toHaveText(money(credits.used));
+  await page.evaluate(()=>{window.print=()=>{};});await page.locator('#print-dre').click();
+  const printed=page.locator('#dre-print-document');
+  await expect(printed.locator('> .dre-final-page')).toHaveCount(2);
+  await expect(printed.locator('[data-dre-row="icmsDebit"] td').nth(2)).toHaveText(money(-credits.debit));
+  await expect(printed.locator('[data-dre-row="icmsCredit"] td').nth(2)).toHaveText(money(credits.used));
+  await page.emulateMedia({media:'print'});
+  await page.pdf({path:info.outputPath('dre-icms-devolucoes.pdf'),preferCSSPageSize:true,printBackground:true});
+});
+
 test('impostos e DRE detalhável compartilham os regimes e a impressão',async({page},info)=>{
   const saved=drePdfFixture(),before=JSON.stringify(saved),errors:string[]=[];
   page.on('pageerror',error=>errors.push(error.message));

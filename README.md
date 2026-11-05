@@ -1,4 +1,10 @@
-# Maximum CNPJ · v0.59.0
+# Maximum CNPJ · v0.59.1
+
+## v0.59.1 — Devoluções no ICMS débito (05/11/2026)
+
+O débito de ICMS é calculado por competência: vendas internas × 18% + vendas interestaduais × 12% − devoluções internas × 18% − devoluções interestaduais × 12%, conforme as UFs confirmadas e com arredondamento por linha. As devoluções não integram o crédito potencial, composto apenas pelas compras elegíveis. O crédito utilizado fica limitado ao débito. Quando a diferença for negativa, ela fica registrada na memória e o débito da competência é limitado a zero, sem transferência automática.
+
+A memória, a conferência da DRE, o CSV e os PDFs apresentam a composição da versão capturada. A alteração vale para novas simulações e para resultados atualizados; históricos permanecem preservados. A nova versão de cálculo identifica resultados antigos para regeneração ou revisão explícita. As premissas de 18% e 12% continuam gerenciais e dependem da conferência fiscal das operações.
 ## v0.59.0 — Alíquota CBS/IBS e descrição dos encargos (05/11/2026)
 
 No Fiscal, após RBT12 e relatórios, escolha **100%, 60% ou 40%** da alíquota de referência de **11,40%**, resultando em **11,40%, 6,84% ou 4,56%**. A seleção é aplicada aos débitos de CBS e IBS da receita por competência nos regimes Híbrido, Presumido e Real; o DAS do Simples Puro mantém a fórmula atual. Os créditos das compras mantêm as premissas dos fornecedores e permanecem limitados aos débitos. A opção fica registrada na análise e em cada simulação; versões anteriores sem escolha conservam 100%.
