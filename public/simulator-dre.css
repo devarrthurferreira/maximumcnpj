@@ -73,7 +73,6 @@
 .dre-percent{display:block;font-size:10px;color:#8b7080;margin-top:4px;font-weight:400;font-variant-numeric:tabular-nums}
 tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
 .dre-footnotes p{margin:5px 0;line-height:1.55}
-.simulator-clean .dre-complete .dre-table-wrap .dre-irpj-total th,.simulator-clean .dre-complete .dre-table-wrap .dre-irpj-total td{background:#f7f3f4;font-weight:650;border-top:1px solid #e0d3d8}
 .simulator-clean .dre-complete .dre-table-wrap .dre-irpj-component th,.simulator-clean .dre-complete .dre-table-wrap .dre-irpj-component td{font-size:12px;line-height:1.6;color:#475467;background:#fdfbfc;padding-top:10px;padding-bottom:10px}
 .simulator-clean .dre-complete .dre-table-wrap .dre-irpj-component th{border-left:3px solid #d7bcc5;padding-left:24px}
 .dre-irpj-in-das{display:inline-block;color:#667085;font-size:11px;font-weight:500;line-height:1.5;white-space:normal}
@@ -225,8 +224,6 @@ tr[data-dre-row=netProfit] .dre-percent{color:#e3c4d0}
   }
   .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap [data-dre-row=taxesDeduction] th,
   .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap [data-dre-row=taxesDeduction] td {background:#f7f7f9;color:#667085;font-size:11px;font-weight:500}
-  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap [data-dre-row=irpj] th,
-  .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap [data-dre-row=irpj] td {font-weight:650;border-top:1px solid #e6d7de}
   .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap .dre-amount {font-variant-numeric:tabular-nums;white-space:nowrap}
   .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap tr[data-dre-row=netProfit] th,
   .simulator-clean .dre-executive.dre-fixed-complete > .dre-table-wrap tr[data-dre-row=netProfit] td {padding-top:15px;padding-bottom:15px}

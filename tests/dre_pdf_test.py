@@ -155,7 +155,7 @@ class DrePdfTests(unittest.TestCase):
         with pymupdf.open(stream=render(saved), filetype='pdf') as document:
             self.assertEqual(document.page_count, 2)
             text = normalized(document[0].get_text())
-            for label in ('Antecipação', 'DIFAL'):
+            for label in ('Antecipação de ICMS', 'DIFAL'):
                 self.assertIn(label + ' — — — —', text)
             for regime in saved['result']['regimes']:
                 self.assertIn(amount(regime['totalTaxes']), text)

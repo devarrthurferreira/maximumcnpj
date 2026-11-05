@@ -52,7 +52,7 @@ STATEMENT_SECTIONS = (
 
 TAX_STATEMENT_ROWS = (
     ('das', 'Simples'), ('icmsNet', 'ICMS (D - C)'), ('cbsIbsNet', 'CBS/IBS (D - C)'),
-    ('irpj', 'IRPJ'), ('csll', 'CSLL'), ('icmsAnticipation', 'Antecipação'), ('difal', 'DIFAL'),
+    ('irpj', 'IRPJ'), ('csll', 'CSLL'), ('icmsAnticipation', 'Antecipação de ICMS'), ('difal', 'DIFAL'),
     ('payroll', 'INSS'), ('iss', 'ISS fora do DAS'), ('totalTaxes', 'Total'),
     ('taxBurden', '% sobre a receita'), ('grossAfterCosts', 'Margem de contribuição'),
     ('contributionMargin', 'Margem de contribuição (%)'), ('ebitda', 'Resultado operacional (EBITDA)'),

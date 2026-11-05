@@ -79,7 +79,7 @@ def assert_statement(test, content, snapshot):
         statement = section_text(document, 'DRE comparativa detalhada', 'Como o resultado se forma')
         taxes = section_text(document, 'Impostos', 'Conferência dos créditos') if compact else statement
         for key, label in (('difal', 'DIFAL' if compact else 'DIFAL sobre vendas'),
-                           ('icmsAnticipation', 'Antecipação' if compact else 'Antecipação de ICMS'),
+                           ('icmsAnticipation', 'Antecipação de ICMS'),
                            ('netProfit', 'Resultado líquido')):
             sign = -1 if compact and key != 'netProfit' else 1
             expected = label + ' ' + ' '.join(amount(sign * row['dre'][key]) for row in snapshot['result']['regimes'])
@@ -181,11 +181,11 @@ class DreDifalZeroTests(unittest.TestCase):
         self.assertIn('DIFAL sobre vendas', full_text)
         self.assertFalse('DIFAL sobre vendas (10%)' in full_text)
         self.assertIn('DIFAL 0,00 0,00 0,00 0,00', annex)
-        self.assertIn('Antecipação 1.976,40 1.976,40 0,00 0,00', annex)
+        self.assertIn('Antecipação de ICMS 1.976,40 1.976,40 0,00 0,00', annex)
         self.assertEqual(corrected, frozen)
         csv_rows = list(csv.reader(io.StringIO(snapshots()['csv']['corrected']), delimiter=';'))
         exit_rows = [row for row in csv_rows if len(row) > 5 and row[0] == 'Impostos' and row[2] == 'DIFAL']
-        entry_rows = [row for row in csv_rows if len(row) > 5 and row[0] == 'Impostos' and row[2] == 'Antecipação']
+        entry_rows = [row for row in csv_rows if len(row) > 5 and row[0] == 'Impostos' and row[2] == 'Antecipação de ICMS']
         self.assertEqual(len(exit_rows), 1)
         self.assertEqual(exit_rows[0][5:9], ['0,00'] * 4)
         self.assertEqual(entry_rows[0][5:9], ['1976,40', '1976,40', '0,00', '0,00'])

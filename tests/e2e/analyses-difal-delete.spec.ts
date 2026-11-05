@@ -263,7 +263,7 @@ async function expectZeroDre(page:Page){
     await expect(cells).toHaveCount(2);for(const cell of await cells.all())await expect(cell).toHaveText('R$ 0,00');
   }
   const monthly=await readDreMonthlyCsv(page);
-  for(const regime of ['Simples Puro','Simples Híbrido'])for(const label of ['DIFAL','Antecipação'])
+  for(const regime of ['Simples Puro','Simples Híbrido'])for(const label of ['DIFAL','Antecipação de ICMS'])
     expect(dreMonthlyValues(monthly,regime,label,'Impostos')).toEqual(Array(10).fill('0,00'));
   await expectConsolidatedDre(page);
 }
@@ -331,7 +331,7 @@ test('DIFAL exige Sim ou Não e a escolha persiste na DRE, CSV e nova sessão se
   const download=await downloading;await download.saveAs(info.outputPath('analysis-difal-excluded-dre.csv'));
   const stream=await download.createReadStream();let csv='';for await(const chunk of stream!)csv+=chunk;
   const rows=csvParse(csv,';');
-  for(const label of ['DIFAL','Antecipação']){
+  for(const label of ['DIFAL','Antecipação de ICMS']){
     const annual=rows.filter(row=>row[2]===label);expect(annual).toHaveLength(1);expect(annual[0].slice(5,7)).toEqual(['0,00','0,00']);
     const monthly=rows.filter(row=>row[3]===label);expect(monthly).toHaveLength(2);
     for(const row of monthly){expect(row.slice(6,15)).toEqual(Array(9).fill('0,00'));expect(row[15]).toBe('0,00');}

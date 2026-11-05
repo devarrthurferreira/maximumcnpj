@@ -78,7 +78,7 @@ test('CSV separa Impostos da DRE, com dedução única, resultado igual e os doi
       assert.deepEqual(taxAnnual.map(row=>row[2]),presentation.taxStatement.rows.map(row=>row.label));
       assert.equal(taxAnnual.filter(row=>row[2]==='% sobre a receita').length,1);
       const dre=data.filter(row=>row[0]==='DRE');
-      for(const label of ['ICMS (D − C)','CBS/IBS (D − C)','Antecipação','DIFAL','INSS','Total'])
+      for(const label of ['ICMS (D − C)','CBS/IBS (D − C)','Antecipação de ICMS','DIFAL','INSS','Total'])
         assert(!dre.some(row=>row[2]===label),`${period}: ${label} não pertence à DRE`);
       assert(!dre.some(row=>row[2]==='(−) Total de impostos'));
       assert(dre.some(row=>row[2]==='ICMS Débito'));assert(dre.some(row=>row[2]==='ICMS Crédito'));
