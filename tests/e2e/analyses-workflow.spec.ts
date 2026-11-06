@@ -121,6 +121,47 @@ function report(name:string,kind:'purchases'|'sales'){
   });
   return {name,mimeType:'text/csv',buffer:Buffer.from([header,...rows].map(row=>row.join(';')).join('\r\n'),'latin1')};
 }
+
+test('Fiscal alterado após confirmar gera nova DRE com aviso e valores reais após confirmação',async({page,baseURL,analysisAccounts})=>{
+  test.setTimeout(150_000);page.setDefaultTimeout(15_000);
+  const {db,workspaceId,accounting}=analysisAccounts,errors:string[]=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  await signIn(page.request,baseURL!,accounting);const client=await company(page.request,baseURL!);
+  const opened=await post(page.request,baseURL!,'/api/v4/analyses',{clientId:client.id,year:2027,
+    regimeSelection:{version:'REGIME_SELECTION_V1',selected:['presumed','actual']}}),id=opened.analysis.id;
+  await page.goto(`/analyses.html?id=${id}&sector=fiscal`);await importInBrowser(page,client.code);await saveSector(page,id,'fiscal');
+  await fillAverage(page,'2025',[100,50,0,20,0,0,0]);await saveSector(page,id,'accounting');
+  const first=await generate(page,id);expect(first.result.annualRevenue).toBe(3000);
+  const prior=await db.collection<any>('analyses').findOne({_id:id,workspaceId});
+  const job=await db.collection<any>('lookupJobs').findOne({_id:first.source.sales.jobId,workspaceId});
+  expect(job?.completedAt).toBeTruthy();
+  await db.collection<any>('lookupJobs').updateOne({_id:job!._id,workspaceId},{$set:{completedAt:new Date(job!.completedAt.getTime()+1000)}});
+  const summary=(await get(page.request,`/api/v4/analyses/${id}?summary=1`)).analysis;
+  expect(summary.readiness.ready).toBe(true);
+  let generatedPosts=0;
+  page.on('request',request=>{if(new URL(request.url()).pathname===`/api/v4/analyses/${id}/generate`&&request.method()==='POST')generatedPosts++;});
+  await page.goto(`/analyses.html?id=${id}`);await expect(page.locator('#analysis-generate')).toBeEnabled();
+  for(const width of [1440,390,320]){
+    await page.setViewportSize({width,height:900});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  }
+  await page.setViewportSize({width:1440,height:900});
+  page.once('dialog',async dialog=>{expect(dialog.message()).toContain('pendente de reconfirmação');await dialog.dismiss();});
+  await page.locator('#analysis-generate').click();expect(generatedPosts).toBe(0);
+  await expect(page.locator('#analysis-generation')).toContainText('Fiscal está pendente de reconfirmação');
+  page.once('dialog',async dialog=>{expect(dialog.message()).toContain('opções fiscais atuais');await dialog.accept();});
+  const pending=await generate(page,id);
+  expect(generatedPosts).toBe(1);expect(pending._id).not.toBe(first._id);
+  expect(pending.partialData).toMatchObject({status:'INCOMPLETE',missingSectors:['fiscal'],fiscalDataUsed:true});
+  expect(pending.result.annualRevenue).toBe(3000);
+  expect(pending.result.regimes.every((regime:any)=>regime.dre.salaries===-900)).toBe(true);
+  await expect(page.locator('[data-partial-data="fiscal"]')).toContainText('DRE com Fiscal pendente');
+  await expect(page.locator('[data-partial-data="fiscal"]')).toContainText('opções fiscais atuais');
+  expect((await page.request.get(`/api/v4/simulations/${first._id}`)).status()).toBe(404);
+  const after=await db.collection<any>('analyses').findOne({_id:id,workspaceId});
+  expect(after?.revision).toBe(prior?.revision);expect(after?.fiscal).toEqual(prior?.fiscal);expect(after?.accounting).toEqual(prior?.accounting);
+  expect(errors).toEqual([]);
+});
 async function importInBrowser(page:Page,code:string){
   await openSector(page,'fiscal','documents');
   const analysisUrl=page.url();

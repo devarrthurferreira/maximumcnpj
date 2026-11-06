@@ -50,7 +50,9 @@ def render_final_pdf(model, letterhead):
         if partial.get('status') == 'INCOMPLETE':
             missing = ' e '.join({'fiscal': 'Fiscal', 'accounting': 'Contábil'}[sector]
                                 for sector in partial.get('missingSectors', []) if sector in ('fiscal', 'accounting'))
-            top -= paragraph('DRE sem ' + missing, LEFT, top, WIDTH, 8, True, BURGUNDY) + 3
+            pending_fiscal = partial.get('fiscalDataUsed') is True and 'fiscal' in partial.get('missingSectors', [])
+            caption = ('DRE com Fiscal pendente' + (' e sem Contábil concluído' if 'accounting' in partial.get('missingSectors', []) else '')) if pending_fiscal else 'DRE sem ' + missing
+            top -= paragraph(caption, LEFT, top, WIDTH, 8, True, BURGUNDY) + 3
             top -= paragraph(partial.get('warning') or 'Resultado incompleto. Complete o setor pendente e gere novamente.',
                              LEFT, top, WIDTH, 7, color=BURGUNDY) + 8
         top -= paragraph(section, LEFT, top, WIDTH, 12, True, BURGUNDY) + 9

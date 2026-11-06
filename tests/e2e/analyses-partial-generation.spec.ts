@@ -21,6 +21,7 @@ async function setup(page:Page,missing:'fiscal'|'accounting',allowed=true,role='
   await page.route('**/api/v4/clients',route=>route.fulfill({json:{items:[{_id:clientId,...analysis.company,active:true}]}}));
   await page.route('**/api/v4/analyses?*',route=>route.fulfill({json:{items:[analysis],pagination:{page:1,total:1,totalPages:1,pageSize:20}}}));
   await page.route(`**/api/v4/analyses/${analysisId}?*`,route=>route.fulfill({json:{analysis,source:null}}));
+  await page.route(`**/api/v4/analyses/${analysisId}`,route=>route.fulfill({json:{analysis,source:null}}));
   await page.route(`**/api/v4/analyses/${analysisId}/generate?*`,async route=>{
     requests.push(route.request().postDataJSON());
     await route.fulfill({json:{analysis:{...analysis,currentSimulation:{id:simulationId,analysisRevision:analysis.revision,stale:false,legacy:false}},simulation:{_id:simulationId}}});
@@ -28,6 +29,76 @@ async function setup(page:Page,missing:'fiscal'|'accounting',allowed=true,role='
   await page.route('**/simulator.html?*',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>DRE sintética</title><h1>DRE sintética</h1>'}));
   return {analysis,requests,errors};
 }
+
+for(const missingAccounting of [false,true]){
+  test(`Fiscal desatualizado${missingAccounting?' e Contábil pendente':''} é conferido antes da confirmação e permite gerar com aviso`,async({page})=>{
+    const {analysis,requests,errors}=await setup(page,'fiscal');
+    analysis.fiscal.status='COMPLETE';analysis.accounting.status=missingAccounting?'DRAFT':'COMPLETE';
+    // The fast navigation summary still looks confirmed; only the full read detects changed fiscal documents.
+    analysis.readiness={...analysis.readiness,ready:true,issues:[],partial:{allowed:false,missingSectors:[]}};
+    const summary={...analysis,currentSimulation:{id:'19222222-2222-4222-8222-222222222224',analysisRevision:analysis.revision,stale:false,legacy:false}};
+    const verified={...summary,currentSimulation:{...summary.currentSimulation,stale:true},readiness:{...analysis.readiness,ready:false,verification:undefined,
+      issues:[{code:'FISCAL_SOURCE_CHANGED',sector:'fiscal',message:'Os arquivos ou as opções fiscais mudaram após a confirmação.'}],
+      partial:{allowed:true,missingSectors:missingAccounting?['fiscal','accounting']:['fiscal'],fiscalDataUsed:true}}};
+    let fullReads=0;
+    await page.route(`**/api/v4/analyses/${analysisId}?*`,route=>route.fulfill({json:{analysis:summary}}));
+    await page.route(`**/api/v4/analyses/${analysisId}`,route=>{fullReads++;return route.fulfill({json:{analysis:verified}});});
+    await page.goto(`/analyses.html?id=${analysisId}`);
+    const button=page.locator('#analysis-generate');await expect(button).toBeVisible();await expect(button).toBeEnabled();await expect(button).toHaveText('Conferir e atualizar DRE');
+    page.once('dialog',async dialog=>{
+      expect(fullReads).toBe(1);expect(dialog.message()).toContain('documentos e as opções fiscais atuais');
+      expect(dialog.message()).toContain('reconfirmação');expect(dialog.message()).not.toContain('somente os dados do Contábil');
+      if(missingAccounting)expect(dialog.message()).toContain('despesas serão consideradas zero');
+      await dialog.dismiss();
+    });
+    await button.click();expect(requests).toHaveLength(0);await expect(page.locator('#analysis-generation')).toContainText('Fiscal está pendente de reconfirmação');
+    await expect(page.locator('#analysis-generate')).toBeEnabled();
+    page.once('dialog',async dialog=>{expect(dialog.message()).toContain('incompleto');await dialog.accept();});
+    await page.locator('#analysis-generate').click();
+    await expect(page).toHaveURL(new RegExp(`/simulator.html\\?simulation=${simulationId}&current=1`));
+    expect(fullReads).toBe(2);expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({expectedRevision:4,confirmedMissingSectors:missingAccounting?['fiscal','accounting']:['fiscal']});
+    expect(analysis.accounting.data.months[0].salariesCents).toBe(12000);expect(errors).toEqual([]);
+  });
+}
+
+test('conferência completa abre a DRE pendente já atual sem repetir geração ou pedir confirmação',async({page})=>{
+  const {analysis,requests,errors}=await setup(page,'fiscal');
+  const summary={...analysis,currentSimulation:{id:simulationId,analysisRevision:analysis.revision,stale:true,legacy:false}};
+  const verified={...summary,currentSimulation:{...summary.currentSimulation,stale:false},
+    readiness:{...analysis.readiness,partial:{allowed:true,missingSectors:['fiscal'],fiscalDataUsed:true}}};
+  await page.route(`**/api/v4/analyses/${analysisId}?*`,route=>route.fulfill({json:{analysis:summary}}));
+  let fullReads=0,dialogs=0;
+  await page.route(`**/api/v4/analyses/${analysisId}`,route=>{fullReads++;return route.fulfill({json:{analysis:verified}});});
+  page.on('dialog',async dialog=>{dialogs++;await dialog.dismiss();});
+  await page.goto(`/analyses.html?id=${analysisId}`);await expect(page.locator('#analysis-generate')).toBeEnabled();
+  await page.locator('#analysis-generate').click();
+  await expect(page).toHaveURL(new RegExp(`/simulator.html\\?simulation=${simulationId}&current=1`));
+  expect(fullReads).toBe(1);expect(dialogs).toBe(0);expect(requests).toHaveLength(0);expect(errors).toEqual([]);
+});
+
+test('nova conferência com DRE desatualizada renova a confirmação e o pedido após resposta de geração não confirmada',async({page})=>{
+  const {analysis,errors}=await setup(page,'fiscal'),requests:any[]=[];
+  const verified={...analysis,currentSimulation:{id:'19222222-2222-4222-8222-222222222224',analysisRevision:analysis.revision,stale:true,legacy:false},
+    readiness:{...analysis.readiness,partial:{allowed:true,missingSectors:['fiscal'],fiscalDataUsed:true}}};
+  let fullReads=0;
+  await page.route(`**/api/v4/analyses/${analysisId}`,route=>{fullReads++;return route.fulfill({json:{analysis:verified}});});
+  await page.route(`**/api/v4/analyses/${analysisId}/generate?*`,async route=>{
+    requests.push(route.request().postDataJSON());
+    if(requests.length===1)return route.fulfill({status:503,json:{error:'TEMPORARY_UNCONFIRMED',message:'Resposta de geração não confirmada.'}});
+    return route.fulfill({json:{analysis:{...verified,currentSimulation:{...verified.currentSimulation,id:simulationId,stale:false}},simulation:{_id:simulationId}}});
+  });
+  await page.goto(`/analyses.html?id=${analysisId}`);
+  page.once('dialog',dialog=>dialog.accept());await page.locator('#analysis-generate').click();
+  await expect(page.locator('#analysis-error')).toContainText('Resposta de geração não confirmada.');
+  await expect(page.locator('#analysis-generate')).toBeEnabled();
+  let reconfirmed=false;
+  page.once('dialog',async dialog=>{reconfirmed=true;expect(dialog.message()).toContain('reconfirmação');await dialog.accept();});
+  await page.locator('#analysis-generate').click();await expect(page).toHaveURL(new RegExp(`/simulator.html\\?simulation=${simulationId}&current=1`));
+  expect(reconfirmed).toBe(true);expect(fullReads).toBe(2);expect(requests).toHaveLength(2);
+  expect(requests[0].expectedRevision).toBe(requests[1].expectedRevision);expect(requests[0].confirmedMissingSectors).toEqual(requests[1].confirmedMissingSectors);
+  expect(requests[0].requestId).not.toBe(requests[1].requestId);expect(errors).toEqual([]);
+});
 
 for(const missing of ['fiscal','accounting'] as const){
   test(`DRE sem ${missing} confirma o setor exato e cancelar preserva o preenchimento`,async({page})=>{
@@ -92,4 +163,15 @@ test('cards das DREs salvas retomam cada setor e não oferecem versões anterior
   await expect(page.locator('h1')).toHaveText('Últimas DREs salvas');await expect(card).toContainText('DRE incompleta');
   await expect(card.locator('a[href$="sector=fiscal"]')).toHaveText('Preencher Fiscal →');await expect(card.locator('a[href$="sector=accounting"]')).toHaveText('Preencher Contábil →');
   await expect(card.locator('.history-parent')).toHaveCount(0);await expect(card.locator('.history-open').last()).toContainText('Abrir última DRE');expect(errors).toEqual([]);
+});
+
+test('card da DRE com Fiscal pendente identifica competências dos relatórios utilizados',async({page})=>{
+  const {analysis,errors}=await setup(page,'fiscal');
+  await page.route('**/api/v4/simulations?*',route=>route.fulfill({json:{page:1,pageSize:20,total:1,items:[{
+    _id:simulationId,analysisId,clientId,company:analysis.company,year:2027,reportMonths:1,calculationMethod:'REPORT_MONTHS_V1',annualRevenue:1000,bestAnnualProfit:500,bestRegimeName:'Lucro Real',
+    createdAt:'2026-11-06T12:00:00Z',partialData:{status:'INCOMPLETE',missingSectors:['fiscal'],fiscalDataUsed:true,warning:'Documentos fiscais atuais utilizados com conferência pendente.'}
+  }]}}));
+  await page.goto('/simulations.html');const card=page.locator(`[data-simulation-id="${simulationId}"]`);
+  await expect(card.locator('.history-tags')).toContainText('NOS RELATÓRIOS');await expect(card.locator('.history-tags')).not.toContainText('NO CONTÁBIL');
+  await expect(card).toContainText('Documentos fiscais atuais utilizados');expect(errors).toEqual([]);
 });

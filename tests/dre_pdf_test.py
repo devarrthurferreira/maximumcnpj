@@ -44,6 +44,25 @@ def section_text(document, label, following):
 
 
 class DrePdfTests(unittest.TestCase):
+    def test_unconfirmed_fiscal_preserves_warning_without_claiming_fiscal_values_are_missing(self):
+        for sectors in (['fiscal'], ['fiscal', 'accounting']):
+            saved = fixture()
+            warning = 'Fiscal pendente de reconfirmação. Os dados fiscais atuais disponíveis foram utilizados.'
+            if 'accounting' in sectors:
+                warning += ' Contábil não concluído: despesas consideradas zero somente nesta simulação.'
+            saved['partialData'] = {'status': 'INCOMPLETE', 'missingSectors': sectors,
+                'fiscalDataUsed': True, 'warning': warning}
+            content = render(saved)
+            self.verify_document(content)
+            with pymupdf.open(stream=content, filetype='pdf') as document:
+                for page in document:
+                    text = normalized(page.get_text())
+                    self.assertIn('DRE com Fiscal pendente', text)
+                    self.assertIn('Os dados fiscais atuais disponíveis foram utilizados.', text)
+                    self.assertNotIn('DRE sem Fiscal', text)
+                    if 'accounting' in sectors:
+                        self.assertIn('despesas consideradas zero somente nesta simulação', text)
+
     def test_missing_sector_warning_is_retained_on_both_pdf_pages(self):
         for sector, name in (('fiscal', 'Fiscal'), ('accounting', 'Contábil')):
             saved = fixture()

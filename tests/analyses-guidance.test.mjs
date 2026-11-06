@@ -27,6 +27,15 @@ test('resultado atual não é contado como uma análise pronta para gerar novame
   assert.equal(stale.state,'ready');assert.equal(stale.canGenerate,true);assert.equal(stale.primaryAction.label,'Atualizar DRE');
 });
 
+test('resumo salvo com resultado corrente mantém ação disponível para conferir os documentos antes de atualizar',()=>{
+  const analysis=readyAnalysis();analysis.readiness.verification='SAVED';analysis.currentSimulation={id:'saved-result',stale:false,legacy:false};
+  const guidance=analysisGuidance(analysis);assert.equal(guidance.currentResult,true);assert.equal(guidance.canGenerate,false);
+  const html=renderAnalysisGeneration({analysis,canWrite:true}),button=html.match(/<button[^>]*id="analysis-generate"[^>]*>[^<]*<\/button>/)?.[0];
+  assert.match(button,/Conferir e atualizar DRE/);assert.doesNotMatch(button,/disabled|hidden/);
+  const dirty=renderAnalysisGeneration({analysis,canWrite:true,fiscalDirty:true});assert.match(dirty,/id="analysis-generate" disabled/);
+  assert.doesNotMatch(renderAnalysisGeneration({analysis,canWrite:false}),/id="analysis-generate"/);
+});
+
 test('alterações locais retiram a confirmação do setor e priorizam salvar antes de gerar',()=>{
   const analysis=readyAnalysis();analysis.currentSimulation={id:'saved-result',stale:false};
   const fiscal=analysisGuidance(analysis,{sector:'accounting',fiscalDirty:true});
@@ -198,10 +207,30 @@ test('DRE com um setor exige autorização parcial do servidor e mantém alerta 
 });
 
 test('metadados parciais inválidos ou ausentes nunca liberam a geração no navegador',()=>{
-  for(const partial of [undefined,{allowed:false,missingSectors:['fiscal']},{allowed:true,missingSectors:[]},{allowed:true,missingSectors:['fiscal','accounting']},{allowed:true,missingSectors:['unknown']}]){
+  for(const partial of [undefined,{allowed:false,missingSectors:['fiscal']},{allowed:true,missingSectors:[]},{allowed:true,missingSectors:['fiscal','accounting']},{allowed:true,missingSectors:['fiscal','fiscal'],fiscalDataUsed:true},{allowed:true,missingSectors:['unknown']}]){
     const analysis=readyAnalysis();analysis.readiness={ready:false,issues:[],partial};
     assert.equal(analysisGuidance(analysis).canGenerate,false);
   }
+});
+
+test('Fiscal concluído mas desatualizado permite gerar com dados atuais e aviso de reconfirmação autorizado pelo servidor',()=>{
+  const analysis=readyAnalysis();analysis.readiness={ready:false,issues:[{code:'FISCAL_SOURCE_CHANGED',sector:'fiscal',message:'Os arquivos ou as opções fiscais mudaram após a confirmação.'}],partial:{allowed:true,missingSectors:['fiscal'],fiscalDataUsed:true}};
+  const before=structuredClone(analysis),guidance=analysisGuidance(analysis);
+  assert.equal(guidance.canGenerate,true);assert.equal(guidance.fiscalDataUsed,true);assert.equal(guidance.confirmedCount,1);
+  assert.equal(guidance.label,'DRE com Fiscal pendente');assert.match(guidance.generationWarning,/documentos e as opções fiscais atuais/);
+  assert.match(guidance.generationWarning,/reconfirmação/);assert.match(guidance.generationConfirmation,/essas pendências/);
+  assert.doesNotMatch(guidance.generationWarning,/somente os dados do Contábil|consideradas zero/);
+  const html=renderAnalysisGeneration({analysis,canWrite:true});assert.match(html,/Gerar DRE com aviso/);assert.doesNotMatch(html,/id="analysis-generate" disabled/);
+  assert.equal(analysisGuidance(analysis,{fiscalDirty:true}).canGenerate,false);assert.deepEqual(analysis,before);
+});
+
+test('Fiscal atual disponível e Contábil pendente identificam ambos sem descartar valores fiscais',()=>{
+  const analysis=readyAnalysis();analysis.accounting.status='DRAFT';
+  analysis.readiness={ready:false,issues:[{code:'FISCAL_SOURCE_CHANGED',sector:'fiscal'},{code:'ACCOUNTING_NOT_CONFIRMED',sector:'accounting'}],partial:{allowed:true,missingSectors:['fiscal','accounting'],fiscalDataUsed:true}};
+  const guidance=analysisGuidance(analysis);assert.equal(guidance.canGenerate,true);assert.deepEqual(guidance.missingSectors,['fiscal','accounting']);
+  assert.equal(guidance.label,'DRE com setores pendentes');assert.match(guidance.generationWarning,/documentos e as opções fiscais atuais/);
+  assert.match(guidance.generationWarning,/Contábil também está pendente/);assert.match(guidance.generationWarning,/despesas serão consideradas zero/);
+  assert.doesNotMatch(guidance.generationWarning,/somente os dados do undefined/);
 });
 
 test('cards mostram a situação e abrem diretamente cada setor da mesma análise',()=>{

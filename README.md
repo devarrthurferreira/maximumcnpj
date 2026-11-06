@@ -1,4 +1,10 @@
-# Maximum CNPJ · v0.61.0
+# Maximum CNPJ · v0.61.1
+
+## v0.61.1 — Gerar com Fiscal pendente de reconfirmação (06/11/2026)
+
+A pendência de confirmação do Fiscal passa a permitir a geração da DRE após um aviso explícito. Quando os relatórios atuais estão disponíveis e válidos, o cálculo aproveita seus valores e as opções fiscais salvas, mesmo após alterações que exijam nova conferência; a DRE e o PDF informam que o Fiscal está pendente de reconfirmação. O setor continua pendente até ser concluído pelo responsável.
+
+A tela confere os dados atuais antes de mostrar a confirmação, inclusive quando a lista resumida ainda indicava que o Fiscal estava concluído. Se o Contábil também não estiver concluído, o aviso identifica os dois setores e informa quais valores ficaram zerados somente na simulação. O fluxo anterior sem dados fiscais continua disponível com Contábil válido, sem criar relatórios fictícios. A geração continua verificando vínculo da empresa, integridade dos arquivos e alterações durante o cálculo.
 
 ## v0.61.0 — Última DRE por empresa e conclusão por setor (06/11/2026)
 

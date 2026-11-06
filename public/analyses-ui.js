@@ -1453,23 +1453,38 @@ function bindAccounting() {
 
 async function generate() {
   if(S.busy||!writable())return;
+  const id=S.analysis.id,sequence=S.sequence;
   try {
     clearError();
     if(S.paste.pending)throw new Error('Confira e aplique a colagem do Contábil ou use Limpar colagem antes de gerar.');
-    if(dirty())throw new Error('Salve as alterações e conclua os setores antes de gerar.');
+    if(dirty())throw new Error('Salve as alterações antes de gerar.');
+    setBusy(true,'Conferindo os dados disponíveis antes de gerar…');
+    // The navigation summary cannot detect changed documents. Confirm only after the server checks the current fiscal source.
+    const verified=await analysisRequest(apiPath('/'+id));
+    if(!currentContext(id,sequence))return;
+    if(hasLocalWork())throw new Error('Salve os preenchimentos pendentes antes de gerar. Seus valores continuam nesta tela.');
+    const saved=assertAnalysis(verified.analysis);
+    if(saved.id!==id||saved.revision<S.analysis.revision)throw new Error('A conferência não corresponde à análise atual. Confira os dados e tente novamente.');
+    adoptAnalysis(saved,{preserveDrafts:true});
     const guidance=analysisGuidance(S.analysis,detailOptions());
-    if(!guidance.canGenerate)throw new Error('Conclua ao menos um setor e confira as pendências indicadas antes de gerar.');
-    if(guidance.partialGeneration&&!S.generateRequest&&!confirm(guidance.generationWarning+' Deseja gerar a DRE mesmo sem o '+sectorName(guidance.missingSectors[0])+'?'))return;
+    if(S.generateRequest&&(saved.currentSimulation?.stale===true||S.generateRequest.expectedRevision!==S.analysis.revision||
+       JSON.stringify(S.generateRequest.confirmedMissingSectors||[])!==JSON.stringify(guidance.partialGeneration?guidance.missingSectors:[])))S.generateRequest=null;
+    if(guidance.currentResult&&uuid(S.analysis.currentSimulation?.id)){
+      S.generateRequest=null;setBusy(false);location.href=guidance.primaryAction.href;return;
+    }
+    if(!guidance.canGenerate)throw new Error('Confira os dados disponíveis e as pendências indicadas antes de gerar.');
+    if(guidance.partialGeneration&&!S.generateRequest&&!confirm(guidance.generationConfirmation))return;
     S.generateRequest??={requestId:crypto.randomUUID(),expectedRevision:S.analysis.revision,
       ...(guidance.partialGeneration?{confirmedMissingSectors:guidance.missingSectors}:{})};
     setBusy(true,guidance.partialGeneration?'Gerando a DRE com os dados disponíveis…':'Gerando a DRE com os dados conferidos dos dois setores…');
-    const response=await analysisRequest(apiPath('/'+S.analysis.id+'/generate?summary=1'),{method:'POST',body:S.generateRequest});
+    const response=await analysisRequest(apiPath('/'+id+'/generate?summary=1'),{method:'POST',body:S.generateRequest});
+    if(!currentContext(id,sequence))return;
     adoptAnalysis(response.analysis);
     if(!uuid(response.simulation?._id)||S.analysis.currentSimulation?.id!==response.simulation._id)throw new Error('O resultado ainda não foi confirmado nesta tela. Atualize a análise para conferir a versão salva.');
     S.generateRequest=null;S.versionsData=null;
     setBusy(false);location.href='/simulator.html?'+new URLSearchParams({simulation:response.simulation._id,current:'1'});
-  } catch(error){showError(error);}
-  finally{if(S.busy){setBusy(false);renderDetail();}}
+  } catch(error){if(currentContext(id,sequence))showError(error);}
+  finally{if(S.busy&&currentContext(id,sequence)){setBusy(false);renderDetail();}}
 }
 
 function showVersions() {

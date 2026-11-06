@@ -22,6 +22,15 @@ test('DRE parcial identifica o setor ausente e retoma seu preenchimento na mesma
   assert.equal(renderPartialDataNotice({}),'');
 });
 
+test('DRE com Fiscal pendente informa uso dos documentos atuais e permite revisar sem apresentá-lo como ausente',()=>{
+  const partialData={status:'INCOMPLETE',missingSectors:['fiscal'],fiscalDataUsed:true,warning:'Dados fiscais atuais usados <a conferir>'};
+  const snapshot={analysisId:'same-analysis',clientId:'same-company',partialData},before=structuredClone(snapshot);
+  const html=renderPartialDataNotice(snapshot);assert.match(html,/DRE com Fiscal pendente/);assert.doesNotMatch(html,/DRE sem Fiscal|Preencher Fiscal/);
+  assert.match(html,/Revisar Fiscal/);assert.match(html,/Dados fiscais atuais usados &lt;a conferir&gt;/);assert(html.includes('id=same-analysis&amp;sector=fiscal'));
+  const both=renderPartialDataNotice({...snapshot,partialData:{...partialData,missingSectors:['fiscal','accounting']}});
+  assert.match(both,/DRE com Fiscal e Contábil pendentes/);assert.match(both,/Preencher Contábil/);assert.deepEqual(snapshot,before);
+});
+
 test('conferência distingue devoluções de compras não abatidas de devoluções de venda já consideradas',()=>{
   const audit={grossSalesCents:100000,serviceSalesCents:0,salesReturnsCents:7000,purchaseGoodsCents:40000,purchaseServicesCents:0,
     excludedSalesCents:4900,excludedPurchaseCents:7000,natures:[
