@@ -28,3 +28,20 @@ test('a marca persistente da DRE parcial distingue ausência de setor de zero co
     assert.match(data.warning,new RegExp(sector==='fiscal'?'Fiscal':'Contábil'));
   }
 });
+test('Fiscal legível pendente de reconfirmação usa a fonte atual, inclusive se o Contábil ainda estiver em rascunho',()=>{
+  const accounting={status:'COMPLETE',data:{months:[row('2026-01')]}};
+  const fiscal={status:'COMPLETE'};
+  assert.deepEqual(partialAnalysisAvailability({fiscal,accounting},[{sector:'fiscal',code:'FISCAL_SOURCE_CHANGED'}],{fiscalDataUsed:true}),
+    {allowed:true,missingSectors:['fiscal'],fiscalDataUsed:true});
+  assert.deepEqual(partialAnalysisAvailability({fiscal:{status:'DRAFT'},accounting:{...accounting,status:'DRAFT'}},
+    [{sector:'fiscal',code:'FISCAL_NOT_CONFIRMED'},{sector:'accounting',code:'ACCOUNTING_NOT_CONFIRMED'}],{fiscalDataUsed:true}),
+    {allowed:true,missingSectors:['fiscal','accounting'],fiscalDataUsed:true});
+  assert.equal(partialAnalysisAvailability({fiscal,accounting},[{sector:'fiscal',code:'ANALYSIS_PERIOD_INCOMPLETE'}],{fiscalDataUsed:true}).allowed,false);
+  assert.equal(partialAnalysisAvailability({fiscal,accounting},[{sector:'fiscal',code:'FISCAL_SOURCE_CHANGED'}]).allowed,false);
+  assert.equal(partialAnalysisAvailability({fiscal,accounting},[{sector:'fiscal',code:'FISCAL_SOURCE_CHANGED'},{sector:'accounting',code:'ACCOUNTING_VALUES_MISSING'}],{fiscalDataUsed:true}).allowed,false);
+  const current=partialAnalysisData(['fiscal'],{fiscalDataUsed:true})!;
+  assert.equal(current.fiscalDataUsed,true);assert.match(current.warning,/documentos e as opções fiscais atuais disponíveis/);
+  assert.doesNotMatch(current.warning,/consideradas zero|considerados zero/);
+  const both=partialAnalysisData(['fiscal','accounting'],{fiscalDataUsed:true})!;
+  assert.match(both.warning,/Contábil não foi concluído/);assert.match(both.warning,/despesas foram consideradas zero/);
+});

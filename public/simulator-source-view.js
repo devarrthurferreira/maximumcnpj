@@ -16,7 +16,9 @@ export function renderPartialDataNotice(snapshot){
   if(partial?.status!=='INCOMPLETE'||!sectors.length)return '';
   const names={fiscal:'Fiscal',accounting:'Contábil'},missing=sectors.map(sector=>names[sector]).join(' e ');
   const identity=snapshot.analysisId?{id:snapshot.analysisId}:{client:snapshot.clientId};
-  return `<section class="card sim-version-notice" data-partial-data="${sectors.join(' ')}" role="status"><h2>DRE sem ${missing}</h2><p>${esc(partial.warning||`Esta DRE foi gerada sem os dados do ${missing}. O resultado usa somente o setor preenchido e precisa ser completado.`)}</p><p>Preencha o setor pendente e gere a DRE novamente para atualizar o resultado da empresa.</p><div class="sim-links">${sectors.map(sector=>`<a class="sim-edit-link" data-fill-missing-sector="${sector}" href="/analyses.html?${esc(new URLSearchParams({...identity,sector}))}">Preencher ${names[sector]} →</a>`).join('')}</div></section>`;
+  const pendingFiscal=partial.fiscalDataUsed===true&&sectors.includes('fiscal');
+  const title=pendingFiscal?sectors.length>1?'DRE com Fiscal e Contábil pendentes':'DRE com Fiscal pendente':`DRE sem ${missing}`;
+  return `<section class="card sim-version-notice" data-partial-data="${sectors.join(' ')}" role="status"><h2>${title}</h2><p>${esc(partial.warning||(pendingFiscal?'Esta DRE usa os documentos e as opções fiscais atuais disponíveis, com o Fiscal pendente de reconfirmação.':`Esta DRE foi gerada sem os dados do ${missing}. O resultado usa somente o setor preenchido e precisa ser completado.`))}</p><p>${pendingFiscal?'Revise as pendências e conclua os setores':'Preencha o setor pendente'} e gere a DRE novamente para atualizar o resultado da empresa.</p><div class="sim-links">${sectors.map(sector=>`<a class="sim-edit-link" data-fill-missing-sector="${sector}" href="/analyses.html?${esc(new URLSearchParams({...identity,sector}))}">${pendingFiscal&&sector==='fiscal'?'Revisar':'Preencher'} ${names[sector]} →</a>`).join('')}</div></section>`;
 }
 
 /** Amounts in BRL. Editing uses the selected source estimate; history reads saved DRE cells only. */

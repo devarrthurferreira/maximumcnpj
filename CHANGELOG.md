@@ -1,5 +1,11 @@
 # Histórico de alterações
 
+## [0.61.1] - 2026-11-06
+
+- Permite gerar a DRE com Fiscal pendente de confirmação, inclusive após mudanças nos arquivos ou opções, mediante confirmação explícita e aviso persistente na tela e no PDF.
+- Preserva os valores fiscais atuais quando as fontes são válidas; identifica o Contábil ausente separadamente quando os dois setores estão pendentes.
+- Confere as pendências completas antes de gerar e diferencia o resultado quando a fonte muda na mesma revisão, mantendo as verificações de integridade e concorrência.
+
 ## [0.61.0] - 2026-11-06
 
 - Mantém uma DRE atual por empresa, remove resultados substituídos e cópias antigas de revisão sem apagar Fiscal, Contábil ou documentos de origem.

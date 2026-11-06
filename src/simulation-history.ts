@@ -212,7 +212,7 @@ export async function createReprocessedSimulation(actor: LookupActor, input: unk
   return createSimulationSnapshot(actor, input, context);
 }
 
-type AnalysisContext={analysisId:string;analysisRevision:number;source:Source;beforeInsert:()=>Promise<void>;evidence:Record<string,unknown>;missingSectors?:MissingSector[];accountingOnly?:boolean};
+type AnalysisContext={analysisId:string;analysisRevision:number;source:Source;beforeInsert:()=>Promise<void>;evidence:Record<string,unknown>;missingSectors?:MissingSector[];accountingOnly?:boolean;fiscalDataUsed?:boolean};
 /** Server-only: the HTTP contract never accepts a source, computed result or analysis linkage. */
 export async function createAnalysisSimulation(actor:LookupActor,input:unknown,context:AnalysisContext){
   return createSimulationSnapshot(actor,input,undefined,context);
@@ -279,9 +279,9 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   need(!rbt12Schedule||rbt12Schedule.complete,`O quadro 2.2 não cobre todas as competências. ${rbt12Schedule?.rows.filter(row=>row.status!=='CONFIRMED').map(row=>`${row.sourceMonth}: faltam ${row.missingMonths.join(', ')}`).join('; ')||''}. Importe um extrato com o histórico necessário.`,409,'RBT12_MONTHS_MISSING');
   const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports!,validated.monthlyInputs,source.sales.jobId,rbt12Schedule,source.analysisPeriod);}catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
   const {difalProjection,anticipationProjection,engineInput,result,projection,monthlyInputs}=computed;
-  const partialData=partialAnalysisData(analysis?.missingSectors||parent?.partialData?.missingSectors||[]);
+  const partialData=partialAnalysisData(analysis?.missingSectors||parent?.partialData?.missingSectors||[],{fiscalDataUsed:analysis?analysis.fiscalDataUsed:parent?.partialData?.fiscalDataUsed===true});
   if(partialData){
-    const warning={code:'analysis-partial-sectors',severity:'warning',title:'DRE sem '+(partialData.missingSectors[0]==='fiscal'?'Fiscal':'Contábil'),detail:partialData.warning};
+    const warning={code:'analysis-partial-sectors',severity:'warning',title:partialData.fiscalDataUsed?'DRE com Fiscal pendente':'DRE sem '+(partialData.missingSectors[0]==='fiscal'?'Fiscal':'Contábil'),detail:partialData.warning};
     result.warnings.push(warning);for(const month of result.monthlyResults||[])month.result.warnings.push({...warning});
   }
   const first=baselineMonth(source.monthlyReports[0]);

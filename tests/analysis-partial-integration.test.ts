@@ -18,7 +18,7 @@ test('MongoDB DRE parcial: confirmação, fontes ausentes, dados preservados e �
   process.env.MONGODB_DB='maximum_partial_'+randomUUID().replaceAll('-','');process.env.WORKSPACE_ID='partial_test';resetLookupIndexes();
   const actor={_id:'operator',role:'operator',name:'Operador sintético',email:'partial@example.test'};
   const admin={...actor,role:'admin'},selection={version:'REGIME_SELECTION_V1',selected:['presumed','actual']};
-  let item:any,accountingOnly:any;
+  let item:any,accountingOnly:any,fullSnapshot:any;
   const patch=async(kind:'fiscal'|'accounting',data:any,complete=true)=>{
     item=(await updateAnalysisSector(actor,item.id,kind,{expectedSectorRevision:item[kind].revision,expectedConfigRevision:item.config.revision,complete,data})).analysis;
   };
@@ -63,9 +63,43 @@ test('MongoDB DRE parcial: confirmação, fontes ausentes, dados preservados e �
       const accounting=structuredClone(item.accounting.data);await fiscalReports();
       assert.equal(item.readiness.ready,true);assert.deepEqual(item.accounting.data,accounting);
       const full=await generate();item=full.analysis;
+      fullSnapshot=full.simulation;
       assert.equal(full.simulation.partialData,undefined);assert.equal(full.simulation.result.annualRevenue,2000);
       assert.deepEqual(item.accounting.data,accounting);assert.equal((await analysisVersions(item.id,1)).pagination.total,1);
       await assert.rejects(getSimulation(accountingOnly._id),code('NOT_FOUND'));
+    });
+    await t.test('opções fiscais alteradas na mesma revisão permitem gerar com aviso e valores fiscais atuais, sem reconfirmar o setor',async()=>{
+      const revision=item.revision,confirmation=structuredClone(item.fiscal.confirmation),accounting=structuredClone(item.accounting.data);
+      await(await collection('analyses')).updateOne(scope({_id:item.id}),{$set:{'fiscal.data.cbsIbsPercent':60}});
+      const summary=(await getAnalysis(item.id,{summary:true})).analysis;
+      assert.equal(summary.readiness.ready,true,'O resumo não compara os arquivos: a geração precisa da conferência completa.');
+      item=(await getAnalysis(item.id)).analysis;
+      assert.equal(item.revision,revision);assert.equal(item.readiness.ready,false);assert.equal(item.currentSimulation.stale,true);
+      assert.ok(item.readiness.issues.some((issue:any)=>issue.code==='FISCAL_SOURCE_CHANGED'));
+      assert.deepEqual(item.readiness.partial,{allowed:true,missingSectors:['fiscal'],fiscalDataUsed:true});
+      await assert.rejects(generate(),code('ANALYSIS_NOT_READY'));
+      await assert.rejects(generate(['accounting']),code('ANALYSIS_NOT_READY'));
+      const generated=await generate(['fiscal']);item=generated.analysis;
+      assert.notEqual(generated.simulation._id,fullSnapshot._id,'O ID distingue a fonte e a confirmação pendente, mesmo sem nova revisão editável.');
+      assert.equal(generated.simulation.result.annualRevenue,2000);assert.equal(generated.simulation.draft.cbsIbsPercent,60);
+      assert.equal(generated.simulation.partialData.fiscalDataUsed,true);assert.deepEqual(generated.simulation.partialData.missingSectors,['fiscal']);
+      assert.match(generated.simulation.partialData.warning,/documentos e as opções fiscais atuais disponíveis/);
+      assert.doesNotMatch(generated.simulation.partialData.warning,/consideradas zero|considerados zero/);
+      assert.equal(generated.simulation.analysisEvidence.fiscal.status,'PENDING_CONFIRMATION');
+      assert.equal(generated.simulation.source.partialData.fiscalDataUsed,true);
+      assert.equal(generated.simulation.result.regimes[0].dre.salaries,-300);
+      assert.deepEqual(item.accounting.data,accounting);assert.deepEqual(item.fiscal.confirmation,confirmation);assert.equal(item.fiscal.status,'COMPLETE');
+      assert.equal(item.currentSimulation.stale,false);assert.equal((await getAnalysis(item.id)).analysis.currentSimulation!.stale,false);
+      const repeated=await generate(['fiscal']);assert.equal(repeated.simulation._id,generated.simulation._id);assert.equal(repeated.reused,true);
+      await assert.rejects(getSimulation(fullSnapshot._id),code('NOT_FOUND'));
+      assert.equal((await analysisVersions(item.id,1)).pagination.total,1);
+    });
+    await t.test('Fiscal legível salvo em rascunho mantém receitas e compras na DRE com pendência',async()=>{
+      await patch('fiscal',item.fiscal.data,false);
+      assert.deepEqual(item.readiness.partial,{allowed:true,missingSectors:['fiscal'],fiscalDataUsed:true});
+      const generated=await generate(['fiscal']);item=generated.analysis;
+      assert.equal(generated.simulation.result.annualRevenue,2000);assert.equal(generated.simulation.source.purchases.totalCents,40000);
+      assert.equal(generated.simulation.partialData.fiscalDataUsed,true);assert.equal(item.fiscal.status,'DRAFT');assert.equal(item.fiscal.confirmation,null);
     });
     await t.test('Fiscal primeiro ignora rascunho contábil somente após confirmação explícita',async()=>{
       item=(await openAnalysis(actor,{clientId:otherId,year:2027,regimeSelection:selection})).analysis;
@@ -77,6 +111,18 @@ test('MongoDB DRE parcial: confirmação, fontes ausentes, dados preservados e �
       for(const regime of generated.simulation.result.regimes){assert.equal(regime.dre.salaries,0);assert.equal(regime.dre.benefits,0);}
       assert.equal(generated.analysis.accounting.data.months[0].salariesCents,999999);assert.equal(generated.analysis.accounting.status,'DRAFT');
       assert.equal(await(await collection('simulations')).countDocuments(scope({clientId})),1,'A outra empresa permanece intacta.');
+    });
+    await t.test('Fiscal atual legível e os dois setores pendentes exigem confirmação dos dois, sem apagar os rascunhos',async()=>{
+      await patch('fiscal',item.fiscal.data,false);
+      assert.deepEqual(item.readiness.partial,{allowed:true,missingSectors:['fiscal','accounting'],fiscalDataUsed:true});
+      await assert.rejects(generate(['fiscal']),code('ANALYSIS_NOT_READY'));await assert.rejects(generate(['accounting']),code('ANALYSIS_NOT_READY'));
+      await assert.rejects(generate(['fiscal','fiscal']),code('ANALYSIS_PARTIAL_CONFIRMATION'));
+      const generated=await generate(['fiscal','accounting']);item=generated.analysis;
+      assert.equal(generated.simulation.result.annualRevenue,2000);assert.equal(generated.simulation.result.regimes[0].dre.salaries,0);
+      assert.deepEqual(generated.simulation.partialData.missingSectors,['fiscal','accounting']);assert.equal(generated.simulation.partialData.fiscalDataUsed,true);
+      assert.match(generated.simulation.partialData.warning,/Contábil não foi concluído/);
+      assert.equal(item.accounting.data.months[0].salariesCents,999999);assert.equal(item.accounting.status,'DRAFT');assert.equal(item.fiscal.status,'DRAFT');
+      await patch('fiscal',item.fiscal.data);
     });
     await t.test('Fiscal marcado concluído com origem inválida não autoriza ignorar erro na fonte',async()=>{
       await(await collection('generations')).deleteOne(scope({_id:item.fiscal.data.generationId}));

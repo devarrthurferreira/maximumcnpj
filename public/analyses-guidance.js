@@ -134,13 +134,22 @@ export function analysisGuidance(analysis,{sector=null,configDirty=false,fiscalD
   }));
   const confirmedCount=SECTORS.filter(key=>sectors[key].complete).length;
   const suppliedMissing=analysis.readiness?.partial?.missingSectors;
-  const missingSectors=analysis.readiness?.partial?.allowed===true&&Array.isArray(suppliedMissing)&&suppliedMissing.length===1&&SECTORS.includes(suppliedMissing[0])?[...suppliedMissing]:[];
-  const partialGeneration=analysis.readiness?.ready!==true&&missingSectors.length===1;
-  const generationWarning=partialGeneration?`O setor ${names[missingSectors[0]]} ainda não foi concluído. A DRE usará somente os dados do ${names[SECTORS.find(key=>!missingSectors.includes(key))]} e ficará identificada como incompleta.`:'';
+  const fiscalDataUsed=analysis.readiness?.partial?.fiscalDataUsed===true;
+  const validMissing=Array.isArray(suppliedMissing)&&suppliedMissing.length>=1&&suppliedMissing.length<=2&&
+    new Set(suppliedMissing).size===suppliedMissing.length&&suppliedMissing.every(key=>SECTORS.includes(key))&&
+    (suppliedMissing.length===1||fiscalDataUsed&&suppliedMissing.includes('fiscal'));
+  const missingSectors=analysis.readiness?.partial?.allowed===true&&validMissing?[...suppliedMissing]:[];
+  const partialGeneration=analysis.readiness?.ready!==true&&missingSectors.length>0;
+  const pendingFiscal=partialGeneration&&fiscalDataUsed&&missingSectors.includes('fiscal');
+  const generationWarning=partialGeneration?pendingFiscal?
+    `O Fiscal está pendente de reconfirmação. A DRE usará os documentos e as opções fiscais atuais disponíveis, sem concluir o Fiscal automaticamente.${missingSectors.includes('accounting')?' O Contábil também está pendente e suas despesas serão consideradas zero somente nesta simulação.':''} O relatório ficará identificado como incompleto.`:
+    `O setor ${names[missingSectors[0]]} ainda não foi concluído. A DRE usará somente os dados do ${names[SECTORS.find(key=>!missingSectors.includes(key))]} e ficará identificada como incompleta.`:'';
+  const generationConfirmation=partialGeneration?generationWarning+' '+(pendingFiscal?'Deseja gerar a DRE com essas pendências?':`Deseja gerar a DRE mesmo sem o ${names[missingSectors[0]]}?`):'';
   const current=analysis.currentSimulation,ready=(analysis.readiness?.ready===true||partialGeneration)&&!hasUnsavedChanges;
   const currentResult=!!(ready&&current?.id&&current.stale===false&&!current.legacy);
   const state=currentResult?'current':ready?'ready':'working';
-  const label=currentResult?(partialGeneration?'DRE sem '+names[missingSectors[0]]:savedVerification?'Resultado salvo':'Resultado atual'):ready?(partialGeneration?'DRE sem '+names[missingSectors[0]]:current?'Pronta para atualizar':'Pronta para gerar'):hasUnsavedChanges?'Alterações não salvas':'Em andamento';
+  const partialLabel=pendingFiscal?missingSectors.length>1?'DRE com setores pendentes':'DRE com Fiscal pendente':'DRE sem '+names[missingSectors[0]];
+  const label=currentResult?(partialGeneration?partialLabel:savedVerification?'Resultado salvo':'Resultado atual'):ready?(partialGeneration?partialLabel:current?'Pronta para atualizar':'Pronta para gerar'):hasUnsavedChanges?'Alterações não salvas':'Em andamento';
   const issues=[];
   if(configDirty)issues.push({code:'UNSAVED_CONFIG',sector:'config',message:'Salve os regimes e o ano escolhidos antes de concluir os setores.',action:'config',label:'Salvar escolhas da análise'});
   if(pastePending)issues.push({code:'UNSAVED_ACCOUNTING_PASTE',sector:'accounting',message:'Há dados colados no Contábil aguardando conferência. Aplique a prévia ou limpe a colagem antes de gerar.',action:'accounting',label:'Conferir colagem do Contábil'});
@@ -170,5 +179,5 @@ export function analysisGuidance(analysis,{sector=null,configDirty=false,fiscalD
       {action:target,label:'Continuar no '+names[target],message:'Confira e conclua os dados deste setor para avançar.',sector:target};
   }
   return {state,label,kind:state==='working'||partialGeneration?'pending':'ready',savedVerification,confirmedCount,sectors,primaryAction,issues,
-    hasUnsavedChanges,partialGeneration,missingSectors,generationWarning,canGenerate:ready&&!currentResult,currentResult,hasSavedResult:!!current?.id};
+    hasUnsavedChanges,partialGeneration,missingSectors,generationWarning,generationConfirmation,fiscalDataUsed:pendingFiscal,canGenerate:ready&&!currentResult,currentResult,hasSavedResult:!!current?.id};
 }

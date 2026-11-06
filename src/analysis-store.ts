@@ -28,7 +28,7 @@ import type {AnalysisDeletionReceipt} from './analysis-deletion.ts';
 type Author={id:string;name:string};
 type Sector<T>={revision:number;status:'DRAFT'|'COMPLETE';data:T;completedAt:Date|null;updatedAt:Date;updatedBy:Author;
   confirmation?:{fingerprint:string;generationId:string;purchaseJobId:string;salesJobId:string;extractionId:string|null;months:string[];configRevision:number;analysisPeriod?:AnalysisPeriod}|null};
-type Current={id:string;analysisRevision:number|null;createdAt:Date;modelVersion:string|null;legacy:boolean};
+type Current={id:string;analysisRevision:number|null;createdAt:Date;modelVersion:string|null;legacy:boolean;sourceFingerprint?:string|null;fiscalDataUsed?:boolean};
 type Analysis=Doc & {clientId:string;company:{name:string;code:string|null;cnpj?:string|null};version:string;activated:boolean;revision:number;
   config:AnalysisConfig;fiscal:Sector<FiscalData>;accounting:Sector<AccountingData>;currentSimulation:Current|null;
   legacy:boolean;legacyReference?:{simulationId:string;monthlyInputsPreserved:boolean};createdAt:Date;createdBy:Author;updatedAt:Date;
@@ -167,8 +167,14 @@ function savedReadiness(item:Analysis):Readiness{
 }
 
 function partialReadiness(item:Analysis,ready:Omit<Readiness,'partial'>):Readiness{
-  const partial=partialAnalysisAvailability(item,ready.issues);
+  // Summary navigation can offer a preflight, but generateAnalysis always verifies the current documents again.
+  const fiscalDataUsed=!!ready.checked||ready.verification==='SAVED'&&!!item.fiscal.data.generationId;
+  const partial=partialAnalysisAvailability(item,ready.issues,{fiscalDataUsed});
   if(partial.allowed){
+    if(partial.fiscalDataUsed){
+      const period=ready.checked?.source.analysisPeriod||savedAnalysisPeriod(item),months=partial.missingSectors.includes('accounting')?period?.includedMonths||[]:ready.months;
+      return {...ready,partial,analysisPeriod:period&&months.length?selectAnalysisPeriod(period,months):period,months};
+    }
     const period=partial.missingSectors[0]==='fiscal'?accountingOnlyPeriod(item.accounting.data):ready.checked?.source.analysisPeriod||savedAnalysisPeriod(item);
     return {...ready,partial,analysisPeriod:period||null,months:period?.includedMonths||[]};
   }
@@ -180,7 +186,9 @@ async function presentation(item:Analysis,options:AnalysisReadOptions={},prepare
   const {workspaceId:_workspace,_id:id,leaseOwner:_owner,leaseUntil:_until,activated:_activated,lastGeneration:_last,...rest}=item;
   const current=item.currentSimulation;
   const analysis={...rest,accounting:{...item.accounting,data:accountingForYear(item.accounting.data,ready.analysisPeriod?.sourceYear)},id,periodPolicy:JAN_SEP_POLICY,readiness:ready,currentSimulation:current?{...current,stale:current.legacy || current.modelVersion!==JAN_SEP_MODEL_VERSION || current.analysisRevision!==item.revision ||
-    (!options.summary&&!ready.partial.missingSectors.includes('fiscal')&&(!checked || checked.fingerprint!==item.fiscal.confirmation?.fingerprint))}:null};
+    (!options.summary&&(current.fiscalDataUsed===true)!==(ready.partial.fiscalDataUsed===true))||
+    (!options.summary&&(!ready.partial.missingSectors.includes('fiscal')||ready.partial.fiscalDataUsed===true)&&
+      (!checked || checked.fingerprint!==(current.sourceFingerprint??item.fiscal.confirmation?.fingerprint)))}:null};
   return {analysis,...(options.includeSource?{source,sourceError}:{})};
 }
 async function visible(item:Analysis,options:AnalysisReadOptions={},prepared?:Readiness){
@@ -188,7 +196,8 @@ async function visible(item:Analysis,options:AnalysisReadOptions={},prepared?:Re
 }
 function sector<T>(data:T,actor:LookupActor,now:Date):Sector<T>{return {revision:0,status:'DRAFT',data,completedAt:null,updatedAt:now,updatedBy:author(actor),confirmation:null};}
 function currentOf(snapshot:any,revision:number|null,legacy:boolean):Current{
-  return {id:snapshot._id,analysisRevision:revision,createdAt:snapshot.createdAt,modelVersion:snapshot.modelVersion||null,legacy};
+  return {id:snapshot._id,analysisRevision:revision,createdAt:snapshot.createdAt,modelVersion:snapshot.modelVersion||null,legacy,
+    sourceFingerprint:snapshot.analysisEvidence?.fiscal?.sourceFingerprint||null,fiscalDataUsed:snapshot.partialData?.fiscalDataUsed===true};
 }
 /** Only explicit open/legacy writes adopt old data. Reads never migrate snapshots. */
 function seedLegacy(item:Analysis,snapshot:any,actor:LookupActor){
@@ -379,8 +388,8 @@ export async function importAnalysisGeneration(actor:LookupActor,id:string,input
   });
 }
 function deterministicId(key:string){const hex=digest(`${scope().workspaceId}:${key}`);return `${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;}
-function calculationInput(item:Analysis,source:Source,simulationId:string,missingSectors:MissingSector[]=[]){
-  const missingFiscal=missingSectors.includes('fiscal'),f=missingFiscal?defaultFiscalData(item.config.regimeSelection):item.fiscal.data;
+function calculationInput(item:Analysis,source:Source,simulationId:string,missingSectors:MissingSector[]=[],fiscalDataUsed=false){
+  const missingFiscal=missingSectors.includes('fiscal')&&!fiscalDataUsed,f=missingFiscal?defaultFiscalData(item.config.regimeSelection):item.fiscal.data;
   if(missingFiscal){f.difalPolicy=upgradeDifalPolicy();for(const id of ['pure','hybrid','presumed','actual'] as const)f.difalPolicy.enabled[id]=false;}
   const expenses=new Map(accountingForYear(item.accounting.data,source.analysisPeriod?.sourceYear).months.map(row=>[row.sourceMonth,row]));
   const overrides=new Map((f.monthlyOverrides||[]).map(row=>[row.sourceMonth,row]));
@@ -441,7 +450,7 @@ async function generatedSimulation(id:string,options:AnalysisReadOptions){
 }
 export async function generateAnalysis(actor:LookupActor,id:string,input:unknown,options:AnalysisReadOptions={}){
   write(actor);analysisObject(input,['requestId','expectedRevision'],['confirmedMissingSectors']);
-  if(input.confirmedMissingSectors!==undefined)need(Array.isArray(input.confirmedMissingSectors)&&input.confirmedMissingSectors.length<=1&&input.confirmedMissingSectors.every((sector:unknown)=>sector==='fiscal'||sector==='accounting'),'Confirme somente o setor ausente desta análise.',400,'ANALYSIS_PARTIAL_CONFIRMATION');
+  if(input.confirmedMissingSectors!==undefined)need(Array.isArray(input.confirmedMissingSectors)&&input.confirmedMissingSectors.length<=2&&new Set(input.confirmedMissingSectors).size===input.confirmedMissingSectors.length&&input.confirmedMissingSectors.every((sector:unknown)=>sector==='fiscal'||sector==='accounting'),'Confirme somente os setores pendentes desta análise.',400,'ANALYSIS_PARTIAL_CONFIRMATION');
   const requestId=analysisId(input.requestId),expected=analysisRevision(input.expectedRevision);
   const initial=await record(id);
   const requests=await collection('analysisGenerationRequests'),requestKey=digest(`${scope().workspaceId}:${id}:${requestId}`);
@@ -454,17 +463,19 @@ export async function generateAnalysis(actor:LookupActor,id:string,input:unknown
     return {analysis:await visible(initial,options),simulation:await generatedSimulation(initial.lastGeneration.simulationId,options),reused:true};
   }
   return withAnalysis(id,async(item,owner)=>{
-    const prepared=await readiness(item),missingSectors=prepared.ready?[]:prepared.partial.missingSectors;
+    const prepared=await readiness(item),missingSectors=prepared.ready?[]:prepared.partial.missingSectors,fiscalDataUsed=prepared.partial.fiscalDataUsed===true;
     need(prepared.ready||prepared.partial.allowed,prepared.issues.map(issue=>issue.message).join(' '),422,'ANALYSIS_NOT_READY');
-    need(!missingSectors.length||isDeepStrictEqual(input.confirmedMissingSectors,missingSectors),'Confirme que deseja gerar a DRE sem o setor '+(missingSectors[0]==='fiscal'?'Fiscal':'Contábil')+'.',422,'ANALYSIS_NOT_READY');
+    need(!missingSectors.length||isDeepStrictEqual(input.confirmedMissingSectors,missingSectors),'Confirme que deseja gerar a DRE com pendências no '+missingSectors.map(sector=>sector==='fiscal'?'Fiscal':'Contábil').join(' e no ')+'.',422,'ANALYSIS_NOT_READY');
     need(!prepared.ready||!input.confirmedMissingSectors?.length,'Os dois setores estão concluídos. Atualize os dados antes de gerar.',409,'ANALYSIS_CONFLICT');
-    const source=missingSectors.includes('fiscal')?accountingOnlySource(item,prepared.analysisPeriod!):selectAnalysisSourceMonths(prepared.checked!.source,prepared.months),sourceFingerprint=prepared.checked?.fingerprint||null;
-    const simulationId=deterministicId(`generate:${item._id}:${item.revision}:${JAN_SEP_MODEL_VERSION}`);
+    const accountingOnly=missingSectors.includes('fiscal')&&!fiscalDataUsed;
+    const source=accountingOnly?accountingOnlySource(item,prepared.analysisPeriod!):selectAnalysisSourceMonths(prepared.checked!.source,prepared.months),sourceFingerprint=prepared.checked?.fingerprint||null;
+    // A source/options change can invalidate confirmation without incrementing the editable analysis revision.
+    const simulationId=deterministicId(JSON.stringify(['generate',item._id,item.revision,JAN_SEP_MODEL_VERSION,sourceFingerprint,missingSectors,fiscalDataUsed]));
     if(item.currentSimulation?.id===simulationId){
       await saveGenerationRequest(id,requestKey,{requestId,revision:expected,simulationId,createdAt:new Date(),createdBy:author(actor)});
       return {analysis:await visible(item,options,prepared),simulation:await generatedSimulation(simulationId,options),reused:true};
     }
-    if(missingSectors.includes('fiscal'))return generateAccountingOnly(actor,item,owner,expected,requestId,requestKey,simulationId,source,prepared,options);
+    if(accountingOnly)return generateAccountingOnly(actor,item,owner,expected,requestId,requestKey,simulationId,source,prepared,options);
     const sources=[source.purchases.jobId,source.sales.jobId].sort();
     return withGeneration(source.generationId,async(_generation,generationOwner)=>withJob(sources[0],async(first)=>withJob(sources[1],async(second)=>{
       let lastChecked=prepared.checked!;
@@ -475,13 +486,14 @@ export async function generateAnalysis(actor:LookupActor,id:string,input:unknown
         need(await(await collection('generations')).findOne(scope({_id:source.generationId,leaseOwner:generationOwner,leaseUntil:{$gt:new Date()}})),
           'A importação está sendo atualizada. Confira os dados e gere novamente.',409,'ANALYSIS_SOURCE_CHANGED');
         const checked=await fiscalSource(current as Analysis);
-        need(checked.fingerprint===sourceFingerprint,'Os arquivos mudaram durante o cálculo. Confirme o Fiscal novamente antes de gerar.',409,'ANALYSIS_SOURCE_CHANGED');
+        need(checked.fingerprint===sourceFingerprint,'Os arquivos mudaram durante o cálculo. Tente gerar novamente para conferir e utilizar os dados atuais.',409,'ANALYSIS_SOURCE_CHANGED');
         lastChecked=checked;
       };
       await unchanged();
-      const simulation=await createAnalysisSimulation(actor,calculationInput(item,source,simulationId,missingSectors),{analysisId:id,analysisRevision:expected,source,beforeInsert:unchanged,missingSectors,
+      const simulation=await createAnalysisSimulation(actor,calculationInput(item,source,simulationId,missingSectors,fiscalDataUsed),{analysisId:id,analysisRevision:expected,source,beforeInsert:unchanged,missingSectors,fiscalDataUsed,
         evidence:{version:ANALYSIS_VERSION,configRevision:item.config.revision,...(missingSectors.length?{missingSectors,partialConfirmedAt:new Date(),partialConfirmedBy:author(actor)}:{}),
-          fiscal:{revision:item.fiscal.revision,confirmedAt:item.fiscal.completedAt,confirmedBy:item.fiscal.updatedBy,sourceFingerprint},
+          fiscal:{revision:item.fiscal.revision,confirmedAt:item.fiscal.completedAt,confirmedBy:item.fiscal.updatedBy,sourceFingerprint,
+            ...(fiscalDataUsed?{status:'PENDING_CONFIRMATION',issueCodes:prepared.issues.filter(issue=>issue.sector==='fiscal').map(issue=>issue.code)}:{})},
           accounting:{revision:item.accounting.revision,confirmedAt:item.accounting.completedAt,confirmedBy:item.accounting.updatedBy}}});
       await unchanged();
       const updated=await(await analyses()).findOneAndUpdate(scope({_id:id,...active(),revision:expected,leaseOwner:owner,leaseUntil:{$gt:new Date()}}),
