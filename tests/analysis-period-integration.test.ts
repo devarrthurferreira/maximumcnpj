@@ -156,7 +156,8 @@ test('MongoDB Jan–Set: recorte auditável, fontes diferentes, faltas explícit
       assert.equal(saved.simulation.monthlyInputs.length,9);assert.equal(saved.simulation.result.annualRevenue,3000);
       assert.equal(saved.simulation.monthlyInputs.reduce((sum:number,row:any)=>sum+row.values.salaries,0),45);
       const revisions=await(await collection('analysisRevisions')).find(scope({analysisId:analysis.id,kind:'accounting'})).toArray();
-      assert.ok(revisions.some(row=>row.data.data.months.length===12));
+      assert.equal(revisions.length,0,'A geração mantém só a análise atual e remove cópias de versões anteriores.');
+      assert.equal((await getAnalysis(analysis.id)).analysis.accounting.data.months.length,12);
     });
   }finally{
     await(await database()).dropDatabase();await closeDatabase();resetLookupIndexes();

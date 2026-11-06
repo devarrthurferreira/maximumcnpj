@@ -39,7 +39,7 @@ STATEMENT_SECTIONS = (
     ('Deduções da receita', (('revenueTaxes', 'Deduções da receita'), ('das', 'Simples'),
         ('icmsDebit', 'ICMS Débito'), ('cbsIbsDebit', 'CBS/IBS Débito'), ('iss', 'ISS'),
         ('difal', 'DIFAL sobre vendas'), ('netRevenueAfterTaxes', 'Receita líquida'))),
-    ('Custos', (('costsWithAnticipation', 'CUSTO'), ('cmvSimple', 'Compras e serviços (do Simples)'),
+    ('Compras e Serviços', (('costsWithAnticipation', 'Compras e Serviços'), ('cmvSimple', 'Compras e serviços (do Simples)'),
         ('cmvRegular', 'Compras e serviços (fora do Simples)'), ('icmsAnticipation', 'Antecipação de ICMS nas compras'),
         ('cbsIbsCredit', 'CBS/IBS Crédito'), ('icmsCredit', 'ICMS Crédito'),
         ('grossAfterCosts', 'Lucro bruto (Margem de contribuição)'))),

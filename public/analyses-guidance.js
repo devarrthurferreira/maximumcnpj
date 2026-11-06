@@ -2,7 +2,7 @@ import {JAN_SEP_POLICY,buildAnalysisPeriod,analysisMonthsForYear,isAnalysisMonth
 
 export const ACCOUNTING_FIELDS=[
   ['salariesCents','Salários e pró-labore'],['rentCents','Aluguéis'],
-  ['cardExpensesCents','Taxas de cartão'],['benefitsCents','Benefícios'],
+  ['cardExpensesCents','Taxas de cartão'],['benefitsCents','Benefícios e Encargos Pessoais'],
   ['adminExpensesCents','Outras despesas'],
   ['financialExpensesCents','Despesas financeiras'],['financialIncomeCents','Receitas financeiras']
 ];
@@ -133,10 +133,14 @@ export function analysisGuidance(analysis,{sector=null,configDirty=false,fiscalD
     return [key,{complete,dirty:!!sectorDirty[key],label,kind:complete?'ready':'pending'}];
   }));
   const confirmedCount=SECTORS.filter(key=>sectors[key].complete).length;
-  const current=analysis.currentSimulation,ready=analysis.readiness?.ready===true&&!hasUnsavedChanges;
+  const suppliedMissing=analysis.readiness?.partial?.missingSectors;
+  const missingSectors=analysis.readiness?.partial?.allowed===true&&Array.isArray(suppliedMissing)&&suppliedMissing.length===1&&SECTORS.includes(suppliedMissing[0])?[...suppliedMissing]:[];
+  const partialGeneration=analysis.readiness?.ready!==true&&missingSectors.length===1;
+  const generationWarning=partialGeneration?`O setor ${names[missingSectors[0]]} ainda não foi concluído. A DRE usará somente os dados do ${names[SECTORS.find(key=>!missingSectors.includes(key))]} e ficará identificada como incompleta.`:'';
+  const current=analysis.currentSimulation,ready=(analysis.readiness?.ready===true||partialGeneration)&&!hasUnsavedChanges;
   const currentResult=!!(ready&&current?.id&&current.stale===false&&!current.legacy);
   const state=currentResult?'current':ready?'ready':'working';
-  const label=currentResult?(savedVerification?'Resultado salvo':'Resultado atual'):ready?(current?'Pronta para atualizar':'Pronta para gerar'):hasUnsavedChanges?'Alterações não salvas':'Em andamento';
+  const label=currentResult?(partialGeneration?'DRE sem '+names[missingSectors[0]]:savedVerification?'Resultado salvo':'Resultado atual'):ready?(partialGeneration?'DRE sem '+names[missingSectors[0]]:current?'Pronta para atualizar':'Pronta para gerar'):hasUnsavedChanges?'Alterações não salvas':'Em andamento';
   const issues=[];
   if(configDirty)issues.push({code:'UNSAVED_CONFIG',sector:'config',message:'Salve os regimes e o ano escolhidos antes de concluir os setores.',action:'config',label:'Salvar escolhas da análise'});
   if(pastePending)issues.push({code:'UNSAVED_ACCOUNTING_PASTE',sector:'accounting',message:'Há dados colados no Contábil aguardando conferência. Aplique a prévia ou limpe a colagem antes de gerar.',action:'accounting',label:'Conferir colagem do Contábil'});
@@ -156,7 +160,7 @@ export function analysisGuidance(analysis,{sector=null,configDirty=false,fiscalD
   }
   let primaryAction;
   if(currentResult)primaryAction={action:'result',label:savedVerification?'Ver DRE salva':'Ver DRE atual',message:savedVerification?'Última versão gerada com os dados salvos. Abra o Fiscal para conferir novamente os documentos.':'O resultado corresponde aos dados salvos e conferidos.',href:'/simulator.html?'+new URLSearchParams({simulation:current.id,current:'1'})};
-  else if(ready)primaryAction={action:'generate',label:current?'Atualizar resultado':'Gerar análise',message:'Os dois setores estão conferidos. A próxima etapa usa os dados que já foram salvos.'};
+  else if(ready)primaryAction={action:'generate',label:current?'Atualizar DRE':'Gerar DRE',message:generationWarning||'Os dois setores estão conferidos. A próxima etapa usa os dados que já foram salvos.'};
   else {
     const next=issues.find(issue=>issue.code==='UNSAVED_CONFIG')||
       issues.find(issue=>issue.sector===sector&&issue.code.startsWith('UNSAVED_'))||issues.find(issue=>issue.code.startsWith('UNSAVED_'))||
@@ -165,6 +169,6 @@ export function analysisGuidance(analysis,{sector=null,configDirty=false,fiscalD
     primaryAction=next?{action:next.action,label:next.label,message:next.message,sector:next.sector}:
       {action:target,label:'Continuar no '+names[target],message:'Confira e conclua os dados deste setor para avançar.',sector:target};
   }
-  return {state,label,kind:state==='working'?'pending':'ready',savedVerification,confirmedCount,sectors,primaryAction,issues,
-    hasUnsavedChanges,canGenerate:ready&&!currentResult,currentResult,hasSavedResult:!!current?.id};
+  return {state,label,kind:state==='working'||partialGeneration?'pending':'ready',savedVerification,confirmedCount,sectors,primaryAction,issues,
+    hasUnsavedChanges,partialGeneration,missingSectors,generationWarning,canGenerate:ready&&!currentResult,currentResult,hasSavedResult:!!current?.id};
 }

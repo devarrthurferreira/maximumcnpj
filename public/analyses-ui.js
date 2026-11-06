@@ -294,11 +294,27 @@ async function openList() {
   const response=await analysisRequest(apiPath('?'+new URLSearchParams({page:String(page),summary:'1',...(search?{search}:{})})));
   if(!Array.isArray(response.items))throw new Error('Não foi possível carregar as análises.');
   const items=response.items.map(assertAnalysis);
-  $('#analyses-app').innerHTML=renderAnalysisList({items,pagination:pagination(response),search,canWrite:writable()});
+  $('#analyses-app').innerHTML=renderAnalysisList({items,pagination:pagination(response),search,canWrite:writable(),canCleanup:S.user?.role==='admin'});
   $('#analysis-search-form').onsubmit=event=>{event.preventDefault();location.href='/analyses.html?'+new URLSearchParams({view:'list',search:$('#analysis-search').value.trim()});};
   document.querySelectorAll('[data-analysis-page]').forEach(button=>button.onclick=()=>{location.href='/analyses.html?'+new URLSearchParams({view:'list',page:button.dataset.analysisPage,...(search?{search}:{})});});
   bindDeleteAnalysis(items);
+  if($('#analysis-cleanup-versions'))$('#analysis-cleanup-versions').onclick=()=>void cleanupVersions();
   if(query.get('deleted')==='1')feedback('Análise excluída. Você já pode iniciar uma nova análise para esta empresa. O cadastro e os documentos fiscais existentes foram preservados.');
+}
+
+async function cleanupVersions() {
+  if(S.busy||S.deleting||S.user?.role!=='admin')return;
+  if(!confirm('Limpar as versões antigas de todas as empresas? Somente a última DRE ficará disponível. Os dados preenchidos no Fiscal e no Contábil e os documentos importados serão preservados.'))return;
+  let result,error;
+  try {
+    clearError();setBusy(true,'Limpando as versões antigas e preservando os dados atuais…');
+    result=await analysisRequest(apiPath('/cleanup-versions'),{method:'POST',body:{confirmed:true}});
+    if(![result.companies,result.removed,result.removedRevisions].every(value=>Number.isSafeInteger(value)&&value>=0)||!Array.isArray(result.failed))throw new Error('O resultado da limpeza não foi confirmado. Tente novamente para conferir as versões restantes.');
+  }catch(caught){error=caught;}
+  finally{setBusy(false);}
+  try{await openList();}catch(caught){showError(caught);return;}
+  if(error){showError(error);return;}
+  feedback(`Limpeza conferida em ${result.companies} empresa(s): ${result.removed} versão(ões) antiga(s) e ${result.removedRevisions} revisão(ões) removida(s). Os dados dos setores foram preservados.${result.failed.length?` Há ${result.failed.length} empresa(s) pendente(s); tente novamente para concluir.`:''}`,result.failed.length?'warning':'');
 }
 
 function setDeleteBusy(value) {
@@ -1015,7 +1031,7 @@ async function saveConfig() {
     const response=await analysisRequest(apiPath('/'+S.analysis.id+'/config?summary=1'),{method:'PATCH',body:{expectedConfigRevision:S.analysis.config.revision,year:config.year,regimeSelection:config.regimeSelection}});
     adoptConfigResponse(response.analysis,priorFiscalRevision);S.generateRequest=null;
     S.modalOpen=false;
-    feedback('Escolhas salvas. Confira os setores antes de gerar a próxima versão.');
+    feedback('Escolhas salvas. Confira os setores antes de atualizar a DRE.');
   } catch(error){showError(error);}
   finally{if(S.busy){setBusy(false);renderDetail();if(!S.modalOpen)wizardReturnTarget()?.focus();}}
 }
@@ -1055,7 +1071,7 @@ async function saveSector(sector,complete) {
     setBusy(true,`${complete?'Concluindo':'Salvando'} o trabalho ${sectorName(sector)}…`);
     await patchSector(sector,data,complete);
     if(complete){S.modalOpen=false;if(sector==='accounting')collapseAccountingTools();}
-    feedback(complete?`${sectorName(sector)} concluído. ${hasLocalWork()?'Há preenchimentos locais que ainda precisam ser conferidos e salvos.':S.analysis.readiness.ready?'Os dois setores estão prontos para gerar a análise.':'Acompanhe abaixo o que ainda falta para gerar.'}`:`Trabalho ${sectorName(sector)} salvo. Você pode continuar depois nesta mesma análise.`);
+    feedback(complete?`${sectorName(sector)} concluído. ${hasLocalWork()?'Há preenchimentos locais que ainda precisam ser conferidos e salvos.':S.analysis.readiness.ready?'Os dois setores estão prontos para gerar a DRE.':S.analysis.readiness.partial?.allowed?'Você já pode gerar a DRE com aviso do setor pendente ou completar o outro setor.':'Acompanhe abaixo o que ainda falta para gerar.'}`:`Trabalho ${sectorName(sector)} salvo. Você pode continuar depois nesta mesma análise.`);
   } catch(error){
     if(sector==='fiscal'&&String(error.code||'').startsWith('RBT12_'))S.modalSteps.fiscal='rbt12';
     if(sector==='fiscal'&&['ANALYSIS_FISCAL_INCOMPLETE','SIMULATOR_INCOMPLETE','ANALYSIS_GENERATION_UNAVAILABLE'].includes(error.code))S.modalSteps.fiscal='documents';
@@ -1126,7 +1142,7 @@ function bindFiscal() {
   if($('#analysis-retry-evidence'))$('#analysis-retry-evidence').onclick=()=>void ensureEvidence({force:true});
   if($('#analysis-replace-missing-documents'))$('#analysis-replace-missing-documents').onclick=()=>void prepareImport();
   if($('#analysis-clear-adjustments'))$('#analysis-clear-adjustments').onclick=()=>{
-    if(!confirm('Usar os valores dos relatórios em todas as competências? Os ajustes ainda não salvos nesta análise serão retirados. As versões anteriores permanecerão no histórico.'))return;
+    if(!confirm('Usar os valores dos relatórios em todas as competências? Os ajustes ainda não salvos nesta análise serão retirados. A última DRE salva permanece disponível até você atualizar o resultado.'))return;
     try{captureAll();S.fiscalDraft.monthlyOverrides=null;markDirty('fiscal');renderDetail();$('#analysis-fiscal-adjustments').open=true;}catch(error){showError(error);}
   };
 }
@@ -1179,7 +1195,7 @@ async function inlineDocumentGeneration(type,state) {
   if(S.analysis.fiscal.data.generationId){
     try { return await generationMetadata(S.analysis,{force:true}); }
     catch(error){if(error.status!==404)throw error;}
-    if(!confirm('Os documentos anteriores estão indisponíveis. Preparar novos relatórios para esta análise? As versões salvas continuarão preservadas.'))return null;
+    if(!confirm('Os documentos anteriores estão indisponíveis. Preparar novos relatórios para esta análise? A última DRE salva e os dados preenchidos continuarão disponíveis.'))return null;
   }
   if(S.fiscalDirty)await patchSector('fiscal',S.fiscalDraft,false);
   const response=await analysisRequest(apiPath('/'+S.analysis.id+'/fiscal/import?summary=1'),{method:'POST',body:{expectedSectorRevision:S.analysis.fiscal.revision,expectedConfigRevision:S.analysis.config.revision}});
@@ -1275,7 +1291,7 @@ async function prepareImport({type='PURCHASES',reuse=false}={}) {
         setBusy(false);location.href=documentImportUrl(generation._id,type,company);return;
       }
     }
-    if(S.analysis.fiscal.data.generationId&&!confirm('Preparar novos relatórios de entradas e saídas? A análise passará a aguardar os novos arquivos; as versões e os relatórios anteriores continuarão preservados.'))return;
+    if(S.analysis.fiscal.data.generationId&&!confirm('Preparar novos relatórios de entradas e saídas? A análise passará a aguardar os novos arquivos; os dados do Contábil, a última DRE salva e os relatórios anteriores continuarão disponíveis.'))return;
     if(S.fiscalDirty)await patchSector('fiscal',S.fiscalDraft,false);
     const response=await analysisRequest(apiPath('/'+S.analysis.id+'/fiscal/import?summary=1'),{method:'POST',body:{expectedSectorRevision:S.analysis.fiscal.revision,expectedConfigRevision:S.analysis.config.revision}});
     adoptAnalysis(response.analysis);S.documentUploads={};
@@ -1441,9 +1457,12 @@ async function generate() {
     clearError();
     if(S.paste.pending)throw new Error('Confira e aplique a colagem do Contábil ou use Limpar colagem antes de gerar.');
     if(dirty())throw new Error('Salve as alterações e conclua os setores antes de gerar.');
-    if(!S.analysis.readiness.ready)throw new Error('Conclua os dois setores e confira as pendências indicadas antes de gerar.');
-    S.generateRequest??={requestId:crypto.randomUUID(),expectedRevision:S.analysis.revision};
-    setBusy(true,'Gerando a análise com os dados conferidos dos dois setores…');
+    const guidance=analysisGuidance(S.analysis,detailOptions());
+    if(!guidance.canGenerate)throw new Error('Conclua ao menos um setor e confira as pendências indicadas antes de gerar.');
+    if(guidance.partialGeneration&&!S.generateRequest&&!confirm(guidance.generationWarning+' Deseja gerar a DRE mesmo sem o '+sectorName(guidance.missingSectors[0])+'?'))return;
+    S.generateRequest??={requestId:crypto.randomUUID(),expectedRevision:S.analysis.revision,
+      ...(guidance.partialGeneration?{confirmedMissingSectors:guidance.missingSectors}:{})};
+    setBusy(true,guidance.partialGeneration?'Gerando a DRE com os dados disponíveis…':'Gerando a DRE com os dados conferidos dos dois setores…');
     const response=await analysisRequest(apiPath('/'+S.analysis.id+'/generate?summary=1'),{method:'POST',body:S.generateRequest});
     adoptAnalysis(response.analysis);
     if(!uuid(response.simulation?._id)||S.analysis.currentSimulation?.id!==response.simulation._id)throw new Error('O resultado ainda não foi confirmado nesta tela. Atualize a análise para conferir a versão salva.');
@@ -1462,10 +1481,10 @@ async function loadVersions(page) {
   if(S.versionsLoading||!S.analysis)return;
   const id=S.analysis.id,sequence=S.sequence;S.versionsLoading=true;
   try {
-    $('#analysis-version-list').innerHTML=loadingMarkup({title:'Carregando o histórico…',detail:'Buscando as versões salvas desta empresa.',compact:true});
+    $('#analysis-version-list').innerHTML=loadingMarkup({title:'Carregando a última DRE…',detail:'Buscando o último resultado salvo desta empresa.',compact:true});
     const response=await analysisRequest(apiPath('/'+id+'/versions?'+new URLSearchParams({page:String(page)})));
     if(!currentContext(id,sequence))return;
-    if(!Array.isArray(response.items))throw new Error('Não foi possível confirmar as versões salvas.');
+    if(!Array.isArray(response.items))throw new Error('Não foi possível confirmar a última DRE salva.');
     S.versionsData={items:response.items,pagination:pagination(response)};showVersions();
   } catch(error){if(currentContext(id,sequence)&&$('#analysis-version-list')){
     $('#analysis-version-list').innerHTML=`<p class="analysis-note">${esc(error.message)}</p><button type="button" id="analysis-retry-versions">Tentar novamente</button>`;

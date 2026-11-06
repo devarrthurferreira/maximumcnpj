@@ -238,7 +238,7 @@ def _calendar(snapshot, regimes, monthly):
 def validate_dre_snapshot(snapshot):
     """Check structural integrity and saved arithmetic, without applying tax rules."""
     _valid(isinstance(snapshot, dict))
-    for key in ('_id', 'clientId', 'generationId'):
+    for key in ('_id', 'clientId'):
         _valid(isinstance(snapshot.get(key), str) and UUID.fullmatch(snapshot[key]))
     company = snapshot.get('company')
     _valid(isinstance(company, dict) and isinstance(company.get('name'), str) and company['name'].strip())
@@ -248,6 +248,18 @@ def validate_dre_snapshot(snapshot):
     _valid(type(year) is int and 2000 <= year <= 2100)
     source = snapshot.get('source', {})
     _valid(isinstance(source, dict))
+    accounting_only = source.get('sourceKind') == 'ACCOUNTING_ONLY'
+    if accounting_only:
+        partial = snapshot.get('partialData') or {}
+        _valid(isinstance(partial, dict))
+        _valid('generationId' in snapshot and snapshot['generationId'] is None and source.get('generationId') is None and
+               isinstance(snapshot.get('analysisId'), str) and UUID.fullmatch(snapshot['analysisId']) and
+               partial.get('status') == 'INCOMPLETE' and partial.get('missingSectors') == ['fiscal'] and
+               isinstance(partial.get('warning'), str) and partial['warning'].strip() and source.get('partialData') == partial)
+        _valid(all(isinstance(source.get(key), dict) and source[key].get('available') is False and
+                   source[key].get('jobId') is None for key in ('purchases', 'sales')))
+    else:
+        _valid(isinstance(snapshot.get('generationId'), str) and UUID.fullmatch(snapshot['generationId']))
     _valid(isinstance(snapshot.get('engineInput', {}), dict))
     warnings = source.get('warnings', [])
     _valid(isinstance(warnings, list) and all(isinstance(row, (str, dict)) for row in warnings))
@@ -259,6 +271,8 @@ def validate_dre_snapshot(snapshot):
         _valid(isinstance(source['company'], dict) and source['company'].get('code') == company.get('code'))
     result = snapshot.get('result')
     regimes = _regimes(result)
+    if accounting_only:
+        _valid(result['annualRevenue'] == 0)
     monthly = {}
     if result.get('method') == 'REPORT_MONTHS_V1':
         entries = result.get('monthlyResults')
@@ -306,6 +320,10 @@ def dre_metadata(db, simulation_id, workspace, options):
                                       'currentSimulation.id': simulation_id}),
                 404, 'NOT_FOUND', 'Esta versão ainda não foi publicada pela análise.')
     validate_dre_snapshot(record)
+    if record.get('source', {}).get('sourceKind') == 'ACCOUNTING_ONLY':
+        require(db.analyses.find_one({'_id': record['analysisId'], 'workspaceId': workspace,
+                                      'clientId': record['clientId'], 'currentSimulation.id': simulation_id}),
+                404, 'NOT_FOUND', 'A DRE contábil precisa ser a versão atual da análise da empresa.')
     regime = options.get('regimeId')
     require(regime is None or any(row['id'] == regime for row in record['result']['regimes']),
             400, 'DRE_REGIME', 'Selecione um dos regimes capturados nesta versão.')

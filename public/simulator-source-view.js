@@ -10,6 +10,15 @@ const appliedMoney=value=>typeof value==='number'&&Number.isFinite(value)?value.
 const difalRegimes=[['pure','Simples puro'],['hybrid','Simples híbrido']];
 const summed=values=>values.every(value=>typeof value==='number'&&Number.isFinite(value))?values.reduce((sum,value)=>sum+Math.round(value*100),0)/100:null;
 
+export function renderPartialDataNotice(snapshot){
+  const partial=snapshot?.partialData||snapshot?.source?.partialData;
+  const sectors=[...new Set((partial?.missingSectors||[]).filter(sector=>['fiscal','accounting'].includes(sector)))];
+  if(partial?.status!=='INCOMPLETE'||!sectors.length)return '';
+  const names={fiscal:'Fiscal',accounting:'Contábil'},missing=sectors.map(sector=>names[sector]).join(' e ');
+  const identity=snapshot.analysisId?{id:snapshot.analysisId}:{client:snapshot.clientId};
+  return `<section class="card sim-version-notice" data-partial-data="${sectors.join(' ')}" role="status"><h2>DRE sem ${missing}</h2><p>${esc(partial.warning||`Esta DRE foi gerada sem os dados do ${missing}. O resultado usa somente o setor preenchido e precisa ser completado.`)}</p><p>Preencha o setor pendente e gere a DRE novamente para atualizar o resultado da empresa.</p><div class="sim-links">${sectors.map(sector=>`<a class="sim-edit-link" data-fill-missing-sector="${sector}" href="/analyses.html?${esc(new URLSearchParams({...identity,sector}))}">Preencher ${names[sector]} →</a>`).join('')}</div></section>`;
+}
+
 /** Amounts in BRL. Editing uses the selected source estimate; history reads saved DRE cells only. */
 export function buildDifalApplicationView({direction,policy,reports=[],row=null,rbt12ByMonth={},rbt12=null,currentCents=null,totalCents=null,sourceEstimate=null,icmsOutside=false,snapshot=null,monthIndex=0}) {
   if(!['entry','exit'].includes(direction))throw new TypeError('Direção do DIFAL inválida.');

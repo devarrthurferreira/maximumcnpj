@@ -126,7 +126,7 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       assert.equal(summary.analysisId,analysis.id);assert.equal(summary.analysisProtected,true);assert.equal(summary.currentAnalysisId,analysis.id);
     });
 
-    await t.test('editar muda só o rascunho; recalcular cria uma revisão ligada à anterior',async()=>{
+    await t.test('editar preserva o rascunho e publicar substitui a DRE anterior',async()=>{
       const before=structuredClone(await getSimulation(first._id)),oldRevision=analysis.revision;
       const rows=accountingRows();rows[0].salariesCents=4321;await saveAccounting(rows);
       assert.equal(analysis.currentSimulation.id,first._id);assert.equal(analysis.currentSimulation.stale,true);
@@ -134,7 +134,8 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       await assert.rejects(generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:oldRevision}),code('ANALYSIS_CONFLICT'));
       const next=await generateAnalysis(accountant,analysis.id,{requestId:randomUUID(),expectedRevision:analysis.revision});analysis=next.analysis;latest=next.simulation;
       assert.notEqual(latest._id,first._id);assert.equal(latest.parentSimulationId,first._id);assert.equal(latest.monthlyInputs[0].values.salaries,43.21);
-      assert.deepEqual(await getSimulation(first._id),before);assert.equal((await analysisVersions(analysis.id,1)).items.filter(row=>row.current).length,1);
+      await assert.rejects(getSimulation(first._id),code('NOT_FOUND'));assert.equal((await analysisVersions(analysis.id,1)).pagination.total,1);
+      assert.equal(await(await collection('simulations')).countDocuments(scope({clientId})),1);
     });
 
     await t.test('confirmação detecta alteração do arquivo; dados alterados durante cálculo não viram corrente',async()=>{
@@ -184,7 +185,7 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       const next=await generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:analysis.revision});analysis=next.analysis;
       assert.deepEqual(next.simulation.result.regimes.map((row:any)=>row.id),['pure','presumed']);assert.equal(next.simulation.rbt12Manual.confirmed,true);
       assert(next.simulation.result.regimes.every((row:any)=>row.available));assert.equal(next.simulation.parentSimulationId,frozen._id);
-      assert.deepEqual(await getSimulation(frozen._id),frozen,'Informar RBT12 depois cria uma versão nova; o resultado sem referência permanece congelado.');
+      await assert.rejects(getSimulation(frozen._id),code('NOT_FOUND'));assert.equal((await analysisVersions(analysis.id,1)).pagination.total,1);
     });
 
     await t.test('bridge legado preserva retry e exclusão antes da ativação; open adota sem mutar o original',async()=>{
@@ -197,7 +198,7 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       legacyInput={simulationId:randomUUID(),generationId:generation._id,clientId:legacyClientId,reportMonths:9,periodConfirmed:true,monthlyInputs,monthlyGroups:groups,
         rbt12Source:'MANUAL',rbt12ManualConfirmed:true,draft:{year:2027,salesAnnex:1,serviceAnnex:3,rbt12:200000,difalPolicy:defaultDifalPolicy(),
           values:{...firstInput.values,salesRevenue:groups.salesOptantCents+groups.salesNonOptantCents+groups.salesCpfCents,simplePurchases:groups.purchasesOptantCents,regularPurchases:groups.purchasesNonOptantCents}}};
-      legacy=await createLegacySimulation(actor,legacyInput);const original=structuredClone(legacy);
+      legacy=await createLegacySimulation(actor,legacyInput);let original=structuredClone(legacy);
       const stale=(await analysisHistory(1,{clientId:legacyClientId})).items[0];
       const changedInputs=structuredClone(monthlyInputs);changedInputs[0].values.salaries=123.45;
       const second=await createLegacySimulation(actor,{...legacyInput,simulationId:randomUUID(),parentSimulationId:legacy._id,monthlyInputs:changedInputs,
@@ -211,7 +212,9 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       assert.equal((await analysisHistory(1,{clientId:legacyClientId})).items[0].currentSimulation!.id,second._id);
       await deleteSimulation(actor,second._id);
       const fallback=(await analysisHistory(1,{clientId:legacyClientId})).items[0];
-      assert.equal(fallback.currentSimulation!.id,legacy._id);
+      assert.equal(fallback.currentSimulation,null);
+      await assert.rejects(getSimulation(legacy._id),code('NOT_FOUND'));
+      legacyInput={...legacyInput,simulationId:randomUUID()};legacy=await createLegacySimulation(actor,legacyInput);original=structuredClone(legacy);
       assert.ok(fallback.config.revision>refreshed.config.revision);assert.ok(fallback.fiscal.revision>refreshed.fiscal.revision);assert.ok(fallback.accounting.revision>refreshed.accounting.revision);
       legacyAnalysis=(await openAnalysis(actor,{clientId:legacyClientId,year:2028,regimeSelection:selection})).analysis;
       assert.equal(legacyAnalysis.legacy,true);assert.equal(legacyAnalysis.config.year,2027);assert.equal(legacyAnalysis.fiscal.status,'DRAFT');assert.equal(legacyAnalysis.accounting.status,'DRAFT');
@@ -234,14 +237,15 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       await reports(imported.generationId,clientId);await saveFiscal();
       const next=await generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:analysis.revision});analysis=next.analysis;
       assert.equal(next.simulation.parentSimulationId,priorCurrent);assert.equal(next.simulation.generationId,imported.generationId);
-      assert.notEqual((await getSimulation(priorCurrent)).generationId,imported.generationId);
+      await assert.rejects(getSimulation(priorCurrent),code('NOT_FOUND'));
       const history=(await simulationHistory(1,{clientId})).items.find(row=>row._id===next.simulation._id)!;
-      assert.equal(history.parentSimulationDeleted,false,'A nova importação da mesma análise conserva o vínculo válido com a versão anterior.');
+      assert.equal(history.parentSimulationDeleted,true,'A publicação libera o armazenamento da versão anterior.');
     });
 
     await t.test('escopo, autoria, revisões compactas e leituras não executam migração global',async()=>{
       const revisions=await(await collection('analysisRevisions')).find(scope({analysisId:analysis.id})).toArray();
-      assert.ok(revisions.some(row=>row.kind==='accounting' && row.createdBy.id===accountant._id));assert.ok(revisions.every(row=>!row.result && !row.source));
+      assert.equal(revisions.length,0,'As cópias de preenchimentos anteriores foram removidas.');
+      assert.equal(analysis.accounting.updatedBy.id,accountant._id);
       const count=await(await collection('analyses')).countDocuments(scope());
       await route('GET','/analyses');await route('GET','/simulations');assert.equal(await(await collection('analyses')).countDocuments(scope()),count);
       process.env.WORKSPACE_ID='other_workspace';
@@ -297,10 +301,10 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       const sourceBefore=await Promise.all(sourceCollections.map(async name=>(await collection(name)).find(scope()).sort({_id:1}).toArray()));
       const otherBefore=structuredClone(await getAnalysis(legacyAnalysis.id)),unrelatedBefore=structuredClone(await getSimulation(unrelated._id));
       const id=analysis.id,body={expectedRevision:analysis.revision,confirmed:true},snapshots=await collection('simulations');
-      const owned=await snapshots.find(scope({analysisId:id})).project({_id:1}).toArray();assert.ok(owned.length>=3);
-      assert.ok(await(await collection('analysisRevisions')).countDocuments(scope({analysisId:id})));
+      const owned=await snapshots.find(scope({analysisId:id})).project({_id:1}).toArray();assert.ok(owned.length>=1);
+      assert.equal(await(await collection('analysisRevisions')).countDocuments(scope({analysisId:id})),0);
       assert.ok(await(await collection('analysisGenerationRequests')).countDocuments(scope({analysisId:id})));
-      await(await collection('simulationReprocessItems')).insertOne({_id:randomUUID(),...scope(),originalId:owned[0]._id,childId:owned[1]._id,status:'QUEUED',company:{name:'Somente resultado removido'}});
+      await(await collection('simulationReprocessItems')).insertOne({_id:randomUUID(),...scope(),originalId:owned[0]._id,childId:owned.at(-1)!._id,status:'QUEUED',company:{name:'Somente resultado removido'}});
       const result=await route('DELETE',`/analyses/${id}`,body);assert.deepEqual(result,{deleted:true,id,clientId});
       await assert.rejects(getAnalysis(id),code('NOT_FOUND'));await assert.rejects(analysisVersions(id,1),code('NOT_FOUND'));
       for(const row of owned)await assert.rejects(getSimulation(row._id),code('NOT_FOUND'));
@@ -372,13 +376,12 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       const generated=await generateAnalysis(actor,legacyAnalysis.id,{requestId:randomUUID(),expectedRevision:legacyAnalysis.revision});legacyAnalysis=generated.analysis;
       assert.notEqual(legacyAnalysis.currentSimulation.id,legacy._id);assert.equal(legacyAnalysis.legacyReference.simulationId,legacy._id);
       const independent=await createSimulation(actor,{...legacyInput,simulationId:randomUUID(),title:'Legado não adotado'}),before=structuredClone(independent);
-      const revised=await createReprocessedSimulation(actor,{...legacyInput,simulationId:randomUUID(),parentSimulationId:legacy._id,title:'Revisão automática da adotada'},
-        {version:'ANALYSIS_CASCADE_TEST',originalId:legacy._id,source:legacy.source,rbt12Extraction:legacy.rbt12Extraction,rbt12Manual:legacy.rbt12Manual});
-      assert.equal(revised.analysisId,undefined);
+      await assert.rejects(createReprocessedSimulation(actor,{...legacyInput,simulationId:randomUUID(),parentSimulationId:legacy._id,title:'Revisão automática da adotada'},
+        {version:'ANALYSIS_CASCADE_TEST',originalId:legacy._id,source:legacy.source,rbt12Extraction:legacy.rbt12Extraction,rbt12Manual:legacy.rbt12Manual}),code('NOT_FOUND'));
       const versions=(await analysisVersions(legacyAnalysis.id,1)).items.map(row=>row._id);
-      assert.ok(versions.includes(legacy._id));assert.ok(versions.includes(revised._id));assert.ok(!versions.includes(independent._id));
+      assert.deepEqual(versions,[generated.simulation._id]);
       await deleteAnalysis(actor,legacyAnalysis.id,{expectedRevision:legacyAnalysis.revision,confirmed:true});
-      for(const id of [legacy._id,generated.simulation._id,revised._id])await assert.rejects(getSimulation(id),code('NOT_FOUND'));
+      for(const id of [legacy._id,generated.simulation._id])await assert.rejects(getSimulation(id),code('NOT_FOUND'));
       assert.deepEqual(await getSimulation(independent._id),before);
       const reopened=(await openAnalysis(actor,{clientId:legacyClientId,year:2028,regimeSelection:selection})).analysis;
       assert.notEqual(reopened.id,legacyAnalysis.id);assert.equal(reopened.currentSimulation,null);assert.equal(reopened.fiscal.data.generationId,null);
@@ -512,12 +515,12 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       assert.equal(current.fiscal.revision,revision+1);assert.equal(current.fiscal.status,'DRAFT');assert.equal(current.fiscal.confirmation,null);
       assert.deepEqual(current.accounting,accounting);assert.deepEqual(await getSimulation(snapshot._id),snapshot);
       const revisionSaved=await(await collection('analysisRevisions')).findOne(scope({analysisId:current.id,revision:current.revision}));
-      assert.equal(revisionSaved!.data.data.rbt12,120000);
+      assert.equal(revisionSaved!.data,undefined);assert.equal(current.fiscal.data.rbt12,120000);
       await assert.rejects(patch(current.fiscal.data,true),code('ANALYSIS_GENERATION_UNAVAILABLE'));
       await assert.rejects(patch(current.fiscal.data,false,revision),code('ANALYSIS_CONFLICT'));
       await assert.rejects(patch(current.fiscal.data,false,current.fiscal.revision,viewer),code('FORBIDDEN'));
       await assert.rejects(generateAnalysis(actor,current.id,{requestId:randomUUID(),expectedRevision:current.revision}),
-        (error:any)=>error.code==='ANALYSIS_NOT_READY'&&/Prepare novos relatórios/.test(error.message));
+        (error:any)=>error.code==='ANALYSIS_NOT_READY'&&/Confirme.*Fiscal/.test(error.message));
       await assert.rejects(patch({...current.fiscal.data,generationId:randomUUID()}),code('NOT_FOUND'));
       const foreign=await createGeneration(actor,{generationId:randomUUID(),clientIds:[outsideId]});
       await assert.rejects(patch({...current.fiscal.data,generationId:foreign._id}),code('GENERATION_CLIENT'));
@@ -532,7 +535,7 @@ test('MongoDB análises: setores explícitos, fonte confirmada, unicidade concor
       await reports(replacement.generationId,recoveryClient);current=(await patch(current.fiscal.data,true)).analysis;
       const regenerated=await generateAnalysis(actor,current.id,{requestId:randomUUID(),expectedRevision:current.revision});
       assert.equal(regenerated.simulation.parentSimulationId,snapshot._id);assert.equal(regenerated.simulation.generationId,replacement.generationId);
-      assert.deepEqual(await getSimulation(snapshot._id),snapshot);
+      await assert.rejects(getSimulation(snapshot._id),code('NOT_FOUND'));
       if(deleted)await assert.rejects(createGeneration(actor,{generationId:firstImport.generationId,clientIds:[recoveryClient]}),code('GENERATION_DELETED'));
     });
   }finally{

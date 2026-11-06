@@ -60,7 +60,7 @@ test('MongoDB: média mensal e histórico sobrevivem à ordem dos setores e à m
       assert.deepEqual(raw.accounting,savedAccounting,'Importação altera somente o Fiscal; Contábil salvo permanece intacto.');
       const viewed=await getAnalysis(item.id,{includeSource:true});
       assert.deepEqual(viewed.analysis.accounting.data,item.accounting.data);
-      assert.deepEqual(await(await collection('analysisRevisions')).find(scope({analysisId:item.id,kind:'accounting'})).toArray(),historyBefore);
+      assert.equal(await(await collection('analysisRevisions')).countDocuments(scope({analysisId:item.id,kind:'accounting'})),0,'O salvamento fiscal descarta revisões anteriores sem alterar o Contábil atual.');
       const generated=await generateAnalysis(actor,item.id,{requestId:randomUUID(),expectedRevision:item.revision});
       assert.equal(generated.simulation.monthlyInputs.length,9);
       assert(generated.simulation.monthlyInputs.every((row:any)=>row.values.salaries===1000));
@@ -70,8 +70,8 @@ test('MongoDB: média mensal e histórico sobrevivem à ordem dos setores e à m
       const next=await generateAnalysis(actor,item.id,{requestId:randomUUID(),expectedRevision:item.revision});
       assert.equal(next.simulation.result.regimes[0].dre.salaries,-10800);
       assert.equal(next.simulation.parentSimulationId,snapshot._id);
-      assert.deepEqual(await getSimulation(snapshot._id),snapshot);
-      assert.equal((await analysisVersions(item.id,1)).items.length,2);
+      await assert.rejects(getSimulation(snapshot._id),(error:any)=>error.code==='NOT_FOUND');
+      assert.equal((await analysisVersions(item.id,1)).items.length,1);
     });
     await t.test('Fiscal primeiro: média recebida com ano provisório é gravada no ano correto do relatório',async()=>{
       let item=await reports(await fresh('98502'),2024);
@@ -105,7 +105,7 @@ test('MongoDB: média mensal e histórico sobrevivem à ordem dos setores e à m
       const next=await generateAnalysis(actor,item.id,{requestId:randomUUID(),expectedRevision:item.revision});
       assert.equal(next.simulation.result.regimes[0].dre.financialResult,12600);
       assert.equal(next.simulation.parentSimulationId,snapshot._id);
-      assert.deepEqual(await getSimulation(snapshot._id),snapshot);
+      await assert.rejects(getSimulation(snapshot._id),(error:any)=>error.code==='NOT_FOUND');
     });
     await t.test('rascunho incompleto é preservado ao importar, sem transformar pendência em zero',async()=>{
       let item=await fresh('98503');const draft=data(2026) as any;
@@ -127,7 +127,8 @@ test('MongoDB: média mensal e histórico sobrevivem à ordem dos setores e à m
       await assert.rejects(save(previous,'accounting',data(2026,250000),false),(error:any)=>error.code==='ANALYSIS_CONFLICT');
       assert.equal((await getAnalysis(item.id,options)).analysis.accounting.data.monthlyAverage!.values.salariesCents,150000);
       const revisions=await(await collection('analysisRevisions')).find(scope({analysisId:item.id,kind:'accounting'})).sort({revision:1}).toArray();
-      assert.deepEqual(revisions.map(row=>row.data.data.monthlyAverage.values.salariesCents),[100000,150000]);
+      assert.equal(revisions.length,1);assert.equal(revisions[0].data,undefined);
+      assert.equal((await getAnalysis(item.id,options)).analysis.accounting.data.monthlyAverage!.values.salariesCents,150000);
     });
     await t.test('lançamentos antigos só mudam ao salvar a média; revisões originais mantêm cada valor',async()=>{
       let item=await fresh('98505');
@@ -138,8 +139,8 @@ test('MongoDB: média mensal e histórico sobrevivem à ordem dos setores e à m
       assert.deepEqual(item.accounting,original);
       item=(await save(item,'accounting',data(2025,50000))).analysis;
       const revisions=await(await collection('analysisRevisions')).find(scope({analysisId:item.id,kind:'accounting'})).sort({revision:1}).toArray();
-      assert.deepEqual(revisions[0].data,original);
-      assert.equal(revisions[1].data.data.monthlyAverage.values.salariesCents,50000);
+      assert.equal(revisions.length,1);assert.equal(revisions[0].data,undefined);
+      assert.equal(item.accounting.data.monthlyAverage!.values.salariesCents,50000);
     });
   }finally{await(await database()).dropDatabase();await closeDatabase();resetLookupIndexes();
     if(oldDb===undefined)delete process.env.MONGODB_DB;else process.env.MONGODB_DB=oldDb;

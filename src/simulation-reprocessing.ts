@@ -230,7 +230,7 @@ export async function simulationReprocessingStatus(page = 1) { return status(pag
 async function inventory(batch: Doc) {
   const simulations=await collection('simulations');
   const projection={_id:1,title:1,company:1,clientId:1,generationId:1,createdAt:1,parentSimulationId:1,reprocessing:1};
-  const live={deletedAt:{$exists:false},analysisPublication:{$ne:'PENDING'},createdAt:{$lte:batch.startedAt}};
+  const live={deletedAt:{$exists:false},analysisPublication:{$ne:'PENDING'},'source.sourceKind':{$ne:'ACCOUNTING_ONLY'},createdAt:{$lte:batch.startedAt}};
   const automatic=(record:Doc)=>typeof record.reprocessing?.version==='string'&&UUID.test(record.parentSimulationId||'')&&
     record.parentSimulationId===record.reprocessing.originalId&&record.parentSimulationId!==record._id;
   const sameSource=(a:Doc,b:Doc)=>a.clientId===b.clientId&&a.generationId===b.generationId;
@@ -328,7 +328,9 @@ async function currentAnalysisForRefresh(original: Doc, allowedIds: string[]) {
 
 async function reprocessItem(actor: LookupActor, originalId: string, loadedOriginal?: Doc) {
   const original = loadedOriginal || await getSimulation(originalId);
+  pending(original.source?.sourceKind!=='ACCOUNTING_ONLY','ANALYSIS_WORKFLOW_REQUIRED','Esta DRE foi gerada sem Fiscal. Abra a análise da empresa para completar os setores ou gerar novamente.');
   const targetId = reprocessedSimulationId(scope().workspaceId, original._id,original.source?.analysisPeriod?.version);
+  await currentAnalysisForRefresh(original,[original._id,targetId]);
   // A completed child is recognized across operators and without re-reading mutable sources.
   const existing = await (await collection('simulations')).findOne(scope({_id:targetId,deletedAt:{$exists:false}}));
   if (existing?.reprocessing?.version === REPROCESS_VERSION && existing.reprocessing.originalId === original._id) {
@@ -356,7 +358,7 @@ async function reprocessItem(actor: LookupActor, originalId: string, loadedOrigi
   const child = await createReprocessedSimulation(actor, plan.input, plan.context);
   await promoteReprocessedAnalysis(actor,original._id,child);
   const migration = plan.context.serviceRevenueMigration;
-  return {childId:child._id,status:'OK',code:'UPDATED',message:'Nova versão com as regras atuais de DIFAL e a comparação gerencial de IRPJ/CSLL no Lucro Real conferidas. Impostos, resultado, PDF e CSV usam o mesmo cálculo; o histórico original foi preservado.' +
+  return {childId:child._id,status:'OK',code:'UPDATED',message:'Nova versão com as regras atuais de DIFAL e a comparação gerencial de IRPJ/CSLL no Lucro Real conferidas. Impostos, resultado, PDF e CSV usam o mesmo cálculo; a empresa mantém somente a última versão publicada.' +
     (migration && migration.priorMonthlyServiceCents > 0 ? ' ' + migration.warning : '')};
 }
 
@@ -368,6 +370,11 @@ export async function refreshSimulation(actor: LookupActor, simulationId: string
   const original=await getSimulation(simulationId);
   const targetId=reprocessedSimulationId(scope().workspaceId,original._id,original.source?.analysisPeriod?.version);
   const analysis=await currentAnalysisForRefresh(original,[original._id,targetId]);
+  if(original.source?.sourceKind==='ACCOUNTING_ONLY'){
+    pending(analysis&&analysis.currentSimulation.id===original._id&&original.partialData?.missingSectors?.includes('fiscal')&&original.modelVersion===JAN_SEP_MODEL_VERSION,
+      'ANALYSIS_WORKFLOW_REQUIRED','Abra a análise para gerar novamente a DRE com os dados atuais dos setores.');
+    return {simulation:original,updated:false,originalId:original._id};
+  }
   // A matching engine label alone is insufficient: an older DIFAL source can
   // retain a positive amount. Verify the frozen calculation locally on the fast
   // path, without loading the financial rows or consulting an external provider.

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {renderOperationAudit,renderRbt12Schedule,renderAnticipationSource,buildDifalApplicationView,difalApplicationSummary,renderDifalAppliedSource} from '../public/simulator-source-view.js';
+import {renderOperationAudit,renderRbt12Schedule,renderAnticipationSource,buildDifalApplicationView,difalApplicationSummary,renderDifalAppliedSource,renderPartialDataNotice} from '../public/simulator-source-view.js';
 import {difalDirectionSelection} from '../public/difal-policy.js';
 import {defaultDifalPolicy,OUTGOING_DIFAL_MESSAGE} from '../public/simulator-engine.js';
 import {legacyOutgoingDreFixture} from './fixtures/dre-outgoing-legacy.mjs';
@@ -8,6 +8,19 @@ import {renderSection22} from '../public/simulator-extrato-view.js';
 import {buildRbt12Schedule} from '../public/simulator-rbt12.js';
 import {section22Year2025} from './fixtures/section22.ts';
 import {renderFinancialAlerts} from '../public/financial-alerts-view.js';
+
+test('DRE parcial identifica o setor ausente e retoma seu preenchimento na mesma análise',()=>{
+  for(const [sector,name] of [['fiscal','Fiscal'],['accounting','Contábil']]){
+    const snapshot={analysisId:'same-analysis',clientId:'same-company',partialData:{status:'INCOMPLETE',missingSectors:[sector],warning:'Sem dados <confirmados>'}};
+    const html=renderPartialDataNotice(snapshot);
+    assert.match(html,new RegExp(`DRE sem ${name}`));
+    assert(html.includes(`id=same-analysis&amp;sector=${sector}`));
+    assert(html.includes('Sem dados &lt;confirmados&gt;'));
+    assert.match(html,/gere a DRE novamente/);
+  }
+  assert.equal(renderPartialDataNotice({partialData:{status:'INCOMPLETE',missingSectors:['other']}}),'');
+  assert.equal(renderPartialDataNotice({}),'');
+});
 
 test('conferência distingue devoluções de compras não abatidas de devoluções de venda já consideradas',()=>{
   const audit={grossSalesCents:100000,serviceSalesCents:0,salesReturnsCents:7000,purchaseGoodsCents:40000,purchaseServicesCents:0,

@@ -2,6 +2,28 @@ import {test,expect} from '@playwright/test';
 import {drePdfFixture} from '../fixtures/dre-pdf.mjs';
 import {expectConsolidatedDre} from './dre-controls.ts';
 
+test('DRE parcial abre sem exigir relatórios ausentes e direciona ao setor pendente',async({page})=>{
+  const saved:any=drePdfFixture();
+  saved.analysisId='96969696-9696-4696-8696-969696969606';
+  saved.generationId=null;saved.source.generationId=null;saved.source.sourceKind='ACCOUNTING_ONLY';
+  for(const key of ['purchases','sales'])Object.assign(saved.source[key],{jobId:null,available:false});
+  saved.partialData={status:'INCOMPLETE',missingSectors:['fiscal'],warning:'DRE gerada sem o setor Fiscal concluído. Os valores fiscais não representam dados confirmados.'};
+  saved.result.warnings.push({code:'analysis-partial-sectors',title:'DRE sem Fiscal',detail:saved.partialData.warning});
+  const errors:string[]=[],refreshRequests:string[]=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  page.on('request',request=>{if(request.url().endsWith('/refresh'))refreshRequests.push(request.url());});
+  await page.route('**/api/auth/session',route=>route.fulfill({json:{user:{_id:'synthetic',role:'viewer',name:'Conferência sintética'}}}));
+  await page.route('**/api/v4/simulations/'+saved._id,route=>route.fulfill({json:saved}));
+  await page.goto('/simulator.html?simulation='+saved._id+'&current=1');
+  await expectConsolidatedDre(page);
+  await expect(page.locator('[data-partial-data="fiscal"]')).toContainText('DRE sem Fiscal');
+  await expect(page.locator('[data-fill-missing-sector="fiscal"]')).toHaveAttribute('href','/analyses.html?id='+saved.analysisId+'&sector=fiscal');
+  await expect(page.locator('.sim-source a')).toHaveCount(0);
+  await expect(page.locator('#simulator-projection')).toHaveCount(0);
+  await expect(page.locator('#tax-demonstrativo [data-partial-dre-warning]')).toContainText('não representam dados confirmados');
+  expect(errors).toEqual([]);expect(refreshRequests).toEqual([]);
+});
+
 test('DRE e impressão alertam quando espécie das saídas não foi capturada',async({page})=>{
   const saved=drePdfFixture();
   saved.result.warnings.push({code:'sales-species-missing',severity:'warning',title:'Espécie das vendas não identificada',detail:'Reimporte o relatório de saídas para identificar NFC-e.'});
@@ -69,7 +91,7 @@ test('impostos e DRE detalhável compartilham os regimes e a impressão',async({
   for(const id of ['cmvSimple','cmvRegular','icmsAnticipation','cbsIbsCredit','icmsCredit'])await expect(dre.locator(`#dre-child-costsWithAnticipation-${id}`)).toBeVisible();
   for(const id of ['salaries','benefits','payroll','rent','cards','administrative'])await expect(dre.locator(`#dre-child-operatingExpensesWithPayroll-${id}`)).toBeVisible();
   for(const id of ['irpj','csll'])await expect(dre.locator(`#dre-child-resultBeforeIncomeTaxes-${id}`)).toBeVisible();
-  await expect(dre.locator('[data-dre-group-toggle="costsWithAnticipation"]')).toContainText('CUSTO');
+  await expect(dre.locator('[data-dre-group-toggle="costsWithAnticipation"]')).toContainText('Compras e Serviços');
   await expect(dre.locator('[data-dre-row="cmvSimple"] th')).toHaveText('Compras e serviços (do Simples)');
   await expect(dre.locator('[data-dre-row="cmvRegular"] th')).toHaveText('Compras e serviços (fora do Simples)');
   await expect(dre.locator('[data-dre-group-toggle="resultBeforeIncomeTaxes"]')).toContainText('Resultado Antes do IRPJ/CSLL');
@@ -104,7 +126,7 @@ test('impostos e DRE detalhável compartilham os regimes e a impressão',async({
   await expect(pages.last()).toContainText('Receita de vendas');
   await expect(pages.last()).toContainText('ICMS Débito');
   await expect(pages.last()).toContainText('CSLL');
-  await expect(pages.last()).toContainText('CUSTO');
+  await expect(pages.last()).toContainText('Compras e Serviços');
   await expect(pages.last()).toContainText('Compras e serviços (do Simples)');
   await expect(pages.last()).toContainText('Compras e serviços (fora do Simples)');
   await expect(pages.last()).toContainText('Resultado Antes do IRPJ/CSLL');

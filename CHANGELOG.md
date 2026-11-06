@@ -1,5 +1,13 @@
 # Histórico de alterações
 
+## [0.61.0] - 2026-11-06
+
+- Mantém uma DRE atual por empresa, remove resultados substituídos e cópias antigas de revisão sem apagar Fiscal, Contábil ou documentos de origem.
+- Inclui limpeza autenticada para a Diretoria e comando de migração das versões existentes, com repetição segura e isolamento por workspace/empresa.
+- Permite emitir DRE com apenas Fiscal ou Contábil concluído após confirmação do setor ausente; identifica os dados incompletos na tela, impressão e PDF.
+- Acrescenta status e atalhos dos dois setores nos cards, preservando os campos preenchidos ao continuar.
+- Renomeia CUSTO para Compras e Serviços na DRE e o campo contábil para Benefícios e Encargos Pessoais.
+
 ## [0.60.3] - 2026-11-05
 
 - Acrescenta reduções de 70% e 30% da referência de CBS/IBS (alíquotas efetivas de 3,42% e 7,98%) no Fiscal, no simulador e no PDF.

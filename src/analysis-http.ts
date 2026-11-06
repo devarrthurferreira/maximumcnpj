@@ -2,12 +2,14 @@ import {need,integer} from './security.ts';
 import {rateLimit,workspace} from './store.ts';
 import type {LookupActor} from './lookup-db.ts';
 import {analysisHistory,openAnalysis,getAnalysis,updateAnalysisConfig,updateAnalysisSector,importAnalysisGeneration,generateAnalysis,analysisVersions,deleteAnalysis} from './analysis-store.ts';
+import {cleanupSavedVersions} from './simulation-retention-admin.ts';
 
 export async function routeAnalyses(actor:LookupActor,method:string,url:URL,input:unknown){
   const path=url.pathname.replace('/api/v4/analyses','');
   if(method==='GET')await rateLimit(`analysis-read:${workspace()}:${actor._id}`,120,1);
   const page=()=>integer(url.searchParams.get('page')||1,1,100000);
   const options={summary:url.searchParams.get('summary')==='1'};
+  if(path==='/cleanup-versions'&&method==='POST')return cleanupSavedVersions(actor,input);
   if(!path && method==='GET')return analysisHistory(page(),{clientId:url.searchParams.get('clientId')||undefined,search:url.searchParams.get('search')||undefined},options);
   if(!path && method==='POST')return openAnalysis(actor,input,options);
   const match=path.match(/^\/([a-f0-9-]{36})(?:\/(config|fiscal|accounting|fiscal\/import|generate|versions))?$/);

@@ -238,18 +238,19 @@ test('Relatórios de doze meses geram Jan–Set, nove despesas e composição co
     await expect(fiscalPage.locator('#dre-print-document .dre-final-page')).toHaveCount(2);
     await fiscalPage.pdf({path:info.outputPath('analysis-two-regimes-complete.pdf'),format:'A4',landscape:true,printBackground:true,preferCSSPageSize:true});
 
-    // A new login resumes the same shared costs; editing creates a new immutable version.
+    // A new login resumes shared costs; publication keeps only the latest DRE.
     await page.goto(`/analyses.html?id=${id}&sector=accounting`);
     await openSector(page,'accounting','values');
     await expect(page.locator('[data-accounting-average="salariesCents"]')).toHaveValue('100.00');
 
     await page.locator('[data-accounting-average="salariesCents"]').fill('150');
     analysis=await saveSector(page,id,'accounting',false);
-    expect(analysis.currentSimulation).toMatchObject({id:first._id,stale:true});await expect(page.locator('#analysis-generate')).toBeDisabled();
+    expect(analysis.currentSimulation).toMatchObject({id:first._id,stale:true});await expect(page.locator('#analysis-generate')).toBeEnabled();
+    expect(analysis.readiness.partial).toMatchObject({allowed:true,missingSectors:['accounting']});
     expect(await get(page.request,`/api/v4/simulations/${first._id}`)).toEqual(first);
     await saveSector(page,id,'accounting');const second=await generate(page,id);
     expect(second._id).not.toBe(first._id);expect(second.parentSimulationId).toBe(first._id);expect(second.monthlyInputs[0].values.salaries).toBe(150);
-    expect(await get(page.request,`/api/v4/simulations/${first._id}`)).toEqual(first);
+    expect((await page.request.get(`/api/v4/simulations/${first._id}`)).status()).toBe(404);
     expect(await db.collection('purchaseLines').find({workspaceId,jobId:{$in:jobIds}}).sort({jobId:1,index:1}).toArray()).toEqual(frozenRows);
     await page.locator('#edit-analysis').click();await openConfig(page);
     await page.locator('#analysis-config-form input[name="regime"][value="presumed"]').uncheck();
@@ -263,8 +264,8 @@ test('Relatórios de doze meses geram Jan–Set, nove despesas e composição co
     await expect(page.locator('#dre-print-document .dre-final-page')).toHaveCount(2);
     await page.pdf({path:info.outputPath('analysis-single-regime-complete.pdf'),format:'A4',landscape:true,printBackground:true,preferCSSPageSize:true});
     await page.goto(`/analyses.html?id=${id}&view=versions`);
-    await expect(page.locator('[data-analysis-version]')).toHaveCount(3);
-    await expect(page.locator(`[data-analysis-version="${single._id}"]`)).toContainText('Versão corrente');
+    await expect(page.locator('[data-analysis-version]')).toHaveCount(1);
+    await expect(page.locator(`[data-analysis-version="${single._id}"]`)).toContainText('Última DRE salva');
     const versions=await get(page.request,`/api/v4/analyses/${id}/versions`);expect(versions.items.filter((row:any)=>row.current)).toHaveLength(1);
     expect(await db.collection('analyses').countDocuments({workspaceId,clientId:client.id})).toBe(1);
     for(const width of [390,320]){
@@ -358,6 +359,7 @@ test('Análise conclui e exporta sem RBT12 ou PDF; informar PGDAS-D manualmente 
   expect(first.result.simplesDiagnostic).toMatchObject({available:false,statusCode:'MISSING_RBT12',rbt12:null});
   for(const month of first.result.monthlyResults)expect(month.engineInput.rbt12).toBeNull();
   await expect(page.locator('#dre-demonstrativo [data-dre-row=netProfit]')).toBeVisible();
+  await page.locator('#tax-demonstrativo .dre-tax-details > summary').click();
   await expect(page.locator('#tax-demonstrativo [data-simples-diagnostic="MISSING_RBT12"]')).toBeVisible();
   await expect(page.locator('#simulation-snapshot')).toContainText('não informada · opcional');
   await expect(page.locator('#simulation-result')).not.toContainText('NaN');
@@ -367,6 +369,7 @@ test('Análise conclui e exporta sem RBT12 ou PDF; informar PGDAS-D manualmente 
   expect(csv).not.toContain('RBT12 fixa: 0');
   await page.screenshot({path:info.outputPath('analysis-without-rbt12-result.png'),fullPage:true});
   await page.reload();await expect(page.locator('#dre-demonstrativo [data-dre-row=netProfit]')).toBeVisible();
+  await page.locator('#tax-demonstrativo .dre-tax-details > summary').click();
   await expect(page.locator('#tax-demonstrativo [data-simples-diagnostic="MISSING_RBT12"]')).toBeVisible();
   expect(await get(page.request,`/api/v4/simulations/${first._id}`)).toEqual(first);
 
@@ -379,6 +382,6 @@ test('Análise conclui e exporta sem RBT12 ou PDF; informar PGDAS-D manualmente 
   expect(second.rbt12Source).toBe('MANUAL');expect(second.draft.rbt12).toBe(150000);expect(second.rbt12Extraction).toBeNull();
   expect(second.result.regimes.every((row:any)=>row.available)).toBe(true);
   expect(second.parentSimulationId).toBe(first._id);expect(second._id).not.toBe(first._id);
-  expect(await get(page.request,`/api/v4/simulations/${first._id}`)).toEqual(first);
+  expect((await page.request.get(`/api/v4/simulations/${first._id}`)).status()).toBe(404);
   expect(errors).toEqual([]);
 });

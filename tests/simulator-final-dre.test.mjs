@@ -35,6 +35,7 @@ test('financial entries persist after EBITDA and affect Real and Presumed bases 
 test('final statement reconciles gross debits, used credits, EBITDA and final taxes in every regime and month',()=>{
   const saved=scenario(1500,600),p=buildDrePresentation({...saved,calendar:saved.monthlyDre});
   const rows=p.statement.sections.flatMap(section=>section.rows),keys=rows.map(row=>row.key);
+  assert.equal(rows.find(row=>row.key==='costsWithAnticipation').label,'Compras e Serviços');
   assert.deepEqual(keys,['revenue','services','sales','revenueTaxes','das','icmsDebit','cbsIbsDebit','iss','difal','netRevenueAfterTaxes',
     'costsWithAnticipation','cmvSimple','cmvRegular','icmsAnticipation','cbsIbsCredit','icmsCredit','grossAfterCosts',
     'operatingExpensesWithPayroll','salaries','benefits','payroll','rent','cards','administrative','ebitda','financialResult',
@@ -79,6 +80,17 @@ test('screen order is taxes with regime controls and detailed DRE; print stays o
     assert(!printed.includes('Resumo dos resultados'));
     assert(printed.indexOf('Impostos e indicadores')<printed.indexOf('DRE - Consolidado'));
     assert.match(printed,/Receitas de serviços/);assert.match(printed,/Receita de vendas/);
+  }
+});
+test('DRE e impressão mantêm o aviso de setor ausente junto aos resultados',()=>{
+  const saved=scenario();
+  saved.result.warnings.push({code:'analysis-partial-sectors',title:'DRE sem Fiscal',detail:'Os valores fiscais não foram confirmados.'});
+  const presentation=buildDrePresentation({...saved,calendar:saved.monthlyDre});
+  const options={presentation,calendar:saved.monthlyDre,year:saved.year,company:saved.company};
+  for(const html of [renderAnnualDre(options),renderDrePrintDocument(options)]){
+    assert.match(html,/data-partial-dre-warning/);
+    assert.match(html,/DRE sem Fiscal/);
+    assert.match(html,/Os valores fiscais não foram confirmados/);
   }
 });
 test('accounting preserves historical fields while accepting explicit financial accounts and rejecting invalid values',()=>{
