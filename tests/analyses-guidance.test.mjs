@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ACCOUNTING_FIELDS,accountingSummary,analysisGuidance,accountingSourceMonths,analysisPeriodFor,scopedAccountingMonths} from '../public/analyses-guidance.js';
+globalThis.document={querySelector:()=>({})};
+const {renderAnalysisList,renderAnalysisGeneration,renderAnalysisVersions}=await import('../public/analyses-view.js');
+delete globalThis.document;
 import {JAN_SEP_POLICY,analysisMonthsForYear,buildAnalysisPeriod} from '../public/analysis-period.js';
 
 const month=(sourceMonth,values)=>({sourceMonth,...Object.fromEntries(ACCOUNTING_FIELDS.map(([key],index)=>[key,index<5?values[index]:(values.some(Number.isSafeInteger)?0:null)]))});
@@ -21,7 +24,7 @@ test('resultado atual não é contado como uma análise pronta para gerar novame
   assert.equal(current.primaryAction.href,'/simulator.html?simulation=saved-result&current=1');
   analysis.currentSimulation.stale=true;
   const stale=analysisGuidance(analysis);
-  assert.equal(stale.state,'ready');assert.equal(stale.canGenerate,true);assert.equal(stale.primaryAction.label,'Atualizar resultado');
+  assert.equal(stale.state,'ready');assert.equal(stale.canGenerate,true);assert.equal(stale.primaryAction.label,'Atualizar DRE');
 });
 
 test('alterações locais retiram a confirmação do setor e priorizam salvar antes de gerar',()=>{
@@ -175,4 +178,43 @@ test('meses vazios da grade não bloqueiam o relatório de meses completos e zer
   rows[4]=month('2026-05',[10,null,null,null,null]);
   const partial=accountingSummary(rows,analysisMonthsForYear(2026));
   assert.equal(partial.complete,false);assert.equal(partial.missingFields,4);assert.equal(partial.totalCents,null);
+});
+
+
+test('DRE com um setor exige autorização parcial do servidor e mantém alerta do setor ausente',()=>{
+  for(const missing of ['fiscal','accounting']){
+    const analysis=readyAnalysis();analysis[missing].status='DRAFT';
+    analysis.readiness={ready:false,issues:[{code:missing.toUpperCase()+'_NOT_CONFIRMED',sector:missing,message:'Setor ainda não concluído.'}],partial:{allowed:true,missingSectors:[missing]}};
+    const before=structuredClone(analysis),guidance=analysisGuidance(analysis);
+    assert.equal(guidance.canGenerate,true);assert.equal(guidance.partialGeneration,true);
+    assert.deepEqual(guidance.missingSectors,[missing]);assert.match(guidance.generationWarning,new RegExp(missing==='fiscal'?'Fiscal':'Contábil'));
+    assert.match(guidance.generationWarning,/incompleta/);assert.equal(guidance.primaryAction.action,'generate');
+    const html=renderAnalysisGeneration({analysis,canWrite:true});
+    assert.match(html,/Gerar DRE com aviso/);assert.match(html,/Completar análise/);assert.doesNotMatch(html,/id="analysis-generate" disabled/);
+    assert.equal(analysisGuidance(analysis,{accountingDirty:true}).canGenerate,false);
+    analysis.readiness.partial.allowed=false;assert.equal(analysisGuidance(analysis).canGenerate,false);
+    analysis.readiness.partial.allowed=true;assert.deepEqual(analysis,before);
+  }
+});
+
+test('metadados parciais inválidos ou ausentes nunca liberam a geração no navegador',()=>{
+  for(const partial of [undefined,{allowed:false,missingSectors:['fiscal']},{allowed:true,missingSectors:[]},{allowed:true,missingSectors:['fiscal','accounting']},{allowed:true,missingSectors:['unknown']}]){
+    const analysis=readyAnalysis();analysis.readiness={ready:false,issues:[],partial};
+    assert.equal(analysisGuidance(analysis).canGenerate,false);
+  }
+});
+
+test('cards mostram a situação e abrem diretamente cada setor da mesma análise',()=>{
+  const analysis=readyAnalysis();analysis.company={name:'Empresa teste',code:'123'};analysis.config={year:2027};
+  analysis.fiscal.status='DRAFT';analysis.readiness={ready:false,issues:[{sector:'fiscal',code:'FISCAL_NOT_CONFIRMED'}]};
+  const html=renderAnalysisList({items:[analysis],pagination:{page:1,totalPages:1,total:1},search:'',canWrite:true});
+  assert.match(html,/data-analysis-card-sector="fiscal"/);assert.match(html,/Preencher Fiscal/);assert.match(html,/Revisar dados/);
+  assert.match(html,/href="\/analyses.html\?id=analysis&sector=fiscal"/);assert.match(html,/href="\/analyses.html\?id=analysis&sector=accounting"/);
+  assert.match(html,/Conferido/);
+});
+
+test('consulta da DRE apresenta somente a última versão e não oferece paginação antiga',()=>{
+  const html=renderAnalysisVersions({items:[{id:'old',title:'Antiga'},{id:'latest',title:'Atual'}],currentId:'latest',pagination:{page:1,totalPages:2}});
+  assert.match(html,/data-analysis-version="latest"/);assert.doesNotMatch(html,/data-analysis-version="old"/);
+  assert.match(html,/Última DRE salva/);assert.doesNotMatch(html,/data-versions-page/);
 });

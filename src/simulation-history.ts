@@ -15,6 +15,8 @@ import { CALCULATOR_SOURCE_COMMIT, TAX_SOURCES,
   SIMULATION_VALUE_FIELDS, FINANCIAL_VALUE_FIELDS, parseDifalPolicy, upgradeDifalPolicy,parseCbsIbsPercent } from '../public/simulator-engine.js';
 import type { SimulationDraft } from '../public/simulator-engine.js';
 import {parseRegimeSelection,requiresSimplesReference} from '../public/regime-selection.js';
+import {partialAnalysisData} from './analysis-partial.ts';
+import type {MissingSector} from './analysis-partial.ts';
 import {withLegacyAnalysisDeletion} from './analysis-store.ts';
 import {assertAnalysisNotDeleted,simulationAnalysisDeletionStarted} from './analysis-deletion.ts';
 import type {AnalysisDeletionReceipt} from './analysis-deletion.ts';
@@ -52,9 +54,9 @@ function signedSalesMoney(value: unknown) {
   return Math.round(value * 100) / 100;
 }
 
-export function validateSimulationRequest(input: unknown) {
+export function validateSimulationRequest(input: unknown,internal?:{accountingOnly:true}) {
   object(input, ['simulationId', 'generationId', 'clientId', 'reportMonths', 'periodConfirmed', 'monthlyGroups', 'draft'], ['title', 'parentSimulationId', 'rbt12ExtractionId', 'rbt12Source', 'rbt12ManualConfirmed', 'monthlyInputs','periodPolicy']);
-  const simulationId = uuid(input.simulationId), generationId = uuid(input.generationId), clientId = uuid(input.clientId);
+  const simulationId = uuid(input.simulationId), generationId = internal?.accountingOnly&&input.generationId===null?null:uuid(input.generationId), clientId = uuid(input.clientId);
   const parentSimulationId = input.parentSimulationId == null ? null : uuid(input.parentSimulationId);
   const rbt12ExtractionId = input.rbt12ExtractionId == null ? null : uuid(input.rbt12ExtractionId);
   need(parentSimulationId !== simulationId, 'A nova simulação precisa de um identificador próprio.');
@@ -210,7 +212,7 @@ export async function createReprocessedSimulation(actor: LookupActor, input: unk
   return createSimulationSnapshot(actor, input, context);
 }
 
-type AnalysisContext={analysisId:string;analysisRevision:number;source:Source;beforeInsert:()=>Promise<void>;evidence:Record<string,unknown>};
+type AnalysisContext={analysisId:string;analysisRevision:number;source:Source;beforeInsert:()=>Promise<void>;evidence:Record<string,unknown>;missingSectors?:MissingSector[];accountingOnly?:boolean};
 /** Server-only: the HTTP contract never accepts a source, computed result or analysis linkage. */
 export async function createAnalysisSimulation(actor:LookupActor,input:unknown,context:AnalysisContext){
   return createSimulationSnapshot(actor,input,undefined,context);
@@ -218,7 +220,7 @@ export async function createAnalysisSimulation(actor:LookupActor,input:unknown,c
 
 async function createSimulationSnapshot(actor: LookupActor, input: unknown, reprocessing?: ReprocessingContext,analysis?:AnalysisContext) {
   write(actor);
-  const validated = validateSimulationRequest(input), {simulationId, generationId, clientId, draft: submittedDraft, reportMonths, monthlyGroups, parentSimulationId, rbt12ExtractionId} = validated;
+  const validated = validateSimulationRequest(input,analysis?.accountingOnly?{accountingOnly:true}:undefined), {simulationId, generationId, clientId, draft: submittedDraft, reportMonths, monthlyGroups, parentSimulationId, rbt12ExtractionId} = validated;
   const requestHash = digest(JSON.stringify(validated));
   const c = await simulations();
   const repeated = async (record: Doc) => {
@@ -235,14 +237,14 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   await assertSimulationNotDeleted(simulationId);
   const existing = await c.findOne(scope({_id: simulationId}));
   if (existing) return repeated(existing);
-  await assertGenerationNotDeleted(generationId);
+  if(generationId)await assertGenerationNotDeleted(generationId);
   let parent:any=null;
   if (parentSimulationId) {
     parent = await getSimulation(parentSimulationId);
     need(parent.clientId === clientId && (analysis || parent.generationId === generationId),
       'A simulação original precisa pertencer à mesma empresa e geração.', 409, 'SIMULATION_PARENT');
   }
-  let source = analysis?.source || reprocessing?.source || await generationSimulator(generationId, clientId,
+  let source = analysis?.source || reprocessing?.source || await generationSimulator(generationId!, clientId,
     validated.periodPolicy?{periodPolicy:validated.periodPolicy}:{});
   if(source.analysisPeriod&&Array.isArray(validated.monthlyInputs)&&validated.monthlyInputs.length<source.monthlyReports.length){
     try{source=selectAnalysisSourceMonths(source,validated.monthlyInputs.map((row:any)=>row?.sourceMonth));}
@@ -277,6 +279,11 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   need(!rbt12Schedule||rbt12Schedule.complete,`O quadro 2.2 não cobre todas as competências. ${rbt12Schedule?.rows.filter(row=>row.status!=='CONFIRMED').map(row=>`${row.sourceMonth}: faltam ${row.missingMonths.join(', ')}`).join('; ')||''}. Importe um extrato com o histórico necessário.`,409,'RBT12_MONTHS_MISSING');
   const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports!,validated.monthlyInputs,source.sales.jobId,rbt12Schedule,source.analysisPeriod);}catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
   const {difalProjection,anticipationProjection,engineInput,result,projection,monthlyInputs}=computed;
+  const partialData=partialAnalysisData(analysis?.missingSectors||parent?.partialData?.missingSectors||[]);
+  if(partialData){
+    const warning={code:'analysis-partial-sectors',severity:'warning',title:'DRE sem '+(partialData.missingSectors[0]==='fiscal'?'Fiscal':'Contábil'),detail:partialData.warning};
+    result.warnings.push(warning);for(const month of result.monthlyResults||[])month.result.warnings.push({...warning});
+  }
   const first=baselineMonth(source.monthlyReports[0]);
   const baselineMonthlyGroups=first.groups,baselineServiceRevenue=first.values.serviceRevenue;
   const allAdjustments=computed.adjustments;
@@ -290,7 +297,7 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
       ...(reprocessing.serviceRevenueMigration ? {serviceRevenueMigration:reprocessing.serviceRevenueMigration} : {})}} : {}),
     modelVersion: result.version, calculatorSourceCommit: CALCULATOR_SOURCE_COMMIT, taxSources: TAX_SOURCES,
     ...(source.analysisPeriod?{analysisPeriod:source.analysisPeriod}:{}),
-    source, projection, difalProjection, anticipationProjection, monthlyInputs, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
+    source:partialData?{...source,partialData}:source,...(partialData?{partialData}:{}), projection, difalProjection, anticipationProjection, monthlyInputs, reportMonths, reportPeriod: source.period || null, periodBasis: source.periodBasis, periodConfirmed: true,
     monthlyGroups, monthlyGroupsUnit: 'BRL', baselineMonthlyGroups,
     ...(baselineServiceRevenue === null ? {} : {baselineServiceRevenue}),
     manuallyAdjusted: allAdjustments.length > 0, adjustments: allAdjustments, draft, engineInput, result, parentSimulationId,
@@ -301,7 +308,7 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   const requireSources = async () => {
     await assertSimulationNotDeleted(simulationId);
     if(analysis?.analysisId || parent?.analysisId)await assertAnalysisNotDeleted(analysis?.analysisId||parent.analysisId);
-    await assertGenerationNotDeleted(generationId);
+    if(generationId)await assertGenerationNotDeleted(generationId);
     if (reprocessing) await Promise.all([assertLookupNotDeleted(source.purchases.jobId), assertLookupNotDeleted(source.sales.jobId)]);
     if (parentSimulationId) await getSimulation(parentSimulationId);
   };
@@ -332,39 +339,47 @@ export async function simulationHistory(page: number, filters: {clientId?: strin
   page = integer(page, 1, 100000);
   const query: Record<string, any> = scope({deletedAt: {$exists: false},analysisPublication:{$ne:'PENDING'}});
   if (filters.clientId) query.clientId = uuid(filters.clientId);
+  // Choose the company's current/latest version before filtering its displayed metadata.
+  // Otherwise a search or year filter could make a superseded version reappear.
+  const selectedFilters:Record<string,any>={};
   if (filters.year) {
     need(['2027', '2028'].includes(filters.year), 'Ano inválido para filtrar as simulações.');
-    query.year = Number(filters.year);
+    selectedFilters.year = Number(filters.year);
   }
   if (filters.search?.trim()) {
     const search = escapeRegex(text(filters.search, 100));
-    query.$or = ['title', 'company.name', 'company.code', 'createdBy.name'].map(field => ({[field]: {$regex: search, $options: 'i'}}));
+    selectedFilters.$or = ['title', 'company.name', 'company.code', 'createdBy.name'].map(field => ({[field]: {$regex: search, $options: 'i'}}));
   }
   const c = await simulations();
   const projection = {_id: 1, generationId: 1, clientId: 1, title: 1, company: 1, year: 1, createdAt: 1, createdBy: 1,
-    annualRevenue: 1, bestRegimeId: 1, bestRegimeName: 1, bestAnnualProfit: 1, manuallyAdjusted: 1, reportMonths: 1, parentSimulationId: 1,
+    annualRevenue: 1, bestRegimeId: 1, bestRegimeName: 1, bestAnnualProfit: 1, partialData:1, manuallyAdjusted: 1, reportMonths: 1, parentSimulationId: 1,
     reportPeriod: 1, periodBasis: 1, modelVersion: 1, analysisPeriod:1, analysisId:1,analysisRevision:1,'result.method': 1, 'projection.version': 1,
     'reprocessing.version': 1, 'reprocessing.originalId': 1, 'reprocessing.completedAt': 1};
-  const [items, total] = await Promise.all([
-    c.find(query).project(projection).sort({createdAt: -1, _id: -1}).skip((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).maxTimeMS(20000).toArray(),
-    c.countDocuments(query, {maxTimeMS: 20000})
-  ]);
-  // The original remains immutable. Expose where its completed revision can be
-  // opened instead of presenting the old projection as though it were updated.
-  // Scope both sides by workspace, company and generation; no snapshot hydration.
+  const [pageResult]=await c.aggregate([
+    {$match:query},{$project:projection},{$sort:{clientId:1,createdAt:-1,_id:-1}},
+    {$group:{_id:'$clientId',snapshot:{$first:'$$ROOT'}}},{$replaceRoot:{newRoot:'$snapshot'}},
+    // Join once per company, even while its obsolete snapshots are awaiting cleanup.
+    {$lookup:{from:'analyses',let:{client:'$clientId'},pipeline:[
+      {$match:{...scope(),$expr:{$eq:['$clientId','$$client']}}},
+      {$project:{_id:1,clientId:1,activated:1,currentSimulation:1,deletionStartedAt:1}},{$limit:1}
+    ],as:'_historyAnalysis'}},
+    {$set:{_historyAnalysis:{$arrayElemAt:['$_historyAnalysis',0]}}},
+    {$match:{'_historyAnalysis.deletionStartedAt':{$exists:false}}},
+    {$lookup:{from:'simulations',let:{client:'$clientId',selected:{$cond:[
+      {$and:[{$eq:['$_historyAnalysis.activated',true]},{$ne:[{$ifNull:['$_historyAnalysis.currentSimulation.id',null]},null]}]},
+      '$_historyAnalysis.currentSimulation.id','$_id'
+    ]}},pipeline:[
+      {$match:{...scope({deletedAt:{$exists:false},analysisPublication:{$ne:'PENDING'}}),$expr:{$and:[{$eq:['$_id','$$selected']},{$eq:['$clientId','$$client']}]}}},
+      {$project:projection},{$limit:1}
+    ],as:'_historySelected'}},
+    {$unwind:'$_historySelected'},{$replaceRoot:{newRoot:'$_historySelected'}},
+    ...(Object.keys(selectedFilters).length?[{$match:selectedFilters}]:[]),
+    {$facet:{items:[{$sort:{createdAt:-1,_id:-1}},{$skip:(page-1)*PAGE_SIZE},{$limit:PAGE_SIZE}],total:[{$count:'count'}]}}
+  ],{maxTimeMS:20000}).toArray();
+  const items:Doc[]=pageResult?.items||[],total:number=pageResult?.total?.[0]?.count||0;
   const parentIds = [...new Set(items.map(item => item.parentSimulationId).filter(Boolean))];
-  const [revisions, parents] = await Promise.all([
-    items.length ? c.aggregate([
-      {$match: scope({deletedAt: {$exists: false}, 'reprocessing.version': {$exists: true},
-        $or: items.map(item => ({parentSimulationId: item._id, clientId: item.clientId, generationId: item.generationId})),
-        $expr: {$eq: ['$reprocessing.originalId', '$parentSimulationId']}})},
-      {$sort: {createdAt: -1, _id: -1}},
-      {$group: {_id: '$parentSimulationId', simulationId: {$first: '$_id'}}}
-    ], {maxTimeMS: 20000}).toArray() : [],
-    parentIds.length ? c.find(scope({_id: {$in: parentIds}, deletedAt: {$exists: false}}))
-      .project({_id: 1, clientId: 1, generationId: 1, analysisId:1}).maxTimeMS(20000).toArray() : []
-  ]);
-  const revisionsByParent = new Map(revisions.map(row => [row._id, row.simulationId]));
+  const parents=parentIds.length?await c.find(scope({_id:{$in:parentIds},deletedAt:{$exists:false}}))
+    .project({_id:1,clientId:1,generationId:1,analysisId:1}).maxTimeMS(20000).toArray():[];
   const parentsById = new Map(parents.map(row => [row._id, row]));
   const analysisIds=[...new Set(items.map(item=>item.analysisId).filter(id=>typeof id==='string'&&UUID.test(id)))];
   const analyses=items.length?await(await collection('analyses')).find(scope({$or:[
@@ -381,7 +396,7 @@ export async function simulationHistory(page: number, filters: {clientId?: strin
     // A managed revision can use a new import. Its parent may be the adopted legacy snapshot.
     const canonicalParent=!!item.analysisId && analysesById.get(item.analysisId)?.clientId===item.clientId &&
       (!parent?.analysisId || parent.analysisId===item.analysisId);
-    return {...summary, calculationMethod, updatedSimulationId: revisionsByParent.get(item._id) || null,
+    return {...summary, calculationMethod, updatedSimulationId: null,
       currentAnalysisId:analysis?._id||null,analysisProtected:!!item.analysisId || analysis?.activated===true,
       ...(item.parentSimulationId ? {parentSimulationDeleted: !parent || parent.clientId !== item.clientId ||
         (parent.generationId !== item.generationId && !canonicalParent)} : {})};

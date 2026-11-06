@@ -1,4 +1,14 @@
-# Maximum CNPJ · v0.60.3
+# Maximum CNPJ · v0.61.0
+
+## v0.61.0 — Última DRE por empresa e conclusão por setor (06/11/2026)
+
+A empresa mantém somente a última DRE publicada. Gerar novamente substitui o resultado anterior e remove suas cópias, os vínculos de reprocessamento e as cópias antigas de revisão. Fiscal e Contábil continuam preenchidos na análise editável; os arquivos e relatórios de origem permanecem disponíveis. Abrir a empresa também limpa suas versões antigas. O resultado corrente confirmado pela análise tem prioridade sobre recálculos automáticos que não foram promovidos.
+
+Com um dos setores concluído, é possível gerar a estrutura completa da DRE após confirmar explicitamente qual setor ainda falta. Os valores ausentes entram como zero somente na simulação, com aviso permanente na tela, impressão e PDF. A DRE continua incompleta até concluir o outro setor e gerar novamente. Sem Fiscal, não são criados arquivos, importações ou consultas fictícias. Os cards permitem preencher ou revisar Fiscal e Contábil diretamente.
+
+O subtotal da DRE passa a se chamar **Compras e Serviços**. No preenchimento contábil, o campo passa a se chamar **Benefícios e Encargos Pessoais**, mantendo sua chave e valores.
+
+Para limpar de uma vez as empresas existentes, use `npm run cleanup:versions` para conferir a quantidade e `npm run cleanup:versions -- --apply` no ambiente do banco correto. A execução usa um administrador ativo do workspace, preserva os dados atuais e informa falhas por empresa para nova tentativa. A Diretoria também pode usar a ação **Limpar versões antigas** na lista. O endpoint autenticado é `POST /api/v4/analyses/cleanup-versions` com `{ "confirmed": true }`. A limpeza é física; versões removidas não ficam disponíveis para recuperação pelo sistema. A migração de produção deve ser executada após a publicação desta versão; verificações locais usam apenas dados sintéticos.
 
 ## v0.60.3 — Reduções adicionais de CBS/IBS (05/11/2026)
 

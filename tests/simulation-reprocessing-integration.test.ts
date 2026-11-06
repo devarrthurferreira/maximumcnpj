@@ -162,7 +162,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const afterAnalysis=(await analyses.findOne(scope({_id:opened.analysis.id})))!;
    assert.equal(afterAnalysis.currentSimulation.id,child._id);
    for(const field of ['fiscal','accounting','config','revision'])assert.deepEqual(afterAnalysis[field],beforeAnalysis[field]);
-   assert.deepEqual(await simulations.findOne(scope({_id:original._id})),frozen);
+   assert.equal(await simulations.findOne(scope({_id:original._id})),null,'A publicação libera o espaço da versão anterior.');
    assert.deepEqual({jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({jobId:1,index:1}).toArray()},sourceBefore);
    assert.equal(providerCalls,callsBefore,'A atualização não consulta CNPJ novamente.');
    const heavy=new Set(['purchaseLines','lookupItems','cnpjStates','lookupStage']);
@@ -173,8 +173,8 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
     });
    });
    try{
-    const retry=await refreshSimulation(operator,original._id,{}),current=await refreshSimulation(actor,child._id,{});
-    assert.equal(retry.simulation._id,child._id);assert.equal(retry.updated,true);
+    await assert.rejects(refreshSimulation(operator,original._id,{}),code('NOT_FOUND'));
+    const current=await refreshSimulation(actor,child._id,{});
     assert.deepEqual(current.simulation,child);assert.equal(current.updated,false);assert.equal(current.originalId,child._id);
    }finally{for(const mock of mocks)mock.mock.restore();}
   });
@@ -360,19 +360,19 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
   for(const selected of ['latest','current-old','orphan'] as const)await t.test(`CBS escolhe uma base por família e atualiza a versão ativa: ${selected}`,async()=>{
    switchWorkspace('cbs-family-'+selected);const input=await fixture(),familyOffset={latest:100,'current-old':200,orphan:300}[selected],original=await save(input,familyOffset);
    const simulations=await collection('simulations'),siblings=[] as any[];
+   const opened=await openAnalysis(actor,{clientId:input.clientId,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid','presumed','actual']}});
    for(const [index,version] of ['V7','V8','V9'].entries()){
     const child={...structuredClone(original),_id:id(familyOffset+1+index),parentSimulationId:original._id,
      reprocessing:{version:'ICMS_OPERATIONS_2026_10_'+version,originalId:original._id,completedAt:new Date(`2026-10-${20+index}T12:00:00Z`)},
      createdAt:new Date(`2026-10-${20+index}T12:00:00Z`)};
     await simulations.insertOne(child);siblings.push(child);
    }
-   if(selected==='orphan')await deleteSimulation(actor,original._id);
+   if(selected==='orphan')await simulations.deleteOne(scope({_id:original._id}));
    const chosen=selected==='current-old'?siblings[0]:siblings[2];
    if(selected==='current-old')await simulations.insertMany(Array.from({length:498},(_,index)=>({...scope(),_id:id(1000+index),
     clientId:original.clientId,generationId:original.generationId,parentSimulationId:original._id,
     company:original.company,title:'Revisão sintética para paginação',createdAt:new Date('2026-10-25T12:00:00Z'),
     reprocessing:{version:'LEGACY_PAGING_SYNTHETIC',originalId:original._id}})));
-   const opened=await openAnalysis(actor,{clientId:input.clientId,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid','presumed','actual']}});
    await simulations.updateOne(scope({_id:chosen._id}),{$set:{analysisId:opened.analysis.id,analysisRevision:opened.analysis.revision,analysisPublication:'PUBLISHED'}});
    await(await collection('analyses')).updateOne(scope({_id:opened.analysis.id}),{$set:{currentSimulation:{id:chosen._id,
     analysisRevision:opened.analysis.revision,createdAt:chosen.createdAt,modelVersion:chosen.modelVersion,legacy:false}}});
@@ -384,10 +384,11 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const childId=reprocessedSimulationId(scope().workspaceId,chosen._id),child=await getSimulation(childId);
    assert.equal(child.engineInput.months[0].input.rates.cbs,.113);
    assert.equal((await getAnalysis(opened.analysis.id,{summary:true})).analysis.currentSimulation.id,childId);
-   assert.deepEqual(await simulations.find(scope({_id:{$in:frozen.map(old=>old._id)}})).sort({_id:1}).toArray(),frozen);
+   assert.equal(await simulations.countDocuments(scope({_id:{$in:frozen.map(old=>old._id)}})),0,'Somente o resultado atual fica armazenado após a publicação.');
    await reprocessSimulations(operator,{});assert.equal((await simulationReprocessingStatus()).total,1);
    assert.equal(await simulations.countDocuments(scope({'reprocessing.version':REPROCESS_VERSION})),1);
-   if(selected==='orphan')assert.equal((await getSimulation(chosen._id)).parentSimulationDeleted,true);
+   await assert.rejects(getSimulation(chosen._id),code('NOT_FOUND'));
+   assert.equal((await getSimulation(childId)).parentSimulationDeleted,true);
   });
 
   await t.test('UF pendente mantém a fonte conferida, mas só impede a revisão de imposto aplicável',async()=>{

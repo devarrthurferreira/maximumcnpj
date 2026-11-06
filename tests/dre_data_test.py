@@ -96,6 +96,28 @@ class DreDataTests(unittest.TestCase):
             with self.subTest(update=update), self.assertRaises(ReportError):
                 validate_dre_snapshot({**fixture(), **update})
 
+    def test_accounting_only_requires_explicit_missing_fiscal_without_fabricated_imports(self):
+        saved = fixture('zero')
+        partial = {'status': 'INCOMPLETE', 'missingSectors': ['fiscal'], 'warning': 'Fiscal não preenchido.'}
+        saved.update(generationId=None, analysisId=ANALYSIS, partialData=partial)
+        saved['source'].update(sourceKind='ACCOUNTING_ONLY', generationId=None, partialData=copy.deepcopy(partial),
+                               purchases={'jobId': None, 'available': False}, sales={'jobId': None, 'available': False})
+        before = copy.deepcopy(saved)
+        self.assertIs(validate_dre_snapshot(saved), saved)
+        self.assertEqual(saved, before)
+        mutations = [
+            lambda row: row.pop('analysisId'),
+            lambda row: row['source'].__setitem__('sourceKind', 'FISCAL'),
+            lambda row: row['partialData'].__setitem__('missingSectors', ['accounting']),
+            lambda row: row['source']['purchases'].__setitem__('jobId', SIMULATION),
+            lambda row: row['source']['sales'].__setitem__('available', True),
+        ]
+        for mutate in mutations:
+            changed = copy.deepcopy(saved)
+            mutate(changed)
+            with self.assertRaises(ReportError):
+                validate_dre_snapshot(changed)
+
     def test_optional_rbt12_preserves_absence_and_unavailable_simples_in_saved_snapshots(self):
         for variant in ('without-rbt12', 'without-rbt12-only-simples'):
             with self.subTest(variant=variant):
@@ -325,6 +347,22 @@ class DreDataMongoTests(unittest.TestCase):
                                      'clientId': self.saved['clientId'], 'currentSimulation': {'id': SIMULATION}})
         self.assertEqual(self.meta()['snapshot']['_id'], SIMULATION)
         self.db.analyses.update_one({'_id': ANALYSIS}, {'$set': {'deletionStartedAt': utcnow()}})
+        with self.assertRaises(ReportError):
+            self.meta()
+
+    def test_accounting_only_export_requires_same_company_current_analysis(self):
+        saved = {**fixture('zero'), 'workspaceId': self.ws, 'analysisId': ANALYSIS, 'generationId': None}
+        partial = {'status': 'INCOMPLETE', 'missingSectors': ['fiscal'], 'warning': 'Fiscal não preenchido.'}
+        saved['partialData'] = partial
+        saved['source'].update(sourceKind='ACCOUNTING_ONLY', generationId=None, partialData=copy.deepcopy(partial),
+                               purchases={'jobId': None, 'available': False}, sales={'jobId': None, 'available': False})
+        self.db.simulations.replace_one({'_id': SIMULATION}, saved)
+        with self.assertRaises(ReportError):
+            self.meta()
+        self.db.analyses.insert_one({'_id': ANALYSIS, 'workspaceId': self.ws,
+                                     'clientId': saved['clientId'], 'currentSimulation': {'id': SIMULATION}})
+        self.assertIsNone(self.meta()['snapshot']['generationId'])
+        self.db.analyses.update_one({'_id': ANALYSIS}, {'$set': {'clientId': ANALYSIS}})
         with self.assertRaises(ReportError):
             self.meta()
 

@@ -213,21 +213,21 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       assert.equal(list.items[0].parentSimulationDeleted, false);
       assert.equal(list.items[0].updatedSimulationId, null);
       assert.equal(typeof list.items[0].bestAnnualProfit, 'number');
-      assert.equal((await simulationHistory(1, {clientId})).total, 3);
+      assert.equal((await simulationHistory(1, {clientId})).total, 1);
       assert.equal((await simulationHistory(1, {clientId: outside})).total, 0);
-      assert.equal((await simulationHistory(1, {search: '936'})).total, 3);
+      assert.equal((await simulationHistory(1, {search: '936'})).total, 1);
       assert.equal((await simulationHistory(1, {search: 'Operador'})).total, 1);
       assert.equal((await simulationHistory(1, {search: '.*'})).total, 0);
-      assert.equal((await simulationHistory(1, {year: '2027'})).total, 2);
+      assert.equal((await simulationHistory(1, {year: '2027'})).total, 0,'O filtro de ano não recupera uma versão superada.');
       assert.equal((await simulationHistory(2)).items.length, 0);
       await assert.rejects(simulationHistory(1, {year: '0'}), code('VALIDATION'));
       await assert.rejects(simulationHistory(1, {clientId: 'invalid'}), code('VALIDATION'));
       await assert.rejects(simulationHistory(1, {search: 'x'.repeat(101)}), code('VALIDATION'));
       await assert.rejects(simulationHistory(0), code('VALIDATION'));
-      // Seed additional immutable records solely to exercise the page boundary.
+      // Seed independent companies to exercise pagination after latest-only grouping.
       const original = await (await collection('simulations')).findOne(scope({_id: saved._id}));
-      await (await collection('simulations')).insertMany(Array.from({length: 19}, (_, index) => ({
-        ...original!, _id: randomUUID(), createdAt: new Date(1_000_000 + index), title: `Página ${index}`
+      await (await collection('simulations')).insertMany(Array.from({length: 21}, (_, index) => ({
+        ...original!, _id: randomUUID(), clientId:randomUUID(), createdAt: new Date(1_000_000 + index), title: `Página ${index}`
       })));
       const firstPage = await simulationHistory(1), secondPage = await simulationHistory(2);
       assert.equal(firstPage.total, 22); assert.equal(firstPage.items.length, 20); assert.equal(secondPage.items.length, 2);
@@ -235,49 +235,44 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       await (await collection('simulations')).deleteMany(scope({title: {$regex: '^Página '}}));
     });
 
-    await t.test('histórico identifica o método salvo e somente a última correção viva da mesma origem', async () => {
-      const c = await collection('simulations'), original = (await c.findOne(scope({_id: saved._id})))!;
-      const parentId = randomUUID(), unknownId = randomUUID(), oldId = randomUUID(), currentId = randomUUID();
-      const completedAt = new Date('2026-10-20T10:00:00Z');
-      const corrected = (id: string, createdAt: Date, extra: Record<string, unknown> = {}) => ({
-        ...original, _id: id, parentSimulationId: parentId, title: 'Metadados revisão', createdAt,
-        reprocessing: {version: 'REPORT_MONTHS_2026_10_V1', originalId: parentId, completedAt,
-          serviceRevenueMigration: {privateEvidence: 'Not part of history summaries'}}, ...extra
-      });
-      const records = [
-        {...original, _id: parentId, title: 'Metadados original', result: {...original.result, method: undefined},
-          projection: {version: 'AVERAGE_X12_V2'}, createdAt: new Date('2026-10-19T10:00:00Z')},
-        {...original, _id: unknownId, title: 'Metadados desconhecido', result: {}, projection: {version: 'UNKNOWN'}},
-        corrected(oldId, new Date('2026-10-20T10:00:00Z')),
-        corrected(currentId, new Date('2026-10-21T10:00:00Z')),
-        corrected(randomUUID(), new Date('2026-10-22T10:00:00Z'), {deletedAt: new Date()}),
-        corrected(randomUUID(), new Date('2026-10-22T11:00:00Z'), {clientId: outside}),
-        corrected(randomUUID(), new Date('2026-10-22T12:00:00Z'), {generationId: randomUUID()}),
-        corrected(randomUUID(), new Date('2026-10-22T13:00:00Z'), {workspaceId: 'outside_history'}),
-        corrected(randomUUID(), new Date('2026-10-22T14:00:00Z'), {reprocessing: {version: 'OTHER', originalId: unknownId}}),
-        corrected(randomUUID(), new Date('2026-10-22T15:00:00Z'), {reprocessing: undefined})
+    await t.test('histórico mostra somente a última DRE por empresa e mantém metadados sem fontes privadas', async () => {
+      const c=await collection('simulations'),original=(await c.findOne(scope({_id:saved._id})))!;
+      const company=randomUUID(),parentId=randomUUID(),unknownId=randomUUID(),legacyId=randomUUID(),oldId=randomUUID(),currentId=randomUUID();
+      const completedAt=new Date('2026-10-20T10:00:00Z');
+      const corrected=(id:string,createdAt:Date,extra:Record<string,unknown>={})=>({...original,_id:id,clientId:company,
+        parentSimulationId:parentId,title:'Metadados revisão',createdAt,
+        reprocessing:{version:'REPORT_MONTHS_2026_10_V1',originalId:parentId,completedAt,
+          serviceRevenueMigration:{privateEvidence:'Not part of history summaries'}},...extra});
+      const records=[
+        {...original,_id:parentId,clientId:company,title:'Metadados original',result:{...original.result,method:undefined},
+          projection:{version:'AVERAGE_X12_V2'},createdAt:new Date('2026-10-19T10:00:00Z')},
+        {...original,_id:unknownId,clientId:randomUUID(),title:'Metadados desconhecido',result:{},projection:{version:'UNKNOWN'}},
+        {...original,_id:legacyId,clientId:randomUUID(),title:'Metadados legado',result:{...original.result,method:undefined},projection:{version:'AVERAGE_X12_V2'}},
+        corrected(oldId,new Date('2026-10-20T10:00:00Z')),
+        corrected(currentId,new Date('2026-10-21T10:00:00Z')),
+        corrected(randomUUID(),new Date('2026-10-22T10:00:00Z'),{deletedAt:new Date()}),
+        corrected(randomUUID(),new Date('2026-10-22T13:00:00Z'),{workspaceId:'outside_history'})
       ];
-      try {
+      try{
         await c.insertMany(records);
-        const list = await simulationHistory(1, {search: 'Metadados'}), parent = list.items.find(row => row._id === parentId)!;
-        assert.equal(parent.calculationMethod, 'AVERAGE_X12_V2');
-        assert.equal(parent.updatedSimulationId, currentId, 'Versões excluídas, manuais ou de outra empresa/geração/workspace não substituem a correção.');
-        assert.equal(list.items.find(row => row._id === unknownId)!.calculationMethod, null);
-        const current = list.items.find(row => row._id === currentId)!;
-        assert.equal(current.calculationMethod, 'REPORT_MONTHS_V1');
-        assert.equal(current.parentSimulationDeleted, false);
-        assert.deepEqual(current.reprocessing, {version: 'REPORT_MONTHS_2026_10_V1', originalId: parentId, completedAt});
-        assert.equal(current.result, undefined); assert.equal(current.projection, undefined); assert.equal(current.source, undefined);
-        await c.updateOne(scope({_id: currentId}), {$set: {deletedAt: new Date()}});
-        assert.equal((await simulationHistory(1, {search: 'Metadados original'})).items[0].updatedSimulationId, oldId);
-        await c.updateOne(scope({_id: oldId}), {$set: {deletedAt: new Date()}});
-        assert.equal((await simulationHistory(1, {search: 'Metadados original'})).items[0].updatedSimulationId, null);
-        await c.deleteOne(scope({_id: parentId}));
-        const orphan = (await simulationHistory(1, {search: 'Metadados'})).items.find(row => row.parentSimulationId === parentId)!;
-        assert.equal(orphan.parentSimulationDeleted, true);
-        assert.deepEqual(await getSimulation(saved._id), saved, 'A consulta da listagem preserva os valores congelados.');
-        assert.equal(providerCalls, 4, 'A listagem não consulta fontes externas.');
-      } finally { await c.deleteMany({_id: {$in: records.map(row => row._id)}}); }
+        const list=await simulationHistory(1,{search:'Metadados'});assert.equal(list.total,3);
+        assert.equal(list.items.some(row=>row._id===parentId||row._id===oldId),false,'Versões superadas não aparecem no card da empresa.');
+        assert.equal(list.items.find(row=>row._id===legacyId)!.calculationMethod,'AVERAGE_X12_V2');
+        assert.equal(list.items.find(row=>row._id===unknownId)!.calculationMethod,null);
+        const current=list.items.find(row=>row._id===currentId)!;
+        assert.equal(current.calculationMethod,'REPORT_MONTHS_V1');assert.equal(current.parentSimulationDeleted,false);
+        assert.equal(current.updatedSimulationId,null);
+        assert.deepEqual(current.reprocessing,{version:'REPORT_MONTHS_2026_10_V1',originalId:parentId,completedAt});
+        assert.equal(current.result,undefined);assert.equal(current.projection,undefined);assert.equal(current.source,undefined);
+        assert.equal((await simulationHistory(1,{search:'Metadados original'})).total,0,'A busca filtra a última versão, sem recuperar a antiga.');
+        await c.updateOne(scope({_id:currentId}),{$set:{deletedAt:new Date()}});
+        assert.equal((await simulationHistory(1,{clientId:company})).items[0]._id,oldId);
+        await c.deleteOne(scope({_id:parentId}));
+        const orphan=(await simulationHistory(1,{clientId:company})).items[0];
+        assert.equal(orphan._id,oldId);assert.equal(orphan.parentSimulationDeleted,true);
+        assert.deepEqual(await getSimulation(saved._id),saved,'A consulta da listagem preserva os valores congelados.');
+        assert.equal(providerCalls,4,'A listagem não consulta fontes externas.');
+      }finally{await c.deleteMany({_id:{$in:records.map(row=>row._id)}});}
     });
 
     await t.test('leitura histórica não depende dos relatórios nem recalcula resultados', async () => {
@@ -346,7 +341,7 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
       await assert.rejects(createSimulation(operator, parentInput), code('SIMULATION_DELETED'));
       await assert.rejects(createSimulation(actor, {...input, simulationId: randomUUID(), parentSimulationId: parent._id}), code('NOT_FOUND'));
       const after = await simulationHistory(1);
-      assert.equal(after.total, before.total - 1);
+      assert.equal(after.total,before.total,'A empresa continua listada pela sua última DRE.');
       assert.equal(after.items.some(item => item._id === parent._id), false);
       assert.equal((await simulationHistory(1, {clientId, search: parentInput.title})).total, 0);
       assert.deepEqual(await getSimulation(child._id), {...child, parentSimulationDeleted: true});
@@ -540,9 +535,11 @@ test('MongoDB histórico de simulações: validação, snapshot completo, concor
         assert.equal(revenue.months[5],-2000);assert.equal(Math.round(revenue.annual*100),-149998);
       }
       assert.deepEqual(signed.source,monthlySource);
-      assert.deepEqual(await routeV4(viewer,'GET',new URL(`https://test/api/v4/simulations/${signed._id}`),{}),signed);
+      assert.deepEqual(await routeV4(viewer,'GET',new URL(`https://test/api/v4/simulations/${signed._id}`),{}),{...signed,parentSimulationDeleted:true});
       assert.deepEqual(await createSimulation(actor,request),signed,'Retentativa preserva o snapshot assinado e seus alertas.');
-      assert.deepEqual(await getSimulation(saved._id),saved);
+      await assert.rejects(getSimulation(saved._id),code('NOT_FOUND'));
+      assert.equal(await(await collection('simulations')).countDocuments(scope({clientId})),1,'O fluxo legado conserva apenas a última DRE publicada.');
+      input.simulationId=randomUUID();saved=await createSimulation(actor,input);
       assert.deepEqual(await generationSimulator(generationId,clientId),monthlySource);
       assert.equal(providerCalls,4);
     });

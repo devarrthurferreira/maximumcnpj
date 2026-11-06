@@ -46,6 +46,13 @@ def render_final_pdf(model, letterhead):
             'Cenário ' + str(model.year)] if value)
         top -= paragraph(identity, LEFT, top, WIDTH, 7.5, color=MUTED) + 4
         top -= paragraph(model.period_label + ' · ' + model.coverage, LEFT, top, WIDTH, 7.5, color=MUTED) + 12
+        partial = model.snapshot.get('partialData') or {}
+        if partial.get('status') == 'INCOMPLETE':
+            missing = ' e '.join({'fiscal': 'Fiscal', 'accounting': 'Contábil'}[sector]
+                                for sector in partial.get('missingSectors', []) if sector in ('fiscal', 'accounting'))
+            top -= paragraph('DRE sem ' + missing, LEFT, top, WIDTH, 8, True, BURGUNDY) + 3
+            top -= paragraph(partial.get('warning') or 'Resultado incompleto. Complete o setor pendente e gere novamente.',
+                             LEFT, top, WIDTH, 7, color=BURGUNDY) + 8
         top -= paragraph(section, LEFT, top, WIDTH, 12, True, BURGUNDY) + 9
         pdf.setStrokeColor(colors.HexColor('#E2D9DA'))
         pdf.line(LEFT, 82, RIGHT, 82)

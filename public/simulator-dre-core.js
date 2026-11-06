@@ -559,7 +559,7 @@ export function buildDrePresentation({result,monthlyGroups,projection,source,rep
         {key:'deductions',label:'Deduções da receita',rows:[finalRow('revenueTaxes','Deduções da receita','subtotal'),
           display('das','Simples'),finalRow('icmsDebit','ICMS Débito'),finalRow('cbsIbsDebit','CBS/IBS Débito'),display('iss','ISS'),
           optionalTax('difal','DIFAL sobre vendas',['DIFAL de saída capturado no cenário.']),finalRow('netRevenueAfterTaxes','Receita líquida','subtotal')]},
-        {key:'costs',label:'Custos',rows:[finalRow('costsWithAnticipation','CUSTO','subtotal'),
+        {key:'costs',label:'Compras e Serviços',rows:[finalRow('costsWithAnticipation','Compras e Serviços','subtotal'),
           display('cmvSimple','Compras e serviços (do Simples)'),display('cmvRegular','Compras e serviços (fora do Simples)'),
           optionalTax('icmsAnticipation','Antecipação de ICMS nas compras',['Antecipação deduzida uma única vez.']),
           finalRow('cbsIbsCredit','CBS/IBS Crédito'),finalRow('icmsCredit','ICMS Crédito'),contribution]},

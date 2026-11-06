@@ -911,3 +911,13 @@ body:has(#analysis-delete-dialog[open]){overflow:hidden}
 .analysis-difal-regime-choice{display:flex;align-items:center;gap:12px;border:1px solid #dfe4ec;border-radius:12px;padding:14px;cursor:pointer;background:#fff}.analysis-difal-regime-choice:has(input:checked){border-color:#750207;background:#fbf5f5}.analysis-difal-regime-choice:focus-within{outline:2px solid #750207;outline-offset:2px}.analysis-difal-regime-choice input{width:18px;height:18px;accent-color:#750207}.analysis-difal-regime-choice strong{display:block;font-size:14px}.analysis-difal-regime-choice small{display:block;font-size:12px;color:#63718a;margin-top:4px}
 .analysis-difal-panel.is-simple [hidden]{display:none!important}.analysis-difal-panel.is-simple>.analysis-actions{margin-top:18px;padding-top:14px;border-top:1px solid #edf0f4}.analysis-difal-panel.is-simple>.analysis-note{font-size:12px;margin:14px 0}
 @media(max-width:560px){.analysis-difal-options.is-simple{grid-template-columns:1fr}.analysis-difal-period{font-size:11px;gap:6px}.analysis-difal-assessment.is-simple article{padding:16px}.analysis-difal-assessment.is-simple .analysis-difal-entry [data-difal-detected-amount]{font-size:28px}.analysis-difal-assessment.is-simple .analysis-difal-exit{padding:14px}.analysis-difal-panel.is-simple .analysis-actions{display:flex;flex-wrap:wrap}.analysis-difal-panel.is-simple .analysis-actions button{flex:1;min-width:130px}}
+
+/* Direct sector access keeps each company's saved work visible in the list. */
+.analysis-company-card{grid-template-columns:minmax(0,1fr) auto}.analysis-company-card .analysis-company-footer-actions{grid-column:1/-1}
+.analysis-company-sectors{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.analysis-company-sector{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid var(--analysis-line);border-radius:9px;background:var(--analysis-soft);color:var(--analysis-ink)}
+.analysis-company-sector:hover{border-color:#a66b70;text-decoration:none}
+.analysis-company-sector>span{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
+.analysis-company-sector strong{font-size:12px}.analysis-company-sector b{font-size:11px;color:#750207;font-weight:600}
+.analysis-company-sector.is-complete{background:#f5faf7}
+@media(max-width:600px){.analysis-company-sectors{grid-template-columns:1fr}.analysis-company-sector{padding:11px 12px}.analysis-company-sector .analysis-tag{font-size:10px}}

@@ -20,7 +20,7 @@ export const ACCOUNTING_IMPORT_COLUMNS=Object.freeze([
   {key:'salariesCents',label:'Salários e pró-labore'},
   {key:'rentCents',label:'Aluguéis'},
   {key:'cardExpensesCents',label:'Taxas de cartões'},
-  {key:'benefitsCents',label:'Benefícios'},
+  {key:'benefitsCents',label:'Benefícios e Encargos Pessoais'},
   {key:'adminExpensesCents',label:'Outras despesas'},
   {key:'financialExpensesCents',label:'Despesas financeiras'},
   {key:'financialIncomeCents',label:'Receitas financeiras'}
@@ -39,7 +39,7 @@ const headerAliases=[
   ['salarios e pro-labore','salarios/pro-labore','salarios + pro-labore','salarios'],
   ['alugueis','aluguel'],
   ['taxas de cartoes','taxas de cartao','taxas cartoes','taxas cartao'],
-  ['beneficios'],
+  ['beneficios e encargos pessoais','beneficios'],
   ['outras despesas','despesas administrativas'],
   ['despesas financeiras'],['receitas financeiras']
 ].map((aliases,index)=>new Set(index?[...aliases,...aliases.map(alias=>alias+' (r$)')]:aliases));

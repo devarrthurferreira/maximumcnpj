@@ -21,6 +21,7 @@ test('colagem TAB reconhece as seis colunas, ordena meses e preserva os centavos
 test('modelo CSV contém cabeçalho e sete valores vazios, sem zeros implícitos',()=>{
   assert.equal(CSV_TEMPLATE,ACCOUNTING_IMPORT_CSV_TEMPLATE);
   assert.equal(ACCOUNTING_IMPORT_COLUMNS.length,8);
+  assert.equal(ACCOUNTING_IMPORT_COLUMNS.find(column=>column.key==='benefitsCents').label,'Benefícios e Encargos Pessoais');
   assert.ok(Object.isFrozen(ACCOUNTING_IMPORT_COLUMNS));assert.ok(ACCOUNTING_IMPORT_COLUMNS.every(Object.isFrozen));
   const parsed=parseAccountingPaste(CSV_TEMPLATE);
   assert.equal(parsed.hasHeader,true);assert.equal(parsed.delimiter,';');assert.equal(parsed.blankCount,7);assert.equal(parsed.totalCents,0);
@@ -30,6 +31,7 @@ test('modelo CSV contém cabeçalho e sete valores vazios, sem zeros implícitos
 test('cabeçalhos aceitam aliases portugueses explícitos e acentos sem adivinhar outra ordem',()=>{
   for(const header of [
     'Competência;Salários e pró-labore;Aluguéis;Taxas de cartões;Benefícios;Outras despesas',
+    'Competência;Salários e pró-labore;Aluguéis;Taxas de cartões;Benefícios e Encargos Pessoais;Outras despesas',
     'MES/ANO;SALÁRIOS / PRÓ-LABORE;ALUGUEL;TAXAS CARTAO;BENEFICIOS;DESPESAS ADMINISTRATIVAS',
     'Mês;Salários (R$);Aluguéis (R$);Taxas de cartão (R$);Benefícios (R$);Outras despesas (R$)'
   ])assert.equal(parseAccountingPaste(header+'\n'+pasted()).hasHeader,true);

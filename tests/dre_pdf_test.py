@@ -44,6 +44,19 @@ def section_text(document, label, following):
 
 
 class DrePdfTests(unittest.TestCase):
+    def test_missing_sector_warning_is_retained_on_both_pdf_pages(self):
+        for sector, name in (('fiscal', 'Fiscal'), ('accounting', 'Contábil')):
+            saved = fixture()
+            saved['partialData'] = {'status': 'INCOMPLETE', 'missingSectors': [sector],
+                'warning': f'DRE gerada sem o setor {name} concluído. Os valores desse setor não representam dados confirmados.'}
+            content = render(saved)
+            self.verify_document(content)
+            with pymupdf.open(stream=content, filetype='pdf') as document:
+                for page in document:
+                    text = normalized(page.get_text())
+                    self.assertIn(f'DRE sem {name}', text)
+                    self.assertIn('não representam dados confirmados', text)
+
     def test_species_warning_is_visible_without_adding_a_third_page(self):
         saved = fixture()
         saved['result']['warnings'].append({'code': 'sales-species-missing', 'severity': 'warning',
@@ -89,7 +102,7 @@ class DrePdfTests(unittest.TestCase):
             self.assertIn('DRE - Consolidado', document[1].get_text())
             self.assertIn('Receitas de serviços', document[1].get_text())
             self.assertIn('Receita de vendas', document[1].get_text())
-            self.assertIn('CUSTO', document[1].get_text())
+            self.assertIn('Compras e Serviços', document[1].get_text())
             self.assertIn('Compras e serviços (do Simples)', document[1].get_text())
             self.assertIn('Compras e serviços (fora do Simples)', document[1].get_text())
             self.assertIn('Resultado Antes do IRPJ/CSLL', document[1].get_text())
