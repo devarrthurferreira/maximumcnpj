@@ -192,11 +192,11 @@ export function planReprocessing(original: any, source: any, workspaceId: string
     // Eligibility is independent of its amount: pending rows can have zero cents.
     if (applications.some((application: any) => application.salesDifal)) {
       pending(report.difal, 'DIFAL_SOURCE_MISSING', `O relatório original não possui os dados necessários para confirmar o DIFAL em ${report.sourceMonth}.`);
-      pending(report.difal.pendingLines === 0, 'DIFAL_UF_PENDING', `Há linhas aguardando UF para confirmar o DIFAL em ${report.sourceMonth}.`);
+      // UF não confirmada é uma ressalva da estimativa, não um bloqueio de abertura.
     }
     if (applications.some((application: any) => application.purchaseAnticipation)) {
       pending(report.anticipation, 'ANTICIPATION_SOURCE_MISSING', `O relatório original não possui os dados necessários para confirmar o DIFAL de entrada em ${report.sourceMonth}.`);
-      pending(report.anticipation.pendingLines === 0, 'ANTICIPATION_UF_PENDING', `Há compras aguardando UF para confirmar a antecipação de ICMS em ${report.sourceMonth}.`);
+      // O motor conserva a antecipação identificada e emite icms-anticipation-partial para as linhas sem UF.
     }
   }
   const alreadyCurrent=modern&&isDeepStrictEqual(original.result,computed.result)&&isDeepStrictEqual(original.projection,computed.projection)&&

@@ -30,11 +30,13 @@ function metadataPeriods(analysis,generation) {
 
 /** Read-only coverage hints. They never confirm missing financial amounts. */
 export function analysisPeriodFor(analysis,source,generation) {
+  if(usesFixedAnalysisPeriod(analysis)){
+    const periods=metadataPeriods(analysis,generation);
+    if(periods)try{return buildAnalysisPeriod(...periods,{includeSingleReportMonths:true});}catch{/* retain saved coverage if metadata is invalid */}
+  }
   if(source?.analysisPeriod?.version===JAN_SEP_POLICY)return source.analysisPeriod;
   if(analysis?.readiness?.analysisPeriod?.version===JAN_SEP_POLICY)return analysis.readiness.analysisPeriod;
-  if(!usesFixedAnalysisPeriod(analysis))return null;
-  const periods=metadataPeriods(analysis,generation);if(!periods)return null;
-  try{return buildAnalysisPeriod(...periods);}catch{return null;}
+  return null;
 }
 
 /** Retain amounts outside the selected window in storage, but exclude them from current totals. */

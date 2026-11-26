@@ -202,7 +202,7 @@ function section(number,title,subtitle,content,id) {
 }
 function fixedPeriodNotice(){
   const period=S.source.analysisPeriod,count=period.includedMonths.length;
-  return `<section class="card sim-fixed-period${period.complete?'':' is-pending'}" aria-label="Período fixo da análise"><div><span class="eyebrow">JANELA · JANEIRO A SETEMBRO</span><h2>Janeiro a setembro de ${esc(period.sourceYear)}</h2><p>${count} de 9 competências confirmadas em entradas e saídas. Outubro a dezembro ficam fora desta análise.</p></div><strong>${period.complete?`${count} ${count===1?'mês incluído':'meses incluídos'}`:'Documentos pendentes'}</strong><select id="period-months" hidden disabled aria-label="Meses do período fixo"><option value="${count}">${count} ${count===1?'mês':'meses'}</option></select><input id="period-confirm" type="checkbox" hidden disabled ${period.complete?'checked':''}><p id="period-explanation" class="sim-help">${period.complete?`O resultado soma somente ${count} ${count===1?'mês':'meses'}, sem projeção. ${period.missingMonths.length?'Fora do cálculo: '+period.missingMonths.map(competenceLabel).map(esc).join(', ')+'.':''}`:'Importe ao menos uma competência em comum nas entradas e saídas.'}</p></section>`;
+  return `<section class="card sim-fixed-period${period.complete?'':' is-pending'}" aria-label="Período fixo da análise"><div><span class="eyebrow">JANELA · JANEIRO A SETEMBRO</span><h2>Janeiro a setembro de ${esc(period.sourceYear)}</h2><p>${count} de 9 competências disponíveis nos relatórios. Outubro a dezembro ficam fora desta análise.</p></div><strong>${period.complete?`${count} ${count===1?'mês incluído':'meses incluídos'}`:'Documentos pendentes'}</strong><select id="period-months" hidden disabled aria-label="Meses do período fixo"><option value="${count}">${count} ${count===1?'mês':'meses'}</option></select><input id="period-confirm" type="checkbox" hidden disabled ${period.complete?'checked':''}><p id="period-explanation" class="sim-help">${period.complete?`O resultado soma somente ${count} ${count===1?'mês':'meses'}, sem projeção. ${period.missingMonths.length?'Fora do cálculo: '+period.missingMonths.map(competenceLabel).map(esc).join(', ')+'.':''}`:'Importe ao menos uma competência disponível nas entradas ou saídas.'}</p></section>`;
 }
 function display(prefill=null) {
   cancelDrePdf();
@@ -214,7 +214,7 @@ function display(prefill=null) {
   if(automaticPeriod)S.months=S.source.reportMonths;
   if(fixedAnalysisPeriod())S.months=S.source.analysisPeriod.includedMonths.length;
   if(fixedAnalysisPeriod()&&!S.source.monthlyReports?.length){
-    $('#simulator-app').innerHTML=`<section class="card sim-empty"><h1>${esc(S.source.company.name)}</h1><h2>Complete os documentos de janeiro a setembro</h2><p>Os relatórios atuais não confirmam competências em comum dentro do período fixo. Importe entradas e saídas para continuar.</p><a class="sim-back" href="/generations.html?id=${encodeURIComponent(S.source.generationId)}">Conferir relatórios →</a></section>${fixedPeriodNotice()}${sourceCard()}`;
+    $('#simulator-app').innerHTML=`<section class="card sim-empty"><h1>${esc(S.source.company.name)}</h1><h2>Complete os documentos de janeiro a setembro</h2><p>Os relatórios atuais não confirmam competências disponíveis dentro do período fixo. Importe entradas e saídas para continuar.</p><a class="sim-back" href="/generations.html?id=${encodeURIComponent(S.source.generationId)}">Conferir relatórios →</a></section>${fixedPeriodNotice()}${sourceCard()}`;
     return;
   }
   const periodText=fixedAnalysisPeriod()?fixedPeriodNotice():automaticPeriod ? `<details class="card sim-source sim-period-details"><summary>Período confirmado · ${S.months} ${S.months===1?'mês':'meses'}<span>${esc(S.source.period.startMonth)} a ${esc(S.source.period.endMonth)}</span></summary><div class="sim-period"><label for="period-months">Meses nos relatórios<select id="period-months" disabled><option value="${S.months}">${S.months} ${S.months===1?'mês':'meses'}</option></select></label><label class="sim-confirm"><input id="period-confirm" type="checkbox" checked disabled>Confirmado pela coluna H. Compras e vendas podem ter dias diferentes na mesma competência.</label></div><p id="period-explanation" class="sim-help"></p></details>` :
@@ -267,7 +267,7 @@ function display(prefill=null) {
   if(prefill) fillSnapshot(prefill);
   restoreDraft();
   updateRevenue(); renderNotices();
-  if(fixedAnalysisPeriod()&&!S.source.analysisPeriod.complete){$('#generate-simulation').disabled=true;$('#draft-status').textContent='Preenchimento salvo nesta aba. Importe ao menos uma competência em comum entre janeiro e setembro para gerar.';}
+  if(fixedAnalysisPeriod()&&!S.source.analysisPeriod.complete){$('#generate-simulation').disabled=true;$('#draft-status').textContent='Preenchimento salvo nesta aba. Importe ao menos uma competência disponível entre janeiro e setembro para gerar.';}
   if(S.rbt12DocumentId&&!S.rbt12Data)void restoreStoredRbt12();
   else if(S.rbt12ExtractionId&&!S.rbt12Data)void restoreRbt12();
   else if(!S.rbt12Data&&S.rbt12Mode==='PDF')clearRbt12();
@@ -279,7 +279,7 @@ function display(prefill=null) {
 function applyReports() {
   if(actualMonths()){
     const previous=S.monthlyInputs;S.monthlyInputs=S.source.monthlyReports.map((row,index)=>baselineMonth(row,previous[index]?.values));showMonth();S.edited=false;
-    $('#period-explanation').textContent=fixedAnalysisPeriod()?(S.source.analysisPeriod.complete?`Valores por competência pela coluna H. Consolidado Jan–Set = soma dos ${S.months} meses disponíveis. A RBT12 continua usando sua própria janela de 12 meses.`:'Geração pendente: importe ao menos uma competência em comum entre janeiro e setembro nas entradas e saídas.'):'Valores de cada competência pela coluna H. Total anual = soma dos meses importados. Meses fora do período ficam sem dados.';updateRevenue();return;
+    $('#period-explanation').textContent=fixedAnalysisPeriod()?(S.source.analysisPeriod.complete?`Valores por competência pela coluna H. Consolidado Jan–Set = soma dos ${S.months} meses disponíveis. A RBT12 continua usando sua própria janela de 12 meses.`:'Geração pendente: importe ao menos uma competência disponível entre janeiro e setembro nas entradas e saídas.'):'Valores de cada competência pela coluna H. Total anual = soma dos meses importados. Meses fora do período ficam sem dados.';updateRevenue();return;
   }
   const projection=sourceProjection();
   for(const key of IMPORTED) $('#'+key).value=(projection.monthlyGroupsCents[key]/100).toFixed(2);
@@ -1086,6 +1086,14 @@ function snapshotNotice(snapshot,{historical=false,updated=false,originalId=null
 }
 function refreshFailure(snapshot,error) {
   const historical=snapshotUrl(snapshot._id,true);
+  // The already authorized saved version is useful even when recalculation fails.
+  // Never bypass authentication, authorization or an explicit deletion response.
+  if(![401,403,404].includes(error?.status)&&snapshot?.result){
+    showSnapshot(snapshot);
+    const notice=document.createElement('section');notice.className='card sim-version-notice';notice.dataset.simulationRefresh='fallback';
+    notice.innerHTML=`<h2>DRE disponível · conferência recomendada</h2><p role="status">${esc(error.message||String(error))}</p><p>Exibindo os valores da última versão salva, sem alterações. A atualização automática não foi concluída; confira os relatórios para atualizar os resultados.</p><div class="sim-links">${canSave()?'<button type="button" id="retry-current-simulation">Tentar atualizar DRE</button>':''}${documentUuid(snapshot.analysisId)?`<a class="sim-back" href="/analyses.html?${new URLSearchParams({id:snapshot.analysisId})}">Abrir análise da empresa →</a>`:''}</div>`;
+    $('#simulator-intro').after(notice);$('#retry-current-simulation')?.addEventListener('click',()=>void openSavedSnapshot(snapshot,{current:true}));return;
+  }
   $('#simulator-app').innerHTML=`<section class="card sim-empty" data-simulation-refresh="failed"><h2>A DRE atual ainda precisa de conferência</h2><p role="alert">${esc(error.message||String(error))}</p><p>A versão salva permanece disponível no histórico. O resultado atualizado será exibido depois da conferência dos relatórios.</p><div class="sim-links">${canSave()?'<button type="button" id="retry-current-simulation">Tentar atualizar DRE</button>':''}${documentUuid(snapshot.analysisId)?`<a class="sim-back" href="/analyses.html?${new URLSearchParams({id:snapshot.analysisId})}">Abrir análise da empresa →</a>`:''}<a class="sim-back" href="${esc(historical)}">Consultar versão histórica →</a></div></section>`;
   $('#retry-current-simulation')?.addEventListener('click',()=>void openSavedSnapshot(snapshot,{current:true}));
 }

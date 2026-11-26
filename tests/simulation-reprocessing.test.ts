@@ -67,7 +67,7 @@ test('recálculo atualiza política e direções somente na versão vinculada, p
  }
 });
 
-test('pendências de UF só bloqueiam impostos potencialmente usados por algum regime',()=>{
+test('pendências de UF não bloqueiam a revisão; totais e identidade continuam obrigatórios',()=>{
  const {original,source}=fixture();
  original.draft.difalPolicy=difalPolicy({pure:false,hybrid:false,presumed:false,actual:false});
  source.sales.difal.pendingLines=1;
@@ -85,13 +85,13 @@ test('pendências de UF só bloqueiam impostos potencialmente usados por algum r
  current.monthlyReports[0].difal={...source.sales.difal,pendingLines:0};
  assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Lucro Presumido não aplica antecipação de compras.');
  original.draft.difalPolicy.enabled.pure=true;
- assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING');
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'UF pendente não bloqueia a DRE.');
  original.draft.rbt12=3_600_000;original.rbt12Manual.rbt12Cents=360_000_000;
  original.draft.difalPolicy.enabled.presumed=false;original.draft.difalPolicy.enabled.hybrid=true;
  current.monthlyReports[0].difal.pendingLines=1;
- assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING','RBT12 no sublimite não dispensa a UF das compras elegíveis.');
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'UF pendente não bloqueia a DRE.');
  original.draft.difalPolicy.enabled.actual=true;
- assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING','A entrada selecionada nos Simples ainda exige UF.');
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'UF pendente não bloqueia a DRE.');
  current.purchases={...current.purchases,totalCents:999};
  original.draft.difalPolicy=difalPolicy({pure:false,hybrid:false,presumed:false,actual:false});
  assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='REPROCESS_SOURCE_TOTAL','Excluir o imposto não dispensa a conciliação das fontes.');
@@ -112,7 +112,7 @@ test('revisão exige somente a evidência da direção selecionada para Puro ou 
  delete current.monthlyReports[0].anticipation;
  assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_SOURCE_MISSING');
  current.monthlyReports[0].anticipation={...anticipation};
- assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING');
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'UF pendente não bloqueia a DRE.');
  original.draft.difalPolicy.enabled={pure:false,hybrid:true,presumed:false,actual:false};
  assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Saída desativada não exige fonte de imposto.');
  current.monthlyReports[0].difal={...source.sales.difal,pendingLines:0};
@@ -125,7 +125,7 @@ test('revisão exige somente a evidência da direção selecionada para Puro ou 
  assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'Nenhuma direção selecionada dispensa ambas as estimativas.');
 });
 
-test('RBT12 móvel não dispensa a UF de entrada ao alcançar R$ 3,6 milhões',()=>{
+test('RBT12 móvel mantém a estimativa parcial com UF a conferir',()=>{
  const {original,source}=fixture();original.reportMonths=2;
  original.projection=annualizeReports(original.source.fields,2);
  original.baselineMonthlyGroups=Object.fromEntries(Object.entries(original.projection.monthlyGroupsCents).map(([key,value])=>[key,Number(value)/100]));
@@ -142,7 +142,7 @@ test('RBT12 móvel não dispensa a UF de entrada ao alcançar R$ 3,6 milhões',(
  const current={...source,monthlyReports:source.monthlyReports.map((row:any,index:number)=>({...row,
   difal:{...row.difal,pendingLines:index},anticipation:{...anticipation,pendingLines:index}}))};
  const before=structuredClone(original);
- assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING'&&error.message.includes('2025-02'));
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'UF pendente não bloqueia a DRE.');
  current.monthlyReports[1].anticipation.pendingLines=0;
  const planned=planReprocessing(original,current,'ws');
  assert.deepEqual(buildRbt12Schedule(planned.context.rbt12Extraction,current.monthlyReports.map((row:any)=>row.sourceMonth)).rows.map(row=>row.rbt12Cents),[359_999_999,360_000_000]);
@@ -150,7 +150,7 @@ test('RBT12 móvel não dispensa a UF de entrada ao alcançar R$ 3,6 milhões',(
  current.monthlyReports[0].difal.pendingLines=1;
  assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'UF de saída não impede a revisão com saída desativada.');
  current.monthlyReports[0].difal.pendingLines=0;current.monthlyReports[0].anticipation.pendingLines=1;
- assert.throws(()=>planReprocessing(original,current,'ws'),(error:any)=>error.code==='ANTICIPATION_UF_PENDING'&&error.message.includes('2025-01'));
+ assert.doesNotThrow(()=>planReprocessing(original,current,'ws'),'UF pendente não bloqueia a DRE.');
 });
 
 test('migração preserva deltas e despesas em centavos, separa serviço e não modifica original',()=>{

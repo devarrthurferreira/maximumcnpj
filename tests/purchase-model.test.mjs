@@ -51,7 +51,7 @@ test('guided second import accepts different days in matching months and blocks 
 test('análise aceita intervalos diferentes, incluindo meses internos sem movimento',()=>{
  const purchases={startMonth:'2026-01',endMonth:'2026-03',months:3,observedMonths:2,missingMonths:['2026-02']};
  const sales={startMonth:'2026-01',endMonth:'2026-04',months:4};
- assert.deepEqual(assertAnalysisPurchaseCompetences(purchases,sales).includedMonths,['2026-01','2026-02','2026-03']);
- assert.deepEqual(assertAnalysisPurchaseCompetences(purchases,{startMonth:'2026-02',endMonth:'2026-04',months:3}).includedMonths,['2026-02','2026-03']);
- assert.throws(()=>assertAnalysisPurchaseCompetences(purchases,{startMonth:'2026-04',endMonth:'2026-06',months:3}),/competência em comum/);
+ assert.deepEqual(assertAnalysisPurchaseCompetences(purchases,sales).includedMonths,['2026-01','2026-02','2026-03','2026-04']);
+ assert.deepEqual(assertAnalysisPurchaseCompetences(purchases,{startMonth:'2026-02',endMonth:'2026-04',months:3}).includedMonths,['2026-01','2026-02','2026-03','2026-04']);
+ assert.deepEqual(assertAnalysisPurchaseCompetences(purchases,{startMonth:'2026-04',endMonth:'2026-06',months:3}).includedMonths,['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06']);
 });

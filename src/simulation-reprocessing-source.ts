@@ -42,7 +42,7 @@ async function originalSource(snapshot: Doc, purchases: Summary, sales: Summary)
   }
   if(source.analysisPeriod){
     let period;
-    try{period=buildAnalysisPeriod(purchases.period,sales.period);assertCompleteAnalysisPeriod(period);
+    try{period=buildAnalysisPeriod(purchases.period,sales.period,{includeSingleReportMonths:source.analysisPeriod.coverageMode==='ANY_REPORT'});assertCompleteAnalysisPeriod(period);
       if(source.analysisPeriod.availableMonths)period=selectAnalysisPeriod(period,source.analysisPeriod.includedMonths);}
     catch(error){check(false,error instanceof Error?error.message:'O período de janeiro a setembro não concilia com as fontes.');}
     check(isDeepStrictEqual(source.analysisPeriod,period)&&isDeepStrictEqual(snapshot.analysisPeriod,period),

@@ -129,3 +129,14 @@ test('linhas contábeis vazias são opcionais mas uma linha parcialmente preench
   assert.throws(()=>parseAccountingData({months:[filled,{...blank('2026-02'),rentCents:100}]},true,{periodPolicy:JAN_SEP_POLICY}),/Preencha todas/);
   assert.throws(()=>parseAccountingData({months:[blank('2026-01')]},true,{periodPolicy:JAN_SEP_POLICY}),/Preencha todas/);
 });
+
+test('cobertura por qualquer relatório inclui competências anteriores sem presumir cobertura conjunta',()=>{
+ const p=period('2026-06','2026-09'),v=period('2026-01','2026-09');
+ const combined=buildAnalysisPeriod(p,v,{includeSingleReportMonths:true});
+ assert.deepEqual(combined.includedMonths,analysisMonthsForYear(2026));
+ assert.deepEqual(combined.purchasesMissingMonths,['2026-01','2026-02','2026-03','2026-04','2026-05']);
+ assert.deepEqual(combined.salesMissingMonths,[]);assert.equal(combined.coverageMode,'ANY_REPORT');
+ assert.doesNotThrow(()=>assertCompleteAnalysisPeriod(combined));
+ assert.equal(buildAnalysisPeriod(p,v).months,4,'A cobertura histórica original continua verificável.');
+ const selected=selectAnalysisPeriod(combined,['2026-01','2026-09']);assert.doesNotThrow(()=>assertCompleteAnalysisPeriod(selected));
+});

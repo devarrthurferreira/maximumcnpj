@@ -1,5 +1,7 @@
 # Maximum CNPJ · v0.61.1
 
+**DRE com ressalvas:** UF pendente não impede o recálculo da estimativa de antecipação. Falhas de atualização exibem a versão salva já autorizada com aviso. Nas novas gerações, a cobertura Jan–Set usa as competências presentes em entradas ou saídas; meses com apenas um relatório são identificados como provisórios no lado ausente. Meses sem cobertura de ambos não são preenchidos automaticamente.
+
 **DIFAL de entrada:** relatório concluído com linhas sem UF permite salvar e concluir o Fiscal com aviso. O valor parcial e as opções de inclusão são mantidos; não se presume UF nem ausência de imposto. A conferência continua disponível.
 
 **Limite de importação de relatórios:** até 80.000 linhas de dados por arquivo, sem alteração das regras fiscais ou das partes internas de envio. Relatórios grandes podem levar mais tempo. Mantidos os demais limites de tamanho e segurança.

@@ -19,7 +19,7 @@ export function reportMonthsInPeriod(period){
   check(count>=1&&count<=12&&count===period.months,'O intervalo original dos relatórios é inválido.');
   return Array.from({length:count},(_,index)=>new Date(Date.UTC(year,month-1+index,1)).toISOString().slice(0,7));
 }
-export function buildAnalysisPeriod(purchasesPeriod,salesPeriod){
+export function buildAnalysisPeriod(purchasesPeriod,salesPeriod,{includeSingleReportMonths=false}={}){
   const purchases=reportMonthsInPeriod(purchasesPeriod),sales=reportMonthsInPeriod(salesPeriod);
   const all=[...new Set([...purchases,...sales])].sort(),purchased=new Set(purchases),sold=new Set(sales);
   const years=[...new Set(all.map(month=>Number(month.slice(0,4))))];
@@ -27,10 +27,13 @@ export function buildAnalysisPeriod(purchasesPeriod,salesPeriod){
   check(years.length===1||completeYears.length===1,
     'Os relatórios abrangem anos diferentes sem uma única janela completa de janeiro a setembro. Importe os dois relatórios do mesmo ano.');
   const sourceYear=completeYears[0]??years[0],expectedMonths=analysisMonthsForYear(sourceYear),expected=new Set(expectedMonths);
-  const includedMonths=expectedMonths.filter(month=>purchased.has(month)&&sold.has(month));
-  const missingMonths=expectedMonths.filter(month=>!purchased.has(month)||!sold.has(month));
+  const includedMonths=expectedMonths.filter(month=>includeSingleReportMonths?(purchased.has(month)||sold.has(month)):(purchased.has(month)&&sold.has(month)));
+  const missingMonths=expectedMonths.filter(month=>!includedMonths.includes(month));
+  const purchasesMissingMonths=includedMonths.filter(month=>!purchased.has(month));
+  const salesMissingMonths=includedMonths.filter(month=>!sold.has(month));
+  const singleReportCoverage=includeSingleReportMonths&&(purchasesMissingMonths.length||salesMissingMonths.length)?{coverageMode:'ANY_REPORT',purchasesMissingMonths,salesMissingMonths}:{};
   return {version:JAN_SEP_POLICY,sourceYear,startMonth:includedMonths[0]||expectedMonths[0],endMonth:includedMonths.at(-1)||expectedMonths[8],months:includedMonths.length,
-    expectedMonths,includedMonths,excludedMonths:all.filter(month=>!expected.has(month)),missingMonths,complete:includedMonths.length>0};
+    expectedMonths,includedMonths,excludedMonths:all.filter(month=>!expected.has(month)),missingMonths,complete:includedMonths.length>0,...singleReportCoverage};
 }
 /** Restrict the calculation to explicitly usable months, retaining source coverage for audit. */
 export function selectAnalysisPeriod(period,sourceMonths){
@@ -60,6 +63,12 @@ export function assertCompleteAnalysisPeriod(period,reports){
   check(Array.isArray(period.excludedMonths)&&new Set(period.excludedMonths).size===period.excludedMonths.length&&
     period.excludedMonths.every(month=>/^20\d{2}-(0[1-9]|1[0-2])$/.test(month)&&!expected.includes(month)),
     'As competências excluídas da análise são inválidas.');
+  if(period.coverageMode!==undefined){
+    check(period.coverageMode==='ANY_REPORT','Modo de cobertura fiscal inválido.');
+    const available=period.availableMonths||included;
+    for(const key of ['purchasesMissingMonths','salesMissingMonths'])check(Array.isArray(period[key])&&new Set(period[key]).size===period[key].length&&period[key].every(month=>available.includes(month)),'Cobertura por documento inválida.');
+    check(!period.purchasesMissingMonths.some(month=>period.salesMissingMonths.includes(month)),'Competência sem cobertura de ambos os documentos.');
+  }
   if(reports!==undefined)check(Array.isArray(reports)&&JSON.stringify(reports.map(row=>row.sourceMonth))===JSON.stringify(included),
     'O cálculo deve conter exatamente as competências incluídas entre janeiro a setembro do ano de origem.');
   return period;

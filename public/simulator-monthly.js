@@ -252,6 +252,10 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     group.sourceMonths.push(row.sourceMonth);warningGroups.set(key,group);
   }
   const warnings=[...warningGroups.values()].map(({sourceMonths,...item})=>({...item,detail:`${sourceMonths.join(', ')}: ${item.detail}`}));
+  if(analysisPeriod?.coverageMode==='ANY_REPORT'){
+    const included=new Set(analysisPeriod.includedMonths),p=(analysisPeriod.purchasesMissingMonths||[]).filter(month=>included.has(month)),v=(analysisPeriod.salesMissingMonths||[]).filter(month=>included.has(month));
+    if(p.length||v.length)warnings.push({code:'partial-fiscal-coverage',severity:'warning',title:'Competências com cobertura fiscal parcial',detail:`Entradas sem cobertura: ${p.join(', ')||'nenhuma'}; saídas sem cobertura: ${v.join(', ')||'nenhuma'}. O valor zero no lado sem documento é uma premissa provisória. Confira os relatórios; os valores disponíveis foram preservados.`});
+  }
   const missingSpecies=reports.reduce((total,row)=>total+(row.salesSpecies?.missingLines||0),0);
   if(missingSpecies)warnings.push({code:'sales-species-missing',severity:'warning',title:'Espécie das vendas não identificada',detail:`${missingSpecies} venda(s) sem espécie registrada na coluna D. Não foi possível identificar NFC-e nessas linhas. O ICMS usa a UF disponível como estimativa; reimporte o relatório de saídas para aplicar a regra com segurança.`});
   if(reports.every(row=>row.salesSpecies?.version==='SALES_SPECIES_V1')){

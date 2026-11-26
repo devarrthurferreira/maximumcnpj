@@ -81,14 +81,15 @@ test('MongoDB Jan–Set: recorte auditável, fontes diferentes, faltas explícit
       assert.equal((await createSimulation(actor,input(source,true))).result.annualRevenue,3000);
     });
 
-    await t.test('ausência em um arquivo é excluída; Contábil incompleto reduz a DRE aos meses preenchidos',async()=>{
+    await t.test('ausência em um arquivo é sinalizada; Contábil incompleto reduz a DRE aos meses preenchidos',async()=>{
       const ids=await fixture('99283',[['2026-02',10000],['2026-09',20000]],
         [['2026-01',100000],['2026-09',200000],['2026-12',900000]]);
       const source=await generationSimulator(ids.generationId,ids.clientId,options);
-      assert.equal(source.analysisPeriod!.complete,true);assert.deepEqual(source.analysisPeriod!.missingMonths,['2026-01']);
-      assert.equal(source.reportMonths,8);assert.equal(source.monthlyReports.length,8);
-      assert.ok(source.monthlyReports.every(row=>row.sourceMonth!=='2026-01'));
-      const standalone=await createSimulation(actor,input(source,true));assert.equal(standalone.reportMonths,8);
+      assert.equal(source.analysisPeriod!.complete,true);assert.deepEqual(source.analysisPeriod!.missingMonths,[]);
+      assert.deepEqual(source.analysisPeriod!.purchasesMissingMonths,['2026-01']);
+      assert.equal(source.reportMonths,9);assert.equal(source.monthlyReports.length,9);
+      assert.ok(source.monthlyReports.some(row=>row.sourceMonth==='2026-01'));
+      const standalone=await createSimulation(actor,input(source,true));assert.equal(standalone.reportMonths,9);
       let analysis=(await openAnalysis(actor,{clientId:ids.clientId,year:2027,regimeSelection})).analysis;
       analysis=(await updateAnalysisSector(actor,analysis.id,'fiscal',{expectedSectorRevision:analysis.fiscal.revision,
         expectedConfigRevision:analysis.config.revision,complete:true,data:{...analysis.fiscal.data,generationId:ids.generationId}})).analysis;

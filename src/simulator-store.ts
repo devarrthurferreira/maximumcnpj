@@ -62,7 +62,7 @@ export async function generationSimulator(id: string, clientId: string, options:
     'Os relatórios não correspondem à empresa e à geração selecionadas.', 409, 'SIMULATOR_INCONSISTENT');
   }
   const analysisPeriod=options.periodPolicy===JAN_SEP_POLICY?(()=>{
-    try{return buildAnalysisPeriod(purchases.period,sales.period);}
+    try{return buildAnalysisPeriod(purchases.period,sales.period,{includeSingleReportMonths:true});}
     catch(error){throw new AppError(409,'ANALYSIS_PERIOD',error instanceof Error?error.message:'Confira o ano e a cobertura de janeiro a setembro dos relatórios.');}
   })():null;
   const importedMonthlyReports = await monthlyReportSource(purchases, sales, undefined, undefined, options);
@@ -97,12 +97,13 @@ export async function generationSimulator(id: string, clientId: string, options:
     period = purchases.period; reportMonths = period.months; periodBasis = 'COLUMN_H';
   }
   const warnings = [
-    analysisPeriod?`Período fixo: janeiro a setembro de ${analysisPeriod.sourceYear}. Cobertura comum das entradas e saídas: ${analysisPeriod.includedMonths.length}/9 competências. ${analysisPeriod.complete?'Os valores são a soma das competências disponíveis, sem preencher meses ausentes.':'Nenhuma competência comum disponível.'} Meses não incluídos: ${analysisPeriod.missingMonths.join(', ')||'nenhum'}.`:
+    analysisPeriod?`Período fixo: janeiro a setembro de ${analysisPeriod.sourceYear}. Cobertura das entradas ou saídas: ${analysisPeriod.includedMonths.length}/9 competências. ${analysisPeriod.complete?'Os valores são a soma das competências disponíveis; meses sem cobertura de ambos permanecem fora.':'Nenhuma competência disponível.'} Meses não incluídos: ${analysisPeriod.missingMonths.join(', ')||'nenhum'}.`:
       period ? `Período identificado automaticamente pela coluna H: ${period.startMonth} a ${period.endMonth} (${period.months} ${period.months === 1 ? 'mês' : 'meses'}). Compras e vendas têm as mesmas competências; dias sem movimento não alteram o período mensal.` :
       'Histórico anterior sem período fiscal persistido: confirme manualmente quantos meses os dois arquivos representam.',
     'O enquadramento é o observado na consulta, sem comprovação retroativa para a data de cada nota. Não confirmados permanecem identificados na fonte.',
     ...financialSourceWarnings(monthlyReports)
   ];
+  if(analysisPeriod?.coverageMode==='ANY_REPORT')warnings.push(`Cobertura fiscal parcial: entradas sem cobertura em ${analysisPeriod.purchasesMissingMonths?.join(', ')||'nenhum mês'}; saídas sem cobertura em ${analysisPeriod.salesMissingMonths?.join(', ')||'nenhum mês'}. A DRE usa somente os valores disponíveis; zero no lado ausente é premissa provisória, não confirmação de ausência de movimento. Confira os arquivos.`);
   if(analysisPeriod?.excludedMonths.length)warnings.push(`Competências fora do período, preservadas nos relatórios originais e excluídas do cálculo: ${analysisPeriod.excludedMonths.join(', ')}.`);
   if ((purchases.period && !sales.period) || (!purchases.period && sales.period)) warnings.push('Somente um dos relatórios possui período automático. Para preservar compatibilidade histórica, confirme o período manualmente.');
   if (classification.purchases.unconfirmedCount || classification.sales.unconfirmedCount) {

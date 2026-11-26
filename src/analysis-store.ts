@@ -77,7 +77,7 @@ async function fiscalSource(item:Analysis,data=item.fiscal.data,onSource?:(sourc
   onSource?.(source);
   let months=source.monthlyReports?.map(row=>row.sourceMonth)||[];
   need(source.analysisPeriod?.complete && months.length>=1,
-    'As entradas e saídas precisam ter pelo menos uma competência em comum entre janeiro e setembro.',422,'ANALYSIS_PERIOD_INCOMPLETE');
+    'Os relatórios precisam ter pelo menos uma competência disponível entre janeiro e setembro.',422,'ANALYSIS_PERIOD_INCOMPLETE');
   let reference:unknown=null;
   if(requiresSimplesReference(item.config.regimeSelection)){
     const kind=rbt12InputSource(data.rbt12Source,data.rbt12Source==='MANUAL'?data.rbt12ManualConfirmed:undefined,data.rbt12ExtractionId,data.rbt12??undefined,item.config.regimeSelection);

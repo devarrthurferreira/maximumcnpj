@@ -120,8 +120,9 @@ def render_final_pdf(model, letterhead):
                      ' (CBS ' + percentage(rates['cbs'], 2) + ' + IBS ' + percentage(rates['ibs'], 2) + ')')
         top -= paragraph(rate_text, LEFT, top, WIDTH, 8, color=MUTED) + 8
     species_warning = next((w for w in model.result.get('warnings', []) if isinstance(w, dict) and w.get('code') == 'sales-species-missing'), None)
+    fiscal_warning = next((w for w in model.result.get('warnings', []) if isinstance(w, dict) and w.get('code') in ('icms-anticipation-partial', 'partial-fiscal-coverage')), None)
     # Preserve a full blank row between tax burden and operating indicators.
-    top = table(top, model.tax_rows(), taxes=True, body_height=top - BOTTOM - (90 if species_warning else 65))
+    top = table(top, model.tax_rows(), taxes=True, body_height=top - BOTTOM - (115 if fiscal_warning else 90 if species_warning else 65))
     notes = ('D = Débito; C = Crédito. Tributos líquidos dos créditos utilizados. '
              'Percentuais sobre a receita bruta de serviços e vendas; sem receita positiva, '
              'não se aplica. — indica valor indisponível.')
@@ -130,6 +131,8 @@ def render_final_pdf(model, letterhead):
     after_notes = note_top - note_height - 4
     if species_warning:
         after_notes -= paragraph('ICMS a conferir: ' + str(species_warning.get('detail') or ''), LEFT, after_notes, WIDTH, 6.3, color=BURGUNDY) + 4
+    if fiscal_warning:
+        after_notes -= paragraph('Estimativa parcial: há divergências de UF ou cobertura de competências. Confira os documentos na análise.', LEFT, after_notes, WIDTH, 6.3, color=BURGUNDY) + 4
     pending = []
     for regime in regimes:
         if regime.get('available') is True:

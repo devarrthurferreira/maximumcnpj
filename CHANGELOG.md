@@ -1,5 +1,10 @@
 # Histórico de alterações
 
+## Ajuste de 26/11/2026 — DRE acessível e cobertura de competências
+
+- Remove o bloqueio de UF pendente na atualização de DRE; conserva estimativas e avisos. Se a atualização falhar, abre a versão salva já autorizada, sem substituir dados nem burlar permissões.
+- Nas novas análises, inclui competências disponíveis em qualquer um dos documentos de janeiro a setembro, sinalizando cobertura unilateral e valores provisórios; mantém a validação das versões históricas.
+
 ## Ajuste de 26/11/2026 — Seis bancos, competências e download
 
 - Amplia o pool para seis clusters, com roteamento preservado em Node e Python.

@@ -52,11 +52,11 @@ export function assertMatchingPurchaseCompetences(period, other) {
   }
 }
 
-/** The Jan–Sep analysis accepts different date ranges if both cover at least one common competence.
- * Empty internal months remain zero movement; outside coverage is not presumed zero. */
+/** The Jan–Sep analysis accepts different date ranges if either covers a competence in Jan–Sep.
+ * Empty internal months remain zero movement; one-sided coverage remains explicitly provisional. */
 export function assertAnalysisPurchaseCompetences(period,other) {
   if(!period?.startMonth||!other?.startMonth)return;
-  const coverage=buildAnalysisPeriod(period,other);
-  if(!coverage.complete)throw new Error('Os relatórios não possuem competência em comum entre janeiro e setembro. Confira o ano e o intervalo dos arquivos. Nenhum dado foi enviado.');
+  const coverage=buildAnalysisPeriod(period,other,{includeSingleReportMonths:true});
+  if(!coverage.complete)throw new Error('Os relatórios não possuem competência disponível entre janeiro e setembro. Confira o ano e o intervalo dos arquivos. Nenhum dado foi enviado.');
   return coverage;
 }
