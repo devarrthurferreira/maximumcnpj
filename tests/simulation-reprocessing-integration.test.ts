@@ -214,8 +214,10 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    switchWorkspace('refresh-pending');const pendingInput=await fixture(''),pending=await save(pendingInput,821,false,record=>{
     record.modelVersion='LEGACY_REFRESH';record.result.version=record.modelVersion;
    });
-   await assert.rejects(refreshSimulation(actor,pending._id,{}),code('ANTICIPATION_UF_PENDING'));
-   assert.equal(await simulations.countDocuments(scope({parentSimulationId:pending._id})),0);
+   const refreshed=await refreshSimulation(actor,pending._id,{});
+    assert.equal(refreshed.simulation.clientId,pending.clientId);
+    assert(refreshed.simulation.source.monthlyReports.some((row:any)=>row.anticipation.pendingLines>0));
+   assert(refreshed.simulation.result.warnings.some((row:any)=>row.code==='icms-anticipation-partial'));
    assert.deepEqual(await simulations.findOne(scope({_id:pending._id})),pending,'Ausência de UF não pode virar zero confirmado.');
   });
 
@@ -391,7 +393,7 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    assert.equal((await getSimulation(childId)).parentSimulationDeleted,true);
   });
 
-  await t.test('UF pendente mantém a fonte conferida, mas só impede a revisão de imposto aplicável',async()=>{
+  await t.test('UF pendente mantém a fonte conferida e permite revisão com ressalva',async()=>{
    switchWorkspace('difal-policy-pending');const input=await fixture('');
    const off={version:'DIFAL_SCENARIOS_V1',enabled:{pure:false,hybrid:false,presumed:false,actual:false}};
    const excluded=await save({...input,draft:{...input.draft,difalPolicy:off}},70);
@@ -401,11 +403,11 @@ test('MongoDB recálculo: lotes, preservação, concorrência, retomada, exclus�
    const jobs=await collection('lookupJobs'),lines=await collection('purchaseLines');
    const sourceBefore={jobs:await jobs.find(scope()).sort({_id:1}).toArray(),lines:await lines.find(scope()).sort({_id:1}).toArray()};
    await reprocessSimulations(actor,{});const done=await finish();
-   assert.deepEqual(done.counts,{queued:0,processing:0,ok:1,pending:2,failed:0});
+   assert.deepEqual(done.counts,{queued:0,processing:0,ok:3,pending:0,failed:0});
    const outcomes=new Map(done.items.map((item:any)=>[item.originalId,item]));
-   assert.equal(outcomes.get(enabled._id)!.code,'ANTICIPATION_UF_PENDING');
-   assert.equal(outcomes.get(atSublimit._id)!.code,'ANTICIPATION_UF_PENDING');
-   for(const original of [excluded]){
+   assert.equal(outcomes.get(enabled._id)!.status,'OK');
+   assert.equal(outcomes.get(atSublimit._id)!.status,'OK');
+   for(const original of [excluded,enabled,atSublimit]){
     const child=await getSimulation(reprocessedSimulationId(scope().workspaceId,original._id));
     assert.deepEqual(child.draft.difalPolicy,currentPolicy(original.draft.difalPolicy));
     assert.equal(child.source.monthlyReports[0].difal.pendingLines,0);

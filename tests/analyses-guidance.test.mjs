@@ -139,7 +139,8 @@ test('períodos originais diferentes podem orientar os mesmos nove meses sem con
 test('cobertura parcial sugere nove campos mas confirma apenas os meses disponíveis',()=>{
   const analysis=fixedAnalysis(),metadata=fiscalMetadata('2026-09','2026-03');
   const period=analysisPeriodFor(analysis,null,metadata);
-  assert.equal(period.complete,true);assert.equal(period.includedMonths.length,3);assert.equal(period.missingMonths.length,6);
+  assert.equal(period.complete,true);assert.equal(period.includedMonths.length,9);assert.equal(period.missingMonths.length,0);
+  assert.deepEqual(period.salesMissingMonths,['2026-04','2026-05','2026-06','2026-07','2026-08','2026-09']);
   assert.deepEqual(accountingSourceMonths(analysis,null,metadata),analysisMonthsForYear(2026));
   assert.equal(accountingSummary([],accountingSourceMonths(analysis,null,metadata)).missingFields,0);
 });

@@ -75,7 +75,7 @@ function currentAnalysis(pair:ReturnType<typeof snapshots>){
     currentSimulation:{id:pair.corrected._id,analysisRevision:4,modelVersion:pair.corrected.modelVersion,stale:false}};
 }
 
-test('DRE atual oculta resultado antigo durante falha 503 e nova tentativa abre a revisão zerada',async({page})=>{
+test('DRE atual exibe a versão salva com aviso após falha 503 e permite atualizar',async({page})=>{
   const pair=snapshots();let releaseFailure!:()=>void;
   const pendingFailure=new Promise<void>(resolve=>{releaseFailure=resolve;});
   const api=await mockApi(page,pair,{refresh:async attempt=>{
@@ -86,10 +86,9 @@ test('DRE atual oculta resultado antigo durante falha 503 e nova tentativa abre 
   await expect(page.locator('[data-simulation-refresh="loading"]')).toBeVisible();
   await expect(page.locator('#dre-demonstrativo,#tax-demonstrativo,[data-dre-row]')).toHaveCount(0);
   releaseFailure();
-  await expect(page.locator('[data-simulation-refresh="failed"]')).toBeVisible();
-  await expect(page.getByRole('alert')).toContainText('Origem fiscal temporariamente indisponível.');
-  await expect(page.locator('#dre-demonstrativo,#tax-demonstrativo,[data-dre-row]')).toHaveCount(0);
-  await expect(page.getByRole('link',{name:'Consultar versão histórica'})).toHaveAttribute('href',savedUrl(pair.original._id,'historical'));
+  await expect(page.locator('[data-simulation-refresh="fallback"]')).toBeVisible();
+  await expect(page.locator('[data-simulation-refresh="fallback"]')).toContainText('Origem fiscal temporariamente indisponível.');
+  await expectStatement(page,pair.original);
   await page.locator('#retry-current-simulation').click();
   await expect(page).toHaveURL(new RegExp(`${pair.corrected._id}&current=1$`));
   await expectStatement(page,pair.corrected);
@@ -112,9 +111,9 @@ for(const mismatch of ['client','model'] as const)test(`resposta de atualizaçã
   else{invalid.modelVersion=previousModel;invalid.result.version=previousModel;}
   const api=await mockApi(page,pair,{refresh:()=>({json:{originalId:pair.original._id,updated:true,simulation:invalid}})});
   await page.goto(savedUrl(pair.original._id,'current'));
-  await expect(page.locator('[data-simulation-refresh="failed"]')).toBeVisible();
-  await expect(page.getByRole('alert')).toContainText('O servidor não confirmou uma versão atualizada desta empresa.');
-  await expect(page.locator('#dre-demonstrativo,#tax-demonstrativo,[data-dre-row]')).toHaveCount(0);
+  await expect(page.locator('[data-simulation-refresh="fallback"]')).toBeVisible();
+  await expect(page.locator('[data-simulation-refresh="fallback"]')).toContainText('O servidor não confirmou uma versão atualizada desta empresa.');
+  await expectStatement(page,pair.original);
   await expect(page.locator('#retry-current-simulation')).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`${pair.original._id}&current=1$`));
   expect(writes(api.requests)).toHaveLength(1);expect(api.errors).toEqual([]);
@@ -149,15 +148,15 @@ test('viewer consulta o resumo da análise e segue a DRE atual indicada sem envi
   expect(api.errors).toEqual([]);
 });
 
-for(const stale of ['flag','revision'] as const)test(`viewer recebe aviso quando ${stale==='flag'?'a DRE está desatualizada':'os setores têm revisão posterior'}, sem atualizar nem mostrar o valor antigo`,async({page})=>{
+for(const stale of ['flag','revision'] as const)test(`viewer recebe aviso quando ${stale==='flag'?'a DRE está desatualizada':'os setores têm revisão posterior'}, sem atualizar e com a versão salva identificada`,async({page})=>{
   const pair=snapshots(),analysis=currentAnalysis(pair);
   if(stale==='flag')analysis.currentSimulation.stale=true;else analysis.revision++;
   const api=await mockApi(page,pair,{role:'viewer',analysis});
   await page.goto(savedUrl(pair.original._id,'current'));
-  await expect(page.locator('[data-simulation-refresh="failed"]')).toBeVisible();
-  await expect(page.getByRole('alert')).toContainText('A DRE atual precisa ser gerada com os dados salvos dos setores.');
-  await expect(page.locator('#dre-demonstrativo,[data-dre-row],#retry-current-simulation')).toHaveCount(0);
-  await expect(page.getByRole('link',{name:'Consultar versão histórica'})).toHaveAttribute('href',savedUrl(pair.original._id,'historical'));
+  await expect(page.locator('[data-simulation-refresh="fallback"]')).toBeVisible();
+  await expect(page.locator('[data-simulation-refresh="fallback"]')).toContainText('A DRE atual precisa ser gerada com os dados salvos dos setores.');
+  await expectStatement(page,pair.original);
+  await expect(page.locator('#retry-current-simulation')).toHaveCount(0);
   expect(writes(api.requests)).toEqual([]);
   expect(api.requests.filter(request=>request.path.startsWith('/api/v4/')).map(request=>request.path))
     .toEqual(['/api/v4/simulations/'+pair.original._id,'/api/v4/analyses/'+analysisId+'?summary=1']);
