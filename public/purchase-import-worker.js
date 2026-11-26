@@ -4,7 +4,7 @@ function sheetMatrix(name, preview = false) {
   const sheet = book.Sheets[name];
   if (!sheet) throw new Error('Aba não encontrada.');
   const full = XLSX.utils.decode_range(sheet['!fullref'] || sheet['!ref'] || 'A1');
-  if (!preview && (full.e.r >= 50022 || full.e.c >= 80)) throw new Error('Aba acima do limite de 50.000 linhas de dados ou 80 colunas.');
+  if (!preview && (full.e.r >= 80022 || full.e.c >= 80)) throw new Error('Aba acima do limite de 80.000 linhas de dados ou 80 colunas.');
   if (!preview) for (const [address, cell] of Object.entries(sheet)) {
     if (!address.startsWith('!') && cell && typeof cell === 'object' && cell.f) {
       cell.v = '[FORMULA_NAO_SUPORTADA]'; cell.t = 's'; delete cell.w;

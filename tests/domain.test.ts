@@ -16,10 +16,10 @@ test('10.001 CNPJs únicos e duplicados normalizados preservando linhas',()=>{
  assert.deepEqual(importSummary(prepared),{lines:10003,unique:10001,invalid:1,duplicates:1});
  assert.equal(prepared.at(-2)?.duplicate,true);assert.equal(prepared.at(-1)?.original,'invalido');
 });
-test('50.000 linhas, todas únicas, validadas sem truncamento',()=>{
- const rows=Array.from({length:50000},(_,i)=>[cnpj(i),`Carga ${i}`]);
- const result=importSummary(prepareRows(rows,0,1));assert.equal(result.unique,50000);assert.equal(result.invalid,0);
- assert.throws(()=>prepareRows([...rows,[cnpj(1)]],0,1),/50.000/);
+test('80.000 linhas, todas únicas, validadas sem truncamento',()=>{
+ const rows=Array.from({length:80000},(_,i)=>[cnpj(i),`Carga ${i}`]);
+ const result=importSummary(prepareRows(rows,0,1));assert.equal(result.unique,80000);assert.equal(result.invalid,0);
+ assert.throws(()=>prepareRows([...rows,[cnpj(1)]],0,1),/80.000/);
 });
 test('Matriz e filiais não são deduplicadas pelo CNPJ básico',()=>{
  const a='123456780001',b='123456780002';

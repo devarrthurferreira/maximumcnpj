@@ -1,5 +1,7 @@
 # Maximum CNPJ · v0.61.1
 
+**Limite de importação de relatórios:** até 80.000 linhas de dados por arquivo, sem alteração das regras fiscais ou das partes internas de envio. Relatórios grandes podem levar mais tempo. Mantidos os demais limites de tamanho e segurança.
+
 ## v0.61.1 — Gerar com Fiscal pendente de reconfirmação (06/11/2026)
 
 A pendência de confirmação do Fiscal passa a permitir a geração da DRE após um aviso explícito. Quando os relatórios atuais estão disponíveis e válidos, o cálculo aproveita seus valores e as opções fiscais salvas, mesmo após alterações que exijam nova conferência; a DRE e o PDF informam que o Fiscal está pendente de reconfirmação. O setor continua pendente até ser concluído pelo responsável.

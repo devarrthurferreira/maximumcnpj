@@ -25,7 +25,7 @@ function checkReview(review){
     const error=new Error(review.errors.length?`O arquivo tem ${number(review.errors.length)} pendência(s). Nenhuma linha foi enviada.\n${details}${review.errors.length>20?'\nExibindo as primeiras 20 pendências.':''}`:'O relatório não contém linhas de dados. Nenhuma linha foi enviada.');
     error.validationErrors=review.errors;error.review=review;throw error;
   }
-  if(review.rows.length>50000)throw new Error('Arquivo acima do limite de 50.000 linhas. Divida o relatório.');
+  if(review.rows.length>80000)throw new Error('Arquivo acima do limite de 80.000 linhas. Divida o relatório.');
 }
 function ownedJob(job,{type,generationId,clientId,importId}){
   if(!job||!UUID.test(job._id||'')||(importId&&job._id!==importId)||job.clientId!==clientId||job.generationId!==generationId||job.mode!==type+'_V1'){
@@ -46,7 +46,7 @@ function wait(milliseconds,signal){
 export async function readFiscalDocument(file,{type,companyCode,issuerUf,resume=null,onProgress=()=>{},signal}={}){
   checkType(type);checkFile(file);checkSignal(signal);
   if(resume&&resume.mode!==type+'_V1')throw new Error('O arquivo selecionado não corresponde ao tipo do relatório em andamento.');
-  onProgress('Lendo e conferindo o arquivo…');
+  onProgress('Lendo e conferindo o arquivo… Relatórios grandes podem levar mais tempo para leitura e processamento.');
   const buffer=await file.arrayBuffer();checkSignal(signal);
   return new Promise((resolve,reject)=>{
     const worker=new Worker('/purchase-import-worker.js');
@@ -60,7 +60,7 @@ export async function readFiscalDocument(file,{type,companyCode,issuerUf,resume=
       try{
         checkReview(data);
         if(resume&&(file.name!==resume.fileName||data.rows.length!==resume.expectedRows))throw new Error('Para retomar, selecione o mesmo arquivo, com o mesmo nome e número de linhas. O documento já enviado será preservado.');
-        onProgress(`Arquivo reconhecido · ${number(data.rows.length)} linha(s).`);
+        onProgress(`Arquivo reconhecido · ${number(data.rows.length)} linha(s).${data.rows.length>50000?' Relatório grande: o processamento poderá demorar mais.':''}`);
         finish(null,data);
       }catch(error){finish(error);}
     };

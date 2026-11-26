@@ -18,7 +18,7 @@ self.onmessage = async ({data}) => {
       if(book) {
         const sheet=book.Sheets[data.name]; if(!sheet)throw new Error('Aba não encontrada.');
         const full=XLSX.utils.decode_range(sheet['!fullref']||sheet['!ref']||'A1');
-        if(full.e.r>=D.MAX_ROWS+21 || full.e.c>=D.MAX_COLUMNS)throw new Error('Aba acima de 50.000 linhas de dados ou 80 colunas.');
+        if(full.e.r>=D.MAX_ROWS+21 || full.e.c>=D.MAX_COLUMNS)throw new Error('Aba acima de 80.000 linhas de dados ou 80 colunas.');
         let formulas=0;
         for(const [address,cell] of Object.entries(sheet)) if(!address.startsWith('!') && cell && typeof cell==='object' && cell.f){cell.v='[FORMULA_NAO_SUPORTADA]';cell.t='s';delete cell.w;formulas++;}
         matrix=XLSX.utils.sheet_to_json(sheet,{header:1,raw:true,defval:'',blankrows:false});

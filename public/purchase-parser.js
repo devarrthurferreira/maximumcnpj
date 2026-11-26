@@ -166,7 +166,7 @@ export function parsePurchaseMatrix(matrix, headerIndex = 0, options = {}) {
     const sourceLine = Number.isSafeInteger(options.sourceLines?.[index]) && options.sourceLines[index] > 0 ? options.sourceLines[index] : index + 1;
     let repaired = null;
     if (!raw.some(v => String(v ?? '').trim())) { ignored++; continue; }
-    if (rows.length + errors.length >= MAX_ROWS) throw new Error('O relatório aceita até 50.000 linhas de dados. Divida o arquivo.');
+    if (rows.length + errors.length >= MAX_ROWS) throw new Error('O relatório aceita até 80.000 linhas de dados. Divida o arquivo.');
     try {
       if (raw.length > MAX_COLUMNS) throw new Error('Máximo de 80 colunas por linha.');
       if (raw.slice(lastHeader + 1).some(value => String(value ?? '').trim())) {

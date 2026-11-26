@@ -1,5 +1,5 @@
 export const VERSION = '0.61.1';
-export const MAX_ROWS = 50_000;
+export const MAX_ROWS = 80_000;
 export const MAX_COLUMNS = 80;
 export type Status = 'OPTANTE' | 'NAO_OPTANTE' | 'NAO_CONFIRMADO';
 export type Row = { index: number; values: string[]; original: string; name: string; cnpj: string; valid: boolean; reason: string | null; duplicate: boolean; warnings: string[] };
@@ -26,7 +26,7 @@ export function normalizeCnpj(value: unknown) {
 }
 export function formatCnpj(value: string) { return value.replace(/^(.{2})(.{3})(.{3})(.{4})(.{2})$/, '$1.$2.$3/$4-$5'); }
 export function prepareRows(data: unknown[][], cnpjColumn: number, nameColumn: number): Row[] {
-  if (!data.length || data.length > MAX_ROWS) throw new Error('A importação deve ter de 1 a 50.000 linhas.');
+  if (!data.length || data.length > MAX_ROWS) throw new Error('A importação deve ter de 1 a 80.000 linhas.');
   if (!Number.isInteger(cnpjColumn) || cnpjColumn < 0 || cnpjColumn >= MAX_COLUMNS) throw new Error('Escolha a coluna do CNPJ.');
   const seen = new Set<string>();
   return data.map((cells, index) => {
@@ -83,7 +83,7 @@ export function csvParse(text: string, delimiter?: string): string[][] {
   if (![';',',','\t'].includes(delimiter)) throw new Error('Separador inválido.');
   const rows: string[][] = []; let row: string[] = [], cell = '', quoted = false;
   const push = () => { row.push(cell); cell = ''; if (row.length > MAX_COLUMNS) throw new Error('Mais de 80 colunas.'); };
-  const line = () => { push(); if (row.some(v => v !== '')) rows.push(row); row = []; if (rows.length > MAX_ROWS + 21) throw new Error('Mais de 50.000 linhas de dados.'); };
+  const line = () => { push(); if (row.some(v => v !== '')) rows.push(row); row = []; if (rows.length > MAX_ROWS + 21) throw new Error('Mais de 80.000 linhas de dados.'); };
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (c === '"') { if (quoted && text[i+1] === '"') { cell += '"'; i++; } else if (!cell || quoted) quoted = !quoted; else cell += c; }

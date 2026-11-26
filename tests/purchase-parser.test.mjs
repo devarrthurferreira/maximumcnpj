@@ -446,3 +446,13 @@ test('5102 conserva receita e competências com saída zero; V5 e retomada V1 pe
   assert(legacy.rows.every(row=>row.operation==='OUTRAS'));
   assert.throws(()=>parsePurchaseMatrix([header,...inputs],0,{type:'SALES',difalVersion:'UNKNOWN'}));
 });
+
+ test('relatório fiscal de 80.000 linhas sem truncamento e bloqueio acima do limite', () => {
+  const input = row('11222333000181','Fornecedor sintético','1','1,00');
+  const matrix = [header, ...Array(80000).fill(input)];
+  const report = parsePurchaseMatrix(matrix, 0, {type:'PURCHASES'});
+  assert.equal(report.errors.length, 0);
+  assert.equal(report.rows.length, 80000);
+  assert.equal(report.totalCents, 8000000);
+  assert.throws(() => parsePurchaseMatrix([...matrix,input], 0, {type:'PURCHASES'}), /80\\.000/);
+ });

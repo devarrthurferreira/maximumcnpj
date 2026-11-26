@@ -1,5 +1,9 @@
 # Histórico de alterações
 
+## Ajuste de 26/11/2026 — Limite de leitura de relatórios
+
+- Eleva de 50.000 para 80.000 linhas de dados por relatório, com aviso de processamento mais demorado. Mantém os demais limites e regras fiscais.
+
 ## [0.61.1] - 2026-11-06
 
 - Permite gerar a DRE com Fiscal pendente de confirmação, inclusive após mudanças nos arquivos ou opções, mediante confirmação explícita e aviso persistente na tela e no PDF.
