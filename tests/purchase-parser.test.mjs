@@ -454,5 +454,5 @@ test('5102 conserva receita e competências com saída zero; V5 e retomada V1 pe
   assert.equal(report.errors.length, 0);
   assert.equal(report.rows.length, 80000);
   assert.equal(report.totalCents, 8000000);
-  assert.throws(() => parsePurchaseMatrix([...matrix,input], 0, {type:'PURCHASES'}), /80\\.000/);
+  assert.throws(() => parsePurchaseMatrix([...matrix,input], 0, {type:'PURCHASES'}), /80[.]000/);
  });
