@@ -5,7 +5,7 @@ import {monthlyProjection} from './simulator-monthly.js';
 /** Local preview only; persistence always rebuilds these source totals on the server. */
 export function selectAvailableRbt12Months(source,monthlyInputs,extraction){
   const schedule=buildRbt12Schedule(extraction,source.monthlyReports.map(row=>row.sourceMonth));
-  if(schedule.complete)return {source,monthlyInputs,schedule,omittedMonths:[]};
+  if(schedule.complete||source.analysisPeriod?.version===JAN_SEP_POLICY)return {source,monthlyInputs,schedule,omittedMonths:[]};
   const confirmed=schedule.rows.filter(row=>row.status==='CONFIRMED').map(row=>row.sourceMonth);
   if(source.analysisPeriod?.version!==JAN_SEP_POLICY||!confirmed.length){
     throw new Error('O quadro 2.2 não contém uma janela RBT12 completa para as competências selecionadas. Importe um extrato com as 12 receitas anteriores a pelo menos um mês da análise.');

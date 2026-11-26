@@ -373,3 +373,13 @@ test('memória anual não confirma valores parciais ou tributos de meses Simples
   assert(result.memory.every(item=>typeof item.value!=='number'||Number.isFinite(item.value)));
  }
 });
+
+test('RBT12 parcial mantém receita de todos os meses Jan–Set disponíveis',()=>{
+ const range={startMonth:'2025-01',endMonth:'2025-03',months:3},period=buildAnalysisPeriod(range,range);
+ const rows=reports,inputs=rows.map(row=>baselineMonth(row));
+ const schedule={version:'RBT12_MONTHLY_SECTION_22_V1',source:'SIMPLES_SECTION_22',sourceSection:'2.2',pa:'03/2025',complete:false,rows:rows.map((row,index)=>({sourceMonth:row.sourceMonth,status:index===0?'MISSING_MONTHS':'CONFIRMED',rbt12Cents:index===0?null:50000000,missingMonths:index===0?['2024-01']:[],window:[]}))};
+ const out=calculateMonthlySimulation(draft,rows,inputs,'sales',schedule,period);
+ assert.equal(out.result.monthlyResults.length,3);close(out.result.annualRevenue,5400.20);
+ assert.equal(out.engineInput.months[0].input.rbt12,null);assert.equal(out.engineInput.months[1].input.rbt12,500000);
+ assert(out.result.warnings.some(row=>row.code==='rbt12-partial-coverage'));assert.equal(out.result.monthlyResults[0].result.regimes.find(row=>row.id==='pure').available,false);
+});

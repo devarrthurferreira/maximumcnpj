@@ -181,7 +181,7 @@ export function planReprocessing(original: any, source: any, workspaceId: string
   for(const key of ['financialExpenses','financialIncome'] as const)
     if(!Object.hasOwn(original.draft.values,key)&&draft.values[key]===0)delete draft.values[key];
   const rbt12Schedule=rbt12Extraction?buildRbt12Schedule(rbt12Extraction,source.monthlyReports.map((row:any)=>row.sourceMonth)):null;
-  pending(!rbt12Schedule||rbt12Schedule.complete,'RBT12_MONTHS_MISSING',`O extrato congelado não cobre todas as competências. Reimporte o extrato com as receitas mensais do quadro 2.2. ${rbt12Schedule?.rows.filter(row=>row.status!=='CONFIRMED').map(row=>`${row.sourceMonth}: faltam ${row.missingMonths.join(', ')}`).join('; ')||''}`);
+  pending(!rbt12Schedule||rbt12Schedule.complete||!!source.analysisPeriod,'RBT12_MONTHS_MISSING',`O extrato congelado não cobre todas as competências. Reimporte o extrato com as receitas mensais do quadro 2.2. ${rbt12Schedule?.rows.filter(row=>row.status!=='CONFIRMED').map(row=>`${row.sourceMonth}: faltam ${row.missingMonths.join(', ')}`).join('; ')||''}`);
   const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports,monthlyInputs,source.sales.jobId,rbt12Schedule,source.analysisPeriod);}catch(error){throw new AppError(409,'REPROCESS_ADJUSTMENT',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
   for (const [index, report] of source.monthlyReports.entries()) {
     const input = computed.engineInput.months[index].input;

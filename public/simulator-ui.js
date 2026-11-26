@@ -880,10 +880,11 @@ async function simulate() {
     }
     if(!$('#simulator-form').reportValidity()||!validateAllMonths(calculationSource.analysisPeriod?.includedMonths||null))return;
     if(selected.omittedMonths.length)$('#draft-status').textContent=`RBT12 do quadro 2.2: ${calculationInputs.length} competências incluídas. Fora do cálculo por falta de histórico: ${selected.omittedMonths.map(competenceLabel).join(', ')}. Os valores digitados continuam preservados.`;
-    if(schedule&&!schedule.complete){
+    if(schedule&&!schedule.complete&&!fixedAnalysisPeriod()){
       const missing=schedule.rows.filter(row=>row.status!=='CONFIRMED');
       throw new Error(`A seção 2.2 não cobre todas as janelas de RBT12. Confira ${missing.map(row=>`${competenceLabel(row.sourceMonth)} (faltam ${row.missingMonths.join(', ')})`).join('; ')}. Importe um extrato que contenha essas receitas.`);
     }
+    if(schedule&&!schedule.complete&&fixedAnalysisPeriod())$('#draft-status').textContent='RBT12 parcial: todos os meses fiscais foram mantidos. O Simples permanece pendente nos meses sem histórico completo.';
     const input=draft(),groups=Object.fromEntries(IMPORTED.map(key=>[key,value(key)])),computed=actualMonths()?calculateMonthlySimulation(input,calculationSource.monthlyReports,calculationInputs,calculationSource.sales.jobId,schedule,calculationSource.analysisPeriod):null;
     const difal=computed?.difalProjection||difalProjection(),result=computed?.result||calculateSimulation(input,difal);
     S.result={input,result,source:calculationSource,monthlyInputs:calculationInputs,difalProjection:difal,rbt12Schedule:computed?.rbt12Schedule||result.rbt12Schedule||null,anticipationProjection:computed?.anticipationProjection||null,monthlyGroups:groups,projection:computed?.projection||{...annualizeReports(S.source.fields,S.months),scenario:projectScenario(groups,input.values)}};S.snapshot=null;S.saveError=null;S.viewPeriod='annual';if(actualMonths())S.dreMonth=fixedAnalysisPeriod()?Math.max(0,result.analysisPeriod.includedMonths.indexOf(S.source.monthlyReports[S.entry].sourceMonth)):S.source.monthlyReports[S.entry].month-1;saveDraft();
@@ -1062,6 +1063,9 @@ function showSnapshot(snapshot) {
   const accountingOnly=S.source.sourceKind==='ACCOUNTING_ONLY';
   $('#simulator-app').innerHTML=`<div id="simulator-intro">${hero(true)}</div>${renderPartialDataNotice(snapshot)}<div id="simulation-result"></div>${capturedFields(snapshot)}${accountingOnly?'':`<h2 class="sim-evidence-title">Conferência dos relatórios de origem</h2>${difalOptions(snapshot)}<div id="simulator-projection"></div><div id="simulator-revenue-reconciliation"></div><div id="simulator-difal"></div><div id="simulator-anticipation"></div>${renderSection22(snapshot.rbt12Extraction)}<div id="rbt12-schedule">${renderRbt12Schedule(snapshot.rbt12Schedule||snapshot.result?.rbt12Schedule)}</div>${sourceCard()}`}<div id="simulation-notices"></div>`;
   updateProjection();updateDifalSource();updateAnticipationSource();updateDifalOptions();renderNotices();renderResult();
+  if(documentUuid(snapshot.analysisId)&&snapshot.result?.analysisPeriod?.missingMonths?.length){
+    const notice=document.createElement('section');notice.className='card sim-version-notice';notice.innerHTML=`<p><strong>Competências desta versão salva.</strong> Para recuperar meses que não foram incluídos pelas regras anteriores, gere novamente com os relatórios atuais da empresa. O histórico não é preenchido artificialmente.</p><a class="sim-back" href="/analyses.html?${new URLSearchParams({id:snapshot.analysisId})}">Atualizar competências na análise →</a>`;$('#simulator-intro').after(notice);
+  }
   const button=$('#create-version');if(button)button.onclick=()=>void openSnapshotVersion(snapshot);
 }
 function currentSnapshotModel(snapshot) {

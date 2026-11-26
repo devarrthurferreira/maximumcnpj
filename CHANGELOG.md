@@ -1,5 +1,10 @@
 # Histórico de alterações
 
+## Ajuste de 26/11/2026 — Competências preservadas com RBT12 parcial
+
+- A ausência de histórico RBT12 não exclui competências fiscais da análise; somente o Simples fica pendente nos meses afetados. Meses fiscais sem despesas preenchidas permanecem no consolidado, com aviso de zeros provisórios no Contábil. Ajustes manuais existentes são preservados e os meses novos usam a fonte original.
+- A DRE histórica mantém o período salvo e oferece acesso à análise para regenerar com a cobertura atual.
+
 ## Ajuste de 26/11/2026 — DRE acessível e cobertura de competências
 
 - Remove o bloqueio de UF pendente na atualização de DRE; conserva estimativas e avisos. Se a atualização falhar, abre a versão salva já autorizada, sem substituir dados nem burlar permissões.

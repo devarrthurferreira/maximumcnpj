@@ -89,12 +89,9 @@ async function fiscalSource(item:Analysis,data=item.fiscal.data,onSource?:(sourc
       const schedule=buildRbt12Schedule(reference as any,months);
       const pending=schedule.rows.filter(row=>row.status!=='CONFIRMED');
       const missingHistory=[...new Set(pending.flatMap(row=>row.missingMonths))].sort();
-      const confirmed=schedule.rows.filter(row=>row.status==='CONFIRMED').map(row=>row.sourceMonth);
-      need(confirmed.length>0,`Nenhuma competência dos relatórios tem RBT12 confirmada. Faltam receitas históricas da seção 2.2: ${missingHistory.join(', ')}. Confira um extrato com o histórico necessário.`,422,'RBT12_MONTHS_MISSING');
-      if(confirmed.length!==months.length){
-        source=selectAnalysisSourceMonths(source,confirmed);
-        source.warnings.push(`Competências sem RBT12 mensal confirmada, excluídas do cálculo: ${pending.map(row=>row.sourceMonth).join(', ')}. Receitas históricas ausentes na seção 2.2: ${missingHistory.join(', ')}.`);
-        months=confirmed;onSource?.(source);
+      if(pending.length){
+        source.warnings.push(`Competências sem RBT12 mensal confirmada: ${pending.map(row=>row.sourceMonth).join(', ')}. Os valores fiscais permanecem no consolidado; apenas o cálculo do Simples fica pendente nesses meses. Receitas históricas ausentes na seção 2.2: ${missingHistory.join(', ')}.`);
+        onSource?.(source);
       }
     }
   } else rbt12InputSource(data.rbt12Source,undefined,data.rbt12ExtractionId,data.rbt12??undefined,item.config.regimeSelection);
@@ -106,8 +103,10 @@ async function fiscalSource(item:Analysis,data=item.fiscal.data,onSource?:(sourc
     need(!document.fileSha256 || document.fileSha256===(reference as any)?.fileSha256,
       'A leitura não corresponde ao arquivo atual do extrato.',409,'RBT12_EXTRACTION');
   }
-  if(data.monthlyOverrides)need(isDeepStrictEqual(data.monthlyOverrides.filter(row=>months.includes(row.sourceMonth)).map(row=>row.sourceMonth),months),
-    'Os ajustes fiscais devem corresponder exatamente às competências dos relatórios. Revise os ajustes antes de concluir.',422,'ANALYSIS_MONTHS');
+  if(data.monthlyOverrides){
+    const covered=new Set(data.monthlyOverrides.map(row=>row.sourceMonth)),newMonths=months.filter(month=>!covered.has(month));
+    if(newMonths.length)source.warnings.push(`Competências sem ajuste fiscal manual: ${newMonths.join(', ')}. Foram utilizados os valores originais dos relatórios.`);
+  }
   return {source,months,reference,fingerprint:fingerprint(source,reference,item.config,data)};
 }
 function savedAnalysisPeriod(item:Analysis):AnalysisPeriod|null{
@@ -132,7 +131,10 @@ async function readiness(item:Analysis):Promise<Readiness>{
   const fiscalPeriod=(source as Source|null)?.analysisPeriod||savedAnalysisPeriod(item);
   const accounting=accountingForYear(item.accounting.data,fiscalPeriod?.sourceYear).months.filter(row=>isAnalysisMonth(row.sourceMonth,fiscalPeriod?.sourceYear)&&ACCOUNTING_FIELDS.some(key=>row[key]!==null));
   const available=fiscalPeriod?.includedMonths||checked?.months||[];
-  const months=available.filter(month=>accounting.some(row=>row.sourceMonth===month&&ACCOUNTING_FIELDS.every(key=>row[key]!==null)));
+  const accountingMonths=available.filter(month=>accounting.some(row=>row.sourceMonth===month&&ACCOUNTING_FIELDS.every(key=>row[key]!==null)));
+  // A completed accounting sector may have no movement or no values for an individual fiscal month.
+  // Keep the fiscal competence and mark missing accounting amounts as provisional in the generated source.
+  const months=accountingMonths.length?available:accountingMonths;
   const analysisPeriod=months.length&&fiscalPeriod?selectAnalysisPeriod(fiscalPeriod,months):fiscalPeriod;
   if(!accounting.length || accounting.some(row=>ACCOUNTING_FIELDS.some(key=>row[key]===null))){
     issues.push({code:'ACCOUNTING_VALUES_MISSING',sector:'accounting',message:'Preencha todas as despesas dos meses utilizados; deixe inteiramente vazios os meses sem dados.'});
@@ -155,7 +157,10 @@ function savedReadiness(item:Analysis):Readiness{
   }
   if(item.accounting.status!=='COMPLETE')issues.push({code:'ACCOUNTING_NOT_CONFIRMED',sector:'accounting',message:'Salve e conclua as despesas do setor Contábil.'});
   const accounting=accountingForYear(item.accounting.data,fiscalPeriod?.sourceYear).months.filter(row=>isAnalysisMonth(row.sourceMonth,fiscalPeriod?.sourceYear)&&ACCOUNTING_FIELDS.some(key=>row[key]!==null));
-  const months=available.filter(month=>accounting.some(row=>row.sourceMonth===month&&ACCOUNTING_FIELDS.every(key=>row[key]!==null)));
+  const accountingMonths=available.filter(month=>accounting.some(row=>row.sourceMonth===month&&ACCOUNTING_FIELDS.every(key=>row[key]!==null)));
+  // A completed accounting sector may have no movement or no values for an individual fiscal month.
+  // Keep the fiscal competence and mark missing accounting amounts as provisional in the generated source.
+  const months=accountingMonths.length?available:accountingMonths;
   const analysisPeriod=months.length&&fiscalPeriod?selectAnalysisPeriod(fiscalPeriod,months):fiscalPeriod;
   if(!accounting.length||accounting.some(row=>ACCOUNTING_FIELDS.some(key=>row[key]===null))){
     issues.push({code:'ACCOUNTING_VALUES_MISSING',sector:'accounting',message:'Preencha todas as despesas dos meses utilizados; deixe inteiramente vazios os meses sem dados.'});
@@ -397,7 +402,7 @@ function calculationInput(item:Analysis,source:Source,simulationId:string,missin
   const expenses=new Map(accountingForYear(item.accounting.data,source.analysisPeriod?.sourceYear).months.map(row=>[row.sourceMonth,row]));
   const overrides=new Map((f.monthlyOverrides||[]).map(row=>[row.sourceMonth,row]));
   const monthlyInputs=source.monthlyReports!.map(row=>{
-    const expense=missingSectors.includes('accounting')?Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,0])):expenses.get(row.sourceMonth)!;
+    const expense=missingSectors.includes('accounting')?Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,0])):Object.fromEntries(ACCOUNTING_FIELDS.map(key=>[key,expenses.get(row.sourceMonth)?.[key]??0]));
     const entry=baselineMonth(row);const override=overrides.get(row.sourceMonth);
     if(override){entry.groups=structuredClone(override.groups);entry.values.serviceRevenue=override.serviceRevenue;}
     Object.assign(entry.values,{salaries:expense.salariesCents!/100,rent:expense.rentCents!/100,cardExpenses:expense.cardExpensesCents!/100,
@@ -473,7 +478,12 @@ export async function generateAnalysis(actor:LookupActor,id:string,input:unknown
     const accountingOnly=missingSectors.includes('fiscal')&&!fiscalDataUsed;
     const source=accountingOnly?accountingOnlySource(item,prepared.analysisPeriod!):selectAnalysisSourceMonths(prepared.checked!.source,prepared.months),sourceFingerprint=prepared.checked?.fingerprint||null;
     // A source/options change can invalidate confirmation without incrementing the editable analysis revision.
-    const simulationId=deterministicId(JSON.stringify(['generate',item._id,item.revision,JAN_SEP_MODEL_VERSION,sourceFingerprint,missingSectors,fiscalDataUsed]));
+    const simulationId=deterministicId(JSON.stringify(['generate',item._id,item.revision,JAN_SEP_MODEL_VERSION,sourceFingerprint,missingSectors,fiscalDataUsed,source.analysisPeriod?.includedMonths]));
+    if(!accountingOnly&&!missingSectors.includes('accounting')){
+      const expenses=accountingForYear(item.accounting.data,source.analysisPeriod?.sourceYear).months;
+      const unfilled=source.monthlyReports!.filter(row=>!expenses.some(expense=>expense.sourceMonth===row.sourceMonth&&ACCOUNTING_FIELDS.every(key=>expense[key]!==null))).map(row=>row.sourceMonth);
+      if(unfilled.length)source.warnings.push(`Contábil sem valores completos em ${unfilled.join(', ')}. As competências fiscais foram mantidas; campos de despesas ou receitas financeiras ausentes usam zero provisório, não confirmação de ausência de movimento. Confira o Contábil.`);
+    }
     if(item.currentSimulation?.id===simulationId){
       await saveGenerationRequest(id,requestKey,{requestId,revision:expected,simulationId,createdAt:new Date(),createdBy:author(actor)});
       return {analysis:await visible(item,options,prepared),simulation:await generatedSimulation(simulationId,options),reused:true};

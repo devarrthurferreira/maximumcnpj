@@ -97,19 +97,19 @@ test('MongoDB Jan–Set: recorte auditável, fontes diferentes, faltas explícit
         ...Object.fromEntries(ACCOUNTING_FIELDS.map(field=>[field,['2026-02','2026-09'].includes(sourceMonth)?100:null]))}));
       analysis=(await updateAnalysisSector(actor,analysis.id,'accounting',{expectedSectorRevision:analysis.accounting.revision,
         expectedConfigRevision:analysis.config.revision,complete:true,data:{months}})).analysis;
-      assert.equal(analysis.readiness.ready,true);assert.deepEqual(analysis.readiness.months,['2026-02','2026-09']);
+      assert.equal(analysis.readiness.ready,true);assert.deepEqual(analysis.readiness.months,analysisMonthsForYear(2026));
       const saved=(await generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:analysis.revision})).simulation;
-      assert.equal(saved.reportMonths,2);assert.equal(saved.monthlyInputs.length,2);assert.equal(saved.result.annualRevenue,2000);
-      assert.deepEqual(saved.analysisPeriod.includedMonths,['2026-02','2026-09']);
-      assert.equal(saved.monthlyDre.months.length,2);assert.equal(saved.result.regimes[0].dre.salaries,-2);
+      assert.equal(saved.reportMonths,9);assert.equal(saved.monthlyInputs.length,9);assert.equal(saved.result.annualRevenue,3000);
+      assert.deepEqual(saved.analysisPeriod.includedMonths,analysisMonthsForYear(2026));
+      assert.equal(saved.monthlyDre.months.length,9);assert.equal(saved.result.regimes[0].dre.salaries,-2);
       const rebuilt=await rebuildSimulationSource(saved);assert.deepEqual(rebuilt.analysisPeriod,saved.analysisPeriod);
       assert.equal(planReprocessing(saved,rebuilt,scope().workspaceId).alreadyCurrent,true);
       const viewed=await getAnalysis(analysis.id,{includeSource:true});
-      assert.deepEqual(viewed.analysis.readiness.months,['2026-02','2026-09']);
+      assert.deepEqual(viewed.analysis.readiness.months,analysisMonthsForYear(2026));
       assert.equal(viewed.analysis.accounting.data.months.length,9,'Campos vazios continuam disponíveis para editar.');
     });
 
-    await t.test('OCR 2.2 parcial calcula apenas a competência com doze receitas históricas confirmadas',async()=>{
+    await t.test('OCR 2.2 parcial conserva todas as competências fiscais e sinaliza a RBT12',async()=>{
       const ids=await fixture('99285',[['2026-01',10000],['2026-08',30000],['2026-09',10000]],
         [['2026-01',100000],['2026-08',500000],['2026-09',200000]]);
       const extraction=section22(),extractionId=randomUUID();
@@ -119,16 +119,16 @@ test('MongoDB Jan–Set: recorte auditável, fontes diferentes, faltas explícit
       analysis=(await updateAnalysisSector(actor,analysis.id,'fiscal',{expectedSectorRevision:analysis.fiscal.revision,
         expectedConfigRevision:analysis.config.revision,complete:true,data:{...analysis.fiscal.data,generationId:ids.generationId,
           rbt12Source:'SIMPLES_SECTION_22',rbt12ExtractionId:extractionId,rbt12:extraction.rbt12Cents/100}})).analysis;
-      assert.deepEqual(analysis.fiscal.confirmation!.months,['2026-08']);
+      assert.deepEqual(analysis.fiscal.confirmation!.months,analysisMonthsForYear(2026));
       const months=analysisMonthsForYear(2026).map(sourceMonth=>({sourceMonth,...Object.fromEntries(ACCOUNTING_FIELDS.map(field=>[field,sourceMonth==='2026-08'?0:null]))}));
       analysis=(await updateAnalysisSector(actor,analysis.id,'accounting',{expectedSectorRevision:analysis.accounting.revision,
         expectedConfigRevision:analysis.config.revision,complete:true,data:{months}})).analysis;
       assert.equal(analysis.readiness.ready,true);
       const saved=(await generateAnalysis(actor,analysis.id,{requestId:randomUUID(),expectedRevision:analysis.revision})).simulation;
-      assert.equal(saved.reportMonths,1);assert.equal(saved.result.annualRevenue,5000);
-      assert.deepEqual(saved.analysisPeriod.includedMonths,['2026-08']);
-      assert.equal(saved.rbt12Schedule.rows.length,1);assert.equal(saved.rbt12Schedule.rows[0].window.length,12);
-      assert.equal(saved.rbt12Schedule.rows[0].rbt12Cents,extraction.rbt12Cents);
+      assert.equal(saved.reportMonths,9);assert.equal(saved.result.annualRevenue,8000);
+      assert.deepEqual(saved.analysisPeriod.includedMonths,analysisMonthsForYear(2026));
+      assert.equal(saved.rbt12Schedule.rows.length,9);assert.equal(saved.rbt12Schedule.rows[7].window.length,12);
+      assert.equal(saved.rbt12Schedule.rows[7].rbt12Cents,extraction.rbt12Cents);assert.equal(saved.rbt12Schedule.rows[0].rbt12Cents,null);
       assert.match(saved.source.warnings.join(' '),/sem RBT12 mensal confirmada/);
       const rebuilt=await rebuildSimulationSource(saved);assert.deepEqual(rebuilt.analysisPeriod,saved.analysisPeriod);
       assert.equal(planReprocessing(saved,rebuilt,scope().workspaceId).alreadyCurrent,true);

@@ -152,7 +152,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     for(const [i,row] of reports.entries()){
       const reference=rbt12Schedule.rows[i];
       check(reference?.sourceMonth===row.sourceMonth,'A composição da RBT12 não corresponde às competências dos relatórios.');
-      check(reference.status==='CONFIRMED'&&Number.isSafeInteger(reference.rbt12Cents)&&reference.rbt12Cents>=0,
+      check((reference.status==='CONFIRMED'&&Number.isSafeInteger(reference.rbt12Cents)&&reference.rbt12Cents>=0)||(analysisPeriod&&reference.status==='MISSING_MONTHS'&&reference.rbt12Cents===null&&Array.isArray(reference.missingMonths)&&reference.missingMonths.length>0),
         `O quadro 2.2 não cobre a RBT12 de ${row.sourceMonth}. Faltam as receitas de ${(reference.missingMonths||[]).join(', ')}. Importe um extrato com o histórico necessário.`);
     }
   }
@@ -181,7 +181,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
   const revenueContext={version:REVENUE_CONTEXT_VERSION,method:'ACTUAL_REPORT_MONTHS',revenueCents,sourceMonths:reports.map(row=>row.sourceMonth),
     ...(positiveRevenueCents===revenueCents?{}:{positiveRevenueCents})};
   const monthlyResults=prepared.map(({row,index,groups,values})=>{
-    const d={...draft,...(rbt12Schedule?{rbt12:rbt12Schedule.rows[index].rbt12Cents/100}:{}),values},difal={version:'DIFAL_DRE_V1',monthlyCents:0,annualCents:0,
+    const d={...draft,...(rbt12Schedule?{rbt12:rbt12Schedule.rows[index].status==='CONFIRMED'?rbt12Schedule.rows[index].rbt12Cents/100:null}:{}),values},difal={version:'DIFAL_DRE_V1',monthlyCents:0,annualCents:0,
       sourceAmountCents:0,reportMonths:1,pendingLines:0};
     const anticipation=row.anticipation?{version:'ICMS_ANTICIPATION_DRE_V1',monthlyCents:row.anticipation.amountCents,annualCents:row.anticipation.amountCents*12,
       sourceAmountCents:row.anticipation.amountCents,sourceBaseCents:row.anticipation.baseCents,reportMonths:1,pendingLines:row.anticipation.pendingLines}:null;
@@ -256,6 +256,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     const included=new Set(analysisPeriod.includedMonths),p=(analysisPeriod.purchasesMissingMonths||[]).filter(month=>included.has(month)),v=(analysisPeriod.salesMissingMonths||[]).filter(month=>included.has(month));
     if(p.length||v.length)warnings.push({code:'partial-fiscal-coverage',severity:'warning',title:'Competências com cobertura fiscal parcial',detail:`Entradas sem cobertura: ${p.join(', ')||'nenhuma'}; saídas sem cobertura: ${v.join(', ')||'nenhuma'}. O valor zero no lado sem documento é uma premissa provisória. Confira os relatórios; os valores disponíveis foram preservados.`});
   }
+  if(rbt12Schedule&&!rbt12Schedule.complete)warnings.push({code:'rbt12-partial-coverage',severity:'warning',title:'RBT12 pendente em algumas competências',detail:`${rbt12Schedule.rows.filter(row=>row.status!=='CONFIRMED').map(row=>row.sourceMonth).join(', ')}: valores fiscais preservados; somente o Simples fica pendente nesses meses. Confira o histórico do quadro 2.2.`});
   const missingSpecies=reports.reduce((total,row)=>total+(row.salesSpecies?.missingLines||0),0);
   if(missingSpecies)warnings.push({code:'sales-species-missing',severity:'warning',title:'Espécie das vendas não identificada',detail:`${missingSpecies} venda(s) sem espécie registrada na coluna D. Não foi possível identificar NFC-e nessas linhas. O ICMS usa a UF disponível como estimativa; reimporte o relatório de saídas para aplicar a regra com segurança.`});
   if(reports.every(row=>row.salesSpecies?.version==='SALES_SPECIES_V1')){
@@ -263,7 +264,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
     const nfceBase=reports.reduce((total,row)=>total+row.salesSpecies.nfceBaseCents,0);
     memory.push({id:'icms.nfceSales',section:'Apuração de ICMS',label:'Vendas NFC-e classificadas como internas',formula:`${nfceLines} linha(s) identificada(s) pela espécie na coluna D. A UF original do destinatário é preservada; no ICMS, a venda usa a UF da empresa.`,value:nfceBase/100,unit:'currency'});
   }
-  warnings.push({code:'actual-months',severity:'info',title:'Valores por competência',detail:`Compras, vendas e serviços seguem cada mês da coluna H.${hasSimples?` O DIFAL de saída permanece desativado. A antecipação das compras respeita as opções de cada regime. ${first.rbt12Source==='NOT_PROVIDED'?'RBT12 não informada; os cenários do Simples permanecem sem cálculo confirmado.':rbt12Schedule?'RBT12 móvel composta pelas 12 receitas anteriores de cada competência, exclusivamente do quadro 2.2.':'RBT12 fixa informada para o cenário.'}`:''} ${analysisPeriod?'O consolidado é a soma efetiva de janeiro a setembro. Outubro a dezembro permanecem fora do cálculo; quando informada, a referência de RBT12 conserva doze meses.':'Total anual é a soma dos meses importados. Meses fora do período não têm dados.'} Não há compensação automática de créditos entre competências.`});
+  warnings.push({code:'actual-months',severity:'info',title:'Valores por competência',detail:`Compras, vendas e serviços seguem cada mês da coluna H.${hasSimples?` O DIFAL de saída permanece desativado. A antecipação das compras respeita as opções de cada regime. ${rbt12Schedule?'RBT12 móvel composta pelas 12 receitas anteriores de cada competência, exclusivamente do quadro 2.2; meses sem histórico completo ficam pendentes somente no Simples.':first.rbt12Source==='NOT_PROVIDED'?'RBT12 não informada; os cenários do Simples permanecem sem cálculo confirmado.':'RBT12 fixa informada para o cenário.'}`:''} ${analysisPeriod?'O consolidado é a soma efetiva de janeiro a setembro. Outubro a dezembro permanecem fora do cálculo; quando informada, a referência de RBT12 conserva doze meses.':'Total anual é a soma dos meses importados. Meses fora do período não têm dados.'} Não há compensação automática de créditos entre competências.`});
   warnings.push({code:'monthly-model-scope',severity:'info',title:'Escopo do cálculo por competência',detail:'IRPJ e CSLL acumulam as bases do trimestre; a DRE mensal reconhece a diferença da provisão, inclusive reversões. O limite do adicional é R$ 60.000 por trimestre, sem redução por meses ausentes. Compras/CMV simplificam o custo; o Lucro Real é gerencial, sem estoques, ajustes fiscais ou compensação de prejuízos. Fechamentos incompletos permanecem pendentes.'});
   if(incomeTaxes.incomeTaxAssessment.regimes.presumed?.periods.some(period=>(period.lc224?.excessRevenue??0)>0))warnings.push({code:'presumption-increase',severity:'warning',title:'Acréscimo trimestral dos coeficientes de presunção',detail:`LC 224/2025 aplicada no cenário ${draft.year}: limite de R$ 1.250.000 por trimestre com saldo anterior conhecido, proporção das atividades do trimestre e ajuste anual de encerramento. A origem dos arquivos não altera o ano das regras do cenário.`});
   let simplesDiagnostic;
@@ -282,7 +283,7 @@ export function calculateMonthlySimulation(draft,reports,monthlyInputs,sourceJob
   memory.push({id:'simples.diagnostic',section:'Simples Nacional',label:'Condição do cálculo no período',formula:'Cada competência mantém sua RBT12 e seu motivo; disponibilidade não confirma enquadramento fiscal.',value:diagnoses.map(item=>`${item.sourceMonth}: ${item.message}`).join(' '),unit:'text'},
     {id:'simples.action',section:'Simples Nacional',label:'Conferência necessária',formula:simplesDiagnostic.statusCode,value:simplesDiagnostic.action,unit:'text'});
   }
-  const result={...first,incomeTaxAssessment:incomeTaxes.incomeTaxAssessment,version:analysisPeriod?JAN_SEP_MODEL_VERSION:MONTHLY_MODEL_VERSION,method:MONTHLY_VERSION,...(analysisPeriod?{analysisPeriod}:{}),annualRevenue,...(simplesDiagnostic?{simplesDiagnostic}:{}),regimes,credits,memory,warnings,monthlyResults,...(rbt12Schedule?{rbt12Schedule}:{}),
+  const result={...first,...(rbt12Schedule?{rbt12Source:'SIMPLES_SECTION_22'}:{}),incomeTaxAssessment:incomeTaxes.incomeTaxAssessment,version:analysisPeriod?JAN_SEP_MODEL_VERSION:MONTHLY_MODEL_VERSION,method:MONTHLY_VERSION,...(analysisPeriod?{analysisPeriod}:{}),annualRevenue,...(simplesDiagnostic?{simplesDiagnostic}:{}),regimes,credits,memory,warnings,monthlyResults,...(rbt12Schedule?{rbt12Schedule}:{}),
     bestRegimeId:ranked[0]?.id||null,difference:ranked.length?ranked[0].annualProfit-ranked.at(-1).annualProfit:0};
   applyIncomeTaxAssessment(result,incomeTaxes.incomeTaxAssessment,false);
   projection.scenario={unit:'CENTS',annual:{revenueCents:sum(monthlyResults.map(row=>asCents(row.values.salesRevenue,true)+asCents(row.values.serviceRevenue)))},months:monthlyResults.map(({sourceMonth,groups,values})=>({sourceMonth,groups,values}))};

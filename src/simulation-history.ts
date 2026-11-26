@@ -276,7 +276,7 @@ async function createSimulationSnapshot(actor: LookupActor, input: unknown, repr
   need(reportMonths===source.monthlyReports.length,'O período precisa corresponder às competências dos relatórios.',409,'SIMULATION_PERIOD');
   need(Array.isArray(validated.monthlyInputs), 'Atualize a página para enviar os valores de cada competência.',409,'SIMULATION_MONTHS');
   const rbt12Schedule=rbt12Extraction?buildRbt12Schedule(rbt12Extraction,source.monthlyReports.map(row=>row.sourceMonth)):null;
-  need(!rbt12Schedule||rbt12Schedule.complete,`O quadro 2.2 não cobre todas as competências. ${rbt12Schedule?.rows.filter(row=>row.status!=='CONFIRMED').map(row=>`${row.sourceMonth}: faltam ${row.missingMonths.join(', ')}`).join('; ')||''}. Importe um extrato com o histórico necessário.`,409,'RBT12_MONTHS_MISSING');
+  need(!rbt12Schedule||rbt12Schedule.complete||!!source.analysisPeriod,`O quadro 2.2 não cobre todas as competências. ${rbt12Schedule?.rows.filter(row=>row.status!=='CONFIRMED').map(row=>`${row.sourceMonth}: faltam ${row.missingMonths.join(', ')}`).join('; ')||''}. Importe um extrato com o histórico necessário.`,409,'RBT12_MONTHS_MISSING');
   const computed=(()=>{try{return calculateMonthlySimulation(draft,source.monthlyReports!,validated.monthlyInputs,source.sales.jobId,rbt12Schedule,source.analysisPeriod);}catch(error){throw new AppError(400,'VALIDATION',error instanceof Error?error.message:'Valores mensais inválidos.');}})();
   const {difalProjection,anticipationProjection,engineInput,result,projection,monthlyInputs}=computed;
   const partialData=partialAnalysisData(analysis?.missingSectors||parent?.partialData?.missingSectors||[],{fiscalDataUsed:analysis?analysis.fiscalDataUsed:parent?.partialData?.fiscalDataUsed===true});
