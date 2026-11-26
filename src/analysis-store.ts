@@ -28,7 +28,7 @@ import type {AnalysisDeletionReceipt} from './analysis-deletion.ts';
 type Author={id:string;name:string};
 type Sector<T>={revision:number;status:'DRAFT'|'COMPLETE';data:T;completedAt:Date|null;updatedAt:Date;updatedBy:Author;
   confirmation?:{fingerprint:string;generationId:string;purchaseJobId:string;salesJobId:string;extractionId:string|null;months:string[];configRevision:number;analysisPeriod?:AnalysisPeriod}|null};
-type Current={id:string;analysisRevision:number|null;createdAt:Date;modelVersion:string|null;legacy:boolean;sourceFingerprint?:string|null;fiscalDataUsed?:boolean};
+type Current={id:string;analysisRevision:number|null;createdAt:Date;modelVersion:string|null;legacy:boolean;sourceFingerprint?:string|null;fiscalDataUsed?:boolean;sourceMonths?:string[]};
 type Analysis=Doc & {clientId:string;company:{name:string;code:string|null;cnpj?:string|null};version:string;activated:boolean;revision:number;
   config:AnalysisConfig;fiscal:Sector<FiscalData>;accounting:Sector<AccountingData>;currentSimulation:Current|null;
   legacy:boolean;legacyReference?:{simulationId:string;monthlyInputsPreserved:boolean};createdAt:Date;createdBy:Author;updatedAt:Date;
@@ -190,7 +190,13 @@ async function presentation(item:Analysis,options:AnalysisReadOptions={},prepare
   const {checked,source,sourceError,...ready}=options.summary?savedReadiness(item):prepared||await readiness(item);
   const {workspaceId:_workspace,_id:id,leaseOwner:_owner,leaseUntil:_until,activated:_activated,lastGeneration:_last,...rest}=item;
   const current=item.currentSimulation;
-  const analysis={...rest,accounting:{...item.accounting,data:accountingForYear(item.accounting.data,ready.analysisPeriod?.sourceYear)},id,periodPolicy:JAN_SEP_POLICY,readiness:ready,currentSimulation:current?{...current,stale:current.legacy || current.modelVersion!==JAN_SEP_MODEL_VERSION || current.analysisRevision!==item.revision ||
+  let capturedMonths=current?.sourceMonths;
+  if(current&&!options.summary&&!capturedMonths&&ready.months.length){
+    const snapshot=await(await collection('simulations')).findOne(scope({_id:current.id,clientId:item.clientId,deletedAt:{$exists:false}}),{projection:{'analysisPeriod.includedMonths':1}});
+    capturedMonths=snapshot?.analysisPeriod?.includedMonths;
+  }
+  const coverageChanged=!!current&&ready.months.length>0&&Array.isArray(capturedMonths)&&!isDeepStrictEqual(capturedMonths,ready.months);
+  const analysis={...rest,accounting:{...item.accounting,data:accountingForYear(item.accounting.data,ready.analysisPeriod?.sourceYear)},id,periodPolicy:JAN_SEP_POLICY,readiness:ready,currentSimulation:current?{...current,stale:coverageChanged || current.legacy || current.modelVersion!==JAN_SEP_MODEL_VERSION || current.analysisRevision!==item.revision ||
     (!options.summary&&(current.fiscalDataUsed===true)!==(ready.partial.fiscalDataUsed===true))||
     (!options.summary&&(!ready.partial.missingSectors.includes('fiscal')||ready.partial.fiscalDataUsed===true)&&
       (!checked || checked.fingerprint!==(current.sourceFingerprint??item.fiscal.confirmation?.fingerprint)))}:null};
@@ -202,7 +208,7 @@ async function visible(item:Analysis,options:AnalysisReadOptions={},prepared?:Re
 function sector<T>(data:T,actor:LookupActor,now:Date):Sector<T>{return {revision:0,status:'DRAFT',data,completedAt:null,updatedAt:now,updatedBy:author(actor),confirmation:null};}
 function currentOf(snapshot:any,revision:number|null,legacy:boolean):Current{
   return {id:snapshot._id,analysisRevision:revision,createdAt:snapshot.createdAt,modelVersion:snapshot.modelVersion||null,legacy,
-    sourceFingerprint:snapshot.analysisEvidence?.fiscal?.sourceFingerprint||null,fiscalDataUsed:snapshot.partialData?.fiscalDataUsed===true};
+    sourceFingerprint:snapshot.analysisEvidence?.fiscal?.sourceFingerprint||null,fiscalDataUsed:snapshot.partialData?.fiscalDataUsed===true,...(Array.isArray(snapshot.analysisPeriod?.includedMonths)?{sourceMonths:[...snapshot.analysisPeriod.includedMonths]}:{})};
 }
 /** Only explicit open/legacy writes adopt old data. Reads never migrate snapshots. */
 function seedLegacy(item:Analysis,snapshot:any,actor:LookupActor){
