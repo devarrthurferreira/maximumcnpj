@@ -248,12 +248,13 @@ export function renderDifalChoice(selection,policy,{prefix='analysis',choice,ass
   const selected=resolveRegimeSelection(selection).selected.filter(id=>['pure','hybrid'].includes(id));
   if(!selected.length)return '';
   const decision=choice===undefined?(selected.some(id=>policy?.enabled?.[id])?'yes':'no'):choice;
-  const canChoose=assessment?.entry?.state==='available';
-  const explanation=assessment?.entry?.state==='none'?'Nenhuma entrada elegível: R$ 0,00 na DRE. Suas preferências salvas são preservadas.':canChoose?'A leitura não altera sua escolha. Confirme abaixo a inclusão na DRE.':'Adicione ou confira o relatório de entradas. Pendência não é valor zero.';
+  const ufPending=['partial','pending'].includes(assessment?.entry?.state);
+  const canChoose=assessment?.entry?.state==='available'||ufPending;
+  const explanation=ufPending?'Atenção: há linhas com UF pendente. Você pode salvar e concluir normalmente; confira as UFs no relatório. Apenas as operações identificadas compõem a estimativa. Se não alterar a opção abaixo, a política de DIFAL vigente será mantida.':assessment?.entry?.state==='none'?'Nenhuma entrada elegível: R$ 0,00 na DRE. Suas preferências salvas são preservadas.':canChoose?'A leitura não altera sua escolha. Confirme abaixo a inclusão na DRE.':'Adicione ou confira o relatório de entradas. Pendência não é valor zero.';
   return `<section class="analysis-difal-panel is-simple" id="${esc(prefix)}-difal-panel" data-evidence-ready="${canChoose}">
     <div class="analysis-difal-period"><span>Resultado dos relatórios</span><span>Janeiro a setembro</span></div>
     ${reading?loadingMarkup({title:'Conferindo os relatórios…',detail:'Atualizando a leitura sem alterar suas escolhas.',compact:true}):''}
-    ${renderDifalAssessment(assessment)}<p class="analysis-note">${esc(explanation)}</p>
+    ${renderDifalAssessment(assessment)}<p class="${ufPending?'warning info':'analysis-note'}" ${ufPending?'role="status" data-difal-uf-warning':''}>${esc(explanation)}</p>
     <fieldset class="analysis-difal-question" ${canChoose?'':'disabled hidden'} aria-describedby="${esc(prefix)}-difal-summary"><legend>Incluir este DIFAL de entrada na DRE?</legend><div class="analysis-difal-choice-options">${[['yes','Sim'],['no','Não']].map(([value,label])=>`<label for="${esc(prefix)}-difal-${value}"><input id="${esc(prefix)}-difal-${value}" type="radio" name="${esc(prefix)}-difal-choice" value="${value}" data-difal-choice="${value}" data-difal-context="${esc(prefix)}" ${decision===value?'checked':''}><span>${label}</span></label>`).join('')}</div></fieldset>
     <p class="analysis-difal-summary" id="${esc(prefix)}-difal-summary" role="status" aria-live="polite" ${canChoose?'':'hidden'}>${esc(difalChoiceSummary(selection,policy,choice))}</p>
     <details class="analysis-difal-details" id="${esc(prefix)}-difal-details" ${decision==='yes'&&canChoose?'open':'hidden'}><summary>Escolher regimes</summary>${difalOptions(selection,policy,prefix)}</details>

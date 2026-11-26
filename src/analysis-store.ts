@@ -363,7 +363,10 @@ export async function updateAnalysisSector(actor:LookupActor,id:string,kind:'fis
     }
     if(fiscal.generationId!==prior.fiscal.data.generationId)need(fiscal.monthlyOverrides===null,'Ao trocar os arquivos, revise os ajustes fiscais anteriores.',409,'ANALYSIS_SOURCE_CHANGED');
     if(input.complete){const checked=await fiscalSource(prior,fiscal);
-      need(!(fiscal.difalChoice===null&&requiresSimplesReference(prior.config.regimeSelection)&&checked.source.monthlyReports?.some(row=>row.anticipation?.amountCents>0)),
+      // Missing UF is a non-blocking warning; retain the existing policy and known amounts.
+      const anticipationRows=checked.source.monthlyReports||[];
+      const hasPendingUf=anticipationRows.some(row=>row.anticipation?.pendingLines>0);
+      need(!(fiscal.difalChoice===null&&requiresSimplesReference(prior.config.regimeSelection)&&!hasPendingUf&&anticipationRows.some(row=>row.anticipation?.amountCents>0)),
         'Confira a entrada identificada nos relatórios e confirme sua inclusão ou exclusão na DRE.',422,'ANALYSIS_DIFAL_CHOICE');
       confirmation={fingerprint:checked.fingerprint,generationId:fiscal.generationId!,purchaseJobId:checked.source.purchases.jobId,
       salesJobId:checked.source.sales.jobId,extractionId:fiscal.rbt12ExtractionId,months:checked.months,configRevision,analysisPeriod:checked.source.analysisPeriod};}

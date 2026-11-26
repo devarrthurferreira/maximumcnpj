@@ -26,10 +26,11 @@ async function fresh(request:APIRequestContext,baseURL:string,account:any){
   const company=(await api(request,baseURL,'POST','/api/v4/clients/import',{rows:[{code,name:'Conferência sintética '+code,uf:'MG'}]})).items[0];
   return (await api(request,baseURL,'POST','/api/v4/analyses',{clientId:company.id,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['pure','hybrid']},difalChoice:null})).analysis;
 }
-async function attach(request:APIRequestContext,baseURL:string,analysis:any,generationId:string,type:'purchases'|'sales',document:string,recipientUf:string){
-  const attached=await api(request,baseURL,'POST',`/api/v4/generations/${generationId}/${type}`,{importId:randomUUID(),clientId:analysis.clientId,fileName:`synthetic-${type}.csv`,expectedRows:1,issuerUf:'MG'});
+async function attach(request:APIRequestContext,baseURL:string,analysis:any,generationId:string,type:'purchases'|'sales',document:string,recipientUf:string,mixed=false){
+  const attached=await api(request,baseURL,'POST',`/api/v4/generations/${generationId}/${type}`,{importId:randomUUID(),clientId:analysis.clientId,fileName:`synthetic-${type}.csv`,expectedRows:mixed?2:1,issuerUf:'MG'});
   const totalCents=type==='purchases'?100000:200000;
-  await api(request,baseURL,'POST',`/api/v4/${type}/${attached.job._id}/rows`,{offset:0,rows:[{document,name:'Operação sintética',recipientUf,serviceDate:'2025-01-15',natureCode:type==='sales'?'5102001':'1102001',description:'Operação sintética',quantity:'1',grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents}]});
+  const row={document,name:'Operação sintética',recipientUf,serviceDate:'2025-01-15',natureCode:type==='sales'?'5102001':'1102001',description:'Operação sintética',quantity:'1',grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents};
+  await api(request,baseURL,'POST',`/api/v4/${type}/${attached.job._id}/rows`,{offset:0,rows:mixed?[row,{...row,recipientUf:''}]:[row]});
   let job=await api(request,baseURL,'POST',`/api/v4/${type}/${attached.job._id}/finalize`,{});
   if(job.status!=='COMPLETED'){
     const actor=(await api(request,baseURL,'GET','/api/auth/session')).user;
@@ -37,9 +38,9 @@ async function attach(request:APIRequestContext,baseURL:string,analysis:any,gene
   }
   expect(job.status).toBe('COMPLETED');
 }
-async function reports(request:APIRequestContext,baseURL:string,analysis:any,document='00000000000191',recipientUf='SP'){
+async function reports(request:APIRequestContext,baseURL:string,analysis:any,document='00000000000191',recipientUf='SP',mixed=false){
   const prepared=await api(request,baseURL,'POST',`/api/v4/analyses/${analysis.id}/fiscal/import`,{expectedSectorRevision:analysis.fiscal.revision,expectedConfigRevision:analysis.config.revision});
-  await attach(request,baseURL,analysis,prepared.generationId,'purchases',document,recipientUf);
+  await attach(request,baseURL,analysis,prepared.generationId,'purchases',document,recipientUf,mixed);
   await attach(request,baseURL,analysis,prepared.generationId,'sales','12345678900','SP');
   return (await api(request,baseURL,'GET',`/api/v4/analyses/${analysis.id}?summary=1`)).analysis;
 }
@@ -92,11 +93,27 @@ test('DIFAL pela leitura: CPF excluído confirma zero sem selecionar Não pelo u
   await page.locator('button[value="complete"]').click();expect((await saving).ok()).toBe(true);
 });
 
-test('DIFAL pela leitura: UF pendente não vira zero e servidor recusa confirmar entrada positiva sem escolha',async({page,baseURL,account})=>{
+test('DIFAL pela leitura: UF pendente permite concluir sem virar zero; entrada completa ainda exige escolha',async({page,baseURL,account})=>{
   const initial=await fresh(page.request,baseURL!,account),positive=await reports(page.request,baseURL!,initial);
   const refused=await page.request.patch(`/api/v4/analyses/${positive.id}/fiscal`,{headers:{Origin:new URL(baseURL!).origin},data:{expectedSectorRevision:positive.fiscal.revision,expectedConfigRevision:positive.config.revision,complete:true,data:positive.fiscal.data}});
   expect(refused.status()).toBe(422);expect((await refused.json()).error).toBe('ANALYSIS_DIFAL_CHOICE');
   const pending=await reports(page.request,baseURL!,await fresh(page.request,baseURL!,account),'00000000000191','');
   await page.goto(url(pending.id));await expect(detected(page)).toHaveAttribute('data-difal-state','pending');
-  await expect(detected(page).locator('[data-difal-detected-amount]')).toHaveCount(0);await expect(page.locator('#analysis-difal-yes')).toBeDisabled();
+  await expect(detected(page).locator('[data-difal-detected-amount]')).toHaveCount(0);await expect(page.locator('#analysis-difal-yes')).toBeEnabled();
+  await expect(page.locator('[data-difal-uf-warning]')).toBeVisible();
+  const saving=page.waitForResponse(r=>r.request().method()==='PATCH'&&new URL(r.url()).pathname===`/api/v4/analyses/${pending.id}/fiscal`);
+  await page.locator('button[value="complete"]').click();expect((await saving).ok()).toBe(true);
+  await expect(page.locator('#analysis-feedback')).toContainText('UF pendente');
+});
+
+test('DIFAL parcial conserva o valor identificado, a política e permite concluir com aviso',async({page,baseURL,account})=>{
+  const analysis=await reports(page.request,baseURL!,await fresh(page.request,baseURL!,account),'00000000000191','SP',true);
+  await page.goto(url(analysis.id));await expect(detected(page)).toHaveAttribute('data-difal-state','partial');
+  await expect(detected(page).locator('[data-difal-detected-amount]')).toHaveText('R$ 73,20');
+  await expect(page.locator('[data-difal-uf-warning]')).toBeVisible();
+  const saving=page.waitForResponse(r=>r.request().method()==='PATCH'&&new URL(r.url()).pathname===`/api/v4/analyses/${analysis.id}/fiscal`);
+  await page.locator('button[value="complete"]').click();expect((await saving).ok()).toBe(true);
+  const saved=(await api(page.request,baseURL!,'GET',`/api/v4/analyses/${analysis.id}?summary=1`)).analysis.fiscal;
+  expect(saved.status).toBe('COMPLETE');expect(saved.data.difalPolicy).toEqual(analysis.fiscal.data.difalPolicy);expect(saved.data.difalChoice).toBeNull();
+  await expect(page.locator('#analysis-feedback')).toContainText('UF pendente');
 });

@@ -470,7 +470,7 @@ function validateDifalChoice(prefix,selection,policy,{required=false}={}) {
   if(!selectedDifalRegimes(selection).length)return;
   if(prefix==='analysis'){
     const entry=assessAnalysisDifal(detailOptions()).entry;
-    if(entry.state==='none')return;
+    if(['none','partial','pending'].includes(entry.state))return; // UF pendente não impede concluir; preserve a política e o valor parcial.
     if(entry.state!=='available'){
       const field=$('#analysis-difal-documents');revealWizardField(field);field?.focus();
       throw new Error('Confira a leitura do relatório de entradas antes de concluir o DIFAL. Dados pendentes não equivalem a zero.');
@@ -1059,6 +1059,7 @@ async function saveSector(sector,complete) {
     }
     captureConfig();const data=sector==='fiscal'?captureFiscal():captureAccounting({applyAverage:true});
     if(S.configDirty)throw new Error('Na etapa Regimes, clique em Continuar para salvar as escolhas antes de salvar o setor.');
+    const difalUfPending=complete&&sector==='fiscal'&&['partial','pending'].includes(assessAnalysisDifal(detailOptions()).entry.state);
     if(complete&&sector==='fiscal')validateDifalChoice('analysis',S.analysis.config.regimeSelection,data.difalPolicy,{required:S.fiscalDifalChoice===null});
     if(complete&&sector==='accounting'){
       const values=data.monthlyAverage.values;
@@ -1071,7 +1072,7 @@ async function saveSector(sector,complete) {
     setBusy(true,`${complete?'Concluindo':'Salvando'} o trabalho ${sectorName(sector)}…`);
     await patchSector(sector,data,complete);
     if(complete){S.modalOpen=false;if(sector==='accounting')collapseAccountingTools();}
-    feedback(complete?`${sectorName(sector)} concluído. ${hasLocalWork()?'Há preenchimentos locais que ainda precisam ser conferidos e salvos.':S.analysis.readiness.ready?'Os dois setores estão prontos para gerar a DRE.':S.analysis.readiness.partial?.allowed?'Você já pode gerar a DRE com aviso do setor pendente ou completar o outro setor.':'Acompanhe abaixo o que ainda falta para gerar.'}`:`Trabalho ${sectorName(sector)} salvo. Você pode continuar depois nesta mesma análise.`);
+    feedback(complete&&difalUfPending?'Fiscal concluído. Atenção: existem linhas com UF pendente no DIFAL de entrada. Confira o relatório; somente as operações com UF identificada compõem a estimativa, conforme a política vigente.':complete?`${sectorName(sector)} concluído. ${hasLocalWork()?'Há preenchimentos locais que ainda precisam ser conferidos e salvos.':S.analysis.readiness.ready?'Os dois setores estão prontos para gerar a DRE.':S.analysis.readiness.partial?.allowed?'Você já pode gerar a DRE com aviso do setor pendente ou completar o outro setor.':'Acompanhe abaixo o que ainda falta para gerar.'}`:`Trabalho ${sectorName(sector)} salvo. Você pode continuar depois nesta mesma análise.`,difalUfPending?'warning':'');
   } catch(error){
     if(sector==='fiscal'&&String(error.code||'').startsWith('RBT12_'))S.modalSteps.fiscal='rbt12';
     if(sector==='fiscal'&&['ANALYSIS_FISCAL_INCOMPLETE','SIMULATOR_INCOMPLETE','ANALYSIS_GENERATION_UNAVAILABLE'].includes(error.code))S.modalSteps.fiscal='documents';

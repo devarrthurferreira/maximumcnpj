@@ -1,5 +1,9 @@
 # Histórico de alterações
 
+## Ajuste de 26/11/2026 — DIFAL com UF pendente
+
+- Permite concluir o Fiscal com estimativa parcial ou pendente de UF, mantendo aviso de conferência e a política de inclusão vigente. Não modifica alíquotas nem presume UF.
+
 ## Ajuste de 26/11/2026 — Limite de leitura de relatórios
 
 - Eleva de 50.000 para 80.000 linhas de dados por relatório, com aviso de processamento mais demorado. Mantém os demais limites e regras fiscais.

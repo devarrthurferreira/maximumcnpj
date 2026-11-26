@@ -49,11 +49,13 @@ test('zero exige leitura concluída sem operações ou pendências',()=>{
  const view=html(f);assert.match(view,/Sem entrada elegível/);assert.match(view,/data-evidence-ready="false"/);
  assert.doesNotMatch(view,/value="no"[^>]*checked/);
 });
-test('pendência e valor parcial não liberam decisão nem zero confirmado',()=>{
+test('UF pendente permite continuar e escolher a política, sem confirmar zero ou perder o valor parcial',()=>{
  const f=fixture();entry(f).purchaseInput.anticipation.pendingLines=1;
- assert.equal(assessAnalysisDifal(f).entry.state,'partial');assert.match(html(f),/data-evidence-ready="false"/);
+ assert.equal(assessAnalysisDifal(f).entry.state,'partial');assert.equal(assessAnalysisDifal(f).entry.amountCents,7320);
+ assert.match(html(f),/data-evidence-ready="true"/);assert.match(html(f),/data-difal-uf-warning/);assert.match(html(f),/salvar e concluir normalmente/);
  Object.assign(entry(f).purchaseInput.anticipation,{baseCents:0,amountCents:0,eligibleLines:0});
- const result=assessAnalysisDifal(f);assert.equal(result.entry.state,'pending');assert.equal(result.entry.amountCents,null);
+ const result=assessAnalysisDifal(f);assert.equal(result.entry.state,'pending');assert.equal(result.entry.amountCents,null);assert.equal(result.entry.confirmed,false);
+ assert.match(html(f),/data-evidence-ready="true"/);assert.match(html(f),/data-difal-uf-warning/);
 });
 test('documento em processamento ou upload substituto não reutiliza valor anterior',()=>{
  const f=fixture();f.documentUploads={PURCHASES:{status:'reading'}};
