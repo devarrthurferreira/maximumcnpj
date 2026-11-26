@@ -31,6 +31,7 @@ class handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.request_id = str(uuid.uuid4())
+        action, stage = 'unknown', 'request'
         try:
             require(allowed_origin(self.headers), 403, 'ORIGIN', 'Origem da requisição não autorizada.')
             # Reject malformed/no session before opening a database connection.
@@ -44,21 +45,27 @@ class handler(BaseHTTPRequestHandler):
             except (ValueError, UnicodeError): raise ReportError(400, 'INVALID_JSON', 'JSON inválido.')
             options = validate(payload)
             workspace = os.getenv('WORKSPACE_ID', 'maximum')
+            action = options['action']
+            stage = 'authentication'
             db = database()
             actor = authenticate(db, self.headers, workspace)
-            action = options['action']
+            stage = 'rate_limit'
             rate_limit(db, actor['_id'], workspace, action in ('pdf', 'csv', 'generation-pdf', 'dre-pdf'))
             if action == 'dre-pdf':
                 from reporting.dre_data import dre_metadata
                 from reporting.dre_pdf import render_dre_pdf
+                stage = 'dre_snapshot'
                 meta = dre_metadata(db, options['simulationId'], workspace, options)
+                stage = 'dre_render'
                 content = render_dre_pdf(meta)
+                stage = 'dre_response'
                 require(len(content) <= MAX_RESPONSE_BYTES, 413, 'REPORT_TOO_LARGE',
                         'O PDF da DRE excedeu o limite de resposta. Tente novamente ou informe o código da requisição.')
                 code = ''.join(c for c in str(meta['snapshot']['company'].get('code') or 'empresa')
                                if c.isascii() and c.isalnum())[:20] or 'empresa'
                 filename = f'dre-{code}-{options["simulationId"]}-{options["period"]}.pdf'
                 return self.send(200, content, 'application/pdf', filename)
+            stage = 'report_generation'
             if action == 'generation-pdf':
                 from reporting.generations import generation_metadata, render_generation_pdf
                 generation_meta = generation_metadata(db, options['generationId'], workspace, options['part'])
@@ -111,5 +118,5 @@ class handler(BaseHTTPRequestHandler):
                 status, code, message = error.status, error.code, str(error)
             else:
                 status, code, message = 503, 'REPORT_UNAVAILABLE', 'Não foi possível gerar o relatório. Confira a conexão com MongoDB e tente novamente.'
-            print(json.dumps({'requestId': self.request_id, 'code': code, 'status': status, 'errorType': type(error).__name__}))
+            print(json.dumps({'requestId': self.request_id, 'code': code, 'status': status, 'errorType': type(error).__name__, 'action': action, 'stage': stage}))
             self.send(status, json.dumps({'error': code, 'message': message, 'requestId': self.request_id}, ensure_ascii=False).encode())

@@ -34,7 +34,7 @@ class StorageRouteTests(unittest.TestCase):
     def test_legacy_and_explicit_routes_are_strict(self):
         from bson.int64 import Int64
         self.assertEqual(storage.job_storage_slot({}), 1)
-        for slot in (1, 2, 3):
+        for slot in (1, 2, 3, 4, 5, 6):
             self.assertEqual(storage.job_storage_slot({'storageSlot': slot, 'storageVersion': storage.STORAGE_VERSION}), slot)
         for slot in (2.0, Int64(3)):
             selected = storage.job_storage_slot({'storageSlot': slot, 'storageVersion': storage.STORAGE_VERSION})
@@ -43,7 +43,7 @@ class StorageRouteTests(unittest.TestCase):
         invalid = [{'storageSlot': 1}, {'storageVersion': storage.STORAGE_VERSION},
                    {'storageSlot': 1, 'storageVersion': 'UNKNOWN'},
                    *({'storageSlot': slot, 'storageVersion': storage.STORAGE_VERSION}
-                     for slot in (None, True, False, '2', 2.1, 0, 4))]
+                     for slot in (None, True, False, '2', 2.1, 0, 7))]
         for job in invalid:
             with self.subTest(job=job), self.assertRaises(ReportError) as caught:
                 storage.job_storage_slot(job)
@@ -80,7 +80,7 @@ class StorageRouteTests(unittest.TestCase):
         with patch.dict(os.environ, {'MONGODB_URI': 'mongodb://primary.test'}, clear=True), patch('pymongo.MongoClient') as factory:
             storage.slot_database(1)
             factory.return_value.__getitem__.assert_called_once_with('maximum_cnpj')
-            for slot in (2, 3):
+            for slot in (2, 3, 4, 5, 6):
                 with self.subTest(slot=slot), self.assertRaises(ReportError) as caught:
                     storage.slot_database(slot)
                 self.assertEqual((caught.exception.status, caught.exception.code), (503, 'STORAGE_NOT_CONFIGURED'))

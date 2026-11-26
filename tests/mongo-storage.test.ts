@@ -28,8 +28,8 @@ test('pool: incomplete configuration, duplicate clusters and unsafe limits are r
 });
 test('pool: a saved destination never silently falls back to the primary',()=>{
   assert.equal(jobStorageSlot({}),1);
-  for(const slot of [1,2,3])assert.equal(jobStorageSlot({storageSlot:slot,storageVersion:STORAGE_VERSION}),slot);
-  for(const data of [{storageSlot:2},{storageVersion:STORAGE_VERSION},{storageSlot:true,storageVersion:STORAGE_VERSION},{storageSlot:4,storageVersion:STORAGE_VERSION},{storageSlot:2,storageVersion:'future'}]){
+  for(const slot of [1,2,3,4,5,6])assert.equal(jobStorageSlot({storageSlot:slot,storageVersion:STORAGE_VERSION}),slot);
+  for(const data of [{storageSlot:2},{storageVersion:STORAGE_VERSION},{storageSlot:true,storageVersion:STORAGE_VERSION},{storageSlot:7,storageVersion:STORAGE_VERSION},{storageSlot:2,storageVersion:'future'}]){
     assert.throws(()=>jobStorageSlot(data),(error:any)=>error.code==='STORAGE_ROUTE');
   }
 });
@@ -60,4 +60,12 @@ test('pool: valid long UTF-8 descriptions are reserved by measured bytes and old
   assert(measured>bytes*10000*2,'Both temporary and final copies must fit.');
   assert(unmeasured>measured,'A client without byte forecasting cannot receive a smaller reservation.');
   assert.throws(()=>jobStorageReservation(10,-1));assert.throws(()=>jobStorageReservation(10,'100'));
+});
+
+test('pool: seis clusters em sequência, com limites e nomes independentes',()=>{
+ const extra=Object.fromEntries([2,3,4,5,6].flatMap(slot=>[[`MONGODB_URI_${slot}`,`mongodb://127.0.0.1:${27016+slot}`],[`MONGODB_DB_${slot}`,`synthetic_${slot}`]]));
+ const configs=storageConfigs({...env,...extra,MONGODB_STORAGE_LIMIT_BYTES_6:'10000000'});
+ assert.deepEqual(configs.map(c=>c.slot),[1,2,3,4,5,6]);assert.equal(configs[5].database,'synthetic_6');assert.equal(configs[5].limitBytes,10000000);
+ assert.throws(()=>storageConfigs({...env,...extra,MONGODB_URI_4:''}),/MongoDB 4/);
+ assert.throws(()=>storageConfigs({...env,...extra,MONGODB_URI_6:extra.MONGODB_URI_5}),/clusters diferentes/);
 });

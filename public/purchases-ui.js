@@ -4,7 +4,7 @@ import {requiresSimplesReference} from './regime-selection.js';
 import {difalDirectionSelection} from './difal-policy.js';
 import {renderRevenueReconciliation} from './revenue-reconciliation-view.js';
 import {formatCnpj,REPORTING_LABELS} from './domain.js';
-import {assertMatchingPurchaseCompetences} from './purchase-model.js';
+import {assertMatchingPurchaseCompetences,assertAnalysisPurchaseCompetences} from './purchase-model.js';
 import {estimatePayloadBytes} from './import-payload-size.js';
 import {BRAZIL_UFS as brazilianUfs, calculateDifal, DIFAL_VERSION, DIFAL_CPF_CNPJ_VERSION, isDifalVersion, isPendingDifal, normalizeUf, summarizeDifal} from './difal.js';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.js';
@@ -382,7 +382,7 @@ async function showGuidedReview(review) {
   const company = generation.companies.find(item => item.clientId === S.company);
   if (!company) throw new Error('A empresa não pertence mais a esta geração. Abra o Histórico para conferir.');
   const other = sales ? company.purchase : company.sales;
-  if (other?.status === 'COMPLETED') assertMatchingPurchaseCompetences(review.period, other.reportPeriod);
+  if (other?.status === 'COMPLETED') (S.analysis?assertAnalysisPurchaseCompetences:assertMatchingPurchaseCompetences)(review.period, other.reportPeriod);
   S.generationDetails = generation;
   setBusy(false);
   const repairs = review.repairedCount || 0;

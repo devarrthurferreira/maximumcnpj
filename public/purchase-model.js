@@ -1,3 +1,4 @@
+import {buildAnalysisPeriod} from './analysis-period.js';
 // Recognize the fixed export before accepting an automatic import. Values are
 // still validated by purchase-parser and again by the API.
 const normalized = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -49,4 +50,13 @@ export function assertMatchingPurchaseCompetences(period, other) {
   if (period.startMonth !== other.startMonth || period.endMonth !== other.endMonth || period.months !== other.months) {
     throw new Error(`Este arquivo cobre ${period.startMonth} a ${period.endMonth}, mas o outro relatório cobre ${other.startMonth} a ${other.endMonth}. Use as mesmas competências nos dois arquivos; os dias podem ser diferentes. Nenhum dado foi enviado.`);
   }
+}
+
+/** The Jan–Sep analysis accepts different date ranges if both cover at least one common competence.
+ * Empty internal months remain zero movement; outside coverage is not presumed zero. */
+export function assertAnalysisPurchaseCompetences(period,other) {
+  if(!period?.startMonth||!other?.startMonth)return;
+  const coverage=buildAnalysisPeriod(period,other);
+  if(!coverage.complete)throw new Error('Os relatórios não possuem competência em comum entre janeiro e setembro. Confira o ano e o intervalo dos arquivos. Nenhum dado foi enviado.');
+  return coverage;
 }

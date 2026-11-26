@@ -1,7 +1,8 @@
 import type {Db, MongoClient} from 'mongodb';
 import {AppError} from './security.ts';
 
-export type StorageSlot = 1 | 2 | 3;
+export const STORAGE_SLOTS = [1,2,3,4,5,6] as const;
+export type StorageSlot = typeof STORAGE_SLOTS[number];
 export type StorageConfig = {slot:StorageSlot;uri:string;database:string;limitBytes:number};
 export const DEFAULT_STORAGE_LIMIT = 512 * 1024 * 1024;
 export const DEFAULT_ROLLOVER_PERCENT = 85;
@@ -11,9 +12,9 @@ const configError = (message:string) => new AppError(503,'STORAGE_CONFIGURATION'
 export function storageConfigs(env:NodeJS.ProcessEnv=process.env):StorageConfig[] {
   const primary=env.MONGODB_URI?.trim();
   if(!primary)throw new AppError(503,'DATABASE_NOT_CONFIGURED','Configure o MongoDB e execute a criação do primeiro administrador.');
-  if(env.MONGODB_URI_3?.trim()&&!env.MONGODB_URI_2?.trim())throw configError('Configure o MongoDB 2 antes de habilitar o MongoDB 3.');
+  for(const slot of STORAGE_SLOTS.slice(2))if(env[`MONGODB_URI_${slot}`]?.trim()&&!env[`MONGODB_URI_${slot-1}`]?.trim())throw configError(`Configure o MongoDB ${slot-1} antes de habilitar o MongoDB ${slot}.`);
   const configs:StorageConfig[]=[],endpoints=new Set<string>();
-  for(const slot of [1,2,3] as const){
+  for(const slot of STORAGE_SLOTS){
     const suffix=slot===1?'':`_${slot}`,uri=env[`MONGODB_URI${suffix}`]?.trim();
     if(!uri)continue;
     // Parse only the scheme and host list; never copy credentials into an error.
@@ -28,7 +29,7 @@ export function storageConfigs(env:NodeJS.ProcessEnv=process.env):StorageConfig[
       if(port<1||port>65535)throw configError(`A conexão do MongoDB ${slot} é inválida.`);
       return `${parsed[1].replace(/\.$/,'')}:${port}`;
     });
-    if(hosts.some(host=>endpoints.has(host)))throw configError('Use clusters diferentes para os MongoDB 1, 2 e 3. Nomes de banco diferentes no mesmo cluster não ampliam a capacidade.');
+    if(hosts.some(host=>endpoints.has(host)))throw configError('Use clusters diferentes para os MongoDB 1 a 6. Nomes de banco diferentes no mesmo cluster não ampliam a capacidade.');
     hosts.forEach(host=>endpoints.add(host));
     const database=(env[`MONGODB_DB${suffix}`]||env.MONGODB_DB||'maximum_cnpj').trim();
     if(!database||/[\/\\. "$*<>:|?\u0000]/.test(database))throw configError(`O nome do banco MongoDB ${slot} é inválido.`);

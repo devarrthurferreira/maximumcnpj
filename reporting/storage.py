@@ -15,7 +15,7 @@ _clients_lock = Lock()
 
 def slot_database(slot=1):
     """Open only the requested configured destination; never fall back to another."""
-    require(type(slot) is int and slot in (1, 2, 3), 409, 'STORAGE_ROUTE',
+    require(type(slot) is int and slot in (1, 2, 3, 4, 5, 6), 409, 'STORAGE_ROUTE',
             'Destino de armazenamento do relatório inválido.')
     suffix = '' if slot == 1 else f'_{slot}'
     uri = os.getenv('MONGODB_URI' + suffix, '').strip()
@@ -47,7 +47,7 @@ def job_storage_slot(job):
     if 'storageSlot' not in job and 'storageVersion' not in job:
         return 1
     slot = job.get('storageSlot')
-    require(isinstance(slot, (int, float)) and not isinstance(slot, bool) and slot in (1, 2, 3)
+    require(isinstance(slot, (int, float)) and not isinstance(slot, bool) and slot in (1, 2, 3, 4, 5, 6)
             and job.get('storageVersion') == STORAGE_VERSION,
             409, 'STORAGE_ROUTE', 'Destino de armazenamento do relatório inconsistente.')
     # PyMongo may decode a BSON numeric value as Int64 or an integral double.

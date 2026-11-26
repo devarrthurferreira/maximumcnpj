@@ -67,3 +67,13 @@ test('cancelamento e falha de rede são propagados sem produzir arquivo',async()
   }}),error=>error.name==='AbortError');
   await assert.rejects(()=>fetchDrePdf({simulationId},{fetchImpl:async()=>{throw new TypeError('Falha de rede');}}),/Falha de rede/);
 });
+
+test('download tenta novamente uma falha transitória do gateway sem trocar a versão salva',async()=>{
+ let calls=0;
+ const file=await fetchDrePdf({simulationId},{fetchImpl:async(_url,options)=>{
+  assert.equal(JSON.parse(options.body).simulationId,simulationId);
+  return ++calls===1?new Response('gateway',{status:502}):response();
+ }});
+ assert.equal(calls,2);assert.equal(await file.blob.text(),pdf);
+ calls=0;await assert.rejects(()=>fetchDrePdf({simulationId},{fetchImpl:async()=>{calls++;return new Response(JSON.stringify({error:'DRE_SNAPSHOT_INVALID',message:'Confira a versão salva.'}),{status:409});}}),/Confira a versão salva/);assert.equal(calls,1);
+});

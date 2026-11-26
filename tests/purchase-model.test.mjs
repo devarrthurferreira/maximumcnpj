@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {purchaseModelHeaders, uniquePurchaseModel, assertPurchaseCompany, assertMatchingPurchaseCompetences} from '../public/purchase-model.js';
+import {purchaseModelHeaders, uniquePurchaseModel, assertPurchaseCompany, assertMatchingPurchaseCompetences, assertAnalysisPurchaseCompetences} from '../public/purchase-model.js';
 
 function header() {
   const row = Array(30).fill('');
@@ -46,4 +46,12 @@ test('guided second import accepts different days in matching months and blocks 
   assert.doesNotThrow(() => assertMatchingPurchaseCompetences(period,{...period,startDate:'2026-04-01'}));
   assert.doesNotThrow(() => assertMatchingPurchaseCompetences(period,null));
   assert.throws(() => assertMatchingPurchaseCompetences(period,{...period,startMonth:'2026-03',months:6}), /Nenhum dado foi enviado/);
+});
+
+test('análise aceita intervalos diferentes, incluindo meses internos sem movimento',()=>{
+ const purchases={startMonth:'2026-01',endMonth:'2026-03',months:3,observedMonths:2,missingMonths:['2026-02']};
+ const sales={startMonth:'2026-01',endMonth:'2026-04',months:4};
+ assert.deepEqual(assertAnalysisPurchaseCompetences(purchases,sales).includedMonths,['2026-01','2026-02','2026-03']);
+ assert.deepEqual(assertAnalysisPurchaseCompetences(purchases,{startMonth:'2026-02',endMonth:'2026-04',months:3}).includedMonths,['2026-02','2026-03']);
+ assert.throws(()=>assertAnalysisPurchaseCompetences(purchases,{startMonth:'2026-04',endMonth:'2026-06',months:3}),/competência em comum/);
 });

@@ -18,19 +18,19 @@ const UNMEASURED_BYTES_PER_ROW=32768;
 
 function poolControlState(control:Doc|null,configuredSlots:StorageSlot[]){
   const activeSlot=control?control.activeSlot:1,highestSlot=control?.highestSlot??activeSlot;
-  need([1,2,3].includes(activeSlot)&&[1,2,3].includes(highestSlot)&&highestSlot>=activeSlot,
+  need([1,2,3,4,5,6].includes(activeSlot)&&[1,2,3,4,5,6].includes(highestSlot)&&highestSlot>=activeSlot,
     'A configuração salva de armazenamento é inválida.',503,'STORAGE_CONFIGURATION');
   for(let slot=1;slot<=highestSlot;slot++)if(!configuredSlots.includes(slot as StorageSlot)){
     throw new AppError(503,'STORAGE_NOT_CONFIGURED',`O MongoDB ${slot} já foi usado e precisa continuar configurado para preservar o acesso ao histórico.`);
   }
   const usedSlots=Array.isArray(control?.usedSlots)?control.usedSlots:Array.from({length:highestSlot},(_,i)=>i+1);
-  need(usedSlots.every(slot=>[1,2,3].includes(slot)&&slot<=highestSlot),'A configuração salva de armazenamento é inválida.',503,'STORAGE_CONFIGURATION');
+  need(usedSlots.every(slot=>[1,2,3,4,5,6].includes(slot)&&slot<=highestSlot),'A configuração salva de armazenamento é inválida.',503,'STORAGE_CONFIGURATION');
   return {activeSlot:activeSlot as StorageSlot,highestSlot,usedSlots:usedSlots as StorageSlot[]};
 }
 
 export function jobStorageSlot(job:Record<string,unknown>):StorageSlot{
   if(job.storageSlot===undefined&&job.storageVersion===undefined)return 1;
-  need(job.storageVersion===STORAGE_VERSION&&[1,2,3].includes(job.storageSlot as number),'A localização salva do relatório é inválida. Os dados não foram alterados.',409,'STORAGE_ROUTE');
+  need(job.storageVersion===STORAGE_VERSION&&[1,2,3,4,5,6].includes(job.storageSlot as number),'A localização salva do relatório é inválida. Os dados não foram alterados.',409,'STORAGE_ROUTE');
   return job.storageSlot as StorageSlot;
 }
 
@@ -85,7 +85,7 @@ export async function storageDatabases({usedOnly=false}:{usedOnly?:boolean}={}):
   if(usedOnly){
     const used=await(await collection('lookupJobs')).distinct('storageSlot',scope());
     const needed=new Set<number>([1]);
-    for(const slot of used){need([1,2,3].includes(slot),'A localização salva de uma consulta é inválida.',409,'STORAGE_ROUTE');needed.add(slot);}
+    for(const slot of used){need([1,2,3,4,5,6].includes(slot),'A localização salva de uma consulta é inválida.',409,'STORAGE_ROUTE');needed.add(slot);}
     for(const slot of needed)if(!configured.some(item=>item.slot===slot))throw new AppError(503,'STORAGE_NOT_CONFIGURED',`O MongoDB ${slot} contém histórico e precisa continuar configurado.`);
     slots=slots.filter(slot=>needed.has(slot));
   }

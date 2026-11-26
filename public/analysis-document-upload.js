@@ -3,7 +3,7 @@ import {finalizeFinancialDocument,isReadyToFinalize} from './purchase-finalizati
 import {DIFAL_VERSION,normalizeUf} from './difal.js';
 import {ANTICIPATION_VERSION} from './icms-anticipation.js';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.js';
-import {assertMatchingPurchaseCompetences} from './purchase-model.js';
+import {assertAnalysisPurchaseCompetences} from './purchase-model.js';
 import {estimatePayloadBytes} from './import-payload-size.js';
 
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -99,7 +99,7 @@ export async function uploadFiscalDocument({file,review,type,generationId,client
       if(active&&(file.name!==active.fileName||review.rows.length!==active.expectedRows))throw new Error('Para retomar, selecione o mesmo arquivo, com o mesmo nome e número de linhas.');
       if(active&&review.calculationVersion!==(active.calculationVersion||'Q_V1'))throw new Error('A leitura não corresponde à regra salva deste relatório. Selecione novamente o arquivo para retomá-lo.');
       const other=type==='SALES'?company.purchase:company.sales;
-      if(other?.status==='COMPLETED')assertMatchingPurchaseCompetences(review.period,other.reportPeriod);
+      if(other?.status==='COMPLETED')assertAnalysisPurchaseCompetences(review.period,other.reportPeriod);
     }
     pending={...context,importId:active?._id||crypto.randomUUID(),fileName:active?.fileName||file.name,
       issuerUf:normalizeUf(active?active.issuerUf:issuerUf),rows:needsRows?review.rows.map(({difal,anticipation,...row})=>row):null,offset:0,job:active};

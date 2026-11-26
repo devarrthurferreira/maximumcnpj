@@ -781,7 +781,7 @@ async function downloadDrePdf(){
   if(!options||drePdf.operation)return;
   const operation={controller:new AbortController(),snapshot:S.snapshot,result:S.result,optionsKey:JSON.stringify(options),timedOut:false};
   drePdf.operation=operation;drePdf.status='';drePdf.error=false;renderDrePdfStatus();
-  const timer=setTimeout(()=>{operation.timedOut=true;operation.controller.abort();},55000);
+  const timer=setTimeout(()=>{operation.timedOut=true;operation.controller.abort();},65000);
   try{
     const {blob,filename}=await fetchDrePdf(options,{signal:operation.controller.signal});
     // A later edit, save or report choice must never download the previous response.

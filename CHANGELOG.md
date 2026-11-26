@@ -1,5 +1,11 @@
 # Histórico de alterações
 
+## Ajuste de 26/11/2026 — Seis bancos, competências e download
+
+- Amplia o pool para seis clusters, com roteamento preservado em Node e Python.
+- Aceita intervalos diferentes nas importações da análise Jan–Set quando há cobertura comum, incluindo meses internos sem movimento; não presume zero fora da cobertura.
+- Download DRE tenta novamente falhas transitórias de gateway e identifica estágio de falha nos logs sem dados de clientes.
+
 ## Ajuste de 26/11/2026 — DIFAL com UF pendente
 
 - Permite concluir o Fiscal com estimativa parcial ou pendente de UF, mantendo aviso de conferência e a política de inclusão vigente. Não modifica alíquotas nem presume UF.

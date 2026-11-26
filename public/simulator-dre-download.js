@@ -21,12 +21,18 @@ function safeFilename(disposition,fallback) {
 
 export async function fetchDrePdf(options,{fetchImpl=globalThis.fetch,signal}={}) {
   const payload=buildDrePdfRequest(options);
-  const response=await fetchImpl('/api/reports',{method:'POST',credentials:'same-origin',
-    headers:{'Content-Type':'application/json',Accept:'application/pdf'},body:JSON.stringify(payload),signal});
+  const request={method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json',Accept:'application/pdf'},body:JSON.stringify(payload),signal};
+  let response=await fetchImpl('/api/reports',request);
+  // Retry only a transient gateway response, never a rejected snapshot, expired session or rate limit.
+  if([502,503,504].includes(response.status)){
+    const failure=await response.clone().json().catch(()=>null);
+    if(!failure?.error){await response.body?.cancel();signal?.throwIfAborted();response=await fetchImpl('/api/reports',request);}
+  }
   if(!response.ok){
     const data=await response.json().catch(()=>null);
-    const message=typeof data?.message==='string'?data.message:'Não foi possível gerar o PDF. Tente novamente.';
-    const requestId=typeof data?.requestId==='string'&&/^[a-z0-9-]{1,60}$/i.test(data.requestId)?` Código: ${data.requestId}.`:'';
+    const message=typeof data?.message==='string'?data.message:`Não foi possível gerar o PDF (HTTP ${response.status}). Tente novamente.`;
+    const id=data?.requestId||response.headers.get('X-Request-Id')||response.headers.get('X-Vercel-Id');
+    const requestId=typeof id==='string'&&/^[a-z0-9:._-]{1,100}$/i.test(id)?` Código: ${id}.`:'';
     throw new Error(message+requestId);
   }
   if(response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase()!=='application/pdf')throw new Error('O servidor não retornou um PDF válido. Tente novamente.');
