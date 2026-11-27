@@ -12,6 +12,7 @@ import {defaultDifalPolicy,parseDifalPolicy} from './simulator-engine.js';
 import {buildRbt12Schedule} from './simulator-rbt12.js';
 import {analysisDocumentStatus,analysisDocumentReadingMessage,loadAnalysisExtraction,retryAnalysisExtraction,uploadAnalysisExtraction} from './analyses-extrato.js';
 import {accountingAverage,accountingAverageMonths,accountingAverageInputValues} from './analysis-accounting-average.js';
+import {prepareSavedAccounting} from './company-dre.js';
 import {analysisGuidance,accountingSourceMonths,analysisPeriodFor,usesFixedAnalysisPeriod} from './analyses-guidance.js';
 import {analysisMonthsForYear,isAnalysisMonth} from './analysis-period.js';
 import {wizardStep,initialWizardStep,normalizeWizardStep} from './analyses-wizard.js';
@@ -869,7 +870,7 @@ function refreshGuidance() {
   if($('#analysis-generation'))$('#analysis-generation').outerHTML=renderAnalysisGeneration(options);
   if(issuesOpen!==undefined&&$('#analysis-pending-issues'))$('#analysis-pending-issues').open=issuesOpen;
   if($('#analysis-generate'))$('#analysis-generate').onclick=()=>void generate();
-  document.querySelectorAll('#analysis-fiscal-form button[value="complete"],#analysis-accounting-form button[value="complete"]').forEach(button=>button.disabled=S.configDirty||S.busy||!writable());
+  document.querySelectorAll('.analysis-wizard-form button:is([value="complete"],[value="generate"])').forEach(button=>button.disabled=S.configDirty||S.busy||!writable());
   bindAnalysisActions();
   refreshDraftStatus();
 }
@@ -911,7 +912,7 @@ async function handleAnalysisAction(action) {
       openWizard('fiscal',{step:'documents'});return;
     }
     if(action==='generate'){await generate();return;}
-    if(action==='result'&&uuid(S.analysis.currentSimulation?.id))location.href='/simulator.html?'+new URLSearchParams({simulation:S.analysis.currentSimulation.id,current:'1'});
+    if(action==='result'&&uuid(S.analysis.currentSimulation?.id))location.href='/simulator.html?'+new URLSearchParams({simulation:S.analysis.currentSimulation.id,current:'1',analysis:S.analysis.id});
   } catch(error){showError(error);}
 }
 function renderDetail() {
@@ -1076,7 +1077,7 @@ async function saveSector(sector,complete,generateAfter=false) {
       await patchSector(sector,data,complete);
     }
     if(complete){S.modalOpen=false;if(sector==='accounting')collapseAccountingTools();}
-    if(generateAfter){setBusy(false);renderDetail();await generate(S.analysis.accounting.revision);return;}
+    if(generateAfter){setBusy(false);renderDetail();await generate({sector,revision:S.analysis[sector].revision});return;}
     feedback(complete&&difalUfPending?'Fiscal concluído. Atenção: existem linhas com UF pendente no DIFAL de entrada. Confira o relatório; somente as operações com UF identificada compõem a estimativa, conforme a política vigente.':complete?`${sectorName(sector)} concluído. ${hasLocalWork()?'Há preenchimentos locais que ainda precisam ser conferidos e salvos.':S.analysis.readiness.ready?'Os dois setores estão prontos para gerar a DRE.':S.analysis.readiness.partial?.allowed?'Você já pode gerar a DRE com aviso do setor pendente ou completar o outro setor.':'Acompanhe abaixo o que ainda falta para gerar.'}`:`Trabalho ${sectorName(sector)} salvo. Você pode continuar depois nesta mesma análise.`,difalUfPending?'warning':'');
   } catch(error){
     if(sector==='fiscal'&&String(error.code||'').startsWith('RBT12_'))S.modalSteps.fiscal='rbt12';
@@ -1130,7 +1131,7 @@ function bindFiscal() {
     markDirty('fiscal');
     if(event.target.id==='analysis-rbt12'&&$('#analysis-rbt12-confirm'))$('#analysis-rbt12-confirm').checked=false;
   };
-  $('#analysis-fiscal-form').onsubmit=event=>{event.preventDefault();void saveSector('fiscal',event.submitter?.value==='complete');};
+  $('#analysis-fiscal-form').onsubmit=event=>{event.preventDefault();const intent=event.submitter?.value;void saveSector('fiscal',intent==='complete'||intent==='generate',intent==='generate');};
   bindFiscalDocumentActions();bindInlineRbt12();
   for(const [id,mode] of [['analysis-extrato-none','NOT_PROVIDED'],['analysis-extrato-pdf','SIMPLES_SECTION_22'],['analysis-extrato-manual','MANUAL']])if($('#'+id))$('#'+id).onclick=()=>{
     if(S.busy||S.pdfBusy||!writable())return;
@@ -1457,7 +1458,7 @@ function bindAccounting() {
   };
 }
 
-async function generate(savedAccountingRevision) {
+async function generate(savedSector) {
   if(S.busy||!writable())return;
   const id=S.analysis.id,sequence=S.sequence;
   try {
@@ -1469,9 +1470,11 @@ async function generate(savedAccountingRevision) {
     const verified=await analysisRequest(apiPath('/'+id));
     if(!currentContext(id,sequence))return;
     if(hasLocalWork())throw new Error('Salve os preenchimentos pendentes antes de gerar. Seus valores continuam nesta tela.');
-    const saved=assertAnalysis(verified.analysis);
-    if(savedAccountingRevision!==undefined&&saved.accounting.revision!==savedAccountingRevision)throw new Error('O Contábil foi alterado após o salvamento. Confira os valores atualizados antes de gerar.');
+    let saved=assertAnalysis(verified.analysis);
+    if(savedSector&&saved[savedSector.sector].revision!==savedSector.revision)throw new Error('O setor foi alterado após o salvamento. Confira os valores atualizados antes de gerar.');
     if(saved.id!==id||saved.revision<S.analysis.revision)throw new Error('A conferência não corresponde à análise atual. Confira os dados e tente novamente.');
+    saved=await prepareSavedAccounting(saved);
+    if(!currentContext(id,sequence)||hasLocalWork())return;
     adoptAnalysis(saved,{preserveDrafts:true});
     const guidance=analysisGuidance(S.analysis,detailOptions());
     if(S.generateRequest&&(saved.currentSimulation?.stale===true||S.generateRequest.expectedRevision!==S.analysis.revision||
@@ -1489,14 +1492,14 @@ async function generate(savedAccountingRevision) {
     adoptAnalysis(response.analysis);
     if(!uuid(response.simulation?._id)||S.analysis.currentSimulation?.id!==response.simulation._id)throw new Error('O resultado ainda não foi confirmado nesta tela. Atualize a análise para conferir a versão salva.');
     S.generateRequest=null;S.versionsData=null;
-    setBusy(false);location.href='/simulator.html?'+new URLSearchParams({simulation:response.simulation._id,current:'1'});
+    setBusy(false);location.href='/simulator.html?'+new URLSearchParams({simulation:response.simulation._id,current:'1',analysis:id});
   } catch(error){if(currentContext(id,sequence))showError(error);}
   finally{if(S.busy&&currentContext(id,sequence)){setBusy(false);renderDetail();}}
 }
 
 function showVersions() {
   if(!S.versionsData||!$('#analysis-version-list'))return;
-  $('#analysis-version-list').innerHTML=renderAnalysisVersions({...S.versionsData,currentId:S.analysis.currentSimulation?.id});
+  $('#analysis-version-list').innerHTML=renderAnalysisVersions({...S.versionsData,currentId:S.analysis.currentSimulation?.id,analysisId:S.analysis.id});
   document.querySelectorAll('[data-versions-page]').forEach(button=>button.onclick=()=>void loadVersions(Number(button.dataset.versionsPage)));
 }
 async function loadVersions(page) {

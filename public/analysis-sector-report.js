@@ -64,7 +64,7 @@ export async function openSectorReport(host,canWrite){
     <div class="sector-report-summary analysis-overview" aria-live="polite"></div>
     <p class="analysis-note sector-report-caption"></p><p role="alert" class="sector-export-error" hidden></p>
     <div class="sector-report-table" tabindex="0" role="region" aria-label="Empresas do relatório"><table><thead><tr>
-      <th scope="col">Código</th><th scope="col">Empresa</th><th scope="col">CNPJ</th><th scope="col">Cadastro</th><th scope="col">Fiscal</th><th scope="col">Contábil</th>${canWrite?'<th class="sector-dre-action" scope="col">DRE</th>':''}</tr></thead>
+      <th scope="col">Código</th><th scope="col">Empresa</th><th scope="col">CNPJ</th><th scope="col">Cadastro</th><th scope="col">Fiscal</th><th scope="col">Contábil</th><th class="sector-dre-action" scope="col">DRE</th></tr></thead>
       <tbody></tbody></table></div></section>`;
   const form=host.querySelector('form'),excel=host.querySelector('[data-excel]'),print=host.querySelector('[data-print]');
   const message=host.querySelector('.sector-export-error'),readAt=dateText(new Date());
@@ -84,12 +84,17 @@ export async function openSectorReport(host,canWrite){
     host.querySelector('.sector-report-summary').innerHTML=totals.map(([label,count])=>`<article><span>${label}</span><strong>${count}</strong></article>`).join('');
     const filters=[registration,fiscal,accounting].map(select=>select.labels[0].firstChild.textContent+' · '+select.selectedOptions[0].text);
     host.querySelector('.sector-report-caption').textContent=['Consulta em '+readAt,...filters,...(term?['Busca · '+search.value.trim()]:[])].join('  |  ');
-    host.querySelector('tbody').innerHTML=filtered.length?filtered.map(row=>`<tr><td>${esc(row.code)||'—'}</td><th scope="row">${esc(row.name)}</th><td>${esc(formatCnpj(row.cnpj))||'—'}</td><td>${row.active?'Ativo':'Inativo'}</td>${sectorCell(row.fiscal)}${sectorCell(row.accounting)}${canWrite?'<td class="sector-dre-action"></td>':''}</tr>`).join(''):
-      `<tr><td colspan="${canWrite?7:6}">Nenhuma empresa encontrada para os filtros selecionados.</td></tr>`;
-    if(canWrite)host.querySelectorAll('tbody .sector-dre-action').forEach((cell,index)=>{
+    host.querySelector('tbody').innerHTML=filtered.length?filtered.map(row=>`<tr><td>${esc(row.code)||'—'}</td><th scope="row">${esc(row.name)}</th><td>${esc(formatCnpj(row.cnpj))||'—'}</td><td>${row.active?'Ativo':'Inativo'}</td>${sectorCell(row.fiscal)}${sectorCell(row.accounting)}<td class="sector-dre-action"></td></tr>`).join(''):
+      `<tr><td colspan="7">Nenhuma empresa encontrada para os filtros selecionados.</td></tr>`;
+    host.querySelectorAll('tbody .sector-dre-action').forEach((cell,index)=>{
       const row=filtered[index];
-      if(row.analysisId)addCompanyDreButton(cell,row.clientId,{analysisId:row.analysisId});
-      else cell.textContent='Sem análise';
+      if(canWrite&&row.analysisId)addCompanyDreButton(cell,row.clientId,{analysisId:row.analysisId});
+      else if(canWrite||row.simulationId){
+        const link=document.createElement('a');
+        link.textContent=canWrite?'Iniciar preenchimento':'Ver DRE';
+        link.href=canWrite?'/analyses.html?'+new URLSearchParams({client:row.clientId}):'/simulator.html?'+new URLSearchParams({simulation:row.simulationId,current:'1',analysis:row.analysisId});
+        cell.append(link);
+      }else cell.textContent='Sem DRE salva';
     });
     print.disabled=!filtered.length;excel.disabled=exporting||!filtered.length;message.hidden=true;
   }

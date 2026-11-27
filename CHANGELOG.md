@@ -1,5 +1,10 @@
 # Histórico de alterações
 
+## [0.62.3] - 2026-11-27
+
+- Abrir a DRE atual pela empresa, pelo histórico ou pelo painel confere a revisão e os valores por competência dos dois setores, inclusive quando a última DRE era parcial.
+- Permite concluir um rascunho contábil válido durante a geração e salvar o Fiscal diretamente no formulário. O relatório por setor oferece consulta à DRE salva para usuários com leitura.
+
 ## [0.62.2] - 2026-11-27
 
 - Gera a DRE pelos relatórios e pelo próprio Contábil. Preserva despesas por competência ao concluir registros anteriores e carrega os valores salvos ao abrir o simulador.

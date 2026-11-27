@@ -298,7 +298,7 @@ test('competências parciais e não consecutivas preservam número, valor, DIFAL
   }
   const html=renderCompleteMonthlyDre({...input,month:1,regimeId:'pure'});
   assert.doesNotMatch(html,/id="dre-display-period"/);assert.match(html,/data-dre-period="annual"/);
-  const annual=renderAnnualDre(input);assert.match(annual,/Janeiro a setembro · 3 de 9 competências/);assert.match(annual,/Fora do cálculo por falta de dados/);
+  const annual=renderAnnualDre(input);assert.match(annual,/Janeiro a setembro · 3 de 9 competências/);assert.match(annual,/Não incluídas nesta versão: 2026-01, 2026-02, 2026-04, 2026-06, 2026-07, 2026-08/);
   assert.equal(html,annual);
   const monthly=renderDreCompleteDetails({...input,monthly:true,month:1});
   const revenue=monthly.match(/data-dre-row="revenue">([\s\S]*?)<\/tr>/)?.[1];
@@ -331,16 +331,14 @@ test('uma única competência em setembro mantém total igual ao mês, sem nove 
 });
 
 
-test('simulador avulso usa somente competências cobertas pela seção 2.2 e conserva os dados editáveis',()=>{
+test('simulador avulso preserva as competências fiscais com cobertura parcial da seção 2.2 e conserva os dados editáveis',()=>{
   const input=fixture(),source={...input.source,period:{startMonth:'2026-01',endMonth:'2026-09',months:9},reportMonths:9,purchases:{jobId:'p',selectedTotalCents:3600000},sales:{jobId:'s',selectedTotalCents:999999999}},
     monthlyInputs=source.monthlyReports.map(report=>baselineMonth(report,{salaries:300,rent:100})),before=structuredClone({source,monthlyInputs});
   const selected=selectAvailableRbt12Months(source,monthlyInputs,section22());
-  assert.deepEqual(selected.source.analysisPeriod.includedMonths,['2026-08']);
-  assert.equal(selected.source.reportMonths,1);assert.equal(selected.schedule.complete,true);
-  assert.deepEqual(selected.monthlyInputs.map(row=>row.sourceMonth),['2026-08']);assert.equal(selected.omittedMonths.length,8);
-  assert.equal(selected.source.sales.selectedTotalCents,source.monthlyReports[7].fields.salesCpfCents+source.monthlyReports[7].fields.serviceRevenueCents);
-  assert.equal(selected.source.commercialComposition,undefined);assert.equal(selected.source.operationAudit,undefined);
+  assert.deepEqual(selected.source,source);assert.deepEqual(selected.monthlyInputs,monthlyInputs);
+  assert.equal(selected.schedule.complete,false);assert.deepEqual(selected.omittedMonths,[]);
+  assert.deepEqual(selected.schedule.rows.filter(row=>row.status==='CONFIRMED').map(row=>row.sourceMonth),['2026-08']);
   assert.deepEqual({source,monthlyInputs},before);
   const legacy={...source,analysisPeriod:undefined};assert.throws(()=>selectAvailableRbt12Months(legacy,monthlyInputs,section22()),/janela RBT12 completa/);
-  const one=fixture({selectedMonths:['2026-01']}).source;assert.throws(()=>selectAvailableRbt12Months(one,monthlyInputs.slice(0,1),section22()),/janela RBT12 completa/);
+  const one=fixture({selectedMonths:['2026-01']}).source;assert.deepEqual(selectAvailableRbt12Months(one,monthlyInputs.slice(0,1),section22()).source.analysisPeriod.includedMonths,['2026-01']);
 });

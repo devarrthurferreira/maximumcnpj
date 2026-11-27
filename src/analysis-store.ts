@@ -197,7 +197,9 @@ async function presentation(item:Analysis,options:AnalysisReadOptions={},prepare
     capturedMonths=snapshot?.analysisPeriod?.includedMonths;
   }
   const coverageChanged=!!current&&ready.months.length>0&&Array.isArray(capturedMonths)&&!isDeepStrictEqual(capturedMonths,ready.months);
-  const analysis={...rest,accounting:{...item.accounting,data:accountingForYear(item.accounting.data,ready.analysisPeriod?.sourceYear)},id,periodPolicy:JAN_SEP_POLICY,readiness:ready,currentSimulation:current?{...current,stale:coverageChanged || current.legacy || current.modelVersion!==JAN_SEP_MODEL_VERSION || current.analysisRevision!==item.revision ||
+  const canCompleteAccounting=item.accounting.status==='DRAFT'&&ready.issues.every(issue=>issue.sector!=='accounting'||issue.code==='ACCOUNTING_NOT_CONFIRMED')&&
+    (!!ready.analysisPeriod?.sourceYear||!!accountingOnlyPeriod(item.accounting.data));
+  const analysis={...rest,accounting:{...item.accounting,data:accountingForYear(item.accounting.data,ready.analysisPeriod?.sourceYear)},id,periodPolicy:JAN_SEP_POLICY,readiness:{...ready,canCompleteAccounting},currentSimulation:current?{...current,stale:coverageChanged || current.legacy || current.modelVersion!==JAN_SEP_MODEL_VERSION || current.analysisRevision!==item.revision ||
     (!options.summary&&(current.fiscalDataUsed===true)!==(ready.partial.fiscalDataUsed===true))||
     (!options.summary&&(!ready.partial.missingSectors.includes('fiscal')||ready.partial.fiscalDataUsed===true)&&
       (!checked || checked.fingerprint!==(current.sourceFingerprint??item.fiscal.confirmation?.fingerprint)))}:null};
@@ -217,20 +219,20 @@ function reportSector(item:SavedWork|undefined,kind:'fiscal'|'accounting',issues
 export async function sectorProgress(after:string|null){
   const batchSize=250;
   const clients=await collection('clients');
-  type ProgressClient={_id:string;code?:string;name:string;cnpj?:string;active:boolean;analysis?:(SavedWork & {_id:string})};
+  type ProgressClient={_id:string;code?:string;name:string;cnpj?:string;active:boolean;analysis?:(SavedWork & {_id:string;currentSimulation?:Current})};
   const rows=await clients.aggregate<ProgressClient>([
     {$match:scope(after===null?{}:{_id:{$gt:analysisId(after)}})},
     {$sort:{_id:1}},{$limit:batchSize+1},
     {$project:{code:1,name:1,cnpj:1,active:1}},
     {$lookup:{from:'analyses',localField:'_id',foreignField:'clientId',as:'work',pipeline:[
-      {$match:scope(active())},{$project:{_id:1,config:1,fiscal:1,accounting:1}}
+      {$match:scope(active())},{$project:{_id:1,config:1,fiscal:1,accounting:1,'currentSimulation.id':1}}
     ]}},
     {$set:{analysis:{$first:'$work'}}},{$unset:'work'}
   ]).toArray();
   const batch=rows.slice(0,batchSize);
   return {items:batch.map(({_id,code,name,cnpj,active,analysis})=>{
     const issues=analysis?savedReadiness(analysis).issues:[];
-    return {clientId:_id,analysisId:analysis?._id??null,code:code??'',name,cnpj:cnpj??'',active:active===true,year:analysis?.config.year??null,
+    return {clientId:_id,analysisId:analysis?._id??null,simulationId:analysis?.currentSimulation?.id??null,code:code??'',name,cnpj:cnpj??'',active:active===true,year:analysis?.config.year??null,
       fiscal:reportSector(analysis,'fiscal',issues),accounting:reportSector(analysis,'accounting',issues)};
   }),next:rows.length>batchSize?batch[batch.length-1]._id:null};
 }
@@ -380,7 +382,7 @@ export async function updateAnalysisConfig(actor:LookupActor,id:string,input:unk
       'fiscal.confirmation':null,'fiscal.updatedAt':now,'fiscal.updatedBy':author(actor),updatedAt:now},$inc:{revision:1,'fiscal.revision':1}},{returnDocument:'after'});
   if(!updated)throw conflict();await revisionAudit(updated as Analysis,actor,'config');return {analysis:await visible(updated as Analysis,options)};
 }
-export async function updateAnalysisSector(actor:LookupActor,id:string,kind:'fiscal'|'accounting',input:unknown,options:AnalysisReadOptions={}){
+export async function updateAnalysisSector(actor:LookupActor,id:string,kind:'fiscal'|'accounting',input:unknown,options:AnalysisReadOptions={},expectedAnalysisRevision?:number){
   write(actor);analysisObject(input,['expectedSectorRevision','expectedConfigRevision','complete','data']);
   const expected=analysisRevision(input.expectedSectorRevision),configRevision=analysisRevision(input.expectedConfigRevision);
   need(typeof input.complete==='boolean','Informe se deseja concluir o setor.');
@@ -413,9 +415,19 @@ export async function updateAnalysisSector(actor:LookupActor,id:string,kind:'fis
       salesJobId:checked.source.sales.jobId,extractionId:fiscal.rbt12ExtractionId,months:checked.months,configRevision,analysisPeriod:checked.source.analysisPeriod};}
   }
   const now=new Date();const value={revision:expected+1,status:input.complete?'COMPLETE':'DRAFT',data,completedAt:input.complete?now:null,updatedAt:now,updatedBy:author(actor),confirmation};
-  const updated=await(await analyses()).findOneAndUpdate(scope({_id:id,...active(),'config.revision':configRevision,[`${kind}.revision`]:expected,...leaseFree()}),
+  const updated=await(await analyses()).findOneAndUpdate(scope({_id:id,...active(),...(expectedAnalysisRevision===undefined?{}:{revision:expectedAnalysisRevision}),'config.revision':configRevision,[`${kind}.revision`]:expected,...leaseFree()}),
     {$set:{activated:true,[kind]:value,updatedAt:now},$inc:{revision:1}},{returnDocument:'after'});
   if(!updated)throw conflict();await revisionAudit(updated as Analysis,actor,kind);return {analysis:await visible(updated as Analysis,options)};
+}
+/** Conclude only a fully filled, already saved draft. The caller cannot supply replacement amounts. */
+export async function prepareAnalysisDre(actor:LookupActor,id:string,input:unknown){
+  write(actor);analysisObject(input,['expectedRevision']);
+  const expected=analysisRevision(input.expectedRevision),item=await record(id);
+  if(item.revision!==expected)throw conflict();
+  const result=await presentation(item);
+  if(!result.analysis.readiness.canCompleteAccounting)return result;
+  return updateAnalysisSector(actor,id,'accounting',{expectedSectorRevision:item.accounting.revision,expectedConfigRevision:item.config.revision,
+    complete:true,data:item.accounting.data},{},expected);
 }
 export async function importAnalysisGeneration(actor:LookupActor,id:string,input:unknown,options:AnalysisReadOptions={}){
   write(actor);analysisObject(input,['expectedSectorRevision','expectedConfigRevision']);

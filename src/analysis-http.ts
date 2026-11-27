@@ -1,7 +1,7 @@
 import {need,integer} from './security.ts';
 import {rateLimit,workspace} from './store.ts';
 import type {LookupActor} from './lookup-db.ts';
-import {analysisHistory,openAnalysis,getAnalysis,updateAnalysisConfig,updateAnalysisSector,importAnalysisGeneration,generateAnalysis,analysisVersions,deleteAnalysis,sectorProgress} from './analysis-store.ts';
+import {analysisHistory,openAnalysis,getAnalysis,updateAnalysisConfig,updateAnalysisSector,importAnalysisGeneration,prepareAnalysisDre,generateAnalysis,analysisVersions,deleteAnalysis,sectorProgress} from './analysis-store.ts';
 import {cleanupSavedVersions} from './simulation-retention-admin.ts';
 
 export async function routeAnalyses(actor:LookupActor,method:string,url:URL,input:unknown){
@@ -13,7 +13,7 @@ export async function routeAnalyses(actor:LookupActor,method:string,url:URL,inpu
   if(path==='/cleanup-versions'&&method==='POST')return cleanupSavedVersions(actor,input);
   if(!path && method==='GET')return analysisHistory(page(),{clientId:url.searchParams.get('clientId')||undefined,search:url.searchParams.get('search')||undefined},options);
   if(!path && method==='POST')return openAnalysis(actor,input,options);
-  const match=path.match(/^\/([a-f0-9-]{36})(?:\/(config|fiscal|accounting|fiscal\/import|generate|versions))?$/);
+  const match=path.match(/^\/([a-f0-9-]{36})(?:\/(config|fiscal|accounting|fiscal\/import|prepare-dre|generate|versions))?$/);
   if(match){const id=match[1],action=match[2];
     if(!action && method==='GET'){
       const includeSource=url.searchParams.get('includeSource')==='1';
@@ -24,6 +24,7 @@ export async function routeAnalyses(actor:LookupActor,method:string,url:URL,inpu
     if(action==='config' && method==='PATCH')return updateAnalysisConfig(actor,id,input,options);
     if((action==='fiscal'||action==='accounting') && method==='PATCH')return updateAnalysisSector(actor,id,action,input,options);
     if(action==='fiscal/import' && method==='POST')return importAnalysisGeneration(actor,id,input,options);
+    if(action==='prepare-dre' && method==='POST')return prepareAnalysisDre(actor,id,input);
     if(action==='generate' && method==='POST')return generateAnalysis(actor,id,input,options);
     if(action==='versions' && method==='GET')return analysisVersions(id,page());
   }

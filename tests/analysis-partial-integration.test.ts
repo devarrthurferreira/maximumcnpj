@@ -7,7 +7,7 @@ import {resetLookupIndexes} from '../src/lookup-db.ts';
 import {importCatalog} from '../src/lookup-catalog.ts';
 import {attachGenerationPurchase,attachGenerationSale} from '../src/generation-store.ts';
 import {uploadLookup,finalizeLookup,processLookup} from '../src/lookup-jobs.ts';
-import {openAnalysis,getAnalysis,updateAnalysisSector,importAnalysisGeneration,generateAnalysis,analysisVersions} from '../src/analysis-store.ts';
+import {openAnalysis,getAnalysis,prepareAnalysisDre,updateAnalysisSector,importAnalysisGeneration,generateAnalysis,analysisVersions} from '../src/analysis-store.ts';
 import {getSimulation} from '../src/simulation-history.ts';
 import {refreshSimulation,reprocessSimulations} from '../src/simulation-reprocessing.ts';
 
@@ -63,8 +63,11 @@ test('MongoDB DRE parcial: confirmação, fontes ausentes, dados preservados e �
     await t.test('preencher Fiscal depois preserva Contábil e substitui a DRE parcial',async()=>{
       const accounting=structuredClone(item.accounting.data);await fiscalReports();
       assert.equal(item.readiness.ready,true);assert.deepEqual(item.accounting.data,accounting);
+      const updated=await refreshSimulation(actor,accountingOnly._id,{});
+      fullSnapshot=updated.simulation;
       const full=await generate();item=full.analysis;
-      fullSnapshot=full.simulation;
+      assert.equal(full.simulation._id,fullSnapshot._id);assert.equal(full.reused,true);
+      assert.equal(updated.updated,true);assert.equal(fullSnapshot.result.regimes[0].dre.salaries,-300);
       assert.equal(full.simulation.partialData,undefined);assert.equal(full.simulation.result.annualRevenue,2000);
       assert.deepEqual(item.accounting.data,accounting);assert.equal((await analysisVersions(item.id,1)).pagination.total,1);
       await assert.rejects(getSimulation(accountingOnly._id),code('NOT_FOUND'));
@@ -110,7 +113,11 @@ test('MongoDB DRE parcial: confirmação, fontes ausentes, dados preservados e �
       await assert.rejects(generate(['accounting']),code('ANALYSIS_NOT_READY'));
       await patch('fiscal',item.fiscal.data,false);
       await assert.rejects(generate(['fiscal','accounting']),code('ANALYSIS_NOT_READY'));
-      await patch('fiscal',item.fiscal.data);await patch('accounting',accounting,true);
+      await patch('fiscal',item.fiscal.data);
+      const rev=item.revision;
+      await assert.rejects(prepareAnalysisDre(actor,item.id,{expectedRevision:rev-1}),code('ANALYSIS_CONFLICT'));
+      item=(await prepareAnalysisDre(actor,item.id,{expectedRevision:rev})).analysis;
+      assert.equal(item.accounting.status,'COMPLETE');assert.deepEqual(item.accounting.data,accounting);
       const source:any=await routeGenerations(actor,'GET',new URL('https://test/api/v4/generations/'+item.fiscal.data.generationId+
         '/simulator?periodPolicy=JAN_SEP_V1&includeAccounting=1&clientId='+otherId),{});
       assert.deepEqual(source.savedAccounting.months,accounting.months);
@@ -119,6 +126,18 @@ test('MongoDB DRE parcial: confirmação, fontes ausentes, dados preservados e �
       assert.deepEqual(generated.simulation.monthlyInputs.map((r:any)=>[r.sourceMonth,r.values.salaries]),
         [['2026-01',9999.99],['2026-02',0],['2026-03',50]]);
       assert.deepEqual((await getAnalysis(item.id)).analysis.accounting.data,accounting);
+      const changed={months:[row('2026-01',12345),row('2026-03',67890)]};
+      await patch('accounting',changed,false);
+      const refreshed=await refreshSimulation(actor,generated.simulation._id,{});
+      assert.equal(refreshed.updated,true);assert.equal(refreshed.simulation.analysisId,item.id);
+      assert.deepEqual(refreshed.simulation.monthlyInputs.map((r:any)=>r.values.salaries),[123.45,0,678.90]);
+      assert.equal(refreshed.simulation.result.annualRevenue,2000);
+      item=(await getAnalysis(item.id)).analysis;assert.equal(item.accounting.status,'COMPLETE');
+      assert.deepEqual(item.accounting.data,changed);
+      assert.equal((await refreshSimulation(actor,refreshed.simulation._id,{})).updated,false);
+      await patch('accounting',{months:[{...row('2026-01',90000),rentCents:null}]},false);
+      await assert.rejects(refreshSimulation(actor,refreshed.simulation._id,{}),code('ANALYSIS_NOT_READY'));
+      assert.equal((await getAnalysis(item.id)).analysis.accounting.data.months[0].rentCents,null);
       assert.equal(await(await collection('simulations')).countDocuments(scope({clientId})),1);
     });
     await t.test('Contábil sem lançamento permite a emissão parcial explícita',async()=>{

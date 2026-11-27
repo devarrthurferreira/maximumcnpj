@@ -30,11 +30,11 @@ function metadataPeriods(analysis,generation) {
 
 /** Read-only coverage hints. They never confirm missing financial amounts. */
 export function analysisPeriodFor(analysis,source,generation) {
+  if(source?.analysisPeriod?.version===JAN_SEP_POLICY)return source.analysisPeriod;
   if(usesFixedAnalysisPeriod(analysis)){
     const periods=metadataPeriods(analysis,generation);
     if(periods)try{return buildAnalysisPeriod(...periods,{includeSingleReportMonths:true});}catch{/* retain saved coverage if metadata is invalid */}
   }
-  if(source?.analysisPeriod?.version===JAN_SEP_POLICY)return source.analysisPeriod;
   if(analysis?.readiness?.analysisPeriod?.version===JAN_SEP_POLICY)return analysis.readiness.analysisPeriod;
   return null;
 }
@@ -141,14 +141,15 @@ export function analysisGuidance(analysis,{sector=null,configDirty=false,fiscalD
     new Set(suppliedMissing).size===suppliedMissing.length&&suppliedMissing.every(key=>SECTORS.includes(key))&&
     (suppliedMissing.length===1||fiscalDataUsed&&suppliedMissing.includes('fiscal'));
   const missingSectors=analysis.readiness?.partial?.allowed===true&&validMissing?[...suppliedMissing]:[];
+  const canPrepare=analysis.readiness?.canCompleteAccounting===true;
   const partialGeneration=analysis.readiness?.ready!==true&&missingSectors.length>0;
   const pendingFiscal=partialGeneration&&fiscalDataUsed&&missingSectors.includes('fiscal');
   const generationWarning=partialGeneration?pendingFiscal?
     `O Fiscal está pendente de reconfirmação. A DRE usará os documentos e as opções fiscais atuais disponíveis, sem concluir o Fiscal automaticamente.${missingSectors.includes('accounting')?' O Contábil também está pendente e suas despesas serão consideradas zero somente nesta simulação.':''} O relatório ficará identificado como incompleto.`:
     `O setor ${names[missingSectors[0]]} ainda não foi concluído. A DRE usará somente os dados do ${names[SECTORS.find(key=>!missingSectors.includes(key))]} e ficará identificada como incompleta.`:'';
   const generationConfirmation=partialGeneration?generationWarning+' '+(pendingFiscal?'Deseja gerar a DRE com essas pendências?':`Deseja gerar a DRE mesmo sem o ${names[missingSectors[0]]}?`):'';
-  const current=analysis.currentSimulation,ready=(analysis.readiness?.ready===true||partialGeneration)&&!hasUnsavedChanges;
-  const currentResult=!!(ready&&current?.id&&current.stale===false&&!current.legacy);
+  const current=analysis.currentSimulation,ready=(analysis.readiness?.ready===true||partialGeneration||canPrepare)&&!hasUnsavedChanges;
+  const currentResult=!!(ready&&!canPrepare&&current?.id&&current.stale===false&&!current.legacy);
   const state=currentResult?'current':ready?'ready':'working';
   const partialLabel=pendingFiscal?missingSectors.length>1?'DRE com setores pendentes':'DRE com Fiscal pendente':'DRE sem '+names[missingSectors[0]];
   const label=currentResult?(partialGeneration?partialLabel:savedVerification?'Resultado salvo':'Resultado atual'):ready?(partialGeneration?partialLabel:current?'Pronta para atualizar':'Pronta para gerar'):hasUnsavedChanges?'Alterações não salvas':'Em andamento';
@@ -170,8 +171,8 @@ export function analysisGuidance(analysis,{sector=null,configDirty=false,fiscalD
     issues.unshift({code:'UNSAVED_FIELDS',sector:active,message:'Salve as alterações que ainda estão nos campos antes de gerar.',action:'save-'+active,label:'Salvar trabalho '+names[active]});
   }
   let primaryAction;
-  if(currentResult)primaryAction={action:'result',label:savedVerification?'Ver DRE salva':'Ver DRE atual',message:savedVerification?'Última versão gerada com os dados salvos. Abra o Fiscal para conferir novamente os documentos.':'O resultado corresponde aos dados salvos e conferidos.',href:'/simulator.html?'+new URLSearchParams({simulation:current.id,current:'1'})};
-  else if(ready)primaryAction={action:'generate',label:current?'Atualizar DRE':'Gerar DRE',message:generationWarning||'Os dois setores estão conferidos. A próxima etapa usa os dados que já foram salvos.'};
+  if(currentResult)primaryAction={action:'result',label:savedVerification?'Ver DRE salva':'Ver DRE atual',message:savedVerification?'Última versão gerada com os dados salvos. Abra o Fiscal para conferir novamente os documentos.':'O resultado corresponde aos dados salvos e conferidos.',href:'/simulator.html?'+new URLSearchParams({simulation:current.id,current:'1',...(analysis.id?{analysis:analysis.id}:{})})};
+  else if(ready)primaryAction={action:'generate',label:current?'Atualizar DRE':'Gerar DRE',message:generationWarning||(canPrepare?'As despesas preenchidas serão salvas e concluídas para gerar a DRE.':'Os dois setores estão conferidos. A próxima etapa usa os dados que já foram salvos.')};
   else {
     const next=issues.find(issue=>issue.code==='UNSAVED_CONFIG')||
       issues.find(issue=>issue.sector===sector&&issue.code.startsWith('UNSAVED_'))||issues.find(issue=>issue.code.startsWith('UNSAVED_'))||

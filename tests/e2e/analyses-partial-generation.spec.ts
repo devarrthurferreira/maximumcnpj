@@ -211,3 +211,23 @@ test('Gerar DRE em Preenchimento por setor usa o Contábil salvo da empresa sele
   await expect(page).toHaveURL(new RegExp('simulation='+simulationId));
   expect(requests).toHaveLength(1);expect(requests[0].confirmedMissingSectors).toEqual(['fiscal']);
 });
+
+test('relatório conclui o rascunho contábil salvo antes de gerar com ambos os setores',async({page})=>{
+  const {analysis,requests}=await setup(page,'accounting',false);
+  Object.assign(analysis.readiness,{canCompleteAccounting:true});
+  let prepared=0;
+  await page.route('**/api/v4/analyses/sector-progress*',route=>route.fulfill({json:{next:null,items:[{
+    ...analysis.company,analysisId,clientId,active:true,cnpj:'',fiscal:{status:'COMPLETE'},accounting:{status:'DRAFT'}
+  }]}}));
+  await page.route('**/prepare-dre',route=>{
+    expect(route.request().method()).toBe('POST');expect(route.request().postDataJSON()).toEqual({expectedRevision:4});
+    prepared++;analysis.revision++;analysis.accounting.status='COMPLETE';
+    Object.assign(analysis.readiness,{ready:true,canCompleteAccounting:false,issues:[],partial:{allowed:false,missingSectors:[]}});
+    return route.fulfill({json:{analysis}});
+  });
+  await page.goto('/analyses.html?view=preenchimento');
+  await page.getByRole('button',{name:'Gerar DRE',exact:true}).click();
+  await expect(page).toHaveURL(new RegExp('simulation='+simulationId));
+  expect(prepared).toBe(1);expect(requests).toHaveLength(1);expect(requests[0].expectedRevision).toBe(5);
+  expect(requests[0].confirmedMissingSectors).toBeUndefined();
+});

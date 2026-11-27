@@ -49,7 +49,7 @@ async function mockApi(page:Page,pair:ReturnType<typeof snapshots>,options:Route
       const response=options.refresh?await options.refresh(++refreshCount):{status:405,json:{message:'Esta navegação não permite recalcular.'}};
       await route.fulfill(response);return;
     }
-    if(method==='GET'&&url.pathname==='/api/v4/analyses/'+analysisId&&url.searchParams.get('summary')==='1'&&options.analysis){
+    if(method==='GET'&&url.pathname==='/api/v4/analyses/'+analysisId&&options.analysis){
       await route.fulfill({json:{analysis:options.analysis}});return;
     }
     await route.fulfill({status:404,json:{message:'Rota fora da fixture sintética.'}});
@@ -65,7 +65,8 @@ async function expectStatement(page:Page,snapshot:any){
   for(const key of ['difal','icmsAnticipation']){
     await expect(page.locator(`#tax-demonstrativo > .dre-tax-table [data-dre-row="${key}"] td .dre-amount`))
       .toHaveText(snapshot.result.regimes.map((regime:any)=>money(regime.dre[key]===0?0:-regime.dre[key])));
-    await expect(page.locator(`#dre-demonstrativo > .dre-table-wrap [data-dre-row="${key}"]`)).toHaveCount(0);
+    await expect(page.locator(`#dre-demonstrativo > .dre-table-wrap [data-dre-row="${key}"] td .dre-amount`))
+      .toHaveText(snapshot.result.regimes.map((regime:any)=>money(regime.dre[key]||0)));
   }
   await expect(page.locator('#dre-demonstrativo > .dre-table-wrap [data-dre-row="netProfit"] td .dre-amount'))
     .toHaveText(snapshot.result.regimes.map((regime:any)=>money(regime.dre.netProfit)));
@@ -134,16 +135,16 @@ test('histórico usa apenas GET e mantém o DIFAL e o resultado originalmente ca
   expect(api.errors).toEqual([]);
 });
 
-test('viewer consulta o resumo da análise e segue a DRE atual indicada sem enviar POST',async({page})=>{
+test('viewer confere os setores da análise e segue a DRE atual indicada sem enviar POST',async({page})=>{
   const pair=snapshots(),api=await mockApi(page,pair,{role:'viewer',analysis:currentAnalysis(pair)});
   await page.goto(savedUrl(pair.original._id,'current'));
-  await expect(page).toHaveURL(new RegExp(`${pair.corrected._id}&current=1$`));
+  await expect(page).toHaveURL(new RegExp(`${pair.corrected._id}&current=1&analysis=${analysisId}$`));
   await expectStatement(page,pair.corrected);
   await expect(page.locator('#simulator-difal [data-difal-disabled]').first()).toHaveText(OUTGOING_DIFAL_MESSAGE);
   await expect(page.locator('[data-simulation-refresh],#retry-current-simulation,[data-simulation-revision="historical"]')).toHaveCount(0);
   expect(writes(api.requests)).toEqual([]);
   expect(api.requests.filter(request=>request.path.startsWith('/api/v4/')).map(request=>request.path)).toEqual([
-    '/api/v4/simulations/'+pair.original._id,'/api/v4/analyses/'+analysisId+'?summary=1','/api/v4/simulations/'+pair.corrected._id,
+    '/api/v4/simulations/'+pair.original._id,'/api/v4/analyses/'+analysisId,'/api/v4/simulations/'+pair.corrected._id,
   ]);
   expect(api.errors).toEqual([]);
 });
@@ -159,6 +160,21 @@ for(const stale of ['flag','revision'] as const)test(`viewer recebe aviso quando
   await expect(page.locator('#retry-current-simulation')).toHaveCount(0);
   expect(writes(api.requests)).toEqual([]);
   expect(api.requests.filter(request=>request.path.startsWith('/api/v4/')).map(request=>request.path))
-    .toEqual(['/api/v4/simulations/'+pair.original._id,'/api/v4/analyses/'+analysisId+'?summary=1']);
+    .toEqual(['/api/v4/simulations/'+pair.original._id,'/api/v4/analyses/'+analysisId]);
   expect(api.errors).toEqual([]);
+});
+
+test('abrir a DRE parcial passa a mostrar a DRE dos dois setores e da nova geração fiscal',async({page})=>{
+  const pair=snapshots();
+  pair.original.partialData={status:'INCOMPLETE',missingSectors:['accounting']};
+  pair.corrected.analysisRevision=5;
+  pair.corrected.generationId='96969696-9696-4696-8696-969696969620';
+  pair.corrected.source.generationId=pair.corrected.generationId;
+  const api=await mockApi(page,pair,{refresh:()=>({json:{originalId:pair.original._id,updated:true,
+    analysisId,analysisRevision:5,simulation:pair.corrected}})});
+  await page.goto(savedUrl(pair.original._id,'current'));
+  await expectStatement(page,pair.corrected);
+  await expect(page).toHaveURL(new RegExp(pair.corrected._id+'&current=1&analysis='+analysisId));
+  await expect(page.locator('[data-partial-data],[data-simulation-refresh="fallback"]')).toHaveCount(0);
+  expect(writes(api.requests)).toHaveLength(1);expect(api.errors).toEqual([]);
 });

@@ -1,4 +1,5 @@
 import {analysisRequest} from './analyses-api.js';
+import {analysisGuidance} from './analyses-guidance.js';
 import {addCompanyDreButton} from './company-dre.js';
 import {loadingMarkup} from './ui-loading.js';
 import {monthlyProjection, monthlyDifal, baselineMonth, calculateMonthlySimulation, MONTHLY_MODEL_VERSION} from './simulator-monthly.js';
@@ -184,7 +185,7 @@ async function api(path, options={}) {
   try {
     const response = await fetch(path,{credentials:'same-origin',...options,signal:controller.signal});
     const data = await response.json().catch(()=>null);
-    if (!response.ok) throw new Error((data?.message || 'O servidor não conseguiu concluir a operação. Tente novamente.')+(data?.requestId?' Código: '+data.requestId+'.':''));
+    if (!response.ok) throw Object.assign(new Error((data?.message || 'O servidor não conseguiu concluir a operação. Tente novamente.')+(data?.requestId?' Código: '+data.requestId+'.':'')),{status:response.status,code:data?.error});
     if(!data)throw new Error('O servidor retornou uma resposta incompleta. Tente novamente.');
     return data;
   } catch(error) { if(error.name === 'AbortError') {
@@ -982,7 +983,7 @@ function renderSaveStatus() {
   const host=$('#simulation-save-status');if(!host)return;
   host.hidden=S.readonly;
   if(S.readonly){host.replaceChildren();return;}
-  if(S.snapshot)host.innerHTML=`<span class="sim-save-dot" aria-hidden="true"></span><span>Simulação salva no histórico · ${date(S.snapshot.createdAt)}</span><a id="saved-simulation-link" href="/simulator.html?simulation=${encodeURIComponent(S.snapshot._id)}&historical=1">Abrir versão salva →</a>`;
+  if(S.snapshot)host.innerHTML=`<span class="sim-save-dot" aria-hidden="true"></span><span>Simulação salva no histórico · ${date(S.snapshot.createdAt)}</span><a id="saved-simulation-link" href="/simulator.html?simulation=${encodeURIComponent(S.snapshot._id)}&current=1">Abrir versão salva →</a>`;
   else if(S.saving)host.innerHTML='<span class="sim-save-dot pending" aria-hidden="true"></span><span>Salvando simulação no histórico…</span>';
   else if(!canSave())host.innerHTML='<span>Prévia local. Seu perfil permite consultar o histórico; salvar versões exige acesso de operador.</span>';
   else if(S.savedAccounting?.managed)host.textContent='Prévia desta tela. Salvar Contábil e gerar DRE usa as despesas editadas e o Fiscal salvo da empresa.';
@@ -1143,8 +1144,8 @@ function currentSnapshotModel(snapshot) {
   const expected=snapshot.source?.analysisPeriod?.version===JAN_SEP_POLICY?JAN_SEP_MODEL_VERSION:MONTHLY_MODEL_VERSION;
   return snapshot.modelVersion===expected&&snapshot.result?.version===expected;
 }
-function snapshotUrl(id,historical=false) {
-  return '/simulator.html?'+new URLSearchParams({simulation:id,[historical?'historical':'current']:'1'});
+function snapshotUrl(id,historical=false,analysisId=null) {
+  return '/simulator.html?'+new URLSearchParams({simulation:id,[historical?'historical':'current']:'1',...(!historical&&documentUuid(analysisId)?{analysis:analysisId}:{})});
 }
 function snapshotNotice(snapshot,{historical=false,updated=false,originalId=null}={}) {
   if(!historical&&!updated&&currentSnapshotModel(snapshot))return;
@@ -1173,9 +1174,6 @@ function refreshFailure(snapshot,error) {
   $('#retry-current-simulation')?.addEventListener('click',()=>void openSavedSnapshot(snapshot,{current:true}));
 }
 async function openSavedSnapshot(snapshot,{current=false,historical=false}={}) {
-  if(snapshot.partialData?.status==='INCOMPLETE'||snapshot.source?.sourceKind==='ACCOUNTING_ONLY'){
-    showSnapshot(snapshot);return;
-  }
   // Explicit history keeps its captured values. Opening the company's current DRE
   // verifies/revises only this saved calculation, not the workspace-wide batch.
   const verify=!historical&&(current||documentUuid(snapshot.analysisId));
@@ -1183,14 +1181,14 @@ async function openSavedSnapshot(snapshot,{current=false,historical=false}={}) {
   if(!canSave()){
     try{
       if(documentUuid(snapshot.analysisId)){
-        const {analysis}=await api('/api/v4/analyses/'+snapshot.analysisId+'?summary=1');
+        const {analysis}=await api('/api/v4/analyses/'+snapshot.analysisId);
         const latest=analysis?.currentSimulation;
         if(analysis?.id!==snapshot.analysisId||analysis.clientId!==snapshot.clientId||!documentUuid(latest?.id)||latest.stale||latest.analysisRevision!==analysis.revision)
           throw new Error('A DRE atual precisa ser gerada com os dados salvos dos setores. Abra a análise da empresa para conferir.');
         const next=latest.id===snapshot._id?snapshot:await api('/api/v4/simulations/'+latest.id);
         if(next.analysisId!==snapshot.analysisId||next.clientId!==snapshot.clientId||next.analysisRevision!==analysis.revision||!currentSnapshotModel(next))
           throw new Error('Um administrador ou operador precisa atualizar esta DRE para aplicar a regra atual do DIFAL.');
-        history.replaceState(null,'',snapshotUrl(next._id));showSnapshot(next);return;
+        history.replaceState(null,'',snapshotUrl(next._id,false,next.analysisId));showSnapshot(next);return;
       }
       showSnapshot(snapshot);snapshotNotice(snapshot,{historical:true});return;
     }catch(error){refreshFailure(snapshot,error);return;}
@@ -1198,6 +1196,26 @@ async function openSavedSnapshot(snapshot,{current=false,historical=false}={}) {
   $('#simulator-app').innerHTML='<div data-simulation-refresh="loading">'+loadingMarkup({title:'Conferindo a DRE atual',detail:'Conferindo os relatórios e recalculando os totais. O histórico será preservado.'})+'</div>';
   try{
     const response=await api('/api/v4/simulations/'+snapshot._id+'/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    if(response.confirmAnalysis||response.analysisId){
+      const analysis=response.confirmAnalysis,id=analysis?.id||response.analysisId;
+      const revision=analysis?.revision??response.analysisRevision;
+      let next=response.simulation;
+      if(response.originalId!==snapshot._id||!documentUuid(id)||(snapshot.analysisId&&snapshot.analysisId!==id)||!Number.isSafeInteger(revision))
+        throw new Error('Não foi possível confirmar a análise da empresa.');
+      if(analysis){
+        const guidance=analysisGuidance(analysis);
+        if(analysis.clientId!==snapshot.clientId||!guidance.partialGeneration)throw new Error('Confira os setores antes de gerar a DRE.');
+        if(!confirm(guidance.generationConfirmation)){refreshFailure(snapshot,new Error('A atualização da DRE parcial foi cancelada.'));return;}
+        const saved=await analysisRequest('/api/v4/analyses/'+id+'/generate?summary=1',{method:'POST',
+          body:{requestId:crypto.randomUUID(),expectedRevision:revision,confirmedMissingSectors:guidance.missingSectors}});
+        if(saved.analysis?.id!==id||saved.analysis.clientId!==snapshot.clientId||saved.analysis.revision!==revision||
+            !documentUuid(saved.simulation?._id)||saved.analysis.currentSimulation?.id!==saved.simulation._id)throw new Error('O salvamento da DRE ainda não foi confirmado.');
+        next=await api('/api/v4/simulations/'+saved.simulation._id);
+      }
+      if(!documentUuid(next?._id)||next.clientId!==snapshot.clientId||next.analysisId!==id||next.analysisRevision!==revision||!currentSnapshotModel(next))
+        throw new Error('A DRE recebida não corresponde aos setores atuais da empresa.');
+      history.replaceState(null,'',snapshotUrl(next._id,false,id));showSnapshot(next);return;
+    }
     const next=response.simulation;
     if(response.originalId!==snapshot._id||typeof response.updated!=='boolean'||!documentUuid(next?._id)||
       next.clientId!==snapshot.clientId||next.generationId!==snapshot.generationId||
@@ -1212,10 +1230,10 @@ async function openSavedSnapshot(snapshot,{current=false,historical=false}={}) {
 async function openSnapshotVersion(snapshot) {
   const button=$('#create-version');if(button)button.disabled=true;
   try {
-    const current=await api(`/api/v4/generations/${snapshot.generationId}/simulator?${new URLSearchParams({clientId:snapshot.clientId,periodPolicy:JAN_SEP_POLICY})}`);
+    const {savedAccounting,...current}=await api(`/api/v4/generations/${snapshot.generationId}/simulator?${new URLSearchParams({clientId:snapshot.clientId,periodPolicy:JAN_SEP_POLICY,includeAccounting:'1'})}`);
     if(current.generationId!==snapshot.generationId||current.clientId!==snapshot.clientId)throw new Error('A origem atual não corresponde à empresa desta simulação.');
-    S.source=current;S.parentId=snapshot._id;S.key=`maximum-simulator:copy:${S.user._id}:${snapshot._id}${fixedAnalysisPeriod()?':'+JAN_SEP_POLICY:''}`;
-    history.replaceState(null,'',sourceUrl());display(snapshot);
+    S.source=current;S.savedAccounting=savedAccounting;S.accountingEdits={};S.parentId=savedAccounting?.managed?null:snapshot._id;S.key=`maximum-simulator:copy:${S.user._id}:${snapshot._id}${fixedAnalysisPeriod()?':'+JAN_SEP_POLICY:''}`;
+    history.replaceState(null,'',sourceUrl());display(savedAccounting?.managed?null:snapshot);
     $('#simulator-app').scrollIntoView({block:'start',behavior:'instant'});
   } catch(error) {
     fail(new Error('Não foi possível conferir os relatórios para criar uma nova versão. A simulação salva foi preservada. '+(error.message||String(error))));
@@ -1242,7 +1260,21 @@ async function boot() {
     S.user=(await api('/api/auth/session')).user;mountNavigation(S.user,'simulations');
     if(!S.user||S.user.mustChangePassword){$('#simulator-app').innerHTML=`<section class="card sim-empty"><h2>${S.user?.mustChangePassword?'Redefina sua senha para continuar':'Entre para continuar'}</h2><p>Use sua conta Maximum para acessar os relatórios e o simulador.</p><a class="sim-back" href="/">Acessar painel →</a></section>`;return;}
     const params=new URLSearchParams(location.search),simulation=params.get('simulation'),generation=params.get('generation'),client=params.get('client'),uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-    if(simulation) {if(!uuid.test(simulation))throw new Error('Identificação da simulação inválida.');await openSavedSnapshot(await api('/api/v4/simulations/'+simulation),{current:params.get('current')==='1',historical:params.get('historical')==='1'});return;}
+    if(simulation){
+      if(!uuid.test(simulation))throw new Error('Identificação da simulação inválida.');
+      const historical=params.get('historical')==='1',analysisId=params.get('analysis');
+      let saved;
+      try{saved=await api('/api/v4/simulations/'+simulation);}
+      catch(error){
+        if(error.status!==404||historical||!documentUuid(analysisId))throw error;
+        const {analysis}=await api('/api/v4/analyses/'+analysisId+'?summary=1');
+        if(analysis?.id!==analysisId||!documentUuid(analysis.currentSimulation?.id)||analysis.currentSimulation.id===simulation)throw error;
+        saved=await api('/api/v4/simulations/'+analysis.currentSimulation.id);
+        if(saved.clientId!==analysis.clientId||saved._id!==analysis.currentSimulation.id)throw new Error('A versão salva não corresponde à empresa.');
+      }
+      if(analysisId&&saved.analysisId&&analysisId!==saved.analysisId)throw new Error('A DRE não pertence à análise selecionada.');
+      await openSavedSnapshot(saved,{current:params.get('current')==='1',historical});return;
+    }
     const analysis=params.get('analysis');
     if(analysis){if(!uuid.test(analysis))throw new Error('Identificação da análise inválida.');location.replace('/analyses.html?'+new URLSearchParams({id:analysis,sector:'fiscal'}));return;}
     if(!generation||!client){$('#simulator-app').innerHTML='<section class="card sim-empty"><h1>Seu próximo cenário começa aqui.</h1><p>Selecione a empresa e importe compras e vendas para começar ou reabra uma simulação salva.</p><div class="sim-links"><a class="sim-back" href="/analyses.html?view=new">Nova análise →</a><a class="sim-back" href="/simulations.html">Ver simulações salvas →</a></div></section>';return;}

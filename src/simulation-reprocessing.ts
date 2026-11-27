@@ -18,7 +18,7 @@ import {buildMonthlyDre} from '../public/simulator-calendar.js';
 import {resolveDifalApplication, upgradeDifalPolicy} from '../public/simulator-engine.js';
 import {REPROCESS_VERSION} from '../public/simulation-reprocess-contract.js';
 import {requiresSimplesReference} from '../public/regime-selection.js';
-import {promoteReprocessedAnalysis} from './analysis-store.ts';
+import {promoteReprocessedAnalysis,prepareAnalysisDre,generateAnalysis} from './analysis-store.ts';
 import {JAN_SEP_POLICY,JAN_SEP_MODEL_VERSION,assertCompleteAnalysisPeriod} from '../public/analysis-period.js';
 import {DIFAL_VERSION} from './difal.ts';
 import {OPERATION_CATALOG_VERSION} from './operation-catalog.ts';
@@ -368,6 +368,28 @@ export async function refreshSimulation(actor: LookupActor, simulationId: string
   need(input == null || (typeof input==='object' && !Array.isArray(input) && Object.keys(input).length===0),
     'A atualização usa somente o histórico armazenado; não envie valores ou identificadores.');
   const original=await getSimulation(simulationId);
+  const linked=await (await collection('analyses')).findOne(scope({clientId:original.clientId,activated:true,deletionStartedAt:{$exists:false},
+    ...(original.analysisId?{_id:original.analysisId}:{'currentSimulation.id':original._id})}),
+    {projection:{revision:1,legacy:1,'accounting.status':1,'fiscal.status':1,'accounting.revision':1,'fiscal.revision':1}});
+  // An untouched legacy bridge still uses the original-report reconciliation below.
+  if(linked&&(original.analysisEvidence||!linked.legacy||linked.accounting.status==='COMPLETE'||linked.fiscal.status==='COMPLETE'||
+      linked.accounting.revision>1||linked.fiscal.revision>1)){
+    const {analysis}=await prepareAnalysisDre(actor,linked._id,{expectedRevision:linked.revision});
+    const current=analysis.currentSimulation,ready=analysis.readiness;
+    pending(ready.ready||ready.partial.allowed,'ANALYSIS_NOT_READY',ready.issues.map(issue=>issue.message).join(' '));
+    if(current&&!current.stale){
+      const simulation=current.id===original._id?original:await getSimulation(current.id);
+      pending(simulation.analysisId===analysis.id&&simulation.clientId===analysis.clientId&&simulation.analysisRevision===analysis.revision,
+        'ANALYSIS_RESULT_CHANGED','A DRE salva não corresponde à revisão atual da empresa.');
+      return {simulation,updated:current.id!==original._id,originalId:original._id,analysisId:analysis.id,analysisRevision:analysis.revision};
+    }
+    if(!ready.ready){
+      return {simulation:original,updated:false,originalId:original._id,confirmAnalysis:analysis};
+    }
+    const generated=await generateAnalysis(actor,analysis.id,{expectedRevision:analysis.revision,requestId:randomUUID()},{summary:true});
+    const simulation=await getSimulation(generated.simulation._id);
+    return {simulation,updated:simulation._id!==original._id,originalId:original._id,analysisId:analysis.id,analysisRevision:analysis.revision};
+  }
   const targetId=reprocessedSimulationId(scope().workspaceId,original._id,original.source?.analysisPeriod?.version);
   const analysis=await currentAnalysisForRefresh(original,[original._id,targetId]);
   if(original.source?.sourceKind==='ACCOUNTING_ONLY'){

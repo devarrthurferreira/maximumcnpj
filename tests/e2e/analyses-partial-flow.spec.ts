@@ -187,3 +187,43 @@ test('Acesso à empresa sem setor ou com permissão de consulta não cria uma an
     const after=await api(page.request,baseURL!,'GET',`/api/v4/analyses?clientId=${company.clientId}&summary=1`);expect(after.items).toHaveLength(0);
   }finally{await mongo.close();}
 });
+
+test('DRE pelo preenchimento por setor preserva os valores mensais ao gerar e ao reabrir',async({page,baseURL,company})=>{
+  test.setTimeout(90000);
+  const call=(method:string,path:string,data?:unknown)=>api(page.request,baseURL!,method,path,data);
+  let analysis=(await call('POST','/api/v4/analyses',{clientId:company.clientId,year:2027,regimeSelection:{version:'REGIME_SELECTION_V1',selected:['actual']}})).analysis;
+  const path='/api/v4/analyses/'+analysis.id;
+  const imported=await call('POST',path+'/fiscal/import',{expectedSectorRevision:analysis.fiscal.revision,expectedConfigRevision:analysis.config.revision});
+  analysis=imported.analysis;
+  for(const kind of ['purchases','sales']){
+    const {job}=await call('POST','/api/v4/generations/'+imported.generationId+'/'+kind,{clientId:company.clientId,importId:randomUUID(),fileName:kind+'.csv',expectedRows:2,issuerUf:'MG'});
+    const rows=[1,2].map(month=>{
+      const totalCents=(kind==='sales'?50000:10000)*month;
+      return {document:'12345678900',name:'Registro de teste',serviceDate:'2026-0'+month+'-15',quantity:'1',natureCode:kind==='sales'?'5102001':'1102001',
+        description:'Teste de competência',recipientUf:'MG',grossCents:totalCents,discountCents:0,accessoryCents:0,freightCents:0,abatementCents:0,totalCents};
+    });
+    await call('POST','/api/v4/'+kind+'/'+job._id+'/rows',{offset:0,rows});await call('POST','/api/v4/'+kind+'/'+job._id+'/finalize',{});
+  }
+  const save=async(sector:string,data:unknown,complete:boolean)=>{
+    analysis=(await call('PATCH',path+'/'+sector,{expectedSectorRevision:analysis[sector].revision,expectedConfigRevision:analysis.config.revision,complete,data})).analysis;
+  };
+  await save('fiscal',analysis.fiscal.data,true);
+  const months=[10101,25050].map((salariesCents,index)=>({sourceMonth:'2026-0'+(index+1),salariesCents,rentCents:0,benefitsCents:0,
+    cardExpensesCents:0,adminExpensesCents:0,financialExpensesCents:0,financialIncomeCents:0}));
+  await save('accounting',{months},false);
+  await page.goto('/analyses.html?view=preenchimento&search='+company.code);
+  await page.getByRole('button',{name:'Gerar DRE',exact:true}).click();
+  await expect(page.locator('#simulation-snapshot')).toBeVisible();
+  const firstUrl=page.url(),firstId=new URL(firstUrl).searchParams.get('simulation');
+  const first=await call('GET','/api/v4/simulations/'+firstId);
+  expect(first.monthlyInputs.map((r:any)=>r.values.salaries)).toEqual([101.01,250.50]);expect(first.result.annualRevenue).toBe(1500);
+  analysis=(await call('GET',path+'?summary=1')).analysis;expect(analysis.accounting.status).toBe('COMPLETE');
+  months[1].salariesCents=39999;await save('accounting',{months},true);
+  await page.goto(firstUrl);await expect(page.locator('#simulation-snapshot')).toBeVisible();
+  const currentId=new URL(page.url()).searchParams.get('simulation');
+  expect(currentId).not.toBe(firstId);
+  const current=await call('GET','/api/v4/simulations/'+currentId);
+  expect(current.monthlyInputs.map((r:any)=>r.values.salaries)).toEqual([101.01,399.99]);expect(current.result.annualRevenue).toBe(1500);
+  await page.goto(firstUrl);await expect(page.locator('#simulation-snapshot')).toBeVisible();
+  expect(new URL(page.url()).searchParams.get('simulation')).toBe(currentId);
+});

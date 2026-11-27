@@ -12,7 +12,7 @@ export function accountingOnlyPeriod(data:AccountingData):AnalysisPeriod|null{
   return {version:JAN_SEP_POLICY,sourceYear,startMonth:includedMonths[0],endMonth:includedMonths.at(-1)!,months:includedMonths.length,
     expectedMonths,includedMonths,excludedMonths:[],missingMonths:expectedMonths.filter(month=>!includedMonths.includes(month)),complete:true};
 }
-export function partialAnalysisAvailability(item:{fiscal:{status:string};accounting:{status:string;data:AccountingData}},issues:{sector:string;code?:string}[],options:{fiscalDataUsed?:boolean}={}):PartialAnalysis{
+export function partialAnalysisAvailability(item:{fiscal:{status:string;data?:{generationId?:string|null}};accounting:{status:string;data:AccountingData}},issues:{sector:string;code?:string}[],options:{fiscalDataUsed?:boolean}={}):PartialAnalysis{
   if(item.accounting.status!=='COMPLETE'&&item.accounting.data.months.some(row=>ACCOUNTING_FIELDS.some(key=>Number.isSafeInteger(row[key])))){
     return {allowed:false,missingSectors:[]};
   }
@@ -24,7 +24,7 @@ export function partialAnalysisAvailability(item:{fiscal:{status:string};account
       missingSectors:accountingComplete?['fiscal']:['fiscal','accounting'],fiscalDataUsed:true};
   }
   if(item.fiscal.status==='COMPLETE'&&item.accounting.status!=='COMPLETE'&&!issues.some(issue=>issue.sector==='fiscal'))return {allowed:true,missingSectors:['accounting']};
-  if(item.accounting.status==='COMPLETE'&&item.fiscal.status!=='COMPLETE'&&accountingOnlyPeriod(item.accounting.data))return {allowed:true,missingSectors:['fiscal']};
+  if(item.accounting.status==='COMPLETE'&&item.fiscal.status!=='COMPLETE'&&(!item.fiscal.data?.generationId||fiscalIssues.some(issue=>issue.code==='ANALYSIS_GENERATION_UNAVAILABLE'))&&accountingOnlyPeriod(item.accounting.data))return {allowed:true,missingSectors:['fiscal']};
   return {allowed:false,missingSectors:[]};
 }
 export function partialAnalysisData(missingSectors:MissingSector[],options:{fiscalDataUsed?:boolean}={}){

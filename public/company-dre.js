@@ -12,6 +12,12 @@ function verifyCompany(analysis,clientId,analysisId){
   return analysis;
 }
 
+export async function prepareSavedAccounting(analysis){
+  if(!analysis.readiness?.canCompleteAccounting)return analysis;
+  const response=await analysisRequest(base+'/'+analysis.id+'/prepare-dre',{method:'POST',body:{expectedRevision:analysis.revision}});
+  return verifyCompany(response.analysis,analysis.clientId,analysis.id);
+}
+
 export function addCompanyDreButton(host,clientId,{analysisId,generationId,difalPolicy,label='Gerar DRE',saveAccounting,setBusy}={}){
   const button=document.createElement('button'),status=document.createElement('span');
   button.type='button';button.className='report-links';button.textContent=label;
@@ -35,11 +41,13 @@ export function addCompanyDreButton(host,clientId,{analysisId,generationId,difal
       const path=base+'/'+encodeURIComponent(id);
       let analysis=verifyCompany((await analysisRequest(path)).analysis,clientId,id);
       const editor=(sector)=>'/analyses.html?'+new URLSearchParams({id,sector});
-      if(generationId&&analysis.fiscal.data.generationId!==generationId){
-        if(analysis.fiscal.data.generationId){
-          status.replaceChildren('A análise desta empresa usa outra geração. ');
+      if(generationId&&analysis.fiscal.data.generationId&&analysis.fiscal.data.generationId!==generationId){
+        if(saveAccounting){
+          status.replaceChildren('O Fiscal mudou desde a abertura do simulador. ');
           const link=document.createElement('a');link.href=editor('fiscal');link.textContent='Conferir a análise atual';status.append(link);return;
         }
+        status.textContent='Usando os relatórios fiscais atuais desta empresa…';
+      }else if(generationId&&!analysis.fiscal.data.generationId){
         const fiscal=analysis.fiscal;
         // Attach only to an empty slot. A concurrent import changes the sector revision.
         await analysisRequest(path+'/fiscal?summary=1',{method:'PATCH',body:{expectedSectorRevision:fiscal.revision,
@@ -51,16 +59,13 @@ export function addCompanyDreButton(host,clientId,{analysisId,generationId,difal
         analysis=verifyCompany(await saveAccounting(analysis),clientId,id);
         if(generationId&&analysis.fiscal.data.generationId!==generationId)throw new Error('Os relatórios da empresa foram alterados. Reabra o simulador antes de gerar.');
       }
-      if(analysis.accounting.status!=='COMPLETE'){
-        location.assign(editor('accounting'));return;
-      }
+      analysis=await prepareSavedAccounting(analysis);
       const guidance=analysisGuidance(analysis);
       if(guidance.currentResult){location.assign(guidance.primaryAction.href);return;}
       if(!guidance.canGenerate){
         location.assign(editor(guidance.issues.some(issue=>issue.sector==='accounting')?'accounting':'fiscal'));return;
       }
       const missing=guidance.partialGeneration?guidance.missingSectors:[];
-      if(missing.includes('accounting')){location.assign(editor('accounting'));return;}
       if(missing.length&&!confirm(guidance.generationConfirmation)){status.textContent='Geração cancelada.';return;}
       if(!request||request.expectedRevision!==analysis.revision||String(request.confirmedMissingSectors||[])!==String(missing)){
         request={requestId:crypto.randomUUID(),expectedRevision:analysis.revision,...(missing.length?{confirmedMissingSectors:missing}:{})};
@@ -69,7 +74,7 @@ export function addCompanyDreButton(host,clientId,{analysisId,generationId,difal
       const result=await analysisRequest(path+'/generate?summary=1',{method:'POST',body:request});
       const saved=verifyCompany(result.analysis,clientId,id),simulation=result.simulation?._id;
       if(!uuid(simulation)||saved.currentSimulation?.id!==simulation)throw new Error('A geração da DRE ainda não foi confirmada. Tente novamente.');
-      location.assign('/simulator.html?'+new URLSearchParams({simulation,current:'1'}));
+      location.assign('/simulator.html?'+new URLSearchParams({simulation,current:'1',analysis:id}));
     }catch(error){status.textContent=error.message;}
     finally{setBusy?.(false);button.disabled=false;}
   };

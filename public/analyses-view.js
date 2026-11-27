@@ -38,7 +38,7 @@ function badge(state){return `<span class="analysis-tag is-${state.kind}">${esc(
 const deleteIcon='<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6m4-6v6"/></svg>';
 function savedBy(sector){return sector?.updatedAt?`Salvo em ${dates(sector.updatedAt)}${sector.updatedBy?.name?' por '+esc(sector.updatedBy.name):''}`:'Trabalho ainda não concluído.';}
 const completionText=count=>`${count} de 2 setores conferidos`;
-const resultUrl=(analysis,historical=false)=>'/simulator.html?'+new URLSearchParams({simulation:analysis.currentSimulation.id,[historical?'historical':'current']:'1'});
+const resultUrl=analysis=>'/simulator.html?'+new URLSearchParams({simulation:analysis.currentSimulation.id,current:'1',analysis:analysis.id});
 const displayCnpj=value=>{
   const text=String(value||''),digits=text.replace(/\D/g,'');
   return digits.length===14?digits.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,'$1.$2.$3/$4-$5'):text||'Não informado';
@@ -302,7 +302,7 @@ function fiscalPanel(options) {
       ${wizardStep('documents','Relatórios de entradas e saídas','Importe e confira somente as competências disponíveis entre janeiro e setembro.',`<div id="analysis-fiscal-period">${renderAnalysisPeriod(options,{compact:true})}</div><div id="analysis-fiscal-evidence">${renderFiscalEvidence(options)}</div><div id="analysis-fiscal-documents-view">${renderFiscalReports(options)}</div>${simples?`<div id="analysis-inline-rbt12-view">${renderInlineRbt12(options)}</div>`:''}<div id="analysis-commercial-composition">${renderFiscalComposition(options)}</div>${tax}`)}
       ${wizardStep('cbs-ibs','Redução de CBS/IBS','Selecione a redução aplicável a esta empresa.',consumptionRate)}
       ${wizardStep('difal','Conferir DIFAL','Veja a leitura e confirme o que entra na DRE.',`<div id="analysis-difal-view">${renderDifalChoice(analysis.config.regimeSelection,draft.difalPolicy,{choice:options.fiscalDifalChoice,assessment:assessAnalysisDifal(options)})||'<p class="analysis-note">Os regimes selecionados não utilizam a antecipação de entrada nesta análise.</p>'}</div>`)}
-    </fieldset></div>${wizardFooter({canWrite,sector:'fiscal',analysisId:analysis.id,finalAction:canWrite?`<button type="submit" name="intent" value="complete" class="primary" ${configDirty?'disabled':''}>Salvar e concluir</button>`:''})}</form>`;
+    </fieldset></div>${wizardFooter({canWrite,sector:'fiscal',analysisId:analysis.id,finalAction:canWrite?`<button type="submit" name="intent" value="complete" class="analysis-button" ${configDirty?'disabled':''}>Salvar e concluir</button><button type="submit" name="intent" value="generate" class="primary" ${configDirty?'disabled':''}>Salvar e gerar DRE</button>`:''})}</form>`;
   return wizardFrame('fiscal','Fiscal',analysis.company?.name||'Documentos e tributação.',form);
 }
 
@@ -390,7 +390,7 @@ export function renderAnalysisGeneration(options) {
   const currentInputs=current&&!guidance.hasUnsavedChanges&&current.analysisRevision===analysis.revision;
   const verifySaved=guidance.savedVerification&&guidance.currentResult&&!guidance.hasUnsavedChanges;
   return `<section class="analysis-panel analysis-generate" id="analysis-generation" data-analysis-result-state="${guidance.state}" aria-label="Resultado da análise"><div class="analysis-generation-top"><div class="analysis-panel-heading"><p>${esc(guidance.generationWarning||(guidance.state==='current'?'Resultado da última DRE salva.':guidance.state==='ready'?canWrite?'Compare os regimes com os dados conferidos.':'A equipe pode gerar o resultado com os dados conferidos.':guidance.primaryAction.message))}</p></div>
-    <div class="analysis-actions">${canWrite?`<button type="button" class="primary" id="analysis-generate" ${guidance.canGenerate||verifySaved?'':'disabled'} ${guidance.state==='current'&&!verifySaved?'hidden':''}>${verifySaved?'Conferir e atualizar DRE':current?'Atualizar DRE':guidance.partialGeneration?'Gerar DRE com aviso':'Gerar DRE'}</button>`:''}${current?`<a class="analysis-button ${guidance.state==='current'?'primary':''}" href="${resultUrl(analysis,!currentInputs)}">${guidance.state==='current'?(guidance.savedVerification?'Ver DRE salva':'Ver DRE atual'):currentInputs?'Conferir DRE atual':'Ver última DRE salva'} →</a>`:''}</div></div>
+    <div class="analysis-actions">${canWrite?`<button type="button" class="primary" id="analysis-generate" ${guidance.canGenerate||verifySaved?'':'disabled'} ${guidance.state==='current'&&!verifySaved?'hidden':''}>${verifySaved?'Conferir e atualizar DRE':current?'Atualizar DRE':guidance.partialGeneration?'Gerar DRE com aviso':'Gerar DRE'}</button>`:''}${current&&!guidance.hasUnsavedChanges?`<a class="analysis-button ${guidance.state==='current'?'primary':''}" href="${resultUrl(analysis)}">${guidance.state==='current'?(guidance.savedVerification?'Ver DRE salva':'Ver DRE atual'):currentInputs?'Conferir DRE atual':'Abrir DRE com os setores atuais'} →</a>`:''}</div></div>
     ${guidance.issues.length?`<details class="analysis-pending-issues" id="analysis-pending-issues"><summary>${guidance.partialGeneration?'Completar análise':'Pendências para gerar'} · ${guidance.issues.length}</summary><ul class="analysis-checklist analysis-action-checklist">${guidance.issues.map(issue=>`<li data-analysis-issue="${esc(issue.code)}"><span class="analysis-issue-marker" aria-hidden="true">→</span><div><p>${esc(issue.message)}</p>${actionButton(issue,{canWrite})}</div></li>`).join('')}</ul></details>`:''}</section>`;
 }
 
@@ -413,9 +413,9 @@ export function renderAnalysisDetail(options) {
     </div>${modal}${deleteAnalysisDialog(analysis,canWrite)}`;
 }
 
-export function renderAnalysisVersions({items,currentId}) {
+export function renderAnalysisVersions({items,analysisId,currentId}) {
   const latest=items.find(item=>(item.id||item._id)===currentId)||items[0];
   if(!latest)return '<p class="analysis-note">Ainda não há uma DRE gerada para esta análise.</p>';
   const id=latest.id||latest._id;
-  return `<div class="analysis-document-list"><article class="analysis-document" data-analysis-version="${esc(id)}"><span class="analysis-document-icon">${icon('report')}</span><div class="analysis-document-copy"><h3>Última DRE salva</h3><p>${dates(latest.createdAt)}${latest.createdBy?.name?' · '+esc(latest.createdBy.name):''}</p><p>${latest.year?'Cenário '+esc(latest.year)+' · ':''}Modelo ${esc(latest.modelVersion||'registrado na simulação')}</p><p>Os dados do Fiscal e do Contábil permanecem disponíveis para edição.</p></div><div class="analysis-document-actions"><a class="analysis-button" href="/simulator.html?${new URLSearchParams({simulation:id,current:'1'})}">Abrir DRE →</a></div></article></div>`;
+  return `<div class="analysis-document-list"><article class="analysis-document" data-analysis-version="${esc(id)}"><span class="analysis-document-icon">${icon('report')}</span><div class="analysis-document-copy"><h3>Última DRE salva</h3><p>${dates(latest.createdAt)}${latest.createdBy?.name?' · '+esc(latest.createdBy.name):''}</p><p>${latest.year?'Cenário '+esc(latest.year)+' · ':''}Modelo ${esc(latest.modelVersion||'registrado na simulação')}</p><p>Os dados do Fiscal e do Contábil permanecem disponíveis para edição.</p></div><div class="analysis-document-actions"><a class="analysis-button" href="/simulator.html?${new URLSearchParams({simulation:id,current:'1',...(analysisId?{analysis:analysisId}:{})})}">Abrir DRE →</a></div></article></div>`;
 }
