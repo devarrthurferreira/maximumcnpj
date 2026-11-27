@@ -1,3 +1,4 @@
+import {routeGenerations} from '../src/generation-http.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -101,27 +102,31 @@ test('MongoDB DRE parcial: confirmação, fontes ausentes, dados preservados e �
       assert.equal(generated.simulation.result.annualRevenue,2000);assert.equal(generated.simulation.source.purchases.totalCents,40000);
       assert.equal(generated.simulation.partialData.fiscalDataUsed,true);assert.equal(item.fiscal.status,'DRAFT');assert.equal(item.fiscal.confirmation,null);
     });
-    await t.test('Fiscal primeiro ignora rascunho contábil somente após confirmação explícita',async()=>{
+    await t.test('DRE e simulador preservam valores diferentes por competência',async()=>{
       item=(await openAnalysis(actor,{clientId:otherId,year:2027,regimeSelection:selection})).analysis;
-      await patch('accounting',{months:[row('2026-01',999999)]},false);await fiscalReports();
-      assert.deepEqual(item.readiness.partial,{allowed:true,missingSectors:['accounting']});
-      await assert.rejects(generate(),code('ANALYSIS_NOT_READY'));
-      const generated=await generate(['accounting']);
-      assert.deepEqual(generated.simulation.partialData.missingSectors,['accounting']);
-      for(const regime of generated.simulation.result.regimes){assert.equal(regime.dre.salaries,0);assert.equal(regime.dre.benefits,0);}
-      assert.equal(generated.analysis.accounting.data.months[0].salariesCents,999999);assert.equal(generated.analysis.accounting.status,'DRAFT');
-      assert.equal(await(await collection('simulations')).countDocuments(scope({clientId})),1,'A outra empresa permanece intacta.');
-    });
-    await t.test('Fiscal atual legível e os dois setores pendentes exigem confirmação dos dois, sem apagar os rascunhos',async()=>{
+      const accounting={months:[row('2026-01',999999),row('2026-03',5000)]};
+      await patch('accounting',accounting,false);await fiscalReports();
+      assert.equal(item.readiness.partial.allowed,false);
+      await assert.rejects(generate(['accounting']),code('ANALYSIS_NOT_READY'));
       await patch('fiscal',item.fiscal.data,false);
+      await assert.rejects(generate(['fiscal','accounting']),code('ANALYSIS_NOT_READY'));
+      await patch('fiscal',item.fiscal.data);await patch('accounting',accounting,true);
+      const source:any=await routeGenerations(actor,'GET',new URL('https://test/api/v4/generations/'+item.fiscal.data.generationId+
+        '/simulator?periodPolicy=JAN_SEP_V1&includeAccounting=1&clientId='+otherId),{});
+      assert.deepEqual(source.savedAccounting.months,accounting.months);
+      assert.equal(source.savedAccounting.analysisId,item.id);
+      const generated=await generate();
+      assert.deepEqual(generated.simulation.monthlyInputs.map((r:any)=>[r.sourceMonth,r.values.salaries]),
+        [['2026-01',9999.99],['2026-02',0],['2026-03',50]]);
+      assert.deepEqual((await getAnalysis(item.id)).analysis.accounting.data,accounting);
+      assert.equal(await(await collection('simulations')).countDocuments(scope({clientId})),1);
+    });
+    await t.test('Contábil sem lançamento permite a emissão parcial explícita',async()=>{
+      await patch('accounting',{months:[]},false);await patch('fiscal',item.fiscal.data,false);
       assert.deepEqual(item.readiness.partial,{allowed:true,missingSectors:['fiscal','accounting'],fiscalDataUsed:true});
-      await assert.rejects(generate(['fiscal']),code('ANALYSIS_NOT_READY'));await assert.rejects(generate(['accounting']),code('ANALYSIS_NOT_READY'));
-      await assert.rejects(generate(['fiscal','fiscal']),code('ANALYSIS_PARTIAL_CONFIRMATION'));
+      await assert.rejects(generate(['fiscal']),code('ANALYSIS_NOT_READY'));
       const generated=await generate(['fiscal','accounting']);item=generated.analysis;
-      assert.equal(generated.simulation.result.annualRevenue,2000);assert.equal(generated.simulation.result.regimes[0].dre.salaries,0);
-      assert.deepEqual(generated.simulation.partialData.missingSectors,['fiscal','accounting']);assert.equal(generated.simulation.partialData.fiscalDataUsed,true);
-      assert.match(generated.simulation.partialData.warning,/Contábil não foi concluído/);
-      assert.equal(item.accounting.data.months[0].salariesCents,999999);assert.equal(item.accounting.status,'DRAFT');assert.equal(item.fiscal.status,'DRAFT');
+      assert.deepEqual(generated.simulation.partialData.missingSectors,['fiscal','accounting']);
       await patch('fiscal',item.fiscal.data);
     });
     await t.test('Fiscal marcado concluído com origem inválida não autoriza ignorar erro na fonte',async()=>{

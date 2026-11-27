@@ -1,4 +1,6 @@
-# Maximum CNPJ · v0.62.1
+# Maximum CNPJ · v0.62.2
+
+Em **Relatórios**, use **Gerar DRE** na empresa ou em **Preenchimento por setor**. O Contábil oferece **Salvar e gerar DRE**. Os valores por competência já cadastrados são mantidos ao concluir. A geração confere a revisão salva e o simulador carrega as despesas dos meses correspondentes. Para empresas que usam a análise por setor, **Salvar Contábil e gerar DRE** no simulador grava as despesas alteradas na respectiva competência e usa o Fiscal salvo. **Calcular prévia** permite experimentar ajustes. Um rascunho contábil com valores precisa ser concluído antes de gerar.
 
 Na aba **Relatórios**, digite parte do nome, código ou CNPJ em **Pesquisar empresa** e clique em **Buscar**. A pesquisa inclui todas as páginas do histórico e aceita CNPJ com ou sem pontuação. Abra **Preenchimento por setor** para consultar o Fiscal e o Contábil com a mesma busca, inclusive para empresas que ainda não geraram relatórios.
 

@@ -943,3 +943,5 @@ body:has(#analysis-delete-dialog[open]){overflow:hidden}
   .sector-report-table tbody th{min-width:0}
   .sector-report .analysis-overview{grid-template-columns:repeat(4,1fr)}
 }
+
+@media print { .sector-dre-action { display: none; } }

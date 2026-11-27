@@ -13,6 +13,9 @@ export function accountingOnlyPeriod(data:AccountingData):AnalysisPeriod|null{
     expectedMonths,includedMonths,excludedMonths:[],missingMonths:expectedMonths.filter(month=>!includedMonths.includes(month)),complete:true};
 }
 export function partialAnalysisAvailability(item:{fiscal:{status:string};accounting:{status:string;data:AccountingData}},issues:{sector:string;code?:string}[],options:{fiscalDataUsed?:boolean}={}):PartialAnalysis{
+  if(item.accounting.status!=='COMPLETE'&&item.accounting.data.months.some(row=>ACCOUNTING_FIELDS.some(key=>Number.isSafeInteger(row[key])))){
+    return {allowed:false,missingSectors:[]};
+  }
   const fiscalIssues=issues.filter(issue=>issue.sector==='fiscal');
   if(options.fiscalDataUsed===true&&fiscalIssues.length&&fiscalIssues.every(issue=>['FISCAL_NOT_CONFIRMED','FISCAL_SOURCE_CHANGED'].includes(issue.code||''))){
     // Only the server's checked source can turn missing confirmation into a warning. Invalid source data stays blocking.

@@ -175,3 +175,39 @@ test('card da DRE com Fiscal pendente identifica competências dos relatórios u
   await expect(card.locator('.history-tags')).toContainText('NOS RELATÓRIOS');await expect(card.locator('.history-tags')).not.toContainText('NO CONTÁBIL');
   await expect(card).toContainText('Documentos fiscais atuais utilizados');expect(errors).toEqual([]);
 });
+
+test('Salvar e gerar DRE confirma os meses originais antes de emitir e mantém os campos após falha',async({page})=>{
+  const {analysis,requests}=await setup(page,'fiscal');
+  analysis.accounting.status='DRAFT';
+  const second={...analysis.accounting.data.months[0],sourceMonth:'2025-03',salariesCents:98765};
+  analysis.accounting.data.months.push(second);
+  const original=structuredClone(analysis.accounting.data);
+  let attempts=0;
+  await page.route(`**/api/v4/analyses/${analysisId}/accounting?*`,async route=>{
+    attempts++;
+    const payload=route.request().postDataJSON();
+    expect(payload.complete).toBe(true);expect(payload.data).toEqual(original);
+    if(attempts===1)return route.fulfill({status:503,json:{message:'Falha ao guardar os valores.'}});
+    analysis.accounting.status='COMPLETE';analysis.revision++;analysis.accounting.revision++;
+    return route.fulfill({json:{analysis}});
+  });
+  await page.goto('/analyses.html?id='+analysisId+'&sector=accounting');
+  const button=page.getByRole('button',{name:'Salvar e gerar DRE',exact:true});
+  await button.click();await expect(page.getByText('Falha ao guardar os valores.')).toBeVisible();
+  expect(requests).toHaveLength(0);await expect(button).toBeEnabled();
+  page.once('dialog',dialog=>dialog.accept());
+  await button.click();await expect(page).toHaveURL(new RegExp('simulation='+simulationId));
+  expect(attempts).toBe(2);expect(requests[0].expectedRevision).toBe(5);
+});
+
+test('Gerar DRE em Preenchimento por setor usa o Contábil salvo da empresa selecionada',async({page})=>{
+  const {analysis,requests}=await setup(page,'fiscal');
+  await page.route('**/api/v4/analyses/sector-progress*',route=>route.fulfill({json:{next:null,items:[{
+    ...analysis.company,analysisId,clientId,active:true,year:2027,cnpj:'',fiscal:{status:'EMPTY'},accounting:{status:'COMPLETE'}
+  }]}}));
+  await page.goto('/analyses.html?view=preenchimento');
+  page.once('dialog',dialog=>dialog.accept());
+  await page.getByRole('button',{name:'Gerar DRE',exact:true}).click();
+  await expect(page).toHaveURL(new RegExp('simulation='+simulationId));
+  expect(requests).toHaveLength(1);expect(requests[0].confirmedMissingSectors).toEqual(['fiscal']);
+});

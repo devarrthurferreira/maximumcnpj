@@ -1,5 +1,10 @@
 # Histórico de alterações
 
+## [0.62.2] - 2026-11-27
+
+- Gera a DRE pelos relatórios e pelo próprio Contábil. Preserva despesas por competência ao concluir registros anteriores e carrega os valores salvos ao abrir o simulador.
+- Protege o preenchimento contábil em rascunho contra a geração de uma DRE com despesas zeradas.
+
 ## [0.62.1] - 2026-11-27
 
 - Inclui pesquisa por empresa na Central de relatórios, com paginação dos resultados e acesso ao preenchimento por setor pela mesma pesquisa.

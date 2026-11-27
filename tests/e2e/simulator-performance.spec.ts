@@ -145,3 +145,56 @@ test('editar e gerar outro resultado invalida a apresentação e a memória ante
   expect(await memoryClones(page)).toBeGreaterThan(firstClones);
   expect(writes).toEqual([]);expect(errors).toEqual([]);
 });
+
+test('Simulador carrega o Contábil pela competência e dá prioridade a uma revisão mais recente',async({page})=>{
+  const source=fixture().source;
+  await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'operator',role:'operator'}}}));
+  let revision=1;
+  await page.route('**/api/v4/generations/*/simulator?*',r=>{
+    expect(new URL(r.request().url()).searchParams.get('includeAccounting')).toBe('1');
+    return r.fulfill({json:{...source,savedAccounting:{analysisId:id,revision,managed:true,status:'COMPLETE',months:[
+      {sourceMonth:'2025-03',salariesCents:98765,rentCents:34000},{sourceMonth:'2025-01',salariesCents:revision===1?12345:55500,rentCents:0}
+    ]}}});
+  });
+  await page.goto('/simulator.html?generation='+generation+'&client='+client);
+  await expect(page.locator('#salaries')).toHaveValue('123.45');
+  await page.locator('#report-competence').selectOption('2');await expect(page.locator('#salaries')).toHaveValue('987.65');
+  await expect(page.locator('#rent')).toHaveValue('340.00');
+  await page.locator('#report-competence').selectOption('0');
+  await page.locator('#salaries').fill('80');
+  await page.reload();await expect(page.locator('#salaries')).toHaveValue('80.00');
+  revision++;await page.reload();await expect(page.locator('#salaries')).toHaveValue('555.00');
+  await expect(page.getByRole('button',{name:'Salvar Contábil e gerar DRE'})).toBeVisible();
+});
+
+test('geração direta no simulador salva apenas as despesas alteradas antes de publicar a DRE',async({page})=>{
+  const source=fixture().source;
+  const row=(sourceMonth:string,salariesCents:number)=>({sourceMonth,salariesCents,rentCents:123,benefitsCents:0,adminExpensesCents:0,cardExpensesCents:0,financialExpensesCents:0,financialIncomeCents:0});
+  const months=[row('2025-01',11000),row('2025-03',32000)];
+  const analysis={id,clientId:client,revision:3,config:{revision:1},fiscal:{status:'COMPLETE',data:{generationId:generation}},
+    accounting:{status:'COMPLETE',revision:2,data:{months}},readiness:{ready:true,issues:[]},currentSimulation:null};
+  await page.route('**/api/auth/session',r=>r.fulfill({json:{user:{_id:'operator',role:'operator'}}}));
+  await page.route('**/api/v4/generations/*/simulator?*',r=>r.fulfill({json:{...source,savedAccounting:{analysisId:id,revision:2,managed:true,months}}}));
+  await page.route('**/api/v4/analyses/'+id,r=>r.fulfill({json:{analysis}}));
+  const requests:string[]=[];
+  await page.route('**/api/v4/analyses/'+id+'/accounting',async r=>{
+    const payload=r.request().postDataJSON();requests.push('salvar');
+    expect(payload.data.months).toEqual([row('2025-01',12345),months[1]]);
+    expect(payload).toMatchObject({expectedSectorRevision:2,complete:true});
+    if(requests.length===1)return r.fulfill({status:503,json:{message:'Tente salvar novamente.'}});
+    return r.fulfill({json:{analysis:{...analysis,revision:4,accounting:{status:'COMPLETE',revision:3,data:payload.data}}}});
+  });
+  await page.route('**/api/v4/analyses/'+id+'/generate?*',r=>{
+    requests.push('gerar');expect(r.request().postDataJSON().expectedRevision).toBe(4);
+    return r.fulfill({json:{analysis:{...analysis,currentSimulation:{id}},simulation:{_id:id}}});
+  });
+  await page.route('**/simulator.html?simulation=*',r=>r.fulfill({contentType:'text/html',body:'DRE confirmada'}));
+  await page.goto('/simulator.html?generation='+generation+'&client='+client);
+  await expect(page.locator('#salaries')).toHaveValue('110.00');
+  await page.locator('#salaries').fill('123.45');
+  const direct=page.getByRole('button',{name:'Salvar Contábil e gerar DRE'});
+  await direct.click();await expect(page.getByText('Tente salvar novamente.')).toBeVisible();
+  expect(requests).toEqual(['salvar']);await expect(page.locator('#salaries')).toHaveValue('123.45');
+  await direct.click();await expect(page).toHaveURL(new RegExp('simulation='+id));
+  expect(requests).toEqual(['salvar','salvar','gerar']);
+});

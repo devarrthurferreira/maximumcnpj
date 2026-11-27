@@ -1,6 +1,7 @@
+import {accountingForYear} from './analysis-contract.ts';
 import { createGeneration, generationHistory, getGeneration, attachGenerationPurchase, attachGenerationSale, deleteGeneration } from './generation-store.ts';
 import { need, integer } from './security.ts';
-import { rateLimit, workspace } from './store.ts';
+import { collection, scope, rateLimit, workspace } from './store.ts';
 import type { LookupActor } from './lookup-db.ts';
 import { generationSimulator } from './simulator-store.ts';
 import { generationRevenue } from './purchase-store.ts';
@@ -18,7 +19,14 @@ export async function routeGenerations(actor: LookupActor, method: string, url: 
     if (match[2] === 'simulator' && method === 'GET') {
       const periodPolicy=url.searchParams.get('periodPolicy');
       need(periodPolicy===null||periodPolicy===JAN_SEP_POLICY,'Política de período desconhecida.');
-      return generationSimulator(match[1],url.searchParams.get('clientId')||'',periodPolicy?{periodPolicy}:{});
+      const clientId=url.searchParams.get('clientId')||'';
+      const source=await generationSimulator(match[1],clientId,periodPolicy?{periodPolicy}:{});
+      if(url.searchParams.get('includeAccounting')!=='1')return source;
+      const analysis=await (await collection('analyses')).findOne(scope({clientId,deletionStartedAt:{$exists:false}}),
+        {projection:{activated:1,'accounting.data':1,'accounting.revision':1,'accounting.status':1}});
+      const savedAccounting=analysis?.accounting?.data?{analysisId:analysis._id,revision:analysis.accounting.revision,
+        managed:analysis.activated===true,status:analysis.accounting.status,months:accountingForYear(analysis.accounting.data,source.analysisPeriod?.sourceYear).months}:null;
+      return {...source,savedAccounting};
     }
     if (match[2] === 'revenue' && method === 'GET') return generationRevenue(match[1], url.searchParams.get('clientId') || '');
     if (match[2] === 'purchases' && method === 'POST') return attachGenerationPurchase(actor, match[1], input);

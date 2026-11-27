@@ -15,7 +15,8 @@ test('Contábil sem Fiscal seleciona somente competências preenchidas de janeir
 test('um setor concluído só permite DRE parcial quando seus próprios dados são válidos',()=>{
   const accounting={status:'COMPLETE',data:{months:[row('2026-01')]}};
   assert.deepEqual(partialAnalysisAvailability({fiscal:{status:'DRAFT'},accounting},[{sector:'fiscal'}]),{allowed:true,missingSectors:['fiscal']});
-  assert.deepEqual(partialAnalysisAvailability({fiscal:{status:'COMPLETE'},accounting:{...accounting,status:'DRAFT'}},[{sector:'accounting'}]),{allowed:true,missingSectors:['accounting']});
+  assert.deepEqual(partialAnalysisAvailability({fiscal:{status:'COMPLETE'},accounting:{...accounting,status:'DRAFT'}},[{sector:'accounting'}]),{allowed:false,missingSectors:[]});
+  assert.deepEqual(partialAnalysisAvailability({fiscal:{status:'COMPLETE'},accounting:{status:'DRAFT',data:{months:[]}}},[{sector:'accounting'}]),{allowed:true,missingSectors:['accounting']});
   assert.equal(partialAnalysisAvailability({fiscal:{status:'COMPLETE'},accounting:{...accounting,status:'DRAFT'}},[{sector:'fiscal'}]).allowed,false);
   assert.equal(partialAnalysisAvailability({fiscal:{status:'COMPLETE'},accounting},[{sector:'fiscal'}]).allowed,false);
   assert.equal(partialAnalysisAvailability({fiscal:{status:'DRAFT'},accounting:{...accounting,status:'DRAFT'}},[]).allowed,false);
@@ -35,7 +36,7 @@ test('Fiscal legível pendente de reconfirmação usa a fonte atual, inclusive s
     {allowed:true,missingSectors:['fiscal'],fiscalDataUsed:true});
   assert.deepEqual(partialAnalysisAvailability({fiscal:{status:'DRAFT'},accounting:{...accounting,status:'DRAFT'}},
     [{sector:'fiscal',code:'FISCAL_NOT_CONFIRMED'},{sector:'accounting',code:'ACCOUNTING_NOT_CONFIRMED'}],{fiscalDataUsed:true}),
-    {allowed:true,missingSectors:['fiscal','accounting'],fiscalDataUsed:true});
+    {allowed:false,missingSectors:[]});
   assert.equal(partialAnalysisAvailability({fiscal,accounting},[{sector:'fiscal',code:'ANALYSIS_PERIOD_INCOMPLETE'}],{fiscalDataUsed:true}).allowed,false);
   assert.equal(partialAnalysisAvailability({fiscal,accounting},[{sector:'fiscal',code:'FISCAL_SOURCE_CHANGED'}]).allowed,false);
   assert.equal(partialAnalysisAvailability({fiscal,accounting},[{sector:'fiscal',code:'FISCAL_SOURCE_CHANGED'},{sector:'accounting',code:'ACCOUNTING_VALUES_MISSING'}],{fiscalDataUsed:true}).allowed,false);

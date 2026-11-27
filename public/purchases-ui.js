@@ -1,3 +1,4 @@
+import {addCompanyDreButton} from './company-dre.js';
 import {mountNavigation} from './navigation.js';
 import {finalizeFinancialDocument,isReadyToFinalize} from './purchase-finalization.js';
 import {requiresSimplesReference} from './regime-selection.js';
@@ -211,6 +212,7 @@ async function renderNextStep(seq) {
     const nextName = nextType === 'SALES' ? 'vendas' : 'compras';
     const params = new URLSearchParams({generation:S.generation,client:companyId,...(nextType === 'SALES' ? {type:'SALES'} : {}),...(nextJobId ? {job:nextJobId} : {}),...(S.analysis?{analysis:S.analysis.id}:{})});
     $('#purchase-next-step').innerHTML = `<section class="card generation-simulator purchase-section ${ready ? 'ready' : ''}"><div><div class="eyebrow">${ready ? 'OS DOIS RELATÓRIOS ESTÃO PRONTOS' : 'PRÓXIMO PASSO'}</div><h2>${ready ? 'Agora, simule com os valores desta empresa.' : `Continue com o relatório de ${nextName}.`}</h2><p>${ready ? 'Vendas de mercadorias, serviços identificados e compras serão preenchidos separadamente no simulador. Confira o período, os serviços e complete as despesas.' : `O relatório de ${reportLower} foi concluído. ${nextJob?.status === 'PROCESSING' ? 'Retome a consulta' : 'Selecione e confira o arquivo'} de ${nextName} da mesma empresa para liberar a simulação.`}</p><a href="/generations.html?id=${encodeURIComponent(S.generation)}">Conferir todos os relatórios da geração</a></div>${ready ? `<a class="primary report-links" href="/simulator.html?${new URLSearchParams({generation:S.generation,client:companyId})}">Ir para o simulador <span aria-hidden="true">→</span></a>` : writable() ? `<a class="primary report-links" href="/purchases.html?${params}">Continuar: ${nextJob?.status === 'PROCESSING' ? 'consultar' : nextJob?.status === 'UPLOADING' ? 'retomar' : 'importar'} ${nextName} <span aria-hidden="true">→</span></a>` : '<p class="hint">Aguardando a conclusão do outro relatório.</p>'}</section>`;
+    if(ready&&writable())addCompanyDreButton($('#purchase-next-step section'),companyId,{generationId:S.generation,difalPolicy:company.difalPolicy});
   } catch (e) {
     if (seq !== S.seq || companyId !== S.company) return;
     $('#purchase-next-step').innerHTML = `<section class="card purchase-section"><p>${esc(e.message)}</p><a class="report-links" href="/generations.html?id=${encodeURIComponent(S.generation)}">Conferir situação na geração</a></section>`;
@@ -252,6 +254,9 @@ function renderGuidedNext(generation, company) {
     description = 'Confira os CNPJs sem confirmação antes de usar os grupos no relatório ou na simulação. ' + description;
   }
   $('#purchase-next-step').innerHTML = `<section class="card purchase-guided-next"><div><h2>${esc(title)}</h2><p>${esc(description)}</p></div><a data-guided-continue class="primary report-links" href="${esc(href)}">${esc(label)} <span aria-hidden="true">→</span></a></section>`;
+  if(writable()&&company.purchase?.status==='COMPLETED'&&company.sales?.status==='COMPLETED'){
+    addCompanyDreButton($('#purchase-next-step section'),company.clientId,{analysisId:S.analysis?.id,generationId:generation._id,difalPolicy:company.difalPolicy});
+  }
 }
 
 async function switchReportType(type) {

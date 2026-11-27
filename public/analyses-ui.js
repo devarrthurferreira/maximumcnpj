@@ -979,10 +979,10 @@ function captureFiscal() {
   });
   S.fiscalDraft=result;return clone(result);
 }
-function captureAccounting({applyAverage=false}={}) {
+function captureAccounting({saving=false}={}) {
   if(!$('#analysis-accounting-form'))return clone(S.accountingDraft);
   // Merely opening/closing a legacy analysis does not convert its saved months.
-  if(!S.accountingDirty&&!applyAverage)return clone(S.accountingDraft);
+  if(!S.accountingDirty&&(!saving||S.accountingDraft.months.length))return clone(S.accountingDraft);
   const year=Number($('#analysis-new-source-year').value);
   if(!Number.isInteger(year)||year<2000||year>2099){
     $('#analysis-new-source-year').focus();throw new Error('Informe o ano dos documentos entre 2000 e 2099.');
@@ -990,7 +990,6 @@ function captureAccounting({applyAverage=false}={}) {
   const values=Object.fromEntries(ACCOUNTING_FIELDS.map(([key,label])=>[key,readNumber(
     document.querySelector(`[data-accounting-average="${key}"]`),{cents:true,label:'a média mensal de '+label})]));
   const next={months:accountingAverageMonths(values,year),monthlyAverage:{version:'MONTHLY_AVERAGE_V1',values}};
-  if(applyAverage&&JSON.stringify(next)!==JSON.stringify(S.accountingDraft))markDirty('accounting');
   S.accountingDraft=next;
   return clone(S.accountingDraft);
 }
@@ -1049,7 +1048,7 @@ async function patchSector(sector,data,complete) {
   return S.analysis;
 }
 
-async function saveSector(sector,complete) {
+async function saveSector(sector,complete,generateAfter=false) {
   if(S.busy||!writable())return;
   try {
     clearError();
@@ -1057,11 +1056,14 @@ async function saveSector(sector,complete) {
       focusSection('#analysis-accounting-paste-panel');
       throw new Error('Confira e aplique a colagem ou use Limpar colagem antes de concluir o Contábil.');
     }
-    captureConfig();const data=sector==='fiscal'?captureFiscal():captureAccounting({applyAverage:true});
+    captureConfig();const data=sector==='fiscal'?captureFiscal():captureAccounting({saving:true});
+    if(sector==='accounting'&&S.accountingDirty&&!S.analysis.accounting.data.monthlyAverage&&data.monthlyAverage&&
+       S.analysis.accounting.data.months.some(row=>ACCOUNTING_FIELDS.some(([key])=>Number.isSafeInteger(row[key])))&&
+       !confirm('Aplicar as médias editadas aos nove meses de janeiro a setembro? Os lançamentos por competência serão substituídos pelas médias.'))return;
     if(S.configDirty)throw new Error('Na etapa Regimes, clique em Continuar para salvar as escolhas antes de salvar o setor.');
     const difalUfPending=complete&&sector==='fiscal'&&['partial','pending'].includes(assessAnalysisDifal(detailOptions()).entry.state);
     if(complete&&sector==='fiscal')validateDifalChoice('analysis',S.analysis.config.regimeSelection,data.difalPolicy,{required:S.fiscalDifalChoice===null});
-    if(complete&&sector==='accounting'){
+    if(complete&&sector==='accounting'&&data.monthlyAverage){
       const values=data.monthlyAverage.values;
       const missing=ACCOUNTING_FIELDS.find(([key])=>values[key]===null);
       if(missing){
@@ -1070,8 +1072,11 @@ async function saveSector(sector,complete) {
       }
     }
     setBusy(true,`${complete?'Concluindo':'Salvando'} o trabalho ${sectorName(sector)}…`);
-    await patchSector(sector,data,complete);
+    if(!generateAfter||S[sector+'Dirty']||S.analysis[sector].status!=='COMPLETE'){
+      await patchSector(sector,data,complete);
+    }
     if(complete){S.modalOpen=false;if(sector==='accounting')collapseAccountingTools();}
+    if(generateAfter){setBusy(false);renderDetail();await generate(S.analysis.accounting.revision);return;}
     feedback(complete&&difalUfPending?'Fiscal concluído. Atenção: existem linhas com UF pendente no DIFAL de entrada. Confira o relatório; somente as operações com UF identificada compõem a estimativa, conforme a política vigente.':complete?`${sectorName(sector)} concluído. ${hasLocalWork()?'Há preenchimentos locais que ainda precisam ser conferidos e salvos.':S.analysis.readiness.ready?'Os dois setores estão prontos para gerar a DRE.':S.analysis.readiness.partial?.allowed?'Você já pode gerar a DRE com aviso do setor pendente ou completar o outro setor.':'Acompanhe abaixo o que ainda falta para gerar.'}`:`Trabalho ${sectorName(sector)} salvo. Você pode continuar depois nesta mesma análise.`,difalUfPending?'warning':'');
   } catch(error){
     if(sector==='fiscal'&&String(error.code||'').startsWith('RBT12_'))S.modalSteps.fiscal='rbt12';
@@ -1439,7 +1444,7 @@ function bindAccounting() {
       S.accountingYearRaw=event.target.value;markDirty('accounting');scheduleAccountingSummary();
     }
   };
-  form.onsubmit=event=>{event.preventDefault();void saveSector('accounting',event.submitter?.value==='complete');};
+  form.onsubmit=event=>{event.preventDefault();const intent=event.submitter?.value;void saveSector('accounting',intent==='complete'||intent==='generate',intent==='generate');};
   const zero=$('#analysis-zero-empty');
   if(zero)zero.onclick=()=>{
     if(S.busy||!writable())return;
@@ -1452,7 +1457,7 @@ function bindAccounting() {
   };
 }
 
-async function generate() {
+async function generate(savedAccountingRevision) {
   if(S.busy||!writable())return;
   const id=S.analysis.id,sequence=S.sequence;
   try {
@@ -1465,6 +1470,7 @@ async function generate() {
     if(!currentContext(id,sequence))return;
     if(hasLocalWork())throw new Error('Salve os preenchimentos pendentes antes de gerar. Seus valores continuam nesta tela.');
     const saved=assertAnalysis(verified.analysis);
+    if(savedAccountingRevision!==undefined&&saved.accounting.revision!==savedAccountingRevision)throw new Error('O Contábil foi alterado após o salvamento. Confira os valores atualizados antes de gerar.');
     if(saved.id!==id||saved.revision<S.analysis.revision)throw new Error('A conferência não corresponde à análise atual. Confira os dados e tente novamente.');
     adoptAnalysis(saved,{preserveDrafts:true});
     const guidance=analysisGuidance(S.analysis,detailOptions());
@@ -1523,7 +1529,7 @@ async function boot() {
       document.title='Preenchimento por setor · Maximum CNPJ';
       document.querySelector('.crumb strong').textContent='Relatórios';
       const {openSectorReport}=await import('./analysis-sector-report.js');
-      await openSectorReport($('#analyses-app'));
+      await openSectorReport($('#analyses-app'),writable());
     }
     else if(query.get('view')==='new')await openNew(clientId||'');
     else if(clientId)await openCompany(clientId);

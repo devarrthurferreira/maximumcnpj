@@ -1,3 +1,5 @@
+import {analysisRequest} from './analyses-api.js';
+import {addCompanyDreButton} from './company-dre.js';
 import {loadingMarkup} from './ui-loading.js';
 import {monthlyProjection, monthlyDifal, baselineMonth, calculateMonthlySimulation, MONTHLY_MODEL_VERSION} from './simulator-monthly.js';
 import {buildRbt12Schedule, reconcileSection22Extraction} from './simulator-rbt12.js';
@@ -34,7 +36,7 @@ const MANUAL = ['serviceRevenue','salaries','benefits','adminExpenses','rent','c
 const DIFAL_REGIMES=[['pure','Simples puro'],['hybrid','Simples híbrido']];
 const LEGACY_DIFAL_REGIMES=[...DIFAL_REGIMES,['presumed','Lucro Presumido'],['actual','Lucro Real']];
 const DIFAL_OPERATIONS=[['entry','DIFAL de entrada','Compras · antecipação de ICMS'],['exit','DIFAL de saída','Cálculo desativado']];
-const S = {source:null,user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',dreReportPeriod:'complete',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,rbt12DocumentConfirmed:false,rbt12DocumentRetryable:false,rbt12Sequence:0,pdfOperation:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales',guided:false,guidedStage:false,guidedResume:false,rbt12Mode:'NONE',serviceMigration:null,draftMigrationNotice:null,dreShowPercent:false,dreVisibleRegimeIds:null,dreMonthView:true,dreMonth:0,dreContext:null,expandedDreGroups:new Set(DRE_EXPANDABLE_GROUP_KEYS),detailStates:new Map(),monthlyInputs:[],entry:0};
+const S = {source:null,savedAccounting:null,accountingEdits:{},user:null,key:'',result:null,months:1,edited:false,snapshot:null,parentId:null,pending:null,saving:false,viewPeriod:'annual',dreReportPeriod:'complete',readonly:false,rbt12ExtractionId:null,rbt12Data:null,rbt12DocumentId:null,rbt12DocumentConfirmed:false,rbt12DocumentRetryable:false,rbt12Sequence:0,pdfOperation:null,pdfUrl:null,readingPdf:false,calendarRegime:null,projectionKind:'sales',guided:false,guidedStage:false,guidedResume:false,rbt12Mode:'NONE',serviceMigration:null,draftMigrationNotice:null,dreShowPercent:false,dreVisibleRegimeIds:null,dreMonthView:true,dreMonth:0,dreContext:null,expandedDreGroups:new Set(DRE_EXPANDABLE_GROUP_KEYS),detailStates:new Map(),monthlyInputs:[],entry:0};
 let dreContextCache=null;
 const drePdf={operation:null,status:'',error:false,snapshot:null,optionsKey:null};
 const localTaxesOutside = () => S.readonly ? S.snapshot?.draft?.icmsOutside===true : $('#icms-outside')?.value==='outside';
@@ -227,6 +229,15 @@ function display(prefill=null) {
     ${section('03','Compras','Valores mensais · preenchidos pelos relatórios e editáveis.',`<div class="sim-fields">${moneyField('purchasesOptantCents','Compras de empresas do Simples','Fornecedores optantes pelo Simples.',true)}${moneyField('purchasesNonOptantCents','Compras de empresas fora do Simples','Inclui não confirmados e outros documentos.',true)}</div><div id="simulator-anticipation"></div>`,'sim-section-purchases')}
     ${section('04','Despesas do mês','Informe os valores por mês. Use 0 quando não houver.',`<div class="sim-fields sim-expense-fields">${moneyField('salaries','Salários e pró-labore','Pagamentos à equipe e aos sócios.')}${moneyField('benefits','Benefícios e Encargos Pessoais','Transporte, alimentação e outros encargos informados.')}${moneyField('adminExpenses','Outras despesas da empresa','Água, energia, internet e similares.')}${moneyField('rent','Aluguel','Valor mensal do imóvel.')}${moneyField('cardExpenses','Taxas de cartão','Total das taxas em reais.')}${moneyField('financialExpenses','Despesas financeiras','Juros e outras despesas financeiras; após o EBITDA.')}${moneyField('financialIncome','Receitas financeiras','Rendimentos financeiros; após o EBITDA.')}</div><p class="sim-help">Não repita uma mesma despesa em mais de um campo.</p>`,'sim-section-expenses')}
     ${actualMonths()?'</div>':''}<div class="sim-actions"><button class="primary" type="submit" id="generate-simulation">Gerar simulação</button><button id="restore-reports" type="button">${actualMonths()?'Restaurar receitas e compras de todos os meses':'Restaurar valores dos relatórios'}</button><small id="draft-status" role="status">Preencha os campos obrigatórios para comparar os cenários.</small></div></fieldset></form><div id="simulation-result"></div>`;
+  if(!prefill&&S.savedAccounting?.managed&&canSave()){
+    $('#generate-simulation').textContent='Calcular prévia';
+    const host=$('.sim-actions');
+    addCompanyDreButton(host,S.source.clientId,{analysisId:S.savedAccounting.analysisId,generationId:S.source.generationId,
+      label:'Salvar Contábil e gerar DRE',saveAccounting:saveSimulatorAccounting,
+      setBusy:value=>{$('#simulator-form').inert=value;}});
+    const link=document.createElement('a');link.href='/analyses.html?'+new URLSearchParams({id:S.savedAccounting.analysisId,sector:'accounting'});
+    link.textContent='Editar Contábil';host.append(link);
+  }
   applyReports();
   if(actualMonths()){
     $('#report-competence').onchange=event=>selectReportMonth(Number(event.target.value));
@@ -240,6 +251,10 @@ function display(prefill=null) {
       const operation=event.target.dataset.difalOperation;
       if(operation==='exit')event.target.checked=false;
       S.difalPolicy.operations[event.target.dataset.difalOperationRegime][operation]=operation==='exit'?false:event.target.checked;
+    }
+    if(S.savedAccounting?.managed&&actualMonths()&&MANUAL.slice(1).includes(event.target.id)){
+      const month=S.monthlyInputs[S.entry].sourceMonth;
+      (S.accountingEdits[month]??={})[event.target.id]=true;
     }
     if (isImportedField(event.target.id)) S.edited=true;
     if(event.target.id==='serviceRevenue'&&$('#service-migration-confirm'))$('#service-migration-confirm').checked=false;
@@ -265,7 +280,20 @@ function display(prefill=null) {
   $('#simulator-form').onsubmit = event => { event.preventDefault(); void simulate(); };
   setRbt12Mode('NONE');
   if(prefill) fillSnapshot(prefill);
-  restoreDraft();
+  const restoredAccounting=restoreDraft();
+  if(!prefill&&actualMonths()&&S.savedAccounting&&restoredAccounting!==accountingRevision()){
+    const months=new Map(S.savedAccounting.months.map(row=>[row.sourceMonth,row]));
+    for(const entry of S.monthlyInputs){
+      const saved=months.get(entry.sourceMonth);
+      for(const key of MANUAL.slice(1)){
+        const cents=saved?.[key+'Cents'];
+        if(Number.isSafeInteger(cents))entry.values[key]=cents/100;
+        else if(cents===null)entry.values[key]=null;
+        else if(S.savedAccounting.managed&&!saved)entry.values[key]=0;
+      }
+    }
+    if(S.monthlyInputs.length)showMonth();
+  }
   updateRevenue(); renderNotices();
   if(fixedAnalysisPeriod()&&!S.source.analysisPeriod.complete){$('#generate-simulation').disabled=true;$('#draft-status').textContent='Preenchimento salvo nesta aba. Importe ao menos uma competência disponível entre janeiro e setembro para gerar.';}
   if(S.rbt12DocumentId&&!S.rbt12Data)void restoreStoredRbt12();
@@ -406,9 +434,46 @@ function draft() {
   d.values.salesRevenue=salesTotal();d.values.simplePurchases=value('purchasesOptantCents');d.values.regularPurchases=value('purchasesNonOptantCents');
   return d;
 }
+async function saveSimulatorAccounting(analysis){
+  if(analysis.accounting.revision!==S.savedAccounting.revision){
+    throw new Error('Outra pessoa atualizou o Contábil. Reabra o simulador para conferir os valores antes de gerar.');
+  }
+  captureMonth();
+  const months=new Map(analysis.accounting.data.months.map(row=>[row.sourceMonth,{...row}]));
+  let changed=false;
+  const keys=MANUAL.slice(1);
+  for(const input of S.monthlyInputs){
+    const edited=S.accountingEdits[input.sourceMonth];
+    if(!edited)continue;
+    const row=months.get(input.sourceMonth)||{sourceMonth:input.sourceMonth,...Object.fromEntries(keys.map(key=>[key+'Cents',null]))};
+    for(const key of keys){
+      if(edited[key]!==true)continue;
+      const value=input.values[key],cents=value===null?null:Math.round(value*100);
+      if(cents!==null&&(!Number.isSafeInteger(cents)||cents<0))throw new Error('Confira as despesas de '+competenceLabel(input.sourceMonth)+'.');
+      if(row[key+'Cents']!==cents){row[key+'Cents']=cents;changed=true;}
+    }
+    months.set(input.sourceMonth,row);
+  }
+  if(!changed)return analysis;
+  const data={months:[...months.values()].sort((a,b)=>a.sourceMonth.localeCompare(b.sourceMonth))};
+  const used=data.months.filter(row=>row.sourceMonth.startsWith(S.source.analysisPeriod?.sourceYear+'-')||!S.source.analysisPeriod)
+    .filter(row=>Number(row.sourceMonth.slice(5))<=9&&keys.some(key=>Number.isSafeInteger(row[key+'Cents'])));
+  const complete=used.length>0&&used.every(row=>keys.every(key=>Number.isSafeInteger(row[key+'Cents'])));
+  const result=await analysisRequest('/api/v4/analyses/'+analysis.id+'/accounting',{method:'PATCH',body:{
+    expectedConfigRevision:analysis.config.revision,expectedSectorRevision:analysis.accounting.revision,complete,data}});
+  const saved=result.analysis;
+  if(saved?.id!==analysis.id||saved.clientId!==analysis.clientId||saved.accounting.revision!==analysis.accounting.revision+1||
+     complete&&saved.accounting.status!=='COMPLETE')throw new Error('O salvamento do Contábil não foi confirmado.');
+  S.savedAccounting={...S.savedAccounting,revision:saved.accounting.revision,status:saved.accounting.status,months:saved.accounting.data.months};
+  S.accountingEdits={};saveDraft();return saved;
+}
+
+function accountingRevision(){
+  return S.savedAccounting?S.savedAccounting.analysisId+':'+S.savedAccounting.revision:null;
+}
 function saveDraft() {
   captureMonth();
-  const data={cbsIbsPercent:Number($('#cbs-ibs-percent').value),icmsOutside:localTaxesOutside(),difalPolicy:parseDifalPolicy(S.difalPolicy),monthlyInputs:actualMonths()?S.monthlyInputs:undefined,entry:S.entry,projectionVersion:actualMonths()?'REPORT_MONTHS_V1':hasImportedServices()?'AVERAGE_X12_V2':'AVERAGE_X12_V1',operationVersion:S.source.operationVersion||null,revenueSplitVersion:S.source.revenueSplit?.version||null,serviceMigrationConfirmed:$('#service-migration-confirm')?.checked===true,months:S.months,edited:S.edited,confirmed:$('#period-confirm').checked,rbt12ExtractionId:S.rbt12ExtractionId,rbt12Document:S.rbt12DocumentId?{documentId:S.rbt12DocumentId,sourceKey:rbt12SourceKey()}:null,rbt12Mode:S.rbt12Mode,rbt12ManualConfirmed:S.rbt12Mode==='MANUAL'&&$('#rbt12-manual-confirm').checked,fields:Object.fromEntries([...IMPORTED,...MANUAL,'rbt12'].map(key=>{const field=$('#'+key);return [key,field.value!==''&&field.validity.valid?Number(field.value).toFixed(2):field.value];})),year:$('#simulation-year').value,salesAnnex:$('#sales-annex').value,serviceAnnex:$('#service-annex').value};
+  const data={accountingEdits:S.accountingEdits,accountingRevision:accountingRevision(),cbsIbsPercent:Number($('#cbs-ibs-percent').value),icmsOutside:localTaxesOutside(),difalPolicy:parseDifalPolicy(S.difalPolicy),monthlyInputs:actualMonths()?S.monthlyInputs:undefined,entry:S.entry,projectionVersion:actualMonths()?'REPORT_MONTHS_V1':hasImportedServices()?'AVERAGE_X12_V2':'AVERAGE_X12_V1',operationVersion:S.source.operationVersion||null,revenueSplitVersion:S.source.revenueSplit?.version||null,serviceMigrationConfirmed:$('#service-migration-confirm')?.checked===true,months:S.months,edited:S.edited,confirmed:$('#period-confirm').checked,rbt12ExtractionId:S.rbt12ExtractionId,rbt12Document:S.rbt12DocumentId?{documentId:S.rbt12DocumentId,sourceKey:rbt12SourceKey()}:null,rbt12Mode:S.rbt12Mode,rbt12ManualConfirmed:S.rbt12Mode==='MANUAL'&&$('#rbt12-manual-confirm').checked,fields:Object.fromEntries([...IMPORTED,...MANUAL,'rbt12'].map(key=>{const field=$('#'+key);return [key,field.value!==''&&field.validity.valid?Number(field.value).toFixed(2):field.value];})),year:$('#simulation-year').value,salesAnnex:$('#sales-annex').value,serviceAnnex:$('#service-annex').value};
   try { sessionStorage.setItem(S.key,JSON.stringify(data)); $('#draft-status').textContent='Rascunho salvo nesta aba. Após alterar valores, gere a simulação novamente.'; }
   catch { $('#draft-status').textContent='Não foi possível guardar o rascunho nesta aba. Mantenha a página aberta até concluir.'; }
 }
@@ -444,6 +509,11 @@ function restoreDraft() {
     }
     for(const [key,id,choices] of [['year','simulation-year',['2027','2028']],['salesAnnex','sales-annex',['1','2']],['serviceAnnex','service-annex',['3','4','5']]]) if(choices.includes(data[key])) $('#'+id).value=data[key];
     S.edited=matchingMonths&&matchingRevenueSplit&&data.edited===true;$('#period-confirm').checked=S.source.periodBasis==='COLUMN_H'||data.confirmed===true;$('#draft-status').textContent='Rascunho desta empresa restaurado. Confira os campos antes de gerar.';
+    if(actualMonths()&&matchingMonthly&&data.monthlyInputs?.length===S.monthlyInputs.length&&
+       data.monthlyInputs.every((row,index)=>row.sourceMonth===S.monthlyInputs[index].sourceMonth)){
+      if(data.accountingRevision===accountingRevision())S.accountingEdits=data.accountingEdits||{};
+      return data.accountingRevision;
+    }
   } catch { /* Invalid/unavailable local drafts never prevent using verified report totals. */ }
 }
 
@@ -888,10 +958,10 @@ async function simulate() {
     const input=draft(),groups=Object.fromEntries(IMPORTED.map(key=>[key,value(key)])),computed=actualMonths()?calculateMonthlySimulation(input,calculationSource.monthlyReports,calculationInputs,calculationSource.sales.jobId,schedule,calculationSource.analysisPeriod):null;
     const difal=computed?.difalProjection||difalProjection(),result=computed?.result||calculateSimulation(input,difal);
     S.result={input,result,source:calculationSource,monthlyInputs:calculationInputs,difalProjection:difal,rbt12Schedule:computed?.rbt12Schedule||result.rbt12Schedule||null,anticipationProjection:computed?.anticipationProjection||null,monthlyGroups:groups,projection:computed?.projection||{...annualizeReports(S.source.fields,S.months),scenario:projectScenario(groups,input.values)}};S.snapshot=null;S.saveError=null;S.viewPeriod='annual';if(actualMonths())S.dreMonth=fixedAnalysisPeriod()?Math.max(0,result.analysisPeriod.includedMonths.indexOf(S.source.monthlyReports[S.entry].sourceMonth)):S.source.monthlyReports[S.entry].month-1;saveDraft();
-    S.pending=canSave()?{simulationId:crypto.randomUUID(),generationId:S.source.generationId,clientId:S.source.clientId,reportMonths:calculationSource.reportMonths||S.months,periodConfirmed:true,...(fixedAnalysisPeriod()?{periodPolicy:JAN_SEP_POLICY}:{}),monthlyGroups:groups,draft:input,...(actualMonths()?{monthlyInputs:calculationInputs}:{}),...(manual?{rbt12Source:'MANUAL',rbt12ManualConfirmed:true}:pdf?{rbt12Source:'SIMPLES_SECTION_22',rbt12ExtractionId:S.rbt12ExtractionId}:{rbt12Source:'NOT_PROVIDED'}),...(S.parentId?{parentSimulationId:S.parentId}:{})}:null;
+    S.pending=canSave()&&!S.savedAccounting?.managed?{simulationId:crypto.randomUUID(),generationId:S.source.generationId,clientId:S.source.clientId,reportMonths:calculationSource.reportMonths||S.months,periodConfirmed:true,...(fixedAnalysisPeriod()?{periodPolicy:JAN_SEP_POLICY}:{}),monthlyGroups:groups,draft:input,...(actualMonths()?{monthlyInputs:calculationInputs}:{}),...(manual?{rbt12Source:'MANUAL',rbt12ManualConfirmed:true}:pdf?{rbt12Source:'SIMPLES_SECTION_22',rbt12ExtractionId:S.rbt12ExtractionId}:{rbt12Source:'NOT_PROVIDED'}),...(S.parentId?{parentSimulationId:S.parentId}:{})}:null;
     renderResult();renderNotices();
     $('#results-top').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'});
-    if(canSave())await persist();
+    if(S.pending)await persist();
   } catch(error) {fail(error);}
 }
 async function persist() {
@@ -915,6 +985,7 @@ function renderSaveStatus() {
   if(S.snapshot)host.innerHTML=`<span class="sim-save-dot" aria-hidden="true"></span><span>Simulação salva no histórico · ${date(S.snapshot.createdAt)}</span><a id="saved-simulation-link" href="/simulator.html?simulation=${encodeURIComponent(S.snapshot._id)}&historical=1">Abrir versão salva →</a>`;
   else if(S.saving)host.innerHTML='<span class="sim-save-dot pending" aria-hidden="true"></span><span>Salvando simulação no histórico…</span>';
   else if(!canSave())host.innerHTML='<span>Prévia local. Seu perfil permite consultar o histórico; salvar versões exige acesso de operador.</span>';
+  else if(S.savedAccounting?.managed)host.textContent='Prévia desta tela. Salvar Contábil e gerar DRE usa as despesas editadas e o Fiscal salvo da empresa.';
   else if(S.pending) {host.innerHTML=`<span>O salvamento não foi confirmado. ${esc(S.saveError||'Tente novamente.')}</span><button type="button" id="retry-save">Tentar salvar novamente</button>`;$('#retry-save').onclick=()=>void persist();}
 }
 function dreContext() {
@@ -1184,7 +1255,9 @@ async function boot() {
       showSnapshot(snapshot);await openSnapshotVersion(snapshot);return;
     }
     S.guided=params.get('guided')==='1';S.guidedResume=params.get('step')==='dados';
-    S.source=await api(`/api/v4/generations/${generation}/simulator?${new URLSearchParams({clientId:client,periodPolicy:JAN_SEP_POLICY})}`);
+    const {savedAccounting,...source}=await api(`/api/v4/generations/${generation}/simulator?${new URLSearchParams({clientId:client,periodPolicy:JAN_SEP_POLICY,includeAccounting:'1'})}`);
+    if(source.clientId!==client||source.generationId!==generation)throw new Error('Os relatórios recebidos não correspondem à empresa e à geração selecionadas.');
+    S.savedAccounting=savedAccounting;S.accountingEdits={};S.source=source;
     S.key=`maximum-simulator:v1:${S.user._id}:${generation}:${client}:${S.source.purchases.jobId}:${S.source.sales.jobId}${fixedAnalysisPeriod()?':'+JAN_SEP_POLICY:''}`;
     display();
   } catch(error) {fail(error);$('#simulator-app').innerHTML='<section class="card sim-empty"><h2>Não foi possível abrir o simulador.</h2><p>Confira o acesso e os relatórios da empresa ou tente abrir a versão salva novamente.</p><div class="sim-links"><a class="sim-back" href="/simulations.html">Simulações salvas →</a><a class="sim-back" href="/generations.html?view=history">Conferir relatórios →</a></div></section>';}

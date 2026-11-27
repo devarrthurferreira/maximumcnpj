@@ -1,3 +1,4 @@
+import {addCompanyDreButton} from './company-dre.js';
 import {analysisRequest} from './analyses-api.js';
 import {esc} from './analyses-view.js';
 import {formatCnpj} from './domain.js';
@@ -34,7 +35,7 @@ async function exportExcel(rows){
   }finally{worker.terminate();}
 }
 
-export async function openSectorReport(host){
+export async function openSectorReport(host,canWrite){
   host.innerHTML=loadingMarkup({title:'Carregando o preenchimento por setor…',detail:'Consultando as empresas cadastradas.'});
   const companies=[];
   try{
@@ -50,7 +51,7 @@ export async function openSectorReport(host){
     }while(cursor);
   }catch(error){
     host.innerHTML=`<section class="analysis-empty"><h1>Preenchimento por setor</h1><p role="alert">${esc(error.message)}</p><button type="button">Tentar novamente</button> <a href="/">Acessar painel</a></section>`;
-    host.querySelector('button').onclick=()=>openSectorReport(host);return;
+    host.querySelector('button').onclick=()=>openSectorReport(host,canWrite);return;
   }
   companies.sort((a,b)=>a.name.localeCompare(b.name,'pt-BR')||String(a.code).localeCompare(String(b.code),'pt-BR',{numeric:true}));
   host.innerHTML=`<section class="sector-report">
@@ -63,7 +64,7 @@ export async function openSectorReport(host){
     <div class="sector-report-summary analysis-overview" aria-live="polite"></div>
     <p class="analysis-note sector-report-caption"></p><p role="alert" class="sector-export-error" hidden></p>
     <div class="sector-report-table" tabindex="0" role="region" aria-label="Empresas do relatório"><table><thead><tr>
-      <th scope="col">Código</th><th scope="col">Empresa</th><th scope="col">CNPJ</th><th scope="col">Cadastro</th><th scope="col">Fiscal</th><th scope="col">Contábil</th></tr></thead>
+      <th scope="col">Código</th><th scope="col">Empresa</th><th scope="col">CNPJ</th><th scope="col">Cadastro</th><th scope="col">Fiscal</th><th scope="col">Contábil</th>${canWrite?'<th class="sector-dre-action" scope="col">DRE</th>':''}</tr></thead>
       <tbody></tbody></table></div></section>`;
   const form=host.querySelector('form'),excel=host.querySelector('[data-excel]'),print=host.querySelector('[data-print]');
   const message=host.querySelector('.sector-export-error'),readAt=dateText(new Date());
@@ -83,8 +84,13 @@ export async function openSectorReport(host){
     host.querySelector('.sector-report-summary').innerHTML=totals.map(([label,count])=>`<article><span>${label}</span><strong>${count}</strong></article>`).join('');
     const filters=[registration,fiscal,accounting].map(select=>select.labels[0].firstChild.textContent+' · '+select.selectedOptions[0].text);
     host.querySelector('.sector-report-caption').textContent=['Consulta em '+readAt,...filters,...(term?['Busca · '+search.value.trim()]:[])].join('  |  ');
-    host.querySelector('tbody').innerHTML=filtered.length?filtered.map(row=>`<tr><td>${esc(row.code)||'—'}</td><th scope="row">${esc(row.name)}</th><td>${esc(formatCnpj(row.cnpj))||'—'}</td><td>${row.active?'Ativo':'Inativo'}</td>${sectorCell(row.fiscal)}${sectorCell(row.accounting)}</tr>`).join(''):
-      '<tr><td colspan="6">Nenhuma empresa encontrada para os filtros selecionados.</td></tr>';
+    host.querySelector('tbody').innerHTML=filtered.length?filtered.map(row=>`<tr><td>${esc(row.code)||'—'}</td><th scope="row">${esc(row.name)}</th><td>${esc(formatCnpj(row.cnpj))||'—'}</td><td>${row.active?'Ativo':'Inativo'}</td>${sectorCell(row.fiscal)}${sectorCell(row.accounting)}${canWrite?'<td class="sector-dre-action"></td>':''}</tr>`).join(''):
+      `<tr><td colspan="${canWrite?7:6}">Nenhuma empresa encontrada para os filtros selecionados.</td></tr>`;
+    if(canWrite)host.querySelectorAll('tbody .sector-dre-action').forEach((cell,index)=>{
+      const row=filtered[index];
+      if(row.analysisId)addCompanyDreButton(cell,row.clientId,{analysisId:row.analysisId});
+      else cell.textContent='Sem análise';
+    });
     print.disabled=!filtered.length;excel.disabled=exporting||!filtered.length;message.hidden=true;
   }
   form.onsubmit=event=>event.preventDefault();form.oninput=render;

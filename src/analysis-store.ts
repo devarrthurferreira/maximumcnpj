@@ -217,20 +217,20 @@ function reportSector(item:SavedWork|undefined,kind:'fiscal'|'accounting',issues
 export async function sectorProgress(after:string|null){
   const batchSize=250;
   const clients=await collection('clients');
-  type ProgressClient={_id:string;code?:string;name:string;cnpj?:string;active:boolean;analysis?:SavedWork};
+  type ProgressClient={_id:string;code?:string;name:string;cnpj?:string;active:boolean;analysis?:(SavedWork & {_id:string})};
   const rows=await clients.aggregate<ProgressClient>([
     {$match:scope(after===null?{}:{_id:{$gt:analysisId(after)}})},
     {$sort:{_id:1}},{$limit:batchSize+1},
     {$project:{code:1,name:1,cnpj:1,active:1}},
     {$lookup:{from:'analyses',localField:'_id',foreignField:'clientId',as:'work',pipeline:[
-      {$match:scope(active())},{$project:{_id:0,config:1,fiscal:1,accounting:1}}
+      {$match:scope(active())},{$project:{_id:1,config:1,fiscal:1,accounting:1}}
     ]}},
     {$set:{analysis:{$first:'$work'}}},{$unset:'work'}
   ]).toArray();
   const batch=rows.slice(0,batchSize);
   return {items:batch.map(({_id,code,name,cnpj,active,analysis})=>{
     const issues=analysis?savedReadiness(analysis).issues:[];
-    return {clientId:_id,code:code??'',name,cnpj:cnpj??'',active:active===true,year:analysis?.config.year??null,
+    return {clientId:_id,analysisId:analysis?._id??null,code:code??'',name,cnpj:cnpj??'',active:active===true,year:analysis?.config.year??null,
       fiscal:reportSector(analysis,'fiscal',issues),accounting:reportSector(analysis,'accounting',issues)};
   }),next:rows.length>batchSize?batch[batch.length-1]._id:null};
 }
