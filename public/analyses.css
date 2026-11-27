@@ -921,3 +921,25 @@ body:has(#analysis-delete-dialog[open]){overflow:hidden}
 .analysis-company-sector strong{font-size:12px}.analysis-company-sector b{font-size:11px;color:#750207;font-weight:600}
 .analysis-company-sector.is-complete{background:#f5faf7}
 @media(max-width:600px){.analysis-company-sectors{grid-template-columns:1fr}.analysis-company-sector{padding:11px 12px}.analysis-company-sector .analysis-tag{font-size:10px}}
+
+.sector-report .analysis-filter-bar label{min-width:0}
+.sector-report .analysis-filter-bar label:first-child{min-width:min(100%,210px)}
+.sector-report-caption{margin:0 0 12px}
+.sector-report-table{max-width:100%;overflow-x:auto;background:#fff;border:1px solid var(--analysis-line);border-radius:12px}
+.sector-report-table table{width:100%;border-collapse:collapse}
+.sector-report-table th,.sector-report-table td{padding:12px;text-align:left;border-bottom:1px solid var(--analysis-line);vertical-align:top}
+.sector-report-table thead th{color:var(--analysis-muted);background:var(--analysis-soft)}
+.sector-report-table tbody th{white-space:normal;overflow-wrap:anywhere;min-width:140px}
+.sector-report-table small{display:block;margin-top:5px;color:var(--analysis-muted);font-size:11px}
+.sector-export-error{color:#750207}
+@media print{
+  body:has(.sector-report) :is(.sidebar,.topbar,.skip,#toast,.analysis-back,.analysis-heading-actions,.analysis-filter-bar){display:none!important}
+  body:has(.sector-report) :is(.shell,.main,.content,.sector-report-table){display:block!important;position:static!important;overflow:visible!important;width:100%!important;max-width:none!important;margin:0!important;padding:0!important}
+  .sector-report-table{border:0}
+  .sector-report-table table{min-width:0;width:100%;font-size:9pt}
+  .sector-report-table tr{break-inside:avoid}
+  .sector-report-table th,.sector-report-table td{white-space:normal;padding:5px;min-width:0}
+  .sector-report-table td:nth-child(3){white-space:nowrap}
+  .sector-report-table tbody th{min-width:0}
+  .sector-report .analysis-overview{grid-template-columns:repeat(4,1fr)}
+}

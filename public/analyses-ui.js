@@ -1512,12 +1512,19 @@ async function boot() {
   $('#analyses-app').innerHTML='<div class="initial">'+loadingMarkup({title:'Carregando suas análises…',detail:'Conferindo seu acesso e o trabalho salvo.'})+'</div>';
   try {
     const session=await analysisRequest('/api/auth/session');S.user=session.user;
-    mountNavigation(S.user,'analyses');
+    const query=new URLSearchParams(location.search),id=query.get('id'),clientId=query.get('client');
+    const progress=!id&&query.get('view')==='preenchimento';
+    mountNavigation(S.user,progress?'history':'analyses');
     if(!S.user||S.user.mustChangePassword){
       $('#analyses-app').innerHTML=`<section class="analysis-empty"><h1>${S.user?.mustChangePassword?'Redefina sua senha para continuar':'Entre para acessar as análises'}</h1><p>Use a conta da equipe Maximum para consultar empresas, documentos e resultados.</p><a class="analysis-button primary" href="/">Acessar painel</a></section>`;return;
     }
-    const query=new URLSearchParams(location.search),id=query.get('id'),clientId=query.get('client');
     if(id)await openAnalysis(id);
+    else if(progress){
+      document.title='Preenchimento por setor · Maximum CNPJ';
+      document.querySelector('.crumb strong').textContent='Relatórios';
+      const {openSectorReport}=await import('./analysis-sector-report.js');
+      await openSectorReport($('#analyses-app'));
+    }
     else if(query.get('view')==='new')await openNew(clientId||'');
     else if(clientId)await openCompany(clientId);
     else if(!writable()||query.get('view')==='list'||query.has('search')||query.has('page')||query.has('deleted'))await openList();

@@ -1,5 +1,9 @@
 # Histórico de alterações
 
+## [0.62.0] - 2026-11-27
+
+- Adiciona o relatório de preenchimento Fiscal e Contábil por empresa, com filtros independentes, contagens, Excel e impressão. Inclui cadastros sem análise e distingue rascunhos de setores que exigem nova conferência.
+
 ## Ajuste de 26/11/2026 — Competências preservadas com RBT12 parcial
 
 - A ausência de histórico RBT12 não exclui competências fiscais da análise; somente o Simples fica pendente nos meses afetados. Meses fiscais sem despesas preenchidas permanecem no consolidado, com aviso de zeros provisórios no Contábil. Ajustes manuais existentes são preservados e os meses novos usam a fonte original.

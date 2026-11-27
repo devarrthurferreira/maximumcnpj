@@ -62,6 +62,41 @@ test('MongoDB desempenho das análises: navegação sem reconciliar arquivos e g
     }
     await saveFiscal();await saveAccounting();
 
+    await t.test('relatório percorre toda a carteira e distingue confirmação, reconferência, rascunho e ausência',async()=>{
+      const clients=await collection('clients'),analyses=await collection('analyses');
+      const model=await analyses.findOne(scope({_id:analysis.id}));assert.ok(model);
+      const ids=Array.from({length:251},()=>randomUUID());
+      const client=(id:string)=>({_id:id,...scope(),name:'Empresa de teste',active:false});
+      const row=(id:string)=>({...model,_id:randomUUID(),clientId:id});
+      try{
+        await clients.insertMany(ids.map(client));
+        await analyses.insertMany([
+          {...row(ids[0]),fiscal:{...model.fiscal,status:'DRAFT'}},
+          {...row(ids[1]),fiscal:{...model.fiscal,confirmation:null}},
+          {...row(ids[2]),accounting:{...model.accounting,status:'DRAFT'}},
+          {...row(ids[3]),deletionStartedAt:new Date()},
+          {...row(ids[4]),workspaceId:'another_workspace'}
+        ]);
+        const report=()=>route('GET','/analyses/sector-progress',{},viewer);
+        const first=await report(),second=await route('GET','/analyses/sector-progress?after='+first.next,{},viewer);
+        assert.equal(first.items.length,250);assert.equal(second.next,null);
+        const rows=[...first.items,...second.items],byId=new Map(rows.map(r=>[r.clientId,r]));
+        assert.equal(rows.length,252);assert.equal(byId.size,252);
+        for(const [id,fiscal,accounting] of [[clientId,'COMPLETE','COMPLETE'],[ids[0],'DRAFT','COMPLETE'],
+          [ids[1],'REVIEW','COMPLETE'],[ids[2],'COMPLETE','DRAFT'],[ids[3],'EMPTY','EMPTY'],[ids[4],'EMPTY','EMPTY'],[ids[250],'EMPTY','EMPTY']]){
+          const result=byId.get(id);
+          assert.equal(result.fiscal.status,fiscal);assert.equal(result.accounting.status,accounting);
+          assert.equal(Object.hasOwn(result.fiscal,'data'),false);
+        }
+        assert.equal(byId.get(ids[4]).fiscal.updatedBy,null);
+        assert.equal(byId.get(clientId).accounting.updatedBy,actor.name);
+        await assert.rejects(route('GET','/analyses/sector-progress?after=abc'));
+      }finally{
+        await analyses.deleteMany({clientId:{$in:ids}});
+        await clients.deleteMany(scope({_id:{$in:ids}}));
+      }
+    });
+
     await t.test('carteira, busca, abertura e edição Contábil não consultam linhas fiscais nem reenviam índices',async()=>{
       const observed=await observe(async()=>{
         const all=await route('GET','/analyses?summary=1');assert.equal(all.items.length,1);

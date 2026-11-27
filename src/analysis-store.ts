@@ -34,6 +34,7 @@ type Analysis=Doc & {clientId:string;company:{name:string;code:string|null;cnpj?
   legacy:boolean;legacyReference?:{simulationId:string;monthlyInputsPreserved:boolean};createdAt:Date;createdBy:Author;updatedAt:Date;
   leaseOwner?:string;leaseUntil?:Date;lastGeneration?:{requestId:string;revision:number;simulationId:string};
   deletionStartedAt?:Date;deletionActor?:string;deletionRevision?:number};
+type SavedWork=Pick<Analysis,'config'|'fiscal'|'accounting'>;
 type Source=Awaited<ReturnType<typeof generationSimulator>>;
 export type AnalysisReadOptions={summary?:boolean;includeSource?:boolean};
 type SourceError={code:string;message:string};
@@ -109,7 +110,7 @@ async function fiscalSource(item:Analysis,data=item.fiscal.data,onSource?:(sourc
   }
   return {source,months,reference,fingerprint:fingerprint(source,reference,item.config,data)};
 }
-function savedAnalysisPeriod(item:Analysis):AnalysisPeriod|null{
+function savedAnalysisPeriod(item:SavedWork):AnalysisPeriod|null{
   const confirmation=item.fiscal.confirmation;
   if(!confirmation||confirmation.generationId!==item.fiscal.data.generationId)return null;
   if(confirmation.analysisPeriod?.version===JAN_SEP_POLICY)return confirmation.analysisPeriod;
@@ -146,7 +147,7 @@ async function readiness(item:Analysis):Promise<Readiness>{
 }
 
 /** Navigation describes saved work only. It never authorizes publication or validates source files. */
-function savedReadiness(item:Analysis):Readiness{
+function savedReadiness(item:SavedWork):Readiness{
   const issues:AnalysisIssue[]=[],confirmation=item.fiscal.confirmation;
   const fiscalPeriod=savedAnalysisPeriod(item),available=fiscalPeriod?.includedMonths||[];
   if(item.fiscal.status!=='COMPLETE')issues.push({code:'FISCAL_NOT_CONFIRMED',sector:'fiscal',message:'Salve e conclua o setor Fiscal.'});
@@ -171,7 +172,7 @@ function savedReadiness(item:Analysis):Readiness{
   return partialReadiness(item,{ready:issues.length===0,issues,months,analysisPeriod,checked:null,source:null,sourceError:null,verification:'SAVED'});
 }
 
-function partialReadiness(item:Analysis,ready:Omit<Readiness,'partial'>):Readiness{
+function partialReadiness(item:SavedWork,ready:Omit<Readiness,'partial'>):Readiness{
   // Summary navigation can offer a preflight, but generateAnalysis always verifies the current documents again.
   const fiscalDataUsed=!!ready.checked||ready.verification==='SAVED'&&!!item.fiscal.data.generationId;
   const partial=partialAnalysisAvailability(item,ready.issues,{fiscalDataUsed});
@@ -205,6 +206,35 @@ async function presentation(item:Analysis,options:AnalysisReadOptions={},prepare
 async function visible(item:Analysis,options:AnalysisReadOptions={},prepared?:Readiness){
   return (await presentation(item,options,prepared)).analysis;
 }
+function reportSector(item:SavedWork|undefined,kind:'fiscal'|'accounting',issues:AnalysisIssue[]){
+  const saved=item?.[kind];
+  if(!saved || (saved.status!=='COMPLETE' && !saved.revision))return {status:'EMPTY',updatedAt:null,updatedBy:null};
+  const status=saved.status==='COMPLETE'?(issues.some(issue=>issue.sector===kind)?'REVIEW':'COMPLETE'):'DRAFT';
+  return {status,updatedAt:saved.updatedAt,updatedBy:saved.updatedBy?.name||null};
+}
+
+/** One row per registered company, including companies that have never opened an analysis. */
+export async function sectorProgress(after:string|null){
+  const batchSize=250;
+  const clients=await collection('clients');
+  type ProgressClient={_id:string;code?:string;name:string;cnpj?:string;active:boolean;analysis?:SavedWork};
+  const rows=await clients.aggregate<ProgressClient>([
+    {$match:scope(after===null?{}:{_id:{$gt:analysisId(after)}})},
+    {$sort:{_id:1}},{$limit:batchSize+1},
+    {$project:{code:1,name:1,cnpj:1,active:1}},
+    {$lookup:{from:'analyses',localField:'_id',foreignField:'clientId',as:'work',pipeline:[
+      {$match:scope(active())},{$project:{_id:0,config:1,fiscal:1,accounting:1}}
+    ]}},
+    {$set:{analysis:{$first:'$work'}}},{$unset:'work'}
+  ]).toArray();
+  const batch=rows.slice(0,batchSize);
+  return {items:batch.map(({_id,code,name,cnpj,active,analysis})=>{
+    const issues=analysis?savedReadiness(analysis).issues:[];
+    return {clientId:_id,code:code??'',name,cnpj:cnpj??'',active:active===true,year:analysis?.config.year??null,
+      fiscal:reportSector(analysis,'fiscal',issues),accounting:reportSector(analysis,'accounting',issues)};
+  }),next:rows.length>batchSize?batch[batch.length-1]._id:null};
+}
+
 function sector<T>(data:T,actor:LookupActor,now:Date):Sector<T>{return {revision:0,status:'DRAFT',data,completedAt:null,updatedAt:now,updatedBy:author(actor),confirmation:null};}
 function currentOf(snapshot:any,revision:number|null,legacy:boolean):Current{
   return {id:snapshot._id,analysisRevision:revision,createdAt:snapshot.createdAt,modelVersion:snapshot.modelVersion||null,legacy,

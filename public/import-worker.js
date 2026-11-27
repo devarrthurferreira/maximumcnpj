@@ -37,7 +37,8 @@ self.onmessage = async ({data}) => {
     }
     if(data.action==='export') {
       if(data.format==='csv') { const blob=new Blob([D.csvEncode([data.headers,...data.rows])],{type:'text/csv;charset=utf-8'}); self.postMessage({type:'export',blob,extension:'csv'}); }
-      else { if(!self.XLSX)importScripts('/vendor/xlsx.full.min.js'); const sheet=XLSX.utils.aoa_to_sheet([data.headers,...data.rows].map(row=>row.map(v=>String(v??'')))); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,sheet,'Consulta CNPJ'); const bytes=XLSX.write(wb,{type:'array',bookType:'xlsx'});self.postMessage({type:'export',blob:new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),extension:'xlsx'}); }
+      else { if(!self.XLSX)importScripts('/vendor/xlsx.full.min.js'); const sheet=XLSX.utils.aoa_to_sheet([data.headers,...data.rows].map(row=>row.map(v=>String(v??'')))); if(data.widths){sheet['!cols']=data.widths.map(wch=>({wch}));sheet['!autofilter']={ref:sheet['!ref']};}
+        const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,sheet,data.sheetName||'Consulta CNPJ'); const bytes=XLSX.write(wb,{type:'array',bookType:'xlsx'});self.postMessage({type:'export',blob:new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),extension:'xlsx'}); }
     }
   } catch(e) { self.postMessage({type:'error',message:e.message||'Falha ao ler a planilha.'}); }
 };

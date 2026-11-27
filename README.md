@@ -1,4 +1,6 @@
-# Maximum CNPJ · v0.61.1
+# Maximum CNPJ · v0.62.0
+
+Em **Relatórios → Preenchimento por setor**, consulte a situação salva do Fiscal e do Contábil em todas as empresas cadastradas. Combine os filtros dos dois setores, busque por código, nome ou CNPJ e selecione cadastros ativos ou inativos. **Baixar Excel** e **Imprimir / PDF** incluem todas as empresas do filtro. O relatório usa a mesma conferência salva da lista de análises. Empresas sem análise aparecem com os dois setores por iniciar.
 
 **DRE com ressalvas:** UF pendente não impede o recálculo da estimativa de antecipação. Falhas de atualização exibem a versão salva já autorizada com aviso. Nas novas gerações, a cobertura Jan–Set usa as competências presentes em entradas ou saídas; meses com apenas um relatório são identificados como provisórios no lado ausente. Meses sem cobertura de ambos não são preenchidos automaticamente.
 
