@@ -737,3 +737,34 @@ test('MongoDB relatórios: DIFAL desmarcado, CSV auditável, propriedade e linha
     if (oldWs === undefined) delete process.env.WORKSPACE_ID; else process.env.WORKSPACE_ID = oldWs;
   }
 });
+
+test('Histórico pesquisa a empresa antes da paginação e inclui gerações antigas', {skip: !process.env.MONGODB_URI}, async () => {
+  const oldDb = process.env.MONGODB_DB, oldWs = process.env.WORKSPACE_ID;
+  process.env.MONGODB_DB = 'maximum_history_search_' + randomUUID().replaceAll('-', '');
+  process.env.WORKSPACE_ID = 'history_search_test';
+  try {
+    const clients = await collection('clients'), generations = await collection('generations');
+    const target = randomUUID(), other = randomUUID();
+    const cnpj = '12ABC3450001' + digits('12ABC3450001');
+    await clients.insertOne({...scope(), _id: target, cnpj, name: 'Café Atual', code: '002', active: false});
+    const snapshot = (clientId: string, name: string, code: string) => ({clientId, name, code, purchaseJobId: null, purchaseJobIds: []});
+    const companies = [snapshot(other, 'Outra', '010'), snapshot(target, 'Razão Antiga', '001')];
+    const rows = Array.from({length: 21}, (_, i) => ({...scope(), _id: randomUUID(), companies, createdAt: new Date(i)}));
+    await generations.insertMany([...rows, {...rows[0], _id: randomUUID(), deletionStartedAt: new Date()},
+      {...rows[0], _id: randomUUID(), workspaceId: 'outside'}, {...rows[0], _id: randomUUID(), companies: [companies[0]]}]);
+    for (const search of ['razao antiga', 'cafe atual', '001', '12.ABC.345/0001-' + cnpj.slice(-2), cnpj.toLowerCase()]) {
+      const url = new URL('https://test/api/v4/generations');
+      url.search = new URLSearchParams({page: '2', search}).toString();
+      const result: any = await routeV4({_id: 'test', role: 'viewer'}, 'GET', url, {});
+      assert.equal(result.total, 21);
+      assert.deepEqual(result.items.map((g: any) => [g._id, g.matchingClientIds]), [[rows[0]._id, [target]]]);
+      assert.equal(result.items[0].companyCount, 2);
+    }
+    assert.equal((await generationHistory(1, '.*')).total, 0);
+    assert.equal((await generationHistory(1)).total, 22);
+  } finally {
+    await (await database()).dropDatabase(); await closeDatabase(); resetLookupIndexes();
+    if (oldDb === undefined) delete process.env.MONGODB_DB; else process.env.MONGODB_DB = oldDb;
+    if (oldWs === undefined) delete process.env.WORKSPACE_ID; else process.env.WORKSPACE_ID = oldWs;
+  }
+});

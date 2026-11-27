@@ -9,7 +9,7 @@ import {JAN_SEP_POLICY} from '../public/analysis-period.js';
 export async function routeGenerations(actor: LookupActor, method: string, url: URL, input: any) {
   const path = url.pathname.replace('/api/v4/generations', '');
   if (method === 'GET') await rateLimit(`generation-read:${workspace()}:${actor._id}`, 120, 1);
-  if (!path && method === 'GET') return generationHistory(integer(url.searchParams.get('page') || 1, 1, 100000));
+  if (!path && method === 'GET') return generationHistory(integer(url.searchParams.get('page') || 1, 1, 100000), url.searchParams.get('search') || '');
   if (!path && method === 'POST') return createGeneration(actor, input);
   const match = path.match(/^\/([a-f0-9-]{36})(?:\/(purchases|sales|simulator|revenue))?$/);
   if (match) {

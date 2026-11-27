@@ -143,3 +143,32 @@ test('Falha temporária ao abrir geração mantém o erro real sem afirmar que f
  await expect(page.locator('#generation-error')).toContainText('Banco temporariamente indisponível');
  await expect(page.locator('#generation-unavailable')).toHaveCount(0);
 });
+
+test('Busca por empresa no histórico mantém a paginação e abre o preenchimento filtrado',async({page})=>{
+ await session(page);
+ const company={clientId:clients[2]._id,name:'Ágata',code:'003'};
+ const group={...base,companyCount:3,companies:[...base.companies,company]};
+ await page.route('**/api/v4/generations?*',route=>{
+   const query=new URL(route.request().url()).searchParams,search=query.get('search');
+   const items=!search?[base]:search==='agata'?[{...group,matchingClientIds:[company.clientId]}]:[];
+   return route.fulfill({json:{items,total:search==='agata'?21:items.length,page:Number(query.get('page')),pageSize:20}});
+ });
+ await page.route('**/api/v4/analyses/sector-progress*',route=>route.fulfill({json:{next:null,items:[
+   {...company,active:true,cnpj:'',year:2027,fiscal:{status:'COMPLETE'},accounting:{status:'EMPTY'}},
+   {...company,name:'Outra',active:true,cnpj:'',year:2027,fiscal:{status:'EMPTY'},accounting:{status:'EMPTY'}}
+ ]}}));
+ await page.goto('/generations.html?view=history');
+ const search=page.getByRole('searchbox',{name:'Pesquisar empresa'});
+ await search.fill('agata');await search.press('Enter');
+ await expect(page.locator('.generation-history-item strong')).toContainText('003 · Ágata');
+ await page.getByRole('button',{name:'Próxima',exact:true}).click();await expect(page.locator('.pagination')).toContainText('2 / 2');
+ await page.reload();await expect(search).toHaveValue('agata');await expect(page.locator('.pagination')).toContainText('2 / 2');
+ await search.fill('inexistente');await search.press('Enter');
+ await expect(page.getByRole('heading',{name:'Nenhuma geração encontrada para esta empresa'})).toBeVisible();
+ await expect(page.locator('.pagination')).toContainText('1 / 1');
+ await page.getByRole('button',{name:'Limpar',exact:true}).click();
+ await expect(search).toHaveValue('');await expect(page.locator('.generation-history-item')).toContainText('EMPRESA PRIMEIRA');
+ await search.fill('agata');await page.getByRole('link',{name:'Preenchimento por setor',exact:true}).click();
+ await expect(page.getByRole('searchbox')).toHaveValue('agata');
+ await expect(page.locator('tbody tr')).toHaveCount(1);await expect(page.locator('tbody')).toContainText('Ágata');
+});

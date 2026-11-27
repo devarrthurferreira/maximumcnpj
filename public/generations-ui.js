@@ -4,7 +4,7 @@ import {difalDirectionSelection} from './difal-policy.js';
 import {renderRevenueReconciliation} from './revenue-reconciliation-view.js';
 const $=q=>document.querySelector(q),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const n=v=>Number(v||0).toLocaleString('pt-BR'),dt=v=>v?new Date(v).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}):'—';
-const S={user:null,clients:[],selected:new Set(),generation:null,analysis:null,page:1,seq:0,busy:false,pendingId:null,pendingClientIds:null,reports:new Set(['PURCHASES','SALES']),pendingReports:null,difalPolicies:new Map(),difalExpanded:new Set(),pendingDifalPolicies:null,historyItems:[],deleteTarget:null,deleteTrigger:null,deleting:false,revenueObserver:null};
+const S={user:null,clients:[],selected:new Set(),generation:null,analysis:null,page:1,seq:0,busy:false,pendingId:null,pendingClientIds:null,reports:new Set(['PURCHASES','SALES']),pendingReports:null,difalPolicies:new Map(),difalExpanded:new Set(),pendingDifalPolicies:null,historyItems:[],historySearch:new URLSearchParams(location.search).get('search')?.trim().slice(0,100)||'',deleteTarget:null,deleteTrigger:null,deleting:false,revenueObserver:null};
 const DIFAL_REGIMES=[['pure','Simples puro'],['hybrid','Simples híbrido']];
 const DIFAL_OPERATIONS=[['entry','DIFAL de entrada','Compras · antecipação de ICMS'],['exit','DIFAL de saída','Desativado · R$ 0,00']];
 function companyDifalPolicy(clientId){
@@ -120,12 +120,73 @@ async function create(){if(!S.selected.size||!S.reports.size||S.busy)return;S.bu
 const statusLabel=g=>g.status==='COMPLETED'?'Concluída':`${n(g.completedCount)} de ${n(g.companyCount)} empresas concluídas`;
 const trashIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg>';
 const deleteButton=g=>writable()&&!S.analysis?`<button type="button" class="generation-delete" data-delete-generation="${esc(g._id)}" aria-label="Excluir geração definitivamente">${trashIcon}Excluir</button>`:'';
-async function history(page=1,focusAfter=false){clearError();document.body.classList.add('generation-history-page');S.revenueObserver?.disconnect();const ticket=++S.seq;heading('Central de relatórios','Encontre os documentos de cada empresa, acompanhe as leituras e abra os relatórios para conferência.','RELATÓRIOS · HISTÓRICO COMPLETO');$('.crumb').textContent='Maximum CNPJ / Relatórios';$('#generation-app').innerHTML='<div class="initial">Carregando suas gerações…</div>';const d=await api('/api/v4/generations?'+new URLSearchParams({page}));if(ticket!==S.seq)return;
- const totalPages=Math.max(1,Math.ceil(d.total/(d.pageSize||20)));if(page>totalPages)return history(totalPages,focusAfter);S.page=page;S.historyItems=d.items;
- window.history.replaceState(null,'','/generations.html?'+new URLSearchParams({view:'history',page}));
- $('#generation-app').innerHTML=`<nav class="generation-history-tabs" aria-label="Tipos de histórico"><span class="active" aria-current="page">Relatórios fiscais</span><a href="/analyses.html?view=preenchimento">Preenchimento por setor</a><a href="/simulations.html">Versões salvas</a><a href="/purchases.html">Compras anteriores</a><a href="/purchases.html?type=SALES">Vendas anteriores</a><a href="/#history">Consultas anteriores</a></nav><dl class="generation-history-summary" aria-label="Resumo dos relatórios"><div><dt>Gerações no histórico</dt><dd>${n(d.total)}</dd><small>Todos os registros salvos</small></div><div><dt>Concluídas nesta página</dt><dd>${n(d.items.filter(g=>g.status==='COMPLETED').length)}</dd><small>Disponíveis para conferência</small></div><div><dt>Em preparação nesta página</dt><dd>${n(d.items.filter(g=>g.status!=='COMPLETED').length)}</dd><small>Retome de onde parou</small></div></dl><section class="card generation-history-panel"><div class="generation-section-title"><div><h2 id="generation-history-title" tabindex="-1">Gerações salvas</h2><p class="hint mt">Mais recentes primeiro · ${n(d.items.length)} nesta página</p></div>${writable()?'<a class="primary report-links" href="/generations.html">Iniciar geração</a>':''}</div>${d.items.length?`<div class="generation-history-list">${d.items.map(g=>`<article class="generation-history-row" data-generation-id="${esc(g._id)}"><a class="generation-history-item" href="/generations.html?id=${encodeURIComponent(g._id)}"><div class="generation-history-icon ${g.status==='COMPLETED'?'is-complete':''}" aria-hidden="true">${icon(g.status==='COMPLETED'?'report':'history')}</div><div><strong>${g.companies?.slice(0,2).map(c=>esc((c.code||'—')+' · '+c.name)).join(' · ')||'Geração de relatórios'}${g.companyCount>2?' e mais '+n(g.companyCount-2):''}</strong><small>${dt(g.createdAt)} · ${n(g.companyCount)} empresa(s) · ${requiredReports(g).map(type=>reportLabels[type]).join(' + ')}</small><span class="generation-state ${g.status==='COMPLETED'?'complete':''}">${statusLabel(g)}</span></div><span aria-hidden="true">→</span></a>${deleteButton(g)}</article>`).join('')}</div>`:'<div class="purchase-empty"><h3>O histórico começa na primeira geração</h3><p>Selecione suas empresas e adicione os relatórios de compras e vendas.</p><a class="report-links" href="/generations.html">Iniciar agora →</a></div>'}<div class="pagination"><button id="generation-prev" ${page<=1?'disabled':''}>Anterior</button><span>${page} / ${totalPages}</span><button id="generation-next" ${page>=totalPages?'disabled':''}>Próxima</button></div></section>`;
+function historyRow(g){
+ const companies=g.companies||[];
+ const shown=g.matchingClientIds?companies.filter(company=>g.matchingClientIds.includes(company.clientId)):companies.slice(0,2);
+ const names=shown.map(c=>esc((c.code||'—')+' · '+c.name)).join(' · ')||'Geração de relatórios';
+ const remaining=g.companyCount-shown.length;
+ return `<article class="generation-history-row" data-generation-id="${esc(g._id)}">
+   <a class="generation-history-item" href="/generations.html?id=${encodeURIComponent(g._id)}">
+     <div class="generation-history-icon ${g.status==='COMPLETED'?'is-complete':''}" aria-hidden="true">${icon(g.status==='COMPLETED'?'report':'history')}</div>
+     <div><strong>${names}${remaining>0?' e mais '+n(remaining):''}</strong>
+       <small>${dt(g.createdAt)} · ${n(g.companyCount)} empresa(s) · ${requiredReports(g).map(type=>reportLabels[type]).join(' + ')}</small>
+       <span class="generation-state ${g.status==='COMPLETED'?'complete':''}">${statusLabel(g)}</span></div>
+     <span aria-hidden="true">→</span></a>${deleteButton(g)}</article>`;
+}
+function sectorReportUrl(search){
+ return '/analyses.html?'+new URLSearchParams({view:'preenchimento',...(search?{search}:{})});
+}
+function mountHistory(){
+ heading('Central de relatórios','Encontre os documentos de cada empresa, acompanhe as leituras e abra os relatórios para conferência.','RELATÓRIOS · HISTÓRICO COMPLETO');
+ $('.crumb').textContent='Maximum CNPJ / Relatórios';
+ $('#generation-app').innerHTML=`<nav class="generation-history-tabs" aria-label="Tipos de histórico">
+   <span class="active" aria-current="page">Relatórios fiscais</span><a id="history-sector-link" href="${esc(sectorReportUrl(S.historySearch))}">Preenchimento por setor</a>
+   <a href="/simulations.html">Versões salvas</a><a href="/purchases.html">Compras anteriores</a><a href="/purchases.html?type=SALES">Vendas anteriores</a><a href="/#history">Consultas anteriores</a></nav>
+   <form id="generation-history-search" class="generation-history-search" role="search" aria-label="Empresas nos relatórios">
+     <label for="history-company">Pesquisar empresa<input id="history-company" type="search" maxlength="100" placeholder="Nome, código ou CNPJ" value="${esc(S.historySearch)}"></label>
+     <button class="primary" type="submit">Buscar</button><button id="history-clear" type="button">Limpar</button></form>
+   <div id="generation-history-results"></div>`;
+ const input=$('#history-company');
+ input.oninput=()=>{$('#history-sector-link').href=sectorReportUrl(input.value.trim());};
+ $('#generation-history-search').onsubmit=event=>{
+   event.preventDefault();S.historySearch=input.value.trim();history(1).catch(errors);
+ };
+ $('#history-clear').onclick=()=>{input.value='';S.historySearch='';$('#history-sector-link').href=sectorReportUrl('');input.focus();history(1).catch(errors);};
+}
+async function history(page=1,focusAfter=false){
+ clearError();document.body.classList.add('generation-history-page');S.revenueObserver?.disconnect();
+ if(!$('#generation-history-search'))mountHistory();
+ const results=$('#generation-history-results'),ticket=++S.seq,search=S.historySearch;
+ const params=new URLSearchParams({page,...(search?{search}:{})});
+ window.history.replaceState(null,'','/generations.html?view=history&'+params);
+ results.innerHTML='<div class="initial" role="status">Carregando suas gerações…</div>';
+ let d;
+ try{d=await api('/api/v4/generations?'+params);}
+ catch(error){
+   if(ticket!==S.seq)return;
+   errors(error);results.innerHTML='<button type="button">Tentar novamente</button>';
+   results.querySelector('button').onclick=()=>history(page,focusAfter).catch(errors);return;
+ }
+ if(ticket!==S.seq)return;
+ const totalPages=Math.max(1,Math.ceil(d.total/(d.pageSize||20)));
+ if(page>totalPages)return history(totalPages,focusAfter);
+ S.page=page;S.historyItems=d.items;
+ const empty=search?`<div class="purchase-empty"><h3>Nenhuma geração encontrada para esta empresa</h3>
+   <p>Confira o nome, o código ou o CNPJ. Empresas sem geração também aparecem no preenchimento por setor.</p>
+   <a class="report-links" href="${esc(sectorReportUrl(search))}">Consultar preenchimento por setor →</a></div>`:
+   '<div class="purchase-empty"><h3>O histórico começa na primeira geração</h3><p>Selecione suas empresas e adicione os relatórios de compras e vendas.</p><a class="report-links" href="/generations.html">Iniciar agora →</a></div>';
+ results.innerHTML=`<dl class="generation-history-summary" aria-label="Resumo dos relatórios">
+   <div><dt>${search?'Gerações encontradas':'Gerações no histórico'}</dt><dd>${n(d.total)}</dd><small>${search?'Na pesquisa por empresa':'Todos os registros salvos'}</small></div>
+   <div><dt>Concluídas nesta página</dt><dd>${n(d.items.filter(g=>g.status==='COMPLETED').length)}</dd><small>Disponíveis para conferência</small></div>
+   <div><dt>Em preparação nesta página</dt><dd>${n(d.items.filter(g=>g.status!=='COMPLETED').length)}</dd><small>Retome de onde parou</small></div></dl>
+   <section class="card generation-history-panel"><div class="generation-section-title"><div><h2 id="generation-history-title" tabindex="-1">Gerações salvas</h2>
+   <p class="hint mt" role="status">${search?esc(search)+' · '+n(d.total)+' no histórico · ':''}Mais recentes primeiro · ${n(d.items.length)} nesta página</p></div>
+   ${writable()?'<a class="primary report-links" href="/generations.html">Iniciar geração</a>':''}</div>
+   ${d.items.length?`<div class="generation-history-list">${d.items.map(historyRow).join('')}</div>`:empty}
+   <div class="pagination"><button id="generation-prev" ${page<=1?'disabled':''}>Anterior</button><span>${page} / ${totalPages}</span>
+   <button id="generation-next" ${page>=totalPages?'disabled':''}>Próxima</button></div></section>`;
  $('#generation-prev').onclick=()=>history(page-1).catch(errors);$('#generation-next').onclick=()=>history(page+1).catch(errors);
- document.querySelectorAll('[data-delete-generation]').forEach(button=>button.onclick=()=>openDelete(S.historyItems.find(g=>g._id===button.dataset.deleteGeneration),button));
+ results.querySelectorAll('[data-delete-generation]').forEach(button=>button.onclick=()=>openDelete(S.historyItems.find(g=>g._id===button.dataset.deleteGeneration),button));
  if(focusAfter)$('#generation-history-title').focus({preventScroll:true});
 }
 function setupDelete(){

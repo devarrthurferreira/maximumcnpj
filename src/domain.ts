@@ -1,4 +1,4 @@
-export const VERSION = '0.62.0';
+export const VERSION = '0.62.1';
 export const MAX_ROWS = 80_000;
 export const MAX_COLUMNS = 80;
 export type Status = 'OPTANTE' | 'NAO_OPTANTE' | 'NAO_CONFIRMADO';

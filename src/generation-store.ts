@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { collection, scope, audit } from './store.ts';
 import {jobDatabase} from './mongo-storage.ts';
 import type { Doc } from './store.ts';
-import { AppError, need, text, integer } from './security.ts';
+import { AppError, need, text, integer, escapeRegex } from './security.ts';
 import { VERSION, MAX_ROWS } from './domain.ts';
 import { write } from './lookup-db.ts';
 import type { LookupActor } from './lookup-db.ts';
@@ -132,10 +132,41 @@ export async function getGeneration(id: string) {
   return (await hydrate([await record(id)]))[0];
 }
 
-export async function generationHistory(page: number) {
-  const c = await generations(), query = scope({deletionStartedAt: {$exists: false}});
-  const records = await c.find(query).sort({createdAt: -1, _id: -1}).skip((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).toArray();
-  return {items: await hydrate(records), total: await c.countDocuments(query), page, pageSize: PAGE_SIZE};
+const portugueseLetters: Record<string, string> = {
+  a: '[aáàâãä]', c: '[cç]', e: '[eéêèë]', i: '[iíìîï]',
+  o: '[oóòôõö]', u: '[uúùûü]', n: '[nñ]'
+};
+
+export async function generationHistory(page: number, search = '') {
+  const c = await generations();
+  const filter: Record<string, unknown> = {deletionStartedAt: {$exists: false}};
+  let matchesCompany: ((company: GenerationCompany) => boolean) | undefined;
+  if (search.trim()) {
+    const term = text(search, 100).normalize('NFC');
+    need(!term.includes('\0'), 'Termo de pesquisa inválido.');
+    const folded = term.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const pattern = new RegExp(Array.from(folded || term, char => portugueseLetters[char] || escapeRegex(char)).join(''), 'i');
+    const catalogFields: Record<string, RegExp>[] = [{name: pattern}, {code: pattern}];
+    const document = term.replace(/[.\/\s-]/g, '');
+    if (/^[A-Z0-9]{1,14}$/i.test(document)) catalogFields.push({cnpj: new RegExp(document, 'i')});
+    // Older generations store only the company ID, name and code. Resolve CNPJs
+    // and current names in the same workspace, including inactive companies.
+    const clients = await (await collection('clients')).distinct('_id', scope({$or: catalogFields}));
+    const clientIds = new Set(clients);
+    filter.$or = [{'companies.clientId': {$in: clients}}, {'companies.name': pattern}, {'companies.code': pattern}];
+    matchesCompany = company => clientIds.has(company.clientId) || pattern.test(company.name) || pattern.test(company.code ?? '');
+  }
+  const query = scope(filter);
+  const [records, total] = await Promise.all([
+    c.find(query).sort({createdAt: -1, _id: -1}).skip((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).toArray(),
+    c.countDocuments(query)
+  ]);
+  const items = await hydrate(records);
+  if (!matchesCompany) return {items, total, page, pageSize: PAGE_SIZE};
+  const matches = matchesCompany;
+  return {items: items.map(item => ({...item,
+    matchingClientIds: item.companies.filter(matches).map((company: GenerationCompany) => company.clientId)
+  })), total, page, pageSize: PAGE_SIZE};
 }
 
 export async function createGeneration(actor: LookupActor, input: any) {

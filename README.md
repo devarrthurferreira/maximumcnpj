@@ -1,4 +1,6 @@
-# Maximum CNPJ · v0.62.0
+# Maximum CNPJ · v0.62.1
+
+Na aba **Relatórios**, digite parte do nome, código ou CNPJ em **Pesquisar empresa** e clique em **Buscar**. A pesquisa inclui todas as páginas do histórico e aceita CNPJ com ou sem pontuação. Abra **Preenchimento por setor** para consultar o Fiscal e o Contábil com a mesma busca, inclusive para empresas que ainda não geraram relatórios.
 
 Em **Relatórios → Preenchimento por setor**, consulte a situação salva do Fiscal e do Contábil em todas as empresas cadastradas. Combine os filtros dos dois setores, busque por código, nome ou CNPJ e selecione cadastros ativos ou inativos. **Baixar Excel** e **Imprimir / PDF** incluem todas as empresas do filtro. O relatório usa a mesma conferência salva da lista de análises. Empresas sem análise aparecem com os dois setores por iniciar.
 

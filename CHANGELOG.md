@@ -1,5 +1,9 @@
 # Histórico de alterações
 
+## [0.62.1] - 2026-11-27
+
+- Inclui pesquisa por empresa na Central de relatórios, com paginação dos resultados e acesso ao preenchimento por setor pela mesma pesquisa.
+
 ## [0.62.0] - 2026-11-27
 
 - Adiciona o relatório de preenchimento Fiscal e Contábil por empresa, com filtros independentes, contagens, Excel e impressão. Inclui cadastros sem análise e distingue rascunhos de setores que exigem nova conferência.

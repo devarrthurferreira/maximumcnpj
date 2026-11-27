@@ -67,12 +67,16 @@ export async function openSectorReport(host){
       <tbody></tbody></table></div></section>`;
   const form=host.querySelector('form'),excel=host.querySelector('[data-excel]'),print=host.querySelector('[data-print]');
   const message=host.querySelector('.sector-export-error'),readAt=dateText(new Date());
+  form.elements.search.value=(new URLSearchParams(location.search).get('search')||'').slice(0,100);
   let filtered=[],exporting=false;
   function render(){
     const {search,registration,fiscal,accounting}=form.elements,term=normalize(search.value);
+    const cnpjTerm=term.replace(/[.\/\s-]/g,'');
+    const searchCnpj=/^[a-z0-9]{1,14}$/.test(cnpjTerm);
     filtered=companies.filter(row=>(registration.value==='all'||row.active===(registration.value==='active'))&&
       sectorMatches(row.fiscal.status,fiscal.value)&&sectorMatches(row.accounting.status,accounting.value)&&
-      [row.name,row.code,row.cnpj,formatCnpj(row.cnpj)].some(value=>normalize(value).includes(term)));
+      ([row.name,row.code].some(value=>normalize(value).includes(term))||
+       (searchCnpj&&normalize(row.cnpj).replace(/[.\/\s-]/g,'').includes(cnpjTerm))));
     const complete=(row,key)=>row[key].status==='COMPLETE';
     const totals=[['Empresas no filtro',filtered.length],['Fiscal concluído',filtered.filter(row=>complete(row,'fiscal')).length],
       ['Contábil concluído',filtered.filter(row=>complete(row,'accounting')).length],['Ambos concluídos',filtered.filter(row=>complete(row,'fiscal')&&complete(row,'accounting')).length]];
